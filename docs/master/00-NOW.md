@@ -35,8 +35,9 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 
 **State (2026-10-22):**
 - Merged: **#309 (P8 CLI learner)** into `general-chat-agent` (`a51fea40`) on the owner's hand check ("hand check passed" 2026-10-22; CI green, suite 2792). Hand check found and fixed in-tree: the write gate read only the first token (nested deletes ran cardless — `2e1ab5e0`+`225ba472`), and scan feedback (`a97e89b7`): spinner + live scan-log tail, per-tool status (scanned-flat vs unreadable vs not-installed), 20 s exec watchdog for GUI tools (Obsidian --help hung forever), app-bundle run paths (iina-cli).
-- **P1–P8 of the app-agent plan are done.** Next: **#203 P9** (`ready`, curated tool catalog + "no route → options" card, §6.2) → #208 P13 (after P6) → #204 P10 → #205/#206. Worktree `Context-Dock-202` removed after the merge; branch deleted.
+- **P1–P9 of the app-agent plan are done.** Merged: **#311 (P9 curated catalog + no-route card, folds the lane-fall fix)** into `general-chat-agent` (`5ca378af`) on the owner's hand check ("works perfect" 2026-10-22; CI green, suite 2804). The owner's Mail hand checks drove five in-tree fixes, all folded into #311: curated `AppToolCatalog` + `find_route` suggestions; the typed no-route card (installed-check, copy-install-only, menu fallback — shared across Corner and window); the data→UI lane fall with its plan card (`LanePlan.decide`, writes included — the closed-app dead ends in `LaneCoordinator.prepare` and `operate_app` are gone); the exec PATH now reads `TerminalPackageManager.userBinDirectories()` (a go-installed linked CLI ran → "command not found" before); and the app-chat prompt's CLI line carries the learned command manifest (the model composed `mail-app-cli archive` from the name alone before). Worktree `issue-203` removed after the merge; branch deleted.
 - Owner 2026-10-22: the Settings sidebar reads as clutter (App Packs / Integrations / Plugins / Plugin Creator all take capabilities) — flagged, no issue filed yet, not part of #203.
+- **Next: #208 P13 (scripting-dictionary rung)** → #204 P10 → #205/#206.
 
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
@@ -51,7 +52,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · **#200 P6** · **#201 P7** · #202/#203 P8/P9 · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · **#200 P6** · **#201 P7** · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
