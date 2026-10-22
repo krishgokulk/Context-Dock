@@ -269,24 +269,9 @@ struct GlobalIntegrationDetailView: View {
     /// added it. It used to live only in the legacy automation screen, which the app no
     /// longer renders — so the one place that names what a learned CLI can do was a place
     /// the owner could not reach.
+    /// The learned review and scan control — the shared row (see `LearnedCLIDetailRow`).
     private func learnedCLIDetail(_ package: TerminalPackage) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !package.subcommands.isEmpty {
-                LearnedCLISummaryLine(subcommands: package.subcommands)
-            }
-            HStack(spacing: 8) {
-                Button(package.subcommands.isEmpty ? "Scan --help" : "Re-scan --help") {
-                    Task { await pkgMgr.refreshHelpText(for: package.id) }
-                }
-                .controlSize(.small)
-                .accessibilityLabel("Scan --help for \(package.name)")
-                if package.subcommands.isEmpty {
-                    Text("Not scanned — no commands learned yet")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
+        LearnedCLIDetailRow(package: package)
     }
 
     private var mcpNote: some View {

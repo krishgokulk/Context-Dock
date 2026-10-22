@@ -567,6 +567,18 @@ class TerminalPackageManager: ObservableObject {
     // MARK: - Live scan log (shown in settings while scanning)
     @Published var scanLog: [String] = []   // e.g. ["✓ ekctl --help", "✓ ekctl list --help", ...]
 
+    /// Which command's scan is running right now — the spinner in Settings needs a state
+    /// the view can read, and a scan that takes tens of seconds with no visible feedback
+    /// reads as a dead button.
+    @Published private(set) var scanningCommands: Set<String> = []
+
+    /// The last scan outcome per command, for the row beneath the Scan button. The old
+    /// wording, "Not scanned — no commands learned yet", told a lie for the two cases the
+    /// owner then hit: a tool that scanned fine but takes only flags has no subcommands,
+    /// and a tool whose `--help` could not be run at all was indistinguishable from
+    /// "never scanned".
+    @Published private(set) var scanStatuses: [String: String] = [:]
+
     // Meta-commands that are never worth recursing into
     private static let metaSubcommands: Set<String> = [
         "help", "version", "completion", "completions",
@@ -574,12 +586,26 @@ class TerminalPackageManager: ObservableObject {
         "man", "doc", "docs"
     ]
 
-    func scanHelpText(for command: String, binary: String? = nil) async -> String? {
+    /// A run that goes nowhere must not hang the scan forever: `Obsidian --help` LAUNCHES
+    /// the app, writes runtime logs to stdout, and never exits — the scan blocked on it
+    /// until the app was quit, with no spinner and no result. This is why no scan of a
+    /// GUI "tool" ever came back.
+    static let scanTimeoutSeconds = 20
+
+    func scanHelpText(for command: String, binary: String? = nil,
+                      run runPath: String? = nil, display: String? = nil) async -> String? {
         let env = buildEnv()
+        // `run` is the shell string to execute; `command` (and `display`) name the tool
+        // for parsing and logs. They differ when the scan runs a recorded absolute path —
+        // "'/Applications/IINA.app/Contents/MacOS/iina-cli' messages" runs, but only
+        // `iina-cli messages` parses.
+        let run = runPath ?? command
         let bin = binary ?? command.components(separatedBy: " ").first ?? command
+        let shown = display ?? command
         let subPath: String = {
-            guard command.hasPrefix(bin) else { return "" }
-            return String(command.dropFirst(bin.count)).trimmingCharacters(in: .whitespaces)
+            guard shown != bin else { return "" }
+            guard shown.hasPrefix(bin + " ") else { return shown }
+            return String(shown.dropFirst(bin.count + 1))
         }()
 
         // Try every known help-invocation pattern, in priority order:
@@ -587,14 +613,19 @@ class TerminalPackageManager: ObservableObject {
         // 2. cmd sub -h           (short flag)
         // 3. binary help sub1 sub2  (Swift ArgumentParser: ekctl, tuist, mint, …)
         // 4. cmd sub help         (some Go CLIs: kubectl sub help)
-        var attempts = ["\(command) --help 2>&1", "\(command) -h 2>&1"]
+        var attempts = ["\(run) --help 2>&1", "\(run) -h 2>&1"]
         if !subPath.isEmpty {
-            attempts.append("\(bin) help \(subPath) 2>&1")
-            attempts.append("\(command) help 2>&1")
+            attempts.append("\(run) help \(subPath) 2>&1")
+            attempts.append("\(run) \(subPath) help 2>&1")
         }
 
         for attempt in attempts {
-            let output = Self.strippingANSI(await runQuiet(attempt, env: env))
+            let (raw, timedOut) = await runQuiet(attempt, env: env)
+            // A tool that hung on one help pattern hangs on them all (a GUI app). Fail
+            // fast: the acceptance checks below would otherwise mistake the app's runtime
+            // log lines — which the killed run left in the pipe — for help text.
+            if timedOut { return nil }
+            let output = Self.strippingANSI(raw)
             let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
             // Accept output that looks like real help (>20 chars, no error markers)
             if trimmed.count > 20
@@ -611,11 +642,12 @@ class TerminalPackageManager: ObservableObject {
     /// Scans every subcommand path up to 5 levels deep, in parallel per level.
     /// Tries all help patterns (--help, -h, `binary help sub`, `cmd sub help`).
     /// Total output capped at 30 000 chars.
-    func scanDeepHelp(for command: String) async -> String? {
+    func scanDeepHelp(for command: String, binary: String? = nil,
+                      run runPath: String? = nil) async -> String? {
         await MainActor.run { scanLog = [] }
         let actor = ScanAccumulator()
-        await scanRecursiveHelp(command: command, binary: command,
-                                depth: 0, accumulator: actor)
+        await scanRecursiveHelp(command: runPath ?? command, binary: binary ?? command,
+                                depth: 0, accumulator: actor, display: command)
         let result = await actor.text
         let count  = await actor.count
         await MainActor.run { scanLog.append("━━ Scan complete: \(count) command path\(count == 1 ? "" : "s") ━━") }
@@ -623,18 +655,24 @@ class TerminalPackageManager: ObservableObject {
     }
 
     /// Recursive parallel worker for scanDeepHelp.
+    /// `command` is the runnable form (a quoted absolute path when the scan resolved one);
+    /// `display` is the readable path that headers and logs use — `--- iina-cli messages
+    /// --help ---` — because the manifest is parsed back out of those headers and must not
+    /// contain the quoted path.
     private func scanRecursiveHelp(command: String, binary: String,
-                                   depth: Int, accumulator: ScanAccumulator) async {
+                                   depth: Int, accumulator: ScanAccumulator,
+                                   display: String) async {
         guard depth < 5 else { return }
         guard await accumulator.markVisited(command) else { return }  // deduplicate
 
-        guard let help = await scanHelpText(for: command, binary: binary) else {
-            await MainActor.run { scanLog.append("✗ \(command) (no help)") }
+        guard let help = await scanHelpText(for: command, binary: binary,
+                                            run: command, display: display) else {
+            await MainActor.run { scanLog.append("✗ \(display) (no help)") }
             return
         }
-        await MainActor.run { scanLog.append("✓ \(command) --help") }
+        await MainActor.run { scanLog.append("✓ \(display) --help") }
 
-        let header = depth == 0 ? help : "\n\n--- \(command) --help ---\n\(help)"
+        let header = depth == 0 ? help : "\n\n--- \(display) --help ---\n\(help)"
         await accumulator.append(header)
 
         // Stop digging if we've already collected enough text
@@ -662,9 +700,11 @@ class TerminalPackageManager: ObservableObject {
         await withTaskGroup(of: Void.self) { group in
             for sub in subs {
                 let childCmd = "\(command) \(sub)"
+                let childDisplay = "\(display) \(sub)"
                 group.addTask {
                     await self.scanRecursiveHelp(command: childCmd, binary: binary,
-                                                 depth: depth + 1, accumulator: accumulator)
+                                                 depth: depth + 1, accumulator: accumulator,
+                                                 display: childDisplay)
                 }
             }
         }
@@ -831,21 +871,84 @@ class TerminalPackageManager: ObservableObject {
     }
 
     /// Scan --help (plus all sub-command help) for a package and update stored fields.
+    ///
+    /// Every outcome is recorded in `scanStatuses`, so the Settings row says what happened
+    /// instead of leaving "Not scanned" hanging there forever.
     func refreshHelpText(for packageId: UUID) async {
         guard let index = packages.firstIndex(where: { $0.id == packageId }) else { return }
-        let pkg = packages[index]
-        // Use top-level help for structure parsing; use deep help for AI context
-        guard let topHelp = await scanHelpText(for: pkg.command) else { return }
-        let deepHelp = await scanDeepHelp(for: pkg.command) ?? topHelp
-        packages[index].helpText       = deepHelp
-        packages[index].subcommands    = learnedCommandPaths(
-            topHelp: topHelp, deepHelp: deepHelp, binary: pkg.command)
+        let original = packages[index]
+        guard original.isInstalled else {
+            await MainActor.run {
+                scanStatuses[original.command] = "Not installed — install it first, then scan."
+            }
+            return
+        }
+        // Run through the path recorded at discovery time. The command NAME is resolved
+        // on the scan PATH, which misses app-bundle tools — `iina-cli` installs to
+        // /Applications/IINA.app/Contents/MacOS — and a name the shell cannot resolve
+        // produced "command not found" and, before that was recorded, silence.
+        let runPath: String? = {
+            if let path = original.installedPath,
+               !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) {
+                return quoted(path)
+            }
+            if let path = resolveOnScanPath(original.command) { return quoted(path) }
+            return nil
+        }()
+        let runnable = runPath ?? original.command
+        let name = original.command  // the bare tool name, for statuses and parsing
+        await MainActor.run {
+            scanningCommands.insert(name)
+            scanStatuses[name] = "Scanning…"
+            scanLog = []
+        }
+        defer { Task { @MainActor in scanningCommands.remove(name) } }
+
+        let topHelp = await scanHelpText(for: runnable, binary: name, display: name)
+        guard let topHelp else {
+            await MainActor.run {
+                // A failed scan must also clear what an earlier scan stored. Obsidian's
+                // stored "help" WAS its runtime log lines — the old run accepted them —
+                // and the model would keep describing flags the tool does not have.
+                packages[index].helpText = nil
+                packages[index].subcommands = []
+                scanStatuses[name] =
+                    "Could not read \(name) --help — the tool may print no help, be a GUI app " +
+                    "(scans quit after \(Self.scanTimeoutSeconds)s), or live outside the scanned paths."
+            }
+            return
+        }
+        let deepHelp = await scanDeepHelp(for: name, binary: name, run: runnable)
+        let paths = learnedCommandPaths(
+            topHelp: topHelp, deepHelp: deepHelp ?? topHelp, binary: name)
+        packages[index].helpText       = deepHelp ?? topHelp
+        packages[index].subcommands    = paths
         packages[index].usagePattern   = parseUsagePattern(from: topHelp)
         // Stamp what was scanned, so a later upgrade is detectable rather than silently
         // leaving the model describing flags the installed version no longer has.
         packages[index].scannedBinaryModified = Self.binaryModificationDate(
             packages[index].installedPath)
         savePackages()
+        await MainActor.run {
+            scanStatuses[name] = paths.isEmpty
+                ? "Scanned — \(name) takes flags, no subcommands (help text learned)."
+                : "Scanned — learned \(paths.count) command paths."
+        }
+    }
+
+    /// SMP-style single-quoted shell word: every `'` becomes `'\''`.
+    private func quoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Resolve a bare command name on the scan PATH — the same list discovery uses.
+    private func resolveOnScanPath(_ command: String) -> String? {
+        let name = command.components(separatedBy: " ").first ?? command
+        for dir in Self.userBinDirectories() + ["/usr/bin", "/bin"] {
+            let candidate = dir + "/" + name
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return nil
     }
 
     /// The manifest: every command the tool can run — the top-level commands first, then
@@ -1095,25 +1198,36 @@ class TerminalPackageManager: ObservableObject {
             .replacingOccurrences(of: "\r", with: "")
     }
 
-    private func runQuiet(_ command: String, env: [String: String]) async -> String {
+    private func runQuiet(_ command: String, env: [String: String]) async -> (String, Bool) {
         await withCheckedContinuation { continuation in
             // MUST dispatch to background queue — waitUntilExit() blocks the thread.
             // Calling it on the Swift concurrency pool starves all async tasks.
             DispatchQueue.global(qos: .utility).async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-c", command]
+                process.arguments = ["-c", "exec " + command]
                 process.environment = env
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = pipe
+                var timedOut = false
+                let watchdog = DispatchWorkItem {
+                    if process.isRunning {
+                        timedOut = true
+                        process.terminate()
+                    }
+                }
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + .seconds(Self.scanTimeoutSeconds), execute: watchdog)
                 do {
                     try process.run()
                     process.waitUntilExit()
+                    watchdog.cancel()
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+                    continuation.resume(returning: (String(data: data, encoding: .utf8) ?? "", timedOut))
                 } catch {
-                    continuation.resume(returning: "")
+                    watchdog.cancel()
+                    continuation.resume(returning: ("", false))
                 }
             }
         }

@@ -182,24 +182,9 @@ struct AppIntegrationResourcesView: View {
 
     /// What the owner reviews after a CLI is learned (§6.1), and the button that produces
     /// it — the same pair the Global view shows, because the tool is the same tool.
+    /// The learned review and scan control — the shared row (see `LearnedCLIDetailRow`).
     private func learnedCLIDetail(_ package: TerminalPackage) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if !package.subcommands.isEmpty {
-                LearnedCLISummaryLine(subcommands: package.subcommands)
-            }
-            HStack(spacing: 8) {
-                Button(package.subcommands.isEmpty ? "Scan --help" : "Re-scan --help") {
-                    Task { await packageManager.refreshHelpText(for: package.id) }
-                }
-                .controlSize(.small)
-                .accessibilityLabel("Scan --help for \(package.name)")
-                if package.subcommands.isEmpty {
-                    Text("Not scanned — no commands learned yet")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
+        LearnedCLIDetailRow(package: package)
     }
 
     private var mcpSection: some View {

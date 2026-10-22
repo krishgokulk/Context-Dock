@@ -2786,6 +2786,65 @@ struct LearnedCLISummaryLine: View {
     }
 }
 
+/// The learned review line AND the scan control that produces it — one definition used by
+/// both Integrations views (Global, and an app's Resources) and the legacy screen.
+///
+/// While a scan runs, the button is disabled and a spinner with the live tail of the scan
+/// log replaces the silence: a deep scan walks dozens of `--help` invocations and takes
+/// tens of seconds, which before read as a button that did nothing.
+///
+/// The status line distinguishes the three states "Not scanned" used to blend together:
+/// never scanned, scanned-but-flat (a flag-only tool has no subcommands), and scanned-but-
+/// unreadable (no help, a GUI app, or a binary that cannot be run by the scan).
+struct LearnedCLIDetailRow: View {
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    let package: TerminalPackage
+
+    /// What the row says when nothing is in flight and no scan has written a status yet:
+    /// a tool WITH stored help was scanned (it just has no subcommands to review), while
+    /// one without is genuinely unscanned.
+    static func restingStatus(for package: TerminalPackage) -> String {
+        if package.helpText?.isEmpty == false {
+            return "Scanned — \(package.command) takes flags, no subcommands (help text learned)."
+        }
+        return "Not scanned — no commands learned yet"
+    }
+
+    var body: some View {
+        let isScanning = pkgMgr.scanningCommands.contains(package.command)
+        let status = pkgMgr.scanStatuses[package.command]
+        return VStack(alignment: .leading, spacing: 4) {
+            if !package.subcommands.isEmpty {
+                LearnedCLISummaryLine(subcommands: package.subcommands)
+            }
+            HStack(spacing: 8) {
+                Button(package.subcommands.isEmpty ? "Scan --help" : "Re-scan --help") {
+                    Task { await pkgMgr.refreshHelpText(for: package.id) }
+                }
+                .controlSize(.small)
+                .disabled(!package.isInstalled || isScanning)
+                .accessibilityLabel("Scan --help for \(package.name)")
+                if isScanning {
+                    ProgressView()
+                        .controlSize(.small)
+                    if let tail = pkgMgr.scanLog.last, !tail.isEmpty {
+                        Text(tail)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                } else if package.subcommands.isEmpty {
+                    Text(status ?? LearnedCLIDetailRow.restingStatus(for: package))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
 struct AppCLIToolPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
