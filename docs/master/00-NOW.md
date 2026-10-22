@@ -33,6 +33,11 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - App-agent lane frontier: **#200 P6** (`ready`) → **#201 P7** (`ready`) → #202/#203 P8/P9 · #208 P13 (after P6) · #204 P10 · #205/#206. Nothing `in-progress`.
 - Verification card out for the other app-chat bugs (#235, #233, #188, #180): check each against current GCA before a builder writes any fix.
 
+**State (2026-10-22):**
+- Merged: **#309 (P8 CLI learner)** into `general-chat-agent` (`a51fea40`) on the owner's hand check ("hand check passed" 2026-10-22; CI green, suite 2792). Hand check found and fixed in-tree: the write gate read only the first token (nested deletes ran cardless — `2e1ab5e0`+`225ba472`), and scan feedback (`a97e89b7`): spinner + live scan-log tail, per-tool status (scanned-flat vs unreadable vs not-installed), 20 s exec watchdog for GUI tools (Obsidian --help hung forever), app-bundle run paths (iina-cli).
+- **P1–P8 of the app-agent plan are done.** Next: **#203 P9** (`ready`, curated tool catalog + "no route → options" card, §6.2) → #208 P13 (after P6) → #204 P10 → #205/#206. Worktree `Context-Dock-202` removed after the merge; branch deleted.
+- Owner 2026-10-22: the Settings sidebar reads as clutter (App Packs / Integrations / Plugins / Plugin Creator all take capabilities) — flagged, no issue filed yet, not part of #203.
+
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
 > stale release base, ~788 commits behind** — its tip is still PR #8; it only advances when a release PR
