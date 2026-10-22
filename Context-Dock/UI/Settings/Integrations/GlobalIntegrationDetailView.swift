@@ -12,6 +12,7 @@ struct GlobalIntegrationDetailView: View {
 
     @ObservedObject private var commandsRegistry = SystemCommandsRegistryObserver.shared
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -227,6 +228,7 @@ struct GlobalIntegrationDetailView: View {
                     row(
                         title: package.name,
                         subtitle: globalCLISubtitle(package),
+                        detail: AnyView(learnedCLIDetail(package)),
                         icon: "terminal",
                         tint: package.isInstalled ? .blue : .orange,
                         isOn: nil,
@@ -257,6 +259,19 @@ struct GlobalIntegrationDetailView: View {
         let state = package.isInstalled ? "installed" : "not installed"
         let reason = settings.isCLIToolPinned(package.command) ? "pinned" : "linked by an app"
         return "\(package.command) · \(state) · \(reason)"
+    }
+
+    /// What the owner reviews after a CLI is learned (§6.1): "Learned 14 commands: 6 read,
+    /// 8 write, 1 sends mail. Enable reads? Writes ask each time." — and the button that
+    /// produces it.
+    ///
+    /// The review belongs HERE, next to the pinned tool, because this is where the owner
+    /// added it. It used to live only in the legacy automation screen, which the app no
+    /// longer renders — so the one place that names what a learned CLI can do was a place
+    /// the owner could not reach.
+    /// The learned review and scan control — the shared row (see `LearnedCLIDetailRow`).
+    private func learnedCLIDetail(_ package: TerminalPackage) -> some View {
+        LearnedCLIDetailRow(package: package)
     }
 
     private var mcpNote: some View {
@@ -315,6 +330,7 @@ struct GlobalIntegrationDetailView: View {
     private func row(
         title: String,
         subtitle: String,
+        detail: AnyView? = nil,
         icon: String,
         tint: Color,
         isOn: Binding<Bool>?,
@@ -333,6 +349,9 @@ struct GlobalIntegrationDetailView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let detail {
+                    detail
+                }
             }
 
             Spacer(minLength: 8)

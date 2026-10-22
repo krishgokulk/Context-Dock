@@ -72,7 +72,9 @@ struct OnDeviceTurnGate: Sendable {
 /// Captures the command results produced inside one Foundation Models tool session.
 /// Apple Intelligence is allowed to finish a tool turn without generating prose; in
 /// that case we still return the real CLI result instead of a vague "Done" response.
-fileprivate final class OnDeviceToolRunRecorder: @unchecked Sendable {
+/// Not `fileprivate`: `CLIAdapterTool` takes it, and that tool's init is internal so a
+/// test can drive the gate the tool enforces.
+final class OnDeviceToolRunRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(command: String, output: String, success: Bool)] = []
 
@@ -959,10 +961,20 @@ struct CLIAdapterTool: Tool {
     let name: String
     let description: String
     private let cliCommand: String
+    /// Absolute path the scan recorded for this binary, when known. Preferred over a PATH
+    /// search so the argv run invokes the exact executable the owner reviewed.
+    private let installedPath: String?
+    /// Marked "needs a terminal": a full-screen TUI that must run in a PTY, not through pipes.
+    private let isInteractive: Bool
+    /// The commands this tool was learned to have — the manifest from its `--help` scan.
+    /// A destructive verb hiding under a noun (`messages delete`) only shows up there.
+    private let learnedPaths: [String]
     private let recorder: OnDeviceToolRunRecorder?
     private let gate: OnDeviceTurnGate?
 
-    fileprivate init(
+    /// Not `fileprivate`: the gate this tool enforces is only verifiable by driving the
+    /// tool itself, and a test that cannot build it can only test the classifier beside it.
+    init(
         action: AdapterAction, recorder: OnDeviceToolRunRecorder? = nil,
         gate: OnDeviceTurnGate? = nil
     ) {
@@ -979,9 +991,13 @@ struct CLIAdapterTool: Tool {
         self.name = "run_\(safeName)"
         let base = action.description.isEmpty ? action.name : action.description
         var desc = "Run `\(resolvedCmd)` CLI tool. \(base). Pass any subcommands, flags, or arguments."
-        if let pkg = TerminalPackageManager.shared.packages.first(where: {
+        let pkg = TerminalPackageManager.shared.packages.first(where: {
             $0.command.caseInsensitiveCompare(resolvedCmd) == .orderedSame
-        }), let help = pkg.helpTextForPrompt {
+        })
+        self.installedPath = pkg?.installedPath
+        self.isInteractive = pkg?.isInteractive ?? false
+        self.learnedPaths = pkg?.subcommands ?? []
+        if let help = pkg?.helpTextForPrompt {
             desc += "\n\nUsage reference:\n\(String(help.prefix(600)))"
         }
         self.description = desc
@@ -998,19 +1014,126 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
+
+        // Argv, never a shell string (§4.2). `args` is model-supplied and steerable by
+        // untrusted mail/message content, so tokenize the whole invocation and REFUSE any
+        // unquoted shell syntax: an approved `archive` carrying `; curl …|sh` is stopped
+        // here, before anything runs. The tokens run as a resolved process with no shell.
+        let tokens: [String]
+        switch ArgvCommandGate.tokenizeRejectingShellSyntax(fullCommand) {
+        case .rejected(let reason):
+            return "❌ \(cliCommand) did not run: \(reason)."
+        case .tokens(let parsed):
+            tokens = parsed
+        }
+        guard let binaryName = tokens.first else {
+            return "❌ \(cliCommand) did not run: nothing to run."
+        }
+        let argv = Array(tokens.dropFirst())
+
+        // A subcommand that writes or sends always asks the owner first (§6.1; AGENTS.md:
+        // "writes/outbound ALWAYS ask"). A read runs without a card. A bare invocation
+        // (no subcommand) only prints usage, so it is not gated here.
+        //
+        // The whole command path is classified, not just its first token, and the tool's
+        // own learned manifest is consulted first: `mail-app-cli messages delete 42`
+        // names a noun first and a destructive verb second, and reading the noun alone
+        // would let the delete run unasked.
+        let verbClass = CLIVerbClassifier.classify(
+            args, learnedPaths: learnedPaths, binary: cliCommand)
+        if !args.isEmpty, verbClass.requiresApproval {
+            guard await askRunApproval(fullCommand: fullCommand, verbClass: verbClass) else {
+                let kind = verbClass == .outbound ? "send" : "write"
+                return "❌ \(cliCommand) did not run: the \(kind) was not approved."
+            }
+        }
+
+        // The lethal-trifecta gate still applies on top: an outbound call in a turn that holds
+        // both private data and untrusted content is held even if the write card was approved.
         if let held = await gate?.check(toolName: "run_command", arguments: ["command": fullCommand]) {
             return "❌ \(cliCommand) did not run: \(held)"
         }
-        let (success, output, _) = await TerminalCommandExecutor.shared.run(
-            fullCommand,
-            purpose: "\(cliCommand) CLI"
-        )
+
+        // A full-screen interactive tool produces escape sequences, not capturable output, and
+        // hangs when run through pipes — it needs a real PTY, so route it through the terminal
+        // path. Still injection-safe: the tokenizer above already refused any unquoted shell
+        // syntax in the model-supplied args, so nothing reaches the shell that it did not vet.
+        if isInteractive {
+            let (ok, out, _) = await TerminalCommandExecutor.shared.run(
+                fullCommand, purpose: "\(cliCommand) CLI")
+            let text = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run { recorder?.record(command: fullCommand, output: text, success: ok) }
+            return ok ? (text.isEmpty ? "✅ \(cliCommand) completed with no output." : text)
+                      : "❌ \(cliCommand) failed: \(text)"
+        }
+
+        guard let executable = Self.resolveExecutable(named: binaryName, installedPath: installedPath) else {
+            return "❌ \(cliCommand) did not run: no executable named \(binaryName) was found."
+        }
+        // The binary's own directory plus the trusted install dirs, so a script CLI's shebang
+        // interpreter (`#!/usr/bin/env node`) resolves without consulting $PATH or dotfiles.
+        let pathDirs = [executable.deletingLastPathComponent().path]
+            + TerminalPackageManager.userBinDirectories()
+        let (output, exitCode) = await TerminalAIBridge.runArgv(
+            executable: executable, arguments: argv, extraPathDirectories: pathDirs)
+        let success = exitCode == 0
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         await MainActor.run {
             recorder?.record(command: fullCommand, output: trimmed, success: success)
         }
         return success ? (trimmed.isEmpty ? "✅ \(cliCommand) completed with no output." : trimmed)
                        : "❌ \(cliCommand) failed: \(trimmed)"
+    }
+
+    /// Resolve a binary name to an absolute executable, with no shell and without consulting
+    /// `$PATH` (attacker-influenceable via dotfiles). Prefer the exact path the scan recorded
+    /// for this tool; otherwise search the fixed dirs a user CLI installs into — the same
+    /// list discovery and the `--help` scan use, including `~/go/bin`, where `go install`
+    /// (mail-app-cli's documented install) puts it.
+    private static func resolveExecutable(named name: String, installedPath: String?) -> URL? {
+        let fm = FileManager.default
+        if let path = installedPath, !path.isEmpty,
+           URL(fileURLWithPath: path).lastPathComponent == name,
+           fm.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        // Same user-install dirs the scanner uses (single source of truth), plus the system
+        // dirs — never $PATH, which dotfiles can steer.
+        let dirs = TerminalPackageManager.userBinDirectories()
+            + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        for dir in dirs {
+            let candidate = dir + "/" + name
+            if fm.isExecutableFile(atPath: candidate) {
+                return URL(fileURLWithPath: candidate)
+            }
+        }
+        return nil
+    }
+
+    /// Ask the owner before a learned CLI write or send. Same shared inbox, expiry and
+    /// unattended refusal as every other capability — a plugin cannot skip it.
+    @MainActor
+    private func askRunApproval(fullCommand: String, verbClass: CLIVerbClass) async -> Bool {
+        let explanation = verbClass == .outbound
+            ? "This \(cliCommand) command sends something to someone. DoraX never sends on its own."
+            : "This \(cliCommand) command changes your data."
+        return await AICapabilityApprovalCenter.shared.requestApproval(
+            plan: AIActionPlan(
+                capability: "cli.\(cliCommand)",
+                input: ["command": fullCommand],
+                explanation: explanation),
+            capability: AICapability(
+                id: "cli.\(cliCommand)",
+                title: "Run \(fullCommand)",
+                appBundleID: nil,
+                inputSchema: .init(fields: []),
+                riskLevel: verbClass == .outbound ? .high : .medium,
+                runsWithoutAdapter: true,
+                executor: { _ in
+                    throw AICapabilityError.blocked(
+                        "CLI tools run through TerminalCommandExecutor, not the registry.")
+                }),
+            context: .none)
     }
 }
 
