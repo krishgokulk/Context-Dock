@@ -67,6 +67,22 @@ struct LanePlan: Equatable {
                 planCard: "Bring \(appName) forward, run the step, then return")
         }
 
+        // §2a: "The data lane falls to the UI lane only when no data rung can do the job
+        // (example: Mail has no archive in its adapter or dictionary route). That fall is
+        // a visible step." A capability that brings the app forward — a menu command — is
+        // that no-data-rung signal: the request's words say data, but a menu press lands
+        // only on the frontmost app, so the plan shows the fall with its card instead of
+        // clicking menus the user cannot see. A closed app is started visibly here, the
+        // same way the UI lane starts one: the card says so before it happens.
+        if bringsAppForward, !state.isFrontmost {
+            return LanePlan(
+                lane: lane, startsHidden: false, bringsForward: true,
+                returnsFocusTo: state.previousFrontmostBundleID,
+                planCard: state.isRunning
+                    ? "Bring \(appName) forward, run the step, then return"
+                    : "Start \(appName), run the step, then return")
+        }
+
         // Data lane (or a UI request whose capability needs no window): never activates, never
         // moves focus. A closed app that must answer Apple Events is started hidden.
         return LanePlan(
@@ -119,12 +135,13 @@ enum LaneCoordinator {
             previousFrontmostBundleID: frontmost?.bundleIdentifier == bundleID
                 ? nil : frontmost?.bundleIdentifier)
 
-        // A write (compose, archive) is medium/high risk and opens its window because the user
-        // will finish it; only a low-risk data read is started silently in the background.
+        // The risk gate is gone: a write's approval card IS the consent, so "compose or
+        // archive" no longer means the app is never started for it (plan §2a — a closed
+        // app is started for its data rungs, and the write itself asks before it runs).
         let plan = LanePlan.decide(
             request: userRequest,
             appName: appName,
-            needsRunningApp: capability.needsRunningApp && capability.riskLevel == .low,
+            needsRunningApp: capability.needsRunningApp,
             bringsAppForward: capability.bringsAppForward,
             state: snapshot)
 
@@ -138,7 +155,32 @@ enum LaneCoordinator {
         var returnTo: String?
         if plan.bringsForward {
             if let card = plan.planCard { steps.append(card) }
-            running?.activate(options: [.activateIgnoringOtherApps])
+            if let running {
+                running.activate(options: [.activateIgnoringOtherApps])
+            } else {
+                // The fall reached a closed app (§2a U1: "the app must start; the plan
+                // card says it opens"). Started visibly, not hidden — the card named the
+                // start, and the menu press needs the app up front.
+                if let url = workspace.urlForApplication(withBundleIdentifier: bundleID) {
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = true
+                    configuration.hides = false
+                    if let started = try? await workspace.openApplication(
+                        at: url, configuration: configuration)
+                    {
+                        // openApplication returns when the process exists, not when it
+                        // can answer — the same readiness wait the data lane does.
+                        for _ in 0..<100
+                            where !started.isFinishedLaunching && !started.isTerminated
+                        {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        _ = started.activate(options: [.activateIgnoringOtherApps])
+                        steps.append("\(appName) started and came forward")
+                    }
+                }
+            }
             returnTo = plan.returnsFocusTo
         }
 

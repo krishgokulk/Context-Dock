@@ -925,16 +925,18 @@ class TerminalAIBridge: ObservableObject {
             environment["TERM"] = "xterm-256color"
             environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
             let currentPath = environment["PATH"] ?? "/usr/bin:/bin"
-            // The directories the user's own pinned tools actually live in come first.
-            // terminal-browser installs to ~/.local/bin, which is on PATH only if a dotfile
-            // puts it there — so a tool DoraX scanned, listed and scoped could still fail to
-            // run as "command not found". We know each tool's resolved path; use it.
+            // The directories the user's own pinned tools actually live in come first, then
+            // EVERY directory the scanner ever looks in. That was the drift that failed a
+            // go-installed CLI the app itself offered: the scan listed mail-app-cli from
+            // ~/go/bin ("CLI tools · 1"), and this PATH had only the Homebrew list —
+            // so the very route find_route had just returned died with
+            // "zsh:3: command not found". `userBinDirectories()` is the one list the
+            // scanner and the runner must both read; `zsh -lc` never sources .zshrc, so
+            // a PATH line in a dotfile still does not leak into the sandbox from here.
             environment["PATH"] =
                 (toolDirectories
-                    + [
-                        "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
-                        "/usr/bin", "/bin",
-                    ]).joined(separator: ":") + ":" + currentPath
+                    + TerminalPackageManager.userBinDirectories()
+                    + ["/usr/bin", "/bin"]).joined(separator: ":") + ":" + currentPath
             process.environment = environment
 
             // The thread's directory when it has one, home otherwise.

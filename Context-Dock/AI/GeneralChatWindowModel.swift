@@ -370,7 +370,8 @@ final class GeneralChatWindowModel: ObservableObject {
                 subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
                 trace: durableTrace,
-                actionChoices: answer.routeChoices)
+                actionChoices: answer.routeChoices,
+                noRouteOptions: AgentToolRegistry.consumeLastNoRouteOptions())
         message.activity = activity
         deliver(message, to: scope, title: title)
     }
