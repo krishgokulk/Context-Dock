@@ -184,11 +184,20 @@ enum ComputerUseRunner {
 
         case .ambiguous(let options):
             let named = options.prefix(4).map(\.display).joined(separator: ", ")
+            // End of the U3 rung, not the end of the plan. The screen rung only ever
+            // reached this ambiguity because the ladder was skipped: the app's own route
+            // list has ONE canonical archive route (its saved actions and verified menu
+            // commands), and an exact route press is not a guess. Send the model back to
+            // find_route first; only when no route fits at all does asking become right.
             return AgentToolResult(
                 success: false,
-                output: "\"\(target)\" describes more than one thing in \(appName) equally "
-                    + "well: \(named). Ask which one — pressing either is guessing with extra "
-                    + "steps.",
+                output: "\"\(target)\" describes more than one thing in \(appName)'s live "
+                    + "menus equally well: \(named). Do not ask yet, and do not press — an "
+                    + "exact route beats guessing. Call find_route first: the app's route "
+                    + "list normally has ONE canonical command for a request like this "
+                    + "(saved action or verified menu command), and running that route is "
+                    + "decisive. Only if find_route returns nothing for it, name the live "
+                    + "options above and ask which one.",
                 displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
 
         case .disabled(let item):
