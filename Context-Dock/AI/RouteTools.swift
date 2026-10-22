@@ -125,13 +125,26 @@ extension AgentToolRegistry {
             let routes = await ChatRouteResolver.routes(
                 for: request, bundleId: bundleID, appName: appName)
             guard !routes.isEmpty else {
+                // §6.2: the no-route card is NOT a shrug. The vetted catalog's suggestions
+                // ride OUT as typed card data (the answer message renders it) as well as
+                // in the text the model reads, because a suggestion that exists only in
+                // prose is a suggestion the surface cannot draw.
+                let lines = await MainActor.run {
+                    AppToolCatalog.suggestionLines(
+                        forBundleId: bundleID, appName: appName)
+                }
+                let card = await MainActor.run {
+                    AppToolCatalog.noRouteCard(
+                        forBundleId: bundleID, appName: appName)
+                }
                 return AgentToolResult(
                     success: true,
                     output: "\(appName) has no route for that — no saved action, no menu "
                         + "command, no linked tool matches it. Say so plainly, and if it "
                         + "would need one, name what the user could link in Settings → App "
-                        + "Adapters. Do not invent a menu path.",
-                    displayCommand: "find_route(\(request))")
+                        + "Adapters. Do not invent a menu path."
+                        + (lines.isEmpty ? "" : "\n\n" + lines.joined(separator: "\n")),
+                    displayCommand: "find_route(\(request))").withNoRouteOptions(card)
             }
             await MainActor.run {
                 AgentToolRegistry.offeredRoutes = Dictionary(

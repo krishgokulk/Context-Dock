@@ -99,14 +99,57 @@ enum ComputerUseRunner {
                 displayCommand: "operate_app(\(target))")
         }
 
-        let app = NSRunningApplication
+        // §2a U3: "must start, come forward, window visible — with consent." A closed app
+        // was a dead end here ("say so rather than launching it"), which is how a Mail
+        // archive without the CLI ended in a refusal instead of a menu press. The consent
+        // is already in this tool's own flow — the first-use/approval card names the exact
+        // menu item before anything is pressed — so starting is allowed by that same
+        // mechanism, exactly as the plan's row says.
+        var running = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleID)
             .first { !$0.isTerminated }
-        guard let app, app.processIdentifier > 0 else {
+        var startedStep: String?
+        if running == nil {
+            guard
+                let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "\(bundleID) is not installed on this Mac, so there is nothing to "
+                        + "start or operate. Say so plainly rather than trying another way.",
+                    displayCommand: "operate_app(\(target))")
+            }
+            let nameGuess = url.deletingPathExtension().lastPathComponent
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.hides = false
+            guard
+                let started = try? await NSWorkspace.shared.openApplication(
+                    at: url, configuration: configuration)
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "\(nameGuess) could not be started, so its screens cannot be "
+                        + "operated. Say so plainly.",
+                    displayCommand: "operate_app(\(target))")
+            }
+            // openApplication returns when the process exists, not when it answers events —
+            // the same readiness wait the data lane does before its first Apple Event.
+            for _ in 0..<100 where !started.isFinishedLaunching && !started.isTerminated {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            _ = started.activate(options: [.activateIgnoringOtherApps])
+            running = started
+            startedStep =
+                "\(nameGuess) wasn't running — started it and brought it forward, because a "
+                + "menu press lands only on the frontmost app."
+        }
+        guard let app = running, app.processIdentifier > 0 else {
             return AgentToolResult(
                 success: false,
-                output: "That app is not running, so there is nothing to operate. Say so rather "
-                    + "than launching it — opening an app is a separate thing to ask for.",
+                output: "The app started but is not answering, so there is nothing to "
+                    + "operate yet. Say so and stop rather than pressing anything.",
                 displayCommand: "operate_app(\(target))")
         }
         let appName = app.localizedName ?? bundleID
@@ -141,11 +184,22 @@ enum ComputerUseRunner {
 
         case .ambiguous(let options):
             let named = options.prefix(4).map(\.display).joined(separator: ", ")
+            // End of the U3 rung, not the end of the plan. The screen rung only ever
+            // reached this ambiguity because the ladder was skipped: the app's own route
+            // list has ONE canonical archive route (its saved actions and verified menu
+            // commands), and an exact route press is not a guess. Send the model back to
+            // find_route first; only when no route fits at all does asking become right.
             return AgentToolResult(
                 success: false,
-                output: "\"\(target)\" describes more than one thing in \(appName) equally "
-                    + "well: \(named). Ask which one — pressing either is guessing with extra "
-                    + "steps.",
+                output: "\"\(target)\" describes more than one thing in \(appName)'s live "
+                    + "menus equally well: \(named). Do not ask yet, and do not press — an "
+                    + "exact route beats guessing. Look the request up first: find_route and "
+                    + "find_menu_command return the app's saved routes and the few matching "
+                    + "menu paths, and one canonical command usually exists (the app's own "
+                    + "route list, not this live bar). Run that exact route, or press its "
+                    + "FULL path (\"Message ▸ Archive\" names one thing; the bare word "
+                    + "names several). Only if no route or path fits, name the live "
+                    + "options above and ask which one.",
                 displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
 
         case .disabled(let item):
@@ -252,7 +306,7 @@ enum ComputerUseRunner {
                 Report what changed between those two readings. If they are identical, say the \
                 command ran and nothing visible changed — do not invent an outcome, and do not \
                 press anything else to produce one.
-                """,
+                """ + (startedStep.map { "\n\n" + $0 } ?? ""),
             displayCommand: "operate_app(\(appName): \(chosen.display))")
     }
 
