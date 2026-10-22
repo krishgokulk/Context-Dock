@@ -339,7 +339,6 @@ class TerminalPackageManager: ObservableObject {
     func scanForInstalledTools() async -> [TerminalPackage] {
         var discovered: [TerminalPackage] = []
         let fm = FileManager.default
-
         // Directories that contain user-installed tools (not macOS system tools)
         let userBinDirs = Self.userBinDirectories()
 
@@ -641,9 +640,23 @@ class TerminalPackageManager: ObservableObject {
         // Stop digging if we've already collected enough text
         guard await accumulator.text.count < 28000 else { return }
 
+        // A command cannot be its own descendant. A leaf's help repeats its own path —
+        // "mail-app-cli messages list [flags]", and a description that spells out the
+        // invocation ("…use jq: mail-app-cli messages list -a Account | jq") — so reading
+        // the second word back as a subcommand sent the scan down a branch that does not
+        // exist: "messages list messages", "send send", "open open open".
+        let ancestors = Set(
+            command.split(separator: " ")
+                .dropFirst(binary.split(separator: " ").count)
+                .map(String.init))
+
         let subs = parseSubcommands(from: help, binary: binary)
             .filter { !Self.metaSubcommands.contains($0) }
-            .prefix(12)  // max breadth per level
+            .filter { !ancestors.contains($0) }
+            // 24 per level, not 12: `mail-app-cli messages` alone has 14 commands, and a
+            // cap of 12 dropped "trash" and "unread" — two commands the owner's review
+            // then could not name. The 28k text cap above still bounds the whole walk.
+            .prefix(24)  // max breadth per level
 
         // Scan all sibling subcommands in parallel
         await withTaskGroup(of: Void.self) { group in
@@ -825,13 +838,60 @@ class TerminalPackageManager: ObservableObject {
         guard let topHelp = await scanHelpText(for: pkg.command) else { return }
         let deepHelp = await scanDeepHelp(for: pkg.command) ?? topHelp
         packages[index].helpText       = deepHelp
-        packages[index].subcommands    = parseSubcommands(from: topHelp, binary: pkg.command)
+        packages[index].subcommands    = learnedCommandPaths(
+            topHelp: topHelp, deepHelp: deepHelp, binary: pkg.command)
         packages[index].usagePattern   = parseUsagePattern(from: topHelp)
         // Stamp what was scanned, so a later upgrade is detectable rather than silently
         // leaving the model describing flags the installed version no longer has.
         packages[index].scannedBinaryModified = Self.binaryModificationDate(
             packages[index].installedPath)
         savePackages()
+    }
+
+    /// The manifest: every command the tool can run — the top-level commands first, then
+    /// the nested ones the deep scan walked.
+    ///
+    /// A CLI whose destructive verbs live under a noun (`mail-app-cli messages delete`)
+    /// must show them. The owner's review — "Learned N commands: X read, Y write, Z sends
+    /// mail" — is the only place that names what the tool can do, and a manifest that
+    /// listed only `messages` said nothing about the delete underneath it.
+    func learnedCommandPaths(topHelp: String, deepHelp: String, binary: String) -> [String] {
+        let top = parseSubcommands(from: topHelp, binary: binary)
+        var paths = top
+        var seen = Set(top.map { $0.lowercased() })
+        for path in Self.commandPaths(inDeepHelp: deepHelp, binary: binary) {
+            let key = path.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            paths.append(path)
+        }
+        return paths
+    }
+
+    /// The command tree the deep scan walked, read from the section headers it writes
+    /// (`--- mail-app-cli messages delete --help ---`), as paths relative to the binary.
+    ///
+    /// The headers ARE the tree: the scan already visited every command path to collect
+    /// its help, so the tree is a by-product of work already done.
+    static func commandPaths(inDeepHelp help: String, binary: String) -> [String] {
+        var paths: [String] = []
+        for line in help.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("--- "), trimmed.hasSuffix(" --help ---") else { continue }
+            let full = String(trimmed.dropFirst(4).dropLast(" --help ---".count))
+                .trimmingCharacters(in: .whitespaces)
+            var relative = full
+            if full.lowercased().hasPrefix(binary.lowercased()) {
+                relative = String(full.dropFirst(binary.count)).trimmingCharacters(in: .whitespaces)
+            }
+            guard !relative.isEmpty else { continue }
+            // A meta command is not a thing the tool can do; it is how the tool talks
+            // about its own commands.
+            let leaf = relative.split(separator: " ").last.map(String.init) ?? relative
+            guard !metaSubcommands.contains(leaf) else { continue }
+            paths.append(relative)
+        }
+        return paths
     }
 
     /// Re-scan a package by command name (used after tool change / new install).
@@ -1001,7 +1061,13 @@ class TerminalPackageManager: ObservableObject {
     private func buildEnv() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         let current = env["PATH"] ?? ""
-        env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:" + current
+        // The user's own binary directories come first, and they are the SAME list
+        // discovery and the runtime resolver use. `go install` puts a tool in ~/go/bin,
+        // which is on no default PATH, and a scan that cannot find the binary learns
+        // nothing at all — the tool was discoverable (the directory is searched) but its
+        // help was unreadable, so it never had a command to show.
+        env["PATH"] = (Self.userBinDirectories() + ["/usr/bin", "/bin"])
+            .joined(separator: ":") + ":" + current
         // Ask tools for plain help. Colour-coded output is the norm for modern CLIs and
         // its escape sequences broke subcommand parsing outright; these three variables
         // are what most CLI frameworks honour. Output is still sanitised after the fact

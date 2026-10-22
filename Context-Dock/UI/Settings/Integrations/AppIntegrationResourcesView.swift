@@ -168,6 +168,7 @@ struct AppIntegrationResourcesView: View {
                 subtitle: package.isInstalled
                     ? "\(package.command) · installed"
                     : "\(package.command) · not installed",
+                detail: AnyView(learnedCLIDetail(package)),
                 icon: "terminal",
                 tint: package.isInstalled ? .blue : .orange,
                 isOn: nil,
@@ -176,6 +177,28 @@ struct AppIntegrationResourcesView: View {
                         .controlSize(.small)
                         .accessibilityLabel("Unlink \(package.name) from \(summary.appName)"))
                 })
+        }
+    }
+
+    /// What the owner reviews after a CLI is learned (§6.1), and the button that produces
+    /// it — the same pair the Global view shows, because the tool is the same tool.
+    private func learnedCLIDetail(_ package: TerminalPackage) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !package.subcommands.isEmpty {
+                LearnedCLISummaryLine(subcommands: package.subcommands)
+            }
+            HStack(spacing: 8) {
+                Button(package.subcommands.isEmpty ? "Scan --help" : "Re-scan --help") {
+                    Task { await packageManager.refreshHelpText(for: package.id) }
+                }
+                .controlSize(.small)
+                .accessibilityLabel("Scan --help for \(package.name)")
+                if package.subcommands.isEmpty {
+                    Text("Not scanned — no commands learned yet")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
     }
 
@@ -278,6 +301,7 @@ struct AppIntegrationResourcesView: View {
     private func resourceRow(
         title: String,
         subtitle: String,
+        detail: AnyView? = nil,
         icon: String,
         tint: Color,
         isOn: Binding<Bool>?,
@@ -296,6 +320,9 @@ struct AppIntegrationResourcesView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let detail {
+                    detail
+                }
             }
 
             Spacer(minLength: 8)

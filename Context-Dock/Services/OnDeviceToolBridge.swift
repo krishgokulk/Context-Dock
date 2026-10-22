@@ -72,7 +72,9 @@ struct OnDeviceTurnGate: Sendable {
 /// Captures the command results produced inside one Foundation Models tool session.
 /// Apple Intelligence is allowed to finish a tool turn without generating prose; in
 /// that case we still return the real CLI result instead of a vague "Done" response.
-fileprivate final class OnDeviceToolRunRecorder: @unchecked Sendable {
+/// Not `fileprivate`: `CLIAdapterTool` takes it, and that tool's init is internal so a
+/// test can drive the gate the tool enforces.
+final class OnDeviceToolRunRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(command: String, output: String, success: Bool)] = []
 
@@ -964,10 +966,15 @@ struct CLIAdapterTool: Tool {
     private let installedPath: String?
     /// Marked "needs a terminal": a full-screen TUI that must run in a PTY, not through pipes.
     private let isInteractive: Bool
+    /// The commands this tool was learned to have — the manifest from its `--help` scan.
+    /// A destructive verb hiding under a noun (`messages delete`) only shows up there.
+    private let learnedPaths: [String]
     private let recorder: OnDeviceToolRunRecorder?
     private let gate: OnDeviceTurnGate?
 
-    fileprivate init(
+    /// Not `fileprivate`: the gate this tool enforces is only verifiable by driving the
+    /// tool itself, and a test that cannot build it can only test the classifier beside it.
+    init(
         action: AdapterAction, recorder: OnDeviceToolRunRecorder? = nil,
         gate: OnDeviceTurnGate? = nil
     ) {
@@ -989,6 +996,7 @@ struct CLIAdapterTool: Tool {
         })
         self.installedPath = pkg?.installedPath
         self.isInteractive = pkg?.isInteractive ?? false
+        self.learnedPaths = pkg?.subcommands ?? []
         if let help = pkg?.helpTextForPrompt {
             desc += "\n\nUsage reference:\n\(String(help.prefix(600)))"
         }
@@ -1026,7 +1034,13 @@ struct CLIAdapterTool: Tool {
         // A subcommand that writes or sends always asks the owner first (§6.1; AGENTS.md:
         // "writes/outbound ALWAYS ask"). A read runs without a card. A bare invocation
         // (no subcommand) only prints usage, so it is not gated here.
-        let verbClass = CLIVerbClassifier.classify(args)
+        //
+        // The whole command path is classified, not just its first token, and the tool's
+        // own learned manifest is consulted first: `mail-app-cli messages delete 42`
+        // names a noun first and a destructive verb second, and reading the noun alone
+        // would let the delete run unasked.
+        let verbClass = CLIVerbClassifier.classify(
+            args, learnedPaths: learnedPaths, binary: cliCommand)
         if !args.isEmpty, verbClass.requiresApproval {
             guard await askRunApproval(fullCommand: fullCommand, verbClass: verbClass) else {
                 let kind = verbClass == .outbound ? "send" : "write"
@@ -1073,8 +1087,9 @@ struct CLIAdapterTool: Tool {
 
     /// Resolve a binary name to an absolute executable, with no shell and without consulting
     /// `$PATH` (attacker-influenceable via dotfiles). Prefer the exact path the scan recorded
-    /// for this tool; otherwise search the fixed dirs a user CLI installs into — including
-    /// `~/go/bin`, where `go install` (mail-app-cli's documented install) puts it.
+    /// for this tool; otherwise search the fixed dirs a user CLI installs into — the same
+    /// list discovery and the `--help` scan use, including `~/go/bin`, where `go install`
+    /// (mail-app-cli's documented install) puts it.
     private static func resolveExecutable(named name: String, installedPath: String?) -> URL? {
         let fm = FileManager.default
         if let path = installedPath, !path.isEmpty,

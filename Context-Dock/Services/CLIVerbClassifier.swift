@@ -1,14 +1,14 @@
 // CLIVerbClassifier.swift
 // Context-Dock
 //
-// Classifies a CLI subcommand as read / write / outbound from its leading verb, so a
+// Classifies a CLI invocation as read / write / outbound from its command path, so a
 // user-installed CLI (plan §6.1) becomes capabilities with the right gate: reads run
 // freely, writes and sends ask. Pure and static — the tested keystone of the CLI learner,
 // reachable without a Mac, a model or a live `--help` run.
 
 import Foundation
 
-/// What running a subcommand does, in gate terms.
+/// What running a command does, in gate terms.
 enum CLIVerbClass: Equatable, Sendable {
     /// Reads or lists; runs without a card.
     case read
@@ -46,26 +46,161 @@ enum CLIVerbClassifier {
         "folders", "labels", "threads", "drafts", "drives",
     ]
 
-    /// Classify a subcommand, case-insensitively. Every non-flag token is considered, not
-    /// only the first: a noun-first command like `attachments save` must be seen as the write
-    /// its later token makes it, not read as its leading noun. Flags (`--json`, `-h`) and
-    /// quoted values are skipped so a flag value cannot flip the class.
-    static func classify(_ subcommand: String) -> CLIVerbClass {
-        let words = subcommand
-            .lowercased()
-            .split(whereSeparator: { $0 == " " || $0 == "\t" })
-            .map(String.init)
-            .filter { !$0.hasPrefix("-") && !$0.hasPrefix("\"") && !$0.hasPrefix("'") }
-        // Most-dangerous class wins: a send anywhere in the invocation is outbound; any write
-        // verb makes it a write. `send` is deliberately in both buckets and outbound wins.
-        if words.contains(where: outboundVerbs.contains) { return .outbound }
-        if words.contains(where: writeVerbs.contains) { return .write }
-        // Only a recognised read verb or enumeration noun as the leading word runs cardless.
-        if let first = words.first, readVerbs.contains(first) || readNouns.contains(first) {
-            return .read
+    // MARK: - Classification
+
+    /// Classify an invocation of a learned CLI.
+    ///
+    /// The WHOLE leading command path is read, not only its first token. A CLI whose
+    /// destructive verbs live under a noun puts the verb in the second position —
+    /// `mail-app-cli messages delete 42`, `mail-app-cli mailboxes mark-read`, `gh repo
+    /// delete`. Reading only the first token took the noun ("messages", "mailboxes",
+    /// "repo") as the command, and a plural noun reads as an enumeration, so a delete
+    /// was classified as a READ and ran without asking. That is the one mistake this gate
+    /// must never make: the first token is a noun far more often than it is a verb.
+    ///
+    /// `learnedPaths` is the tool's own manifest — the command paths its `--help` scan
+    /// found. When the invocation names a command the manifest knows, the manifest
+    /// decides: the tool said what that command does, and the gate believes the tool.
+    /// Without a match the static verb lists decide, and anything unknown asks.
+    ///
+    /// `binary` is the tool's command name, stripped from the front when the model
+    /// spelled the whole invocation out.
+    static func classify(
+        _ invocation: String,
+        learnedPaths: [String] = [],
+        binary: String? = nil
+    ) -> CLIVerbClass {
+        let chain = leadingCommandPath(invocation, binary: binary)
+        guard !chain.isEmpty else { return .write }
+
+        // 1. The tool's own manifest wins: the LONGEST learned path that prefixes the
+        //    invocation names the command, and its verb decides.
+        if let match = longestLearnedMatch(chain: chain, learnedPaths: learnedPaths),
+           let cls = verbClass(ofCommand: match) {
+            return cls
         }
-        // Unknown: ask. The safe default (§6.1).
+        // 2. Otherwise the invocation's own verbs decide. The most dangerous class wins:
+        //    a send anywhere is outbound, a mutating verb anywhere is a write.
+        if let cls = verbClass(inChain: chain) { return cls }
+        // 3. A single bare noun that names a collection is an enumeration, not an action.
+        if chain.count == 1, readNouns.contains(chain[0].lowercased()) { return .read }
+        // 4. Unknown: ask. The safe default (§6.1).
         return .write
+    }
+
+    // MARK: - The command path
+
+    /// The leading command path: the tokens before the first flag.
+    ///
+    /// Everything from a flag on is that flag's value, not part of the command.
+    /// `messages list --search delete` searches for the word "delete" and is still a read,
+    /// so the flag ends the path rather than being scanned for verbs.
+    static func leadingCommandPath(_ invocation: String, binary: String? = nil) -> [String] {
+        var tokens = tokenize(invocation)
+        if let binary, !binary.isEmpty,
+           let first = tokens.first,
+           first.caseInsensitiveCompare(binary) == .orderedSame {
+            tokens.removeFirst()
+        }
+        var chain: [String] = []
+        for token in tokens {
+            if token.hasPrefix("-") { break }
+            chain.append(token)
+        }
+        return chain
+    }
+
+    /// Split an invocation into tokens, honouring quotes so a quoted value stays one
+    /// token. Deliberately lenient: the shell-syntax gate runs before this one and
+    /// refuses anything unquotable, so there is nothing to reject here.
+    static func tokenize(_ invocation: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        var sawQuotedContent = false
+        for character in invocation {
+            if let active = quote {
+                if character == active { quote = nil } else { current.append(character) }
+                continue
+            }
+            switch character {
+            case "'", "\"":
+                quote = character
+                sawQuotedContent = true
+            case " ", "\t":
+                if !current.isEmpty || sawQuotedContent {
+                    tokens.append(current)
+                    current = ""
+                    sawQuotedContent = false
+                }
+            default:
+                current.append(character)
+            }
+        }
+        if !current.isEmpty || sawQuotedContent { tokens.append(current) }
+        return tokens
+    }
+
+    /// The longest learned command path that prefixes the invocation, or nil.
+    ///
+    /// Longest wins: "messages delete" says more than "messages", and the manifest is
+    /// the best evidence of what a command does.
+    static func longestLearnedMatch(chain: [String], learnedPaths: [String]) -> String? {
+        guard !learnedPaths.isEmpty, !chain.isEmpty else { return nil }
+        let known = Set(learnedPaths.map { $0.lowercased() })
+        for length in stride(from: chain.count, through: 1, by: -1) {
+            let candidate = chain.prefix(length).joined(separator: " ")
+            if known.contains(candidate.lowercased()) { return candidate }
+        }
+        return nil
+    }
+
+    // MARK: - Verbs
+
+    /// The class of a command path's verb — the last token of the path — or nil when the
+    /// path names no known verb.
+    static func verbClass(ofCommand command: String) -> CLIVerbClass? {
+        let leaf = command.split(separator: " ").last.map(String.init) ?? command
+        return verbClass(ofToken: leaf)
+    }
+
+    /// The class of the whole command path: the most dangerous verb on it decides.
+    ///
+    /// A send anywhere is outbound, a mutating verb anywhere is a write, and only then
+    /// does a read verb grant a read. That ordering is what makes `messages list` a read
+    /// and `messages delete` a write, and it is why a known verb later on the path can
+    /// never make a write look like a read.
+    static func verbClass(inChain chain: [String]) -> CLIVerbClass? {
+        for token in chain where outboundVerbs.contains(token.lowercased()) { return .outbound }
+        for token in chain where writeVerbs.contains(token.lowercased()) { return .write }
+        // A compound may hide the verb: `mailboxes mark-read` is a write.
+        for token in chain {
+            if let cls = compoundVerbClass(ofToken: token) { return cls }
+        }
+        for token in chain where readVerbs.contains(token.lowercased()) { return .read }
+        return nil
+    }
+
+    /// The class of one token, or nil when it names no known verb.
+    static func verbClass(ofToken token: String) -> CLIVerbClass? {
+        let lower = token.lowercased()
+        if outboundVerbs.contains(lower) { return .outbound }
+        if writeVerbs.contains(lower) { return .write }
+        if readVerbs.contains(lower) { return .read }
+        return compoundVerbClass(ofToken: token)
+    }
+
+    /// A compound verb ("mark-read", "unflag") is decided by its parts, and only a
+    /// destructive part counts: "mark-read" is a write even though it also contains
+    /// "read", while an unknown compound that merely contains a read word
+    /// ("search-bar") is not a read — it stays unknown, and unknown asks.
+    static func compoundVerbClass(ofToken token: String) -> CLIVerbClass? {
+        let lower = token.lowercased()
+        guard lower.contains("-") else { return nil }
+        let parts = lower.split(separator: "-").map(String.init)
+        for part in parts where outboundVerbs.contains(part) { return .outbound }
+        for part in parts where writeVerbs.contains(part) { return .write }
+        return nil
     }
 }
 
