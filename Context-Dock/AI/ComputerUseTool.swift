@@ -193,10 +193,12 @@ enum ComputerUseRunner {
                 success: false,
                 output: "\"\(target)\" describes more than one thing in \(appName)'s live "
                     + "menus equally well: \(named). Do not ask yet, and do not press — an "
-                    + "exact route beats guessing. Call find_route first: the app's route "
-                    + "list normally has ONE canonical command for a request like this "
-                    + "(saved action or verified menu command), and running that route is "
-                    + "decisive. Only if find_route returns nothing for it, name the live "
+                    + "exact route beats guessing. Look the request up first: find_route and "
+                    + "find_menu_command return the app's saved routes and the few matching "
+                    + "menu paths, and one canonical command usually exists (the app's own "
+                    + "route list, not this live bar). Run that exact route, or press its "
+                    + "FULL path (\"Message ▸ Archive\" names one thing; the bare word "
+                    + "names several). Only if no route or path fits, name the live "
                     + "options above and ask which one.",
                 displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
 
