@@ -125,12 +125,18 @@ extension AgentToolRegistry {
             let routes = await ChatRouteResolver.routes(
                 for: request, bundleId: bundleID, appName: appName)
             guard !routes.isEmpty else {
+                // §6.2: the no-route card is NOT a shrug. When the shipped catalog has a
+                // vetted tool for this app, the answer names it, what it adds, and the
+                // install command the OWNER runs — DoraX never installs.
+                let suggestions = AppToolCatalog.suggestionLines(
+                    forBundleId: bundleID, appName: appName)
                 return AgentToolResult(
                     success: true,
                     output: "\(appName) has no route for that — no saved action, no menu "
                         + "command, no linked tool matches it. Say so plainly, and if it "
                         + "would need one, name what the user could link in Settings → App "
-                        + "Adapters. Do not invent a menu path.",
+                        + "Adapters. Do not invent a menu path."
+                        + (suggestions.isEmpty ? "" : "\n\n" + suggestions.joined(separator: "\n")),
                     displayCommand: "find_route(\(request))")
             }
             await MainActor.run {
