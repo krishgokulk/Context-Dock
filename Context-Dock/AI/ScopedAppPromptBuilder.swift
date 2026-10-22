@@ -281,6 +281,23 @@ enum ScopedAppPromptBuilder {
                 ? "- MCP servers: none linked"
                 : "- MCP servers (read the app's data with the run_mcp_tool tool): "
                     + mcpServers.map(\.name).joined(separator: ", "))
+        // The dictionary rung (P13 #208): learned from the app's own sdef, one typed
+        // query capability. Absent for an app DoraX already serves through a built-in
+        // adapter — the adapter keeps that job (plan §2c).
+        func dictionaryLine() -> String? {
+            guard let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleId),
+                !dictionary.classes.isEmpty
+            else { return nil }
+            let classes = dictionary.classes.map(\.name).sorted().prefix(10)
+                .joined(separator: ", ")
+            return "- Scripting dictionary (read the app's data directly; no window opens): "
+                + "classes \(classes). Call it with run_capability(dict.query.\(bundleId), "
+                + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?}). "
+                + "Changes go through dict.modify and ask first."
+        }
+        if let dictionaryLine = dictionaryLine() {
+            lines.append(dictionaryLine)
+        }
         if !apiConns.isEmpty {
             // Stored credentials and a base URL, with no endpoint spec and no executor —
             // so they are context, not a route. Advertising them as callable would have

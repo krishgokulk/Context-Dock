@@ -235,6 +235,16 @@ final class CapabilityRegistry {
         }
     }
 
+    /// Drop every capability whose id carries one of the prefixes. The learned
+    /// dictionaries use this between preflights: an app the store still lists but whose
+    /// manifest changed (or a manifest the store dropped) must not keep a capability an
+    /// older scan taught the registry.
+    func removeCapabilities(withPrefixes prefixes: [String]) {
+        for (id, _) in capabilitiesByID where prefixes.contains(where: id.hasPrefix) {
+            capabilitiesByID.removeValue(forKey: id)
+        }
+    }
+
     func registerAppleNotesMCPIfNeeded() {
         guard AppSettings.shared.noteMCPEnabled else { return }
         guard capabilitiesByID["notes.search"] == nil else { return }
@@ -325,6 +335,9 @@ final class CapabilityRegistry {
                 }
             }
         }
+        // The dictionary rung (P13 #208): learned manifests ride the same preflight.
+        // Apps that already have a built-in adapter keep it, inside the helper.
+        AppDictionaryCapabilities.registerLearned(in: self)
     }
 
     private func registerBuiltIns() {

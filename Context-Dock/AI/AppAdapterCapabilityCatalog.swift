@@ -29,6 +29,10 @@ enum AppAdapterCapabilityCatalog {
         appName: String, bundleID: String, query: String
     ) -> [DoraXActionCandidate] {
         CapabilityRegistry.shared.refreshBuiltInMCPs()
+        // The dictionary rung's cache (P13 #208): launched per scoped turn, but it
+        // returns at once when the manifest is current, and a scan is fire-and-forget
+        // (sdef is a command-line reader — no launch, no activation).
+        AppDictionaryStore.shared.kickScanIfStale(bundleID: bundleID, appName: appName)
         let queryTokens = significantTokens(query)
         guard !queryTokens.isEmpty else { return [] }
 
