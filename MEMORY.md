@@ -66,3 +66,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-10-22 | Task 203 (#311) | Hand-check follow-up: bridge PATH + userBinDirectories (go-installed CLIs run; zsh -lc no .zshrc) + state-aware suggestion prose (installed→App Adapters link, not re-install). 7056f53d. Suite 2804 pass. Note: owner screenshots came from stale main-checkout build.
 - 2026-10-22 | Task 203 (#311) | Round 3: operate_app ambiguous → back to find_route ladder. 910acb84. Suite 2804 pass.
 - 2026-10-22 | Task 203 (#311) | Round 4: CLI prompt line carries learned command manifest (was name-only → 'mail-app-cli archive' guess); ambiguity wording provider-agnostic. 44de035b. Suite 2804.
+- 2026-10-22 | #311 merged (squash 5ca378af) on owner hand check 'works perfect'; 00-NOW updated (4f0a8a04): P1–P9 done, next #208 P13. Worktree issue-203 removed; app relaunched from main checkout (pid 62342).
