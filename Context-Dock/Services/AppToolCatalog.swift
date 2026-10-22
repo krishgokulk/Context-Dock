@@ -140,14 +140,26 @@ enum AppToolCatalog {
         return NoRouteOptionsCard(appName: appName, rows: rows, fallback: fallback)
     }
 
-    /// The card's lines for an app with no route: one per entry, each naming the tool,
-    /// what it adds and the install command the owner runs themselves.
-    static func suggestionLines(forBundleId bundleId: String, appName: String) -> [String] {
-        suggestions(forBundleId: bundleId).map { entry in
-            "\(appName): optional, vetted — \(entry.tool) (\(entry.repo)) adds "
+    /// The card's lines for an app with no route: one per vetted entry, each telling the
+    /// model the truthful state — not installed (the owner installs, DoraX never does),
+    /// installed but not linked to this app ("add it in App Adapters", the CLI learner's
+    /// own flow), or installed and linked (the route should have matched; say so).
+    @MainActor static func suggestionLines(
+        forBundleId bundleId: String, appName: String
+    ) -> [String] {
+        suggestions(forBundleId: bundleId).map { entry -> String in
+            let seen = isInstalled(entry.tool)
+            let head = "\(appName): optional, vetted — \(entry.tool) (\(entry.repo)) adds "
                 + entry.adds.joined(separator: ", ")
-                + ". Install yourself: \(entry.installCommand). DoraX never installs; "
-                + "its writes ask first."
+            if seen.installed {
+                return head + ". It is ALREADY installed on this Mac"
+                    + (seen.scanned ? " and its commands are learned" : "")
+                    + " — route requests through it once it is linked to this app; the "
+                    + "user adds it in Settings → App Adapters («Add to this app»). "
+                    + "Do not ask them to install it again."
+            }
+            return head + ". Install yourself: \(entry.installCommand). DoraX never "
+                + "installs; its writes ask first."
         }
     }
 }

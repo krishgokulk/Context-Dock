@@ -129,8 +129,10 @@ extension AgentToolRegistry {
                 // ride OUT as typed card data (the answer message renders it) as well as
                 // in the text the model reads, because a suggestion that exists only in
                 // prose is a suggestion the surface cannot draw.
-                let suggestions = AppToolCatalog.suggestionLines(
-                    forBundleId: bundleID, appName: appName)
+                let lines = await MainActor.run {
+                    AppToolCatalog.suggestionLines(
+                        forBundleId: bundleID, appName: appName)
+                }
                 let card = await MainActor.run {
                     AppToolCatalog.noRouteCard(
                         forBundleId: bundleID, appName: appName)
@@ -141,7 +143,7 @@ extension AgentToolRegistry {
                         + "command, no linked tool matches it. Say so plainly, and if it "
                         + "would need one, name what the user could link in Settings → App "
                         + "Adapters. Do not invent a menu path."
-                        + (suggestions.isEmpty ? "" : "\n\n" + suggestions.joined(separator: "\n")),
+                        + (lines.isEmpty ? "" : "\n\n" + lines.joined(separator: "\n")),
                     displayCommand: "find_route(\(request))").withNoRouteOptions(card)
             }
             await MainActor.run {

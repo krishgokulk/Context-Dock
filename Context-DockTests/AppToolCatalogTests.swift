@@ -56,16 +56,24 @@ struct AppToolCatalogTests {
 
     // MARK: - The card's words
 
-    @Test func cardLineNamesToolWhatItAddsAndTheRuleThatDoraxNeverInstalls() {
+    @Test @MainActor func cardLineNamesTheTruthfulInstallState() {
+        let seen = AppToolCatalog.isInstalled("mail-app-cli")
         let lines = AppToolCatalog.suggestionLines(
             forBundleId: "com.apple.mail", appName: "Mail")
         #expect(lines.count == 1)
         let line = try! #require(lines.first)
         #expect(line.contains("mail-app-cli"))
         #expect(line.contains("intelligrit/mail-app-cli"))
-        #expect(line.contains("go install"))
-        #expect(line.contains("DoraX never installs"))
-        #expect(line.contains("writes ask first"))
+        if seen.installed {
+            // A tool already on the user's PATH must never be offered as something to
+            // install again — the truthful turn says it is there and points to linking it.
+            #expect(line.contains("ALREADY installed"))
+            #expect(!line.contains("Install yourself"))
+            #expect(line.contains("App Adapters"))
+        } else {
+            #expect(line.contains("go install"))
+            #expect(line.contains("DoraX never installs"))
+        }
     }
 
     @Test @MainActor func unknownToolIsNotReportedInstalled() {
