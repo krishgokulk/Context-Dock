@@ -442,6 +442,9 @@ struct AIChatMessage: Identifiable, Equatable {
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
     var runOutput: String?  // terminal/script output, collapsed behind a disclosure
+    /// The no-route card (§6.2): an app-scoped turn that found nothing to run, with the
+    /// catalog's vetted options. Not persisted — like `trace`, it belongs to its turn.
+    var noRouteOptions: NoRouteOptionsCard? = nil
     /// One row per thing the turn ran, recorded where it executed. Not persisted: like
     /// `trace`, it describes the turn that produced the answer.
     var activity: [ActivityStep] = []
@@ -506,6 +509,7 @@ struct AIChatMessage: Identifiable, Equatable {
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        noRouteOptions: NoRouteOptionsCard? = nil,
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
         timestamp: Date = Date(),
@@ -534,6 +538,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.trace = trace
         self.runOutput = runOutput
         self.actionChoices = actionChoices
+        self.noRouteOptions = noRouteOptions
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
@@ -551,6 +556,7 @@ struct AIChatMessage: Identifiable, Equatable {
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        noRouteOptions: NoRouteOptionsCard? = nil,
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
         timestamp: Date = Date(),
@@ -581,6 +587,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.trace = trace
         self.runOutput = runOutput
         self.actionChoices = actionChoices
+        self.noRouteOptions = noRouteOptions
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -1250,6 +1257,70 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// The no-route card (§6.2): the catalog's vetted options for an app whose turn found
+    /// nothing to run. Copy-only — the card copies an install command to the clipboard,
+    /// it never installs (E17) — and the fallback line says what the slower menu path is.
+    @ViewBuilder
+    private func noRouteOptionsCard(_ card: NoRouteOptionsCard) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                Text("\(card.appName) can't do that yet")
+                    .font(.system(size: 12, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            ForEach(Array(card.rows.enumerated()), id: \.offset) { _, row in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: row.installed ? "checkmark.circle.fill" : "terminal")
+                            .font(.system(size: 11))
+                            .foregroundStyle(row.installed ? Color.green : Color.secondary)
+                            .accessibilityHidden(true)
+                        Text(row.tool)
+                            .font(.system(size: 12, weight: .medium))
+                        Text("(\(row.repo))")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 0)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                                row.installCommand, forType: .string)
+                        } label: {
+                            Label("Copy install", systemImage: "doc.on.doc")
+                                .font(.system(size: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text(row.installed
+                        ? (row.scanned
+                            ? "Installed and scanned — review its commands in Settings › Integrations."
+                            : "Installed — learning its commands needs one Scan --help in Settings.")
+                        : "Not installed. Adds: \(row.adds.joined(separator: ", ")). Writes still ask.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color.primary.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            Text(card.fallback)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 3)
+    }
+
     @ViewBuilder
     private var enableAppButton: some View {
         if let req = message.enableAppRequest {
@@ -1634,6 +1705,9 @@ struct AIChatMessageView: View {
 
                 if message.enableAppRequest != nil {
                     enableAppButton
+                }
+                if let card = message.noRouteOptions {
+                    noRouteOptionsCard(card)
                 }
                 if !message.actionChoices.isEmpty {
                     actionChoiceButtons

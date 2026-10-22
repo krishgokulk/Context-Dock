@@ -67,4 +67,32 @@ struct AppToolCatalogTests {
         #expect(line.contains("DoraX never installs"))
         #expect(line.contains("writes ask first"))
     }
+
+    @Test @MainActor func unknownToolIsNotReportedInstalled() {
+        let seen = AppToolCatalog.isInstalled("definitely-not-a-real-cli-xyz")
+        #expect(seen.installed == false)
+        #expect(seen.scanned == false)
+    }
+
+    @Test @MainActor
+    func cardForMailNamesTheEntryAndTheFallbackSaysTheMenuPath() {
+        let card = AppToolCatalog.noRouteCard(
+            forBundleId: "com.apple.mail", appName: "Mail")
+        #expect(card.rows.count == 1)
+        let row = try! #require(card.rows.first)
+        #expect(row.tool == "mail-app-cli")
+        #expect(row.repo == "intelligrit/mail-app-cli")
+        #expect(row.installCommand.contains("go install"))
+        #expect(!row.scanned || row.installed)
+        #expect(
+            card.fallback.contains("menus") || card.fallback.contains("menu path"),
+            "the fallback must always name the slower menu path, never silence")
+    }
+
+    @Test @MainActor func cardForAnUnlistedAppIsEmptyAndHonest() {
+        let card = AppToolCatalog.noRouteCard(
+            forBundleId: "org.example.unrelated", appName: "SomethingElse")
+        #expect(card.rows.isEmpty)
+        #expect(card.fallback.contains("No vetted tool"))
+    }
 }

@@ -45,6 +45,30 @@ struct AppToolCatalogEntry: Codable, Equatable {
     var vetting: String
 }
 
+/// The no-route card (§6.2): what an app-scoped turn shows when the data lane had nothing
+/// to run. The tool result (`find_route`, no routes) is its source, the answer message
+/// carries it, and the shared message view draws it — never a parse of the answer's prose.
+struct NoRouteOptionsCard: Equatable, Identifiable {
+    struct Row: Equatable {
+        let tool: String
+        let repo: String
+        /// The command the OWNER runs. DoraX never installs (E17): the card copies it.
+        let installCommand: String
+        let adds: [String]
+        /// The binary resolved on the user's own PATH right now.
+        let installed: Bool
+        /// Commands were scanned and learned — the review lives in Settings › Integrations.
+        let scanned: Bool
+    }
+
+    let appName: String
+    let rows: [Row]
+    /// What to do instead when the entry adds nothing — the UI-lane fallback, in words.
+    let fallback: String
+
+    var id: String { appName + rows.map(\.tool).joined() }
+}
+
 /// The bundled, versioned catalog and the sentence the no-route card reads out.
 enum AppToolCatalog {
     /// Bump when the shipped entries change, so a session can tell what it consulted.
@@ -70,6 +94,50 @@ enum AppToolCatalog {
     /// Vetted suggestions for an app, by bundle id.
     static func suggestions(forBundleId bundleId: String) -> [AppToolCatalogEntry] {
         entries.filter { $0.bundleIds.contains(bundleId.lowercased()) }
+    }
+
+    /// Is the catalog tool present on the user's own binary directories right now? Check
+    /// ONLY — this is not a search and not an install (§6.2).
+    @MainActor static func isInstalled(_ tool: String) -> (installed: Bool, scanned: Bool) {
+        let pkg = TerminalPackageManager.shared.packages
+            .first { $0.command == tool || $0.name == tool }
+        if let pkg, pkg.isInstalled, let path = pkg.installedPath,
+            FileManager.default.isExecutableFile(atPath: path)
+        {
+            return (true, !pkg.subcommands.isEmpty)
+        }
+        for dir in TerminalPackageManager.userBinDirectories() + ["/usr/bin", "/bin"] {
+            if FileManager.default.isExecutableFile(atPath: dir + "/" + tool) {
+                return (true, false)
+            }
+        }
+        return (false, false)
+    }
+
+    /// The card for an app whose turn had no route: one row per vetted entry, checked
+    /// against what is installed this minute, plus the menu fallback.
+    @MainActor static func noRouteCard(
+        forBundleId bundleId: String, appName: String
+    ) -> NoRouteOptionsCard {
+        let rows = suggestions(forBundleId: bundleId).map { entry -> NoRouteOptionsCard.Row in
+            let seen = isInstalled(entry.tool)
+            return NoRouteOptionsCard.Row(
+                tool: entry.tool, repo: entry.repo, installCommand: entry.installCommand,
+                adds: entry.adds, installed: seen.installed, scanned: seen.scanned)
+        }
+        let fallback: String
+        if rows.isEmpty {
+            fallback = "No vetted tool exists for this app in the catalog yet — nothing "
+                + "to suggest, and nothing auto-installed."
+        } else if rows.allSatisfy({ !$0.installed }) {
+            fallback = "Nothing installed can reach that yet. You can still ask me to do it "
+                + "through \(appName)'s menus (it will come forward), or install the "
+                + "suggestion above yourself."
+        } else {
+            fallback = "In the app's menus there is a slower path; say the word and I'll "
+                + "press it."
+        }
+        return NoRouteOptionsCard(appName: appName, rows: rows, fallback: fallback)
     }
 
     /// The card's lines for an app with no route: one per entry, each naming the tool,

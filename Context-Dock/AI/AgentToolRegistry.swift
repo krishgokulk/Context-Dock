@@ -230,6 +230,17 @@ struct AgentToolResult {
     var verifiedByReadBack: String? = nil
     /// The user said no on the approval card. Distinct from a failure: nothing ran.
     var deniedByUser = false
+    /// The no-route card (§6.2), set only by a find_route that found nothing to run:
+    /// the vetted suggestions and the menu fallback, for the answer's card.
+    var noRouteOptions: NoRouteOptionsCard? = nil
+
+    /// The result with its no-route card attached (a builder, because the tool closures
+    /// construct results positionally).
+    func withNoRouteOptions(_ card: NoRouteOptionsCard) -> AgentToolResult {
+        var copy = self
+        copy.noRouteOptions = card
+        return copy
+    }
 
     init(
         success: Bool,
@@ -391,6 +402,18 @@ final class AgentToolRegistry {
     private var turnOrder: [AgentTurnToken] = []
     /// Readings taken this turn by a typed verifier, in the order they were taken.
     private var settledByTurn: [AgentTurnToken: [String]] = [:]
+
+    /// The no-route card the turn's most recent empty find_route left behind (§6.2).
+    /// Message assembly reads it once, and then it is gone: an old card must not attach
+    /// to the next turn's answer.
+    @MainActor static var lastNoRouteOptions: NoRouteOptionsCard?
+
+    /// Read and clear. Called when an assistant message is assembled, on both surfaces
+    /// (the chat window and the Corner), so the two cannot diverge on who gets it.
+    @MainActor static func consumeLastNoRouteOptions() -> NoRouteOptionsCard? {
+        defer { lastNoRouteOptions = nil }
+        return lastNoRouteOptions
+    }
     private let maxLiveTurns = 8
 
     /// What each live turn has read (private data, untrusted content) and which hosts its user
@@ -633,6 +656,12 @@ final class AgentToolRegistry {
                 output: result.output,
                 readBack: result.verifiedByReadBack)
         }
+        // The no-route card belongs to the turn's answer: a find_route that found nothing
+        // leaves its card on the registry for the message assembly to pick up, and one
+        // that DID find routes clears whatever an earlier call left there.
+        if name == "find_route" {
+            Self.lastNoRouteOptions = result.noRouteOptions
+        }
         context.onStatus?(
             result.success
                 ? ScopedToolStep.completedLabel(for: name)
@@ -664,6 +693,7 @@ final class AgentToolRegistry {
             stdout: result.stdout,
             stderr: result.stderr)
         offloaded.verifiedByReadBack = result.verifiedByReadBack
+        offloaded.noRouteOptions = result.noRouteOptions
         return offloaded
     }
 

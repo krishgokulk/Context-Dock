@@ -125,11 +125,16 @@ extension AgentToolRegistry {
             let routes = await ChatRouteResolver.routes(
                 for: request, bundleId: bundleID, appName: appName)
             guard !routes.isEmpty else {
-                // §6.2: the no-route card is NOT a shrug. When the shipped catalog has a
-                // vetted tool for this app, the answer names it, what it adds, and the
-                // install command the OWNER runs — DoraX never installs.
+                // §6.2: the no-route card is NOT a shrug. The vetted catalog's suggestions
+                // ride OUT as typed card data (the answer message renders it) as well as
+                // in the text the model reads, because a suggestion that exists only in
+                // prose is a suggestion the surface cannot draw.
                 let suggestions = AppToolCatalog.suggestionLines(
                     forBundleId: bundleID, appName: appName)
+                let card = await MainActor.run {
+                    AppToolCatalog.noRouteCard(
+                        forBundleId: bundleID, appName: appName)
+                }
                 return AgentToolResult(
                     success: true,
                     output: "\(appName) has no route for that — no saved action, no menu "
@@ -137,7 +142,7 @@ extension AgentToolRegistry {
                         + "would need one, name what the user could link in Settings → App "
                         + "Adapters. Do not invent a menu path."
                         + (suggestions.isEmpty ? "" : "\n\n" + suggestions.joined(separator: "\n")),
-                    displayCommand: "find_route(\(request))")
+                    displayCommand: "find_route(\(request))").withNoRouteOptions(card)
             }
             await MainActor.run {
                 AgentToolRegistry.offeredRoutes = Dictionary(
