@@ -298,8 +298,22 @@ struct AppDictionaryQueryBuilderTests {
         #expect(rows[1].values == ["Track Two", "R. D. Burman", "3:41"])
     }
 
-    @Test func parseRowsSkipsAnAllEmptyRecord() {
-        // The shape the read script prints: `_line` is always three values joined by
+    @Test func parseRowsReadsAOnePropertyRecord() throws {
+        // A one-property read returns `value|||`; without the marker the parser used to
+        // drop the line and the answer was "No applications matched" with the value in
+        // hand (found live: "what is the volume in Spotify?").
+        let rows = AppDictionaryQuery.parseRows("playing|||\n", propertyCount: 1)
+        #expect(rows.count == 1)
+        #expect(rows[0].values == ["playing"])
+        // And the rendered singleton script ends each row with that marker.
+        let script = try AppDictionaryQuery.render(
+            DictionaryRequest(
+                verb: .query, className: "application", propertiesRaw: "player state"),
+            for: Self.spotify)
+        #expect(script.contains(#"_v0 & "|||""#))
+    }
+
+    @Test func parseRowsSkipsAnAllEmptyRecord() {        // The shape the read script prints: `_line` is always three values joined by
         // separators, then the trailing separator — an all-empty record is nine pipes —
         // and it is not a record.
         let output = "|||||||||\nTrack One|||Asha Bhosle|||\n"

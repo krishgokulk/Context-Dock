@@ -258,13 +258,9 @@ enum AppDictionaryQuery {
             lines.append("            set _v\(index) to (\(property.name) of _r) as text")
             lines.append("        end try")
         }
-        var line = "        set _line to _v0"
-        for index in Array(requested.indices.dropFirst()) {
-            line += " & \"\(fieldSeparator)\" & _v\(index)"
-        }
-        lines.append(line)
+        lines.append("        set _line to \(rowExpression(requested))")
         lines.append("        set _collected to _collected + 1")
-        lines.append("        set _out to _out & _line & \"\(fieldSeparator)\" & linefeed")
+        lines.append("        set _out to _out & _line & linefeed")
         lines.append("    end repeat")
         lines.append("    return _out")
         lines.append("end tell")
@@ -342,11 +338,14 @@ enum AppDictionaryQuery {
     }
 
     private static func rowExpression(_ requested: [ScriptingProperty]) -> String {
+        // Always terminated by the separator: `parseRows` reads a record by that marker,
+        // and without it a one-property read returned "No applications matched" — the
+        // value was there and the parser dropped the line.
         var expression = "_v0"
         for index in Array(requested.indices.dropFirst()) {
             expression += " & \"\(fieldSeparator)\" & _v\(index)"
         }
-        return expression
+        return expression + " & \"\(fieldSeparator)\""
     }
 
     private static func renderCount(
