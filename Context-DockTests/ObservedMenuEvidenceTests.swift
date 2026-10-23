@@ -97,4 +97,30 @@ struct ObservedMenuEvidenceTests {
         #expect(evidence != nil, "history questions are what this path is for")
         #expect(evidence?.root.lowercased() == "history")
     }
+
+    /// Present-tense playback is live state. Spotify's Playback menu holds Next/Pause/
+    /// Previous, and "what's playing?" was answered with that list instead of the track.
+    @Test func whatIsPlayingNowNeverComesFromAMenu() {
+        let spotifyMenus: [[String]] = [
+            ["Playback", "Next"],
+            ["Playback", "Pause"],
+            ["Playback", "Previous"],
+            ["Playback", "Shuffle"],
+        ]
+        for query in [
+            "whats playing?", "what's playing right now?", "which song is playing in Spotify?",
+            "what am i listening to?",
+        ] {
+            let evidence = AppScopedChatService.menuSnapshotEvidence(
+                query: query, appName: "Spotify", paths: spotifyMenus, age: 2_580)
+            #expect(
+                evidence == nil,
+                "\"\(query)\" is about live state; the Playback menu cannot answer it")
+        }
+        // A question about the menu itself still answers.
+        let menuQuestion = AppScopedChatService.menuSnapshotEvidence(
+            query: "what's in the playback menu?", appName: "Spotify", paths: spotifyMenus,
+            age: 2_580)
+        #expect(menuQuestion?.root.lowercased() == "playback")
+    }
 }

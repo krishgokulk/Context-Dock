@@ -1137,6 +1137,19 @@ enum AppScopedChatService {
             return nil
         }
 
+        // What is playing *now* is live state, not a menu. Spotify's Playback menu lists
+        // Next/Pause/Previous/Shuffle and says nothing about the current track, yet
+        // "what's playing?" matched it and was answered with that list — from a snapshot,
+        // with no reader tried. A present-tense media question must fall through to a
+        // reader; only a question about the menu itself may be answered by the menu.
+        let presentTenseMedia: Set<String> = ["playing", "watching", "listening"]
+        let menuWords: Set<String> = ["menu", "menus", "command", "commands", "option", "options"]
+        if !queryWords.isDisjoint(with: presentTenseMedia),
+            queryWords.isDisjoint(with: menuWords)
+        {
+            return nil
+        }
+
         var evidenceWords = queryWords
         let mediaReadWords: Set<String> = [
             "watch", "watched", "watching", "view", "viewed", "video", "videos",
