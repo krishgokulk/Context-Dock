@@ -642,7 +642,9 @@ final class GeneralChatCapabilityHub {
             // Built-in capability ids (notes.search, calendar.today, …) win over MCP
             // server tools — there is no overlap in practice.
             if CapabilityRegistry.shared.capability(id: tool) != nil {
-                if let appBundleID = CapabilityRegistry.shared.capability(id: tool)?.appBundleID,
+                let capability = CapabilityRegistry.shared.capability(id: tool)
+                if let appBundleID = capability?.appBundleID,
+                    capability?.runsWithoutAdapter != true,
                     AppAdapterManager.shared.adapter(for: appBundleID) == nil
                 {
                     return ToolCallResult(

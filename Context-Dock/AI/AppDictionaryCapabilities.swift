@@ -65,6 +65,11 @@ enum AppDictionaryCapabilities {
                     .init(name: "limit", description: "Max rows (default 25)", required: false),
                 ]),
                 riskLevel: .low,
+                // The rung executes itself (osascript), not through an app adapter — and
+                // Spotify/Things-style apps have no adapter at all. Without this flag the
+                // tool-less chat path (GeneralChatCapabilityHub) filters the pair out for
+                // exactly the apps the rung exists for.
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 try await executeQuery(manifest, request: request)
@@ -92,6 +97,7 @@ enum AppDictionaryCapabilities {
                     .init(name: "value", description: "set: the new value; make: values inside k=v pairs", required: false),
                 ]),
                 riskLevel: .medium,   // every write asks (AGENTS.md)
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 try await executeModify(manifest, request: request)

@@ -49,6 +49,9 @@ struct AppDictionaryRegistrationTests {
             CapabilityRegistry.shared.capability(id: "dict.query." + Self.testBundleID))
         #expect(query.riskLevel == .low)
         #expect(query.needsRunningApp)
+        // The rung runs itself, and the apps it exists for (Spotify, Things) have no
+        // adapter — the chat hub filters app-owned capabilities on exactly that.
+        #expect(query.runsWithoutAdapter)
         #expect(query.appBundleID == Self.testBundleID)
         #expect(query.inputSchema.fields.contains { $0.name == "class" })
 
@@ -56,6 +59,7 @@ struct AppDictionaryRegistrationTests {
             CapabilityRegistry.shared.capability(id: "dict.modify." + Self.testBundleID))
         #expect(modify.riskLevel == .medium)
         #expect(modify.needsRunningApp)
+        #expect(modify.runsWithoutAdapter)
         reset()
     }
 
