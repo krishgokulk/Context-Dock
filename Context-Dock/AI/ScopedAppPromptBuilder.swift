@@ -292,7 +292,9 @@ enum ScopedAppPromptBuilder {
                 .joined(separator: ", ")
             return "- Scripting dictionary (read the app's data directly; no window opens): "
                 + "classes \(classes). Call it with run_capability(dict.query.\(bundleId), "
-                + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?}). "
+                + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?, root?}). "
+                + "When the app has no collection of a class, read one item it names with "
+                + "root: {class: \"track\", root: \"current track\", properties: \"name, artist\"}. "
                 + "Learned commands: "
                 + (dictionary.commands.map(\.name).prefix(10).joined(separator: ", "))
                 + ". Run one with dict.modify {verb: \"command\", command: \"<name>\"}; "

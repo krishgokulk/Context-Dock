@@ -75,7 +75,7 @@ struct AppDictionaryQueryBuilderTests {
                 verb: .count, className: "track", filterProperty: "starred",
                 filterValue: "true"),
             for: Self.spotify)
-        #expect(script.contains("count of"))
+        #expect(script.contains("count (every track whose starred is true)"))
         #expect(script.contains("every track whose starred is true"))
     }
 
@@ -226,7 +226,6 @@ struct AppDictionaryQueryBuilderTests {
     }
 
     // MARK: Commands — the app's own verbs, gated
-
     @Test func commandRendersALearnedVerb() throws {
         // "pause" is a Spotify command, not a property write — the route the hand check
         // asked for ("pause the song") without clicking a menu.
@@ -317,5 +316,108 @@ struct AppDictionaryQueryBuilderTests {
         #expect(AppDictionaryQuery.answerLine(for: rows, className: "track").hasPrefix("2 tracks"))
         #expect(
             AppDictionaryQuery.answerLine(for: [], className: "track") == "No tracks matched.")
+    }
+
+    // MARK: Script shape
+
+    @Test func everyScriptClosesTheTimeoutBlockTheWayAppleScriptExpects() throws {
+        // `end with timeout` is not a term AppleScript accepts: every rendered script
+        // failed to compile with "Expected timeout… but found with" until the live hand
+        // check ran one. The block closes with `end timeout`.
+        let scripts = [
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .query, className: "track"), for: Self.spotify),
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .count, className: "track"), for: Self.spotify),
+            try AppDictionaryQuery.render(
+                DictionaryRequest(
+                    verb: .set, className: "track", propertiesRaw: "spotify url",
+                    value: "spotify:track:1", filterProperty: "name", filterValue: "One"),
+                for: Self.spotify),
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .command, className: "", propertiesRaw: "pause"),
+                for: Self.spotify),
+        ]
+        for script in scripts {
+            #expect(script.hasPrefix("with timeout of 15 seconds"))
+            #expect(script.hasSuffix("end timeout"))
+            #expect(!script.contains("end with timeout"))
+        }
+    }
+
+    // MARK: Singleton reads — the app object and the item it names
+
+    @Test func applicationPropertiesAreReadDirectly() throws {
+        // Spotify's "what's playing" half: `player state` belongs to the app object, not
+        // to a collection, so the script must never say "every application".
+        let script = try AppDictionaryQuery.render(
+            DictionaryRequest(
+                verb: .query, className: "application", propertiesRaw: "player state"),
+            for: Self.spotify)
+        #expect(script.contains("set _v0 to (player state) as text"))
+        #expect(!script.contains("every"))
+    }
+
+    @Test func rootReadsOneItemTheAppNames() throws {
+        // `every track` is not valid in Spotify's dictionary; `current track` is. The
+        // root is a learned property, so the script contains only a term the app wrote.
+        let script = try AppDictionaryQuery.render(
+            DictionaryRequest(
+                verb: .query, className: "track", propertiesRaw: "name, artist",
+                root: "current track"),
+            for: Self.spotify)
+        #expect(script.contains("set _r to current track"))
+        #expect(script.contains("set _v0 to (name of _r) as text"))
+        #expect(script.contains("set _v1 to (artist of _r) as text"))
+        #expect(!script.contains("every track"))
+    }
+
+    @Test func rootMustBeALearnedTermOfThatClass() throws {
+        // A model-supplied root is a scripting term, so only a property the dictionary
+        // declares — and whose type is the class being read — may reach the script.
+        #expect(
+            throws: DictionaryQueryError.unknownRoot(
+                "tell application \"Finder\" to delete", "track", ["current track"])
+        ) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(
+                    verb: .query, className: "track", propertiesRaw: "name",
+                    root: "tell application \"Finder\" to delete"),
+                for: Self.spotify)
+        }
+        // "current track" is a track, not the application object.
+        #expect(
+            throws: DictionaryQueryError.unknownRoot("current track", "application", [])
+        ) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(
+                    verb: .query, className: "application", propertiesRaw: "player state",
+                    root: "current track"),
+                for: Self.spotify)
+        }
+    }
+
+    @Test func rootIsOnlyForReads() throws {
+        #expect(throws: DictionaryQueryError.rootOnlyForReads("set")) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(
+                    verb: .set, className: "track", propertiesRaw: "starred",
+                    value: "true", filterProperty: "name", filterValue: "One",
+                    root: "current track"),
+                for: Self.spotify)
+        }
+    }
+
+    @Test func aRefusedCollectionSaysHowToReadOneItem() {
+        let refused = AppDictionaryCapabilities.collectionHint(
+            "Spotify got an error: every track doesn’t understand the “count” message.",
+            for: DictionaryRequest(verb: .count, className: "track"))
+        #expect(refused.contains("root"))
+        #expect(refused.contains("current track"))
+        // Anything that is not the app refusing a collection is left exactly as it was.
+        let other = "Spotify got an error: A privilege violation occurred."
+        #expect(
+            AppDictionaryCapabilities.collectionHint(
+                other, for: DictionaryRequest(verb: .query, className: "track")) == other)
     }
 }

@@ -26,6 +26,8 @@ enum DictionaryQueryError: LocalizedError, Equatable {
     case outboundCommand(String)
     case unknownCommand(String, [String])
     case unsupportedCommand(String, String)
+    case unknownRoot(String, String, [String])
+    case rootOnlyForReads(String)
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +56,14 @@ enum DictionaryQueryError: LocalizedError, Equatable {
                 + (known.sorted().prefix(24).joined(separator: ", "))
         case .unsupportedCommand(let command, let reason):
             return "Cannot run \"\(command)\": \(reason)"
+        case .unknownRoot(let root, let className, let known):
+            return "\"\(root)\" is not a learned \(className) the app exposes. Roots this "
+                + "dictionary allows: " + (known.isEmpty ? "none" : known.joined(separator: ", "))
+                + ". Use root only for a single item the app names, or omit it to read the "
+                + "class collection."
+        case .rootOnlyForReads(let verb):
+            return "root selects one item, so it only applies to a read (query). "
+                + "\"\(verb)\" needs a class collection and a filter."
         }
     }
 }
@@ -89,12 +99,16 @@ struct DictionaryRequest: Equatable, Sendable {
     var filterValue: String
     /// Reads only: the cap (the rung tightens or widens the model's number itself).
     var limit: Int
+    /// Reads only: one item the app names, instead of "every <class>". The term must be a
+    /// property of a learned class whose type is this class — Spotify's "current track" —
+    /// so it is validated against the manifest and never reaches the script as free text.
+    var root: String
 
     init(
         verb: Verb, className: String,
         propertiesRaw: String = "", value: String = "",
         filterProperty: String = "", filterOperator: String = "is",
-        filterValue: String = "", limit: Int = 25
+        filterValue: String = "", limit: Int = 25, root: String = ""
     ) {
         self.verb = verb
         self.className = className
@@ -104,6 +118,7 @@ struct DictionaryRequest: Equatable, Sendable {
         self.filterOperator = filterOperator
         self.filterValue = filterValue
         self.limit = limit
+        self.root = root
     }
 
     /// Parse the property list the model sent — comma-separated Names, trimmed.
@@ -140,6 +155,9 @@ enum AppDictionaryQuery {
         // no class.
         if request.verb == .command {
             return try renderCommand(request, dictionary)
+        }
+        if !request.root.isEmpty, request.verb != .query {
+            throw DictionaryQueryError.rootOnlyForReads(request.verb.rawValue)
         }
         let knownClasses = dictionary.classes.map(\.name)
         guard let target = dictionary.class(named: request.className) else {
@@ -210,6 +228,21 @@ enum AppDictionaryQuery {
         let whose = try whoseClause(request, target: target)
         let limit = max(1, min(request.limit, maximumRows))
 
+        // A read can name one item instead of a collection. Spotify is the shape that
+        // needs this: its dictionary has `application` and a `track` value type, but no
+        // `every track` collection at all, so "what's playing" is `name of current track`.
+        // `root` is validated against a learned property whose type is this class, so the
+        // script can only contain a term the app itself declared.
+        if let root = try validatedRoot(request.root, for: target, in: dictionary) {
+            return singleItemScript(
+                root: root, requested: requested, bundleID: dictionary.bundleID)
+        }
+        // The app object is a singleton as well: `player state` is read directly, never
+        // as "every application".
+        if target.name.lowercased() == "application" {
+            return propertyScript(requested: requested, bundleID: dictionary.bundleID)
+        }
+
         var lines: [String] = [
             "with timeout of 15 seconds",
             "tell application id \"\(dictionary.bundleID)\"",
@@ -235,8 +268,85 @@ enum AppDictionaryQuery {
         lines.append("    end repeat")
         lines.append("    return _out")
         lines.append("end tell")
-        lines.append("end with timeout")
+        lines.append("end timeout")
         return lines.joined(separator: "\n")
+    }
+
+    /// The learned term that selects one item, or nil when the read wants a collection.
+    /// A root is only allowed when it is a property the dictionary declares and that
+    /// property's type is the class being read — so `current track` may root a `track`
+    /// read, and anything the app never wrote cannot reach the script.
+    private static func validatedRoot(
+        _ raw: String, for target: ScriptingClass, in dictionary: AppScriptingDictionary
+    ) throws -> String? {
+        let needle = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return nil }
+        let roots = dictionary.classes
+            .flatMap(\.properties)
+            .filter { $0.type.lowercased() == target.name.lowercased() }
+        guard let match = roots.first(where: { $0.name.lowercased() == needle }) else {
+            throw DictionaryQueryError.unknownRoot(
+                raw, target.name, Array(Set(roots.map(\.name))).sorted())
+        }
+        return match.name
+    }
+
+    /// One item the app names (`current track`), read for its properties. Same row shape
+    /// as a collection read, so the answer text and the chips do not have two formats.
+    private static func singleItemScript(
+        root: String, requested: [ScriptingProperty], bundleID: String
+    ) -> String {
+        (
+            [
+                "with timeout of 15 seconds",
+                "tell application id \"\(bundleID)\"",
+                "    set _r to \(root)",
+            ] + valueLines(requested, of: "_r") + [
+                "    return \(rowExpression(requested))",
+                "end tell",
+                "end timeout",
+            ]
+        ).joined(separator: "\n")
+    }
+
+    /// The app object's own properties (`player state`), read directly.
+    private static func propertyScript(
+        requested: [ScriptingProperty], bundleID: String
+    ) -> String {
+        (
+            [
+                "with timeout of 15 seconds",
+                "tell application id \"\(bundleID)\"",
+            ] + valueLines(requested, of: nil) + [
+                "    return \(rowExpression(requested))",
+                "end tell",
+                "end timeout",
+            ]
+        ).joined(separator: "\n")
+    }
+
+    /// One `try`-guarded `set _vN` per property — an app that refuses one property does
+    /// not lose the rest of the row. `of` nil means the property of the app itself.
+    private static func valueLines(
+        _ requested: [ScriptingProperty], of reference: String?
+    ) -> [String] {
+        var lines: [String] = []
+        for (index, property) in requested.enumerated() {
+            let value = reference.map { "\(property.name) of \($0)" } ?? property.name
+            lines.append("    set _v\(index) to \"\"")
+            lines.append("    try")
+            lines.append("        set _v\(index) to (\(value)) as text")
+            lines.append("    end try")
+        }
+        return lines
+    }
+
+    private static func rowExpression(_ requested: [ScriptingProperty]) -> String {
+        var expression = "_v0"
+        for index in Array(requested.indices.dropFirst()) {
+            expression += " & \"\(fieldSeparator)\" & _v\(index)"
+        }
+        return expression
     }
 
     private static func renderCount(
@@ -247,9 +357,10 @@ enum AppDictionaryQuery {
         let whose = try whoseClause(request, target: target)
         return [
             "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\" to count of",
-            "    (every \(target.name)\(whose))",
-            "end with timeout",
+            "tell application id \"\(dictionary.bundleID)\"",
+            "    return count (every \(target.name)\(whose))",
+            "end tell",
+            "end timeout",
         ].joined(separator: "\n")
     }
 
@@ -278,7 +389,7 @@ enum AppDictionaryQuery {
             "    set \(property.name) of (every \(target.name)\(whose)) to "
                 + literal(request.value, type: property.type),
             "end tell",
-            "end with timeout",
+            "end timeout",
         ].joined(separator: "\n")
     }
 
@@ -310,7 +421,7 @@ enum AppDictionaryQuery {
             "tell application id \"\(dictionary.bundleID)\"",
             "    make new \(target.name)\(withProperties)",
             "end tell",
-            "end with timeout",
+            "end timeout",
         ].joined(separator: "\n")
     }
 
@@ -328,7 +439,7 @@ enum AppDictionaryQuery {
             "tell application id \"\(dictionary.bundleID)\"",
             "    delete (every \(target.name)\(whose))",
             "end tell",
-            "end with timeout",
+            "end timeout",
         ].joined(separator: "\n")
     }
 
@@ -372,7 +483,7 @@ enum AppDictionaryQuery {
         return [
             "with timeout of 15 seconds",
             "tell application id \"\(dictionary.bundleID)\" to \(call)",
-            "end with timeout",
+            "end timeout",
         ].joined(separator: "\n")
     }
 

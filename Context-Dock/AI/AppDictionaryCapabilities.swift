@@ -66,6 +66,7 @@ enum AppDictionaryCapabilities {
                     .init(name: "filterValue", description: "Value the filter matches", required: false),
                     .init(name: "count", description: "\"true\" to return only a count", required: false),
                     .init(name: "limit", description: "Max rows (default 25)", required: false),
+                    .init(name: "root", description: "Read one item the app names instead of the whole class (e.g. \"current track\" for Spotify), paired with class track", required: false),
                 ]),
                 riskLevel: .low,
                 // The rung executes itself (osascript), not through an app adapter — and
@@ -128,7 +129,8 @@ enum AppDictionaryCapabilities {
             filterProperty: request.input["filterProperty"] ?? "",
             filterOperator: request.input["filterOperator"].map { $0.isEmpty ? "is" : $0 } ?? "is",
             filterValue: request.input["filterValue"] ?? "",
-            limit: Int(request.input["limit"] ?? "25") ?? 25)
+            limit: Int(request.input["limit"] ?? "25") ?? 25,
+            root: request.input["root"] ?? "")
         let script: String
         do {
             script = try AppDictionaryQuery.render(textRequest, for: dictionary)
@@ -140,7 +142,10 @@ enum AppDictionaryCapabilities {
 
         let output = try await AppDictionaryExecutor.runAppleScript(script, appName: manifest.appName)
         guard output.success else {
-            return .init(success: false, output: output.text)
+            // "every track doesn't understand the count message" is the app saying it has
+            // no such collection — Spotify's shape, where the only track is
+            // `current track`. Name the fix instead of returning the AppleScript verbatim.
+            return .init(success: false, output: Self.collectionHint(output.text, for: textRequest))
         }
         if countOnly {
             let count = output.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -221,6 +226,22 @@ enum AppDictionaryCapabilities {
     /// answered with no window opened and no focus moved.
     private static func laneStep(_ manifest: AppScriptingDictionary, action: String) -> String {
         "\(action) via \(manifest.appName)'s scripting dictionary — no window opened"
+    }
+
+    /// When the app refuses the collection, say what to try instead. Matched on the
+    /// phrasings an app uses for "this is not a collection of mine"; every other failure
+    /// is returned untouched.
+    nonisolated static func collectionHint(
+        _ text: String, for request: DictionaryRequest
+    ) -> String {
+        let lower = text.lowercased()
+        let refused =
+            lower.contains("doesn’t understand the") || lower.contains("doesn't understand the")
+            || lower.contains("can’t get every") || lower.contains("can't get every")
+        guard refused else { return text }
+        return text + " — \(request.className) is not a collection in this app's dictionary. "
+            + "Read one item the app names instead: set root to a learned "
+            + "\(request.className) property (Spotify: root \"current track\", class track)."
     }
 
     private static func recordRows(
