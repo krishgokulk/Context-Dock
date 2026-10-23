@@ -291,6 +291,9 @@ enum ScopedAppPromptBuilder {
             let classes = dictionary.classes.map(\.name).sorted().prefix(10)
                 .joined(separator: ", ")
             return "- Scripting dictionary (read the app's data directly; no window opens): "
+                + "the live facts above are partial, so for any value they do not show "
+                + "(player state, volume, repeat, track fields) read it here first — do not "
+                + "answer that it is unavailable. "
                 + "classes \(classes). Call it with run_capability(dict.query.\(bundleId), "
                 + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?, root?}). "
                 + "When the app has no collection of a class, read one item it names with "
