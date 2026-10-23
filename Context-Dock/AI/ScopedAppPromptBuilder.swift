@@ -293,7 +293,10 @@ enum ScopedAppPromptBuilder {
             return "- Scripting dictionary (read the app's data directly; no window opens): "
                 + "classes \(classes). Call it with run_capability(dict.query.\(bundleId), "
                 + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?}). "
-                + "Changes go through dict.modify and ask first."
+                + "Learned commands: "
+                + (dictionary.commands.map(\.name).prefix(10).joined(separator: ", "))
+                + ". Run one with dict.modify {verb: \"command\", command: \"<name>\"}; "
+                + "property changes go through dict.modify too, and every change asks first."
         }
         if let dictionaryLine = dictionaryLine() {
             lines.append(dictionaryLine)

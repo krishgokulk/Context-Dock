@@ -24,6 +24,8 @@ enum DictionaryQueryError: LocalizedError, Equatable {
     case unsupportedOperator(String, [String])
     case writeWithoutTarget(String)
     case outboundCommand(String)
+    case unknownCommand(String, [String])
+    case unsupportedCommand(String, String)
 
     var errorDescription: String? {
         switch self {
@@ -47,6 +49,11 @@ enum DictionaryQueryError: LocalizedError, Equatable {
         case .outboundCommand(let command):
             return "\"\(command)\" sends something outside this Mac; the dictionary rung "
                 + "never sends. Use the app itself for anything that sends."
+        case .unknownCommand(let name, let known):
+            return "The scripting dictionary has no command \"\(name)\". Known commands: "
+                + (known.sorted().prefix(24).joined(separator: ", "))
+        case .unsupportedCommand(let command, let reason):
+            return "Cannot run \"\(command)\": \(reason)"
         }
     }
 }
@@ -60,6 +67,7 @@ struct DictionaryRequest: Equatable, Sendable {
         case set     // write: change a property of the matching items (gated)
         case make    // write: create one item (gated)
         case delete  // write: delete the matching items (gated)
+        case command // write: run one learned, non-sending command ("pause") (gated)
     }
 
     static let filterOperators = [
@@ -70,9 +78,11 @@ struct DictionaryRequest: Equatable, Sendable {
     var verb: Verb
     var className: String
     /// A read: comma-separated property names in one string. `make`: "k=v" pairs.
-    /// `set`: exactly one property name.
+    /// `set`: exactly one property name. `command`: the learned command's name (commands
+    /// are app-global in AppleScript, so `className` is unused for this verb).
     var propertiesRaw: String
-    /// The `make`/`set` value, rendered per the property's learned type.
+    /// The `make`/`set`/command value, rendered per the property's or parameter's learned
+    /// type.
     var value: String
     var filterProperty: String
     var filterOperator: String
@@ -126,6 +136,11 @@ enum AppDictionaryQuery {
     static func render(_ request: DictionaryRequest, for dictionary: AppScriptingDictionary)
         throws -> String
     {
+        // Commands are app-global, so they render before the class lookup: "pause" names
+        // no class.
+        if request.verb == .command {
+            return try renderCommand(request, dictionary)
+        }
         let knownClasses = dictionary.classes.map(\.name)
         guard let target = dictionary.class(named: request.className) else {
             throw DictionaryQueryError.unknownClass(request.className, knownClasses)
@@ -136,6 +151,7 @@ enum AppDictionaryQuery {
         case .set: return try renderSet(request, target, dictionary)
         case .make: return try renderMake(request, target, dictionary)
         case .delete: return try renderDelete(request, target, dictionary)
+        case .command: return try renderCommand(request, dictionary)
         }
     }
 
@@ -312,6 +328,50 @@ enum AppDictionaryQuery {
             "tell application id \"\(dictionary.bundleID)\"",
             "    delete (every \(target.name)\(whose))",
             "end tell",
+            "end with timeout",
+        ].joined(separator: "\n")
+    }
+
+    /// One learned command, by name — "pause", "playpause", "next track". The name must
+    /// exist in the manifest, and a command the dictionary classifies outbound never
+    /// renders. The write gate already asked; this is the typed event the card approved.
+    ///
+    /// Named parameters are refused rather than guessed: Spotify's `play track` takes
+    /// "in context", and rendering "play track with in context …" from a model's guess is
+    /// how a typed rung starts inventing AppleScript. Only a text direct parameter is
+    /// accepted, because that is the one shape this builder can render correctly.
+    private static func renderCommand(
+        _ request: DictionaryRequest,
+        _ dictionary: AppScriptingDictionary
+    ) throws -> String {
+        let name = request.propertiesRaw.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let command = dictionary.command(named: name) else {
+            throw DictionaryQueryError.unknownCommand(
+                name, dictionary.commands.map(\.name))
+        }
+        if command.verbClass == .outbound {
+            throw DictionaryQueryError.outboundCommand(command.name)
+        }
+        if !command.parameterNames.isEmpty {
+            throw DictionaryQueryError.unsupportedCommand(
+                command.name,
+                "it takes named parameters (\(command.parameterNames.joined(separator: ", "))), "
+                    + "which this rung does not render yet. Use the app itself.")
+        }
+        let call: String
+        if let directType = command.directType {
+            guard directType.lowercased() == "text" else {
+                throw DictionaryQueryError.unsupportedCommand(
+                    command.name,
+                    "its argument is \(directType), which this rung does not render yet.")
+            }
+            call = "\(command.name) \(literal(request.value, type: directType))"
+        } else {
+            call = command.name
+        }
+        return [
+            "with timeout of 15 seconds",
+            "tell application id \"\(dictionary.bundleID)\" to \(call)",
             "end with timeout",
         ].joined(separator: "\n")
     }

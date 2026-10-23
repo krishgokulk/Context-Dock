@@ -225,6 +225,54 @@ struct AppDictionaryQueryBuilderTests {
         #expect(script.contains("delete (every track whose starred is false)"))
     }
 
+    // MARK: Commands — the app's own verbs, gated
+
+    @Test func commandRendersALearnedVerb() throws {
+        // "pause" is a Spotify command, not a property write — the route the hand check
+        // asked for ("pause the song") without clicking a menu.
+        let script = try AppDictionaryQuery.render(
+            DictionaryRequest(verb: .command, className: "", propertiesRaw: "pause"),
+            for: Self.spotify)
+        #expect(script.contains(#"tell application id "com.spotify.client" to pause"#))
+    }
+
+    @Test func commandAcceptsATextDirectParameter() throws {
+        // `extract name from` takes one text argument and no named ones, so it renders.
+        let script = try AppDictionaryQuery.render(
+            DictionaryRequest(
+                verb: .command, className: "", propertiesRaw: "extract name from",
+                value: "Asha <asha@example.com>"),
+            for: Self.mail)
+        #expect(script.contains(#"to extract name from "Asha <asha@example.com>""#))
+    }
+
+    @Test func commandRefusesWhatItCannotRender() throws {
+        #expect(
+            throws: DictionaryQueryError.unknownCommand("rewind", Self.spotify.commands.map(\.name))
+        ) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .command, className: "", propertiesRaw: "rewind"),
+                for: Self.spotify)
+        }
+        // Outbound commands are never rendered, even though the manifest knows them.
+        #expect(throws: DictionaryQueryError.outboundCommand("send")) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .command, className: "", propertiesRaw: "send"),
+                for: Self.mail)
+        }
+        // Named parameters are refused rather than guessed ("play track" takes "in context").
+        #expect(
+            throws: DictionaryQueryError.unsupportedCommand(
+                "play track",
+                "it takes named parameters (in context), which this rung does not render yet. "
+                    + "Use the app itself.")
+        ) {
+            try AppDictionaryQuery.render(
+                DictionaryRequest(verb: .command, className: "", propertiesRaw: "play track"),
+                for: Self.spotify)
+        }
+    }
+
     // MARK: Literals
 
     @Test func literalsAreTypedToTheProperty() {

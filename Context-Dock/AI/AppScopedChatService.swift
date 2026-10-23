@@ -1324,6 +1324,20 @@ enum AppScopedChatService {
         // card looks current.
         ChatResultRowCollector.shared.begin(scope: scope)
 
+        // The registry is refreshed per turn by the dock engine's preflight, but this
+        // surface assembles its own prompt and never went through that path — so a
+        // dictionary the store had learned for this app (P13 #208) stayed unregistered
+        // until some other chat happened to refresh it. The hand check showed exactly
+        // that: Spotify answered "what's playing" from its window title, "list tracks"
+        // said "no linked reader", and "Can do here" listed menu commands only.
+        // Refresh here, and kick the store's version check so a manifest from an older
+        // app version is re-scanned (sdef is a command-line reader — no launch, no
+        // AppleScript, and the store no-ops when the cache is current).
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        if case .app(let bundleID) = scope, !bundleID.isEmpty {
+            AppDictionaryStore.shared.kickScanIfStale(bundleID: bundleID, appName: appName)
+        }
+
         // Local inspection precedes app access and specialist bridges. "Is Claude Code
         // installed?" is not a request for Claude Code to inspect a repository, and "is
         // LLMBrain installed?" is not a request for an LLMBrain app adapter. Classify the
@@ -1672,6 +1686,19 @@ enum AppScopedChatService {
             let block = resolved.promptBlock()
             prompt.set(.resolvedContext, block)
             log.notice("context \(resolved.summary, privacy: .public)")
+            // Say what was read, not just that something was. "what's playing" was
+            // answered from Spotify's window title (`Hosanna`), and the Progress panel
+            // showed "Understood: answer a question" and nothing about the evidence —
+            // so a correct answer looked like a guess, and a guess would have looked
+            // the same. Name the slot and its reader.
+            if let window = resolved.value("window"), !window.isEmpty {
+                onStatus?(
+                    "Read \(appName)'s window — \(String(window.prefix(70))) (AX)")
+            } else if !resolved.gaps.isEmpty {
+                onStatus?(
+                    "No window readable from \(appName) — "
+                        + "\(resolved.gaps.map(\.name).joined(separator: ", ")) unavailable")
+            }
             // What the app is doing right now — its project, branch, changes, running
             // agents — and what its vendor documents about it. Both were the dock's alone,
             // so the window could describe an app's tool inventory and nothing about the

@@ -60,6 +60,8 @@ struct AppDictionaryRegistrationTests {
         #expect(modify.riskLevel == .medium)
         #expect(modify.needsRunningApp)
         #expect(modify.runsWithoutAdapter)
+        // Commands ("pause") are writable through the same gated card.
+        #expect(modify.inputSchema.fields.contains { $0.name == "command" })
         reset()
     }
 

@@ -23,6 +23,9 @@ enum AppDictionaryCapabilities {
 
     private static let queryPrefix = "dict.query."
     private static let modifyPrefix = "dict.modify."
+    /// Every capability this rung owns. Used by contract tests that must tell a learned
+    /// dictionary route apart from an adapter's own typed write.
+    static let idPrefix = "dict."
 
     /// Drop stale registrations and register one pair of capabilities per learned
     /// dictionary that has readable classes. Called from
@@ -87,14 +90,15 @@ enum AppDictionaryCapabilities {
                 title: "Change \(app) through its scripting dictionary (asks each time)",
                 appBundleID: manifest.bundleID,
                 inputSchema: .init(fields: [
-                    .init(name: "verb", description: "set / make / delete", required: true),
+                    .init(name: "verb", description: "set / make / delete / command (run a learned command such as pause or play; asks first)", required: true),
                     .init(name: "class", description: "Scripting class", required: true),
                     .init(name: "filterProperty", description: "Property to select the target item(s)", required: false),
                     .init(name: "filterOperator", description: "is / contains / … (default is)", required: false),
                     .init(name: "filterValue", description: "Value the filter matches", required: false),
                     // `set`: the property to change; `make`: "k=v" pairs.
                     .init(name: "property", description: "set: the property; make: k=v pairs", required: false),
-                    .init(name: "value", description: "set: the new value; make: values inside k=v pairs", required: false),
+                    .init(name: "value", description: "set: the new value; make: values inside k=v pairs; command: a text argument", required: false),
+                    .init(name: "command", description: "verb command: the learned command's name (pause, play, next track…)", required: false),
                 ]),
                 riskLevel: .medium,   // every write asks (AGENTS.md)
                 runsWithoutAdapter: true,
@@ -144,13 +148,13 @@ enum AppDictionaryCapabilities {
             return .init(
                 success: true,
                 output: count.isEmpty ? "Count could not be read." : "\(count) \(target)s matched.",
-                laneSteps: [laneStep(manifest)])
+                laneSteps: [laneStep(manifest, action: "Read")])
         }
         let rows = AppDictionaryQuery.parseRows(
             output.text, propertyCount: DictionaryRequest.propertyNames(from: textRequest.propertiesRaw).count)
         recordRows(rows, manifest: manifest, scope: request.chatScope)
         let summary = AppDictionaryQuery.answerLine(for: rows, className: textRequest.className)
-        return .init(success: true, output: summary, laneSteps: [laneStep(manifest)])
+        return .init(success: true, output: summary, laneSteps: [laneStep(manifest, action: "Read")])
     }
 
     private static func executeModify(
@@ -166,12 +170,13 @@ enum AppDictionaryCapabilities {
             rawValue: verbRaw), verb != .query, verb != .count
         else {
             throw AICapabilityError.blocked(
-                "Modify needs verb = set, make or delete — reads go through dict.query.")
+                "Modify needs verb = set, make, delete or command — reads go through dict.query.")
         }
         let textRequest = DictionaryRequest(
             verb: verb,
             className: request.input["class"] ?? "",
-            propertiesRaw: request.input["property"] ?? "",
+            propertiesRaw: verb == .command
+                ? (request.input["command"] ?? "") : (request.input["property"] ?? ""),
             value: request.input["value"] ?? "",
             filterProperty: request.input["filterProperty"] ?? "",
             filterOperator: request.input["filterOperator"].map { $0.isEmpty ? "is" : $0 } ?? "is",
@@ -185,25 +190,37 @@ enum AppDictionaryCapabilities {
 
         let outcome = try await AppDictionaryExecutor.runAppleScript(script, appName: manifest.appName)
         let verbWord: String
+        let objectWord: String
         switch verb {
-        case .set: verbWord = "Changed"
-        case .make: verbWord = "Created"
-        case .delete: verbWord = "Deleted"
-        default: verbWord = "Ran"
+        case .set:
+            verbWord = "Changed"
+            objectWord = textRequest.className + " in " + manifest.appName
+        case .make:
+            verbWord = "Created"
+            objectWord = textRequest.className + " in " + manifest.appName
+        case .delete:
+            verbWord = "Deleted"
+            objectWord = textRequest.className + " in " + manifest.appName
+        case .command:
+            verbWord = "Ran"
+            objectWord = "\"\(textRequest.propertiesRaw)\" in " + manifest.appName
+        default:
+            verbWord = "Ran"
+            objectWord = manifest.appName
         }
         return .init(
             success: outcome.success,
             output: outcome.success
-                ? "\(verbWord) \(manifest.appName) \(textRequest.className)"
+                ? "\(verbWord) \(objectWord)"
                     + "\(outcome.text.isEmpty ? "" : " — \(outcome.text)")"
                 : outcome.text,
-            laneSteps: [laneStep(manifest)])
+            laneSteps: [laneStep(manifest, action: verbWord)])
     }
 
     /// The visible step for the rung — the sentence the hand check reads for: the app
     /// answered with no window opened and no focus moved.
-    private static func laneStep(_ manifest: AppScriptingDictionary) -> String {
-        "Read via \(manifest.appName)'s scripting dictionary — no window opened"
+    private static func laneStep(_ manifest: AppScriptingDictionary, action: String) -> String {
+        "\(action) via \(manifest.appName)'s scripting dictionary — no window opened"
     }
 
     private static func recordRows(
