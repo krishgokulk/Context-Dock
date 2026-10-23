@@ -689,7 +689,8 @@ final class GeneralChatCapabilityHub {
                         ? result.resultLine(
                             isWrite: CapabilityRegistry.shared.capability(id: tool)?.riskLevel != .low)
                         : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
-                    label: "\(tool) via built-in",
+                    label: (CapabilityRegistry.shared.capability(id: tool)?.title ?? tool)
+                        .replacingOccurrences(of: " (asks each time)", with: ""),
                     laneSteps: result.laneSteps)
             }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {

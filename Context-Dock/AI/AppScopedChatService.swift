@@ -710,7 +710,8 @@ enum AppScopedChatService {
     ///
     /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
     /// for Updates…", not "running an operateApp invocation".
-    nonisolated static func runningLabel(for invocation: AITypedInvocation) -> String {
+    @MainActor
+    static func runningLabel(for invocation: AITypedInvocation) -> String {
         switch invocation.kind {
         case .menuAction:
             let path = (invocation.arguments["path"] ?? "")
@@ -735,10 +736,14 @@ enum AppScopedChatService {
         case .adapterAction:
             let action = invocation.arguments["actionId"] ?? ""
             return action.isEmpty ? "Running an app action…" : "Running \(action)…"
-        case .mcp:
-            return "Running \(invocation.capabilityID)…"
-        case .capability:
-            return "Running \(invocation.capabilityID)…"
+        case .mcp, .capability:
+            // The capability's own title is the human sentence — "Read Spotify through
+            // its scripting dictionary" — where the id ("dict.query.com.spotify.client")
+            // tells a person nothing about what was read or how.
+            let title = CapabilityRegistry.shared.capability(id: invocation.capabilityID)?
+                .title
+                .replacingOccurrences(of: " (asks each time)", with: "")
+            return title.map { "\($0)…" } ?? "Running \(invocation.capabilityID)…"
         case .share:
             return "Sharing…"
         }
@@ -848,7 +853,8 @@ enum AppScopedChatService {
             // Say what is about to happen before it happens. The directive is already in the
             // answer text; reading it here costs nothing and is the difference between a live
             // row and a receipt.
-            if let announced = AITypedInvocationResolver.invocation(from: raw) {
+            let announced = AITypedInvocationResolver.invocation(from: raw)
+            if let announced {
                 onStatus?(Self.runningLabel(for: announced))
             }
             let call = await GeneralChatCapabilityHub.shared.execute(
@@ -888,8 +894,21 @@ enum AppScopedChatService {
 
             executedAnything = true
             toolChips.append(call.label)
-            // Past tense, because by here it has. The row above it said what was running.
-            onStatus?(call.success ? "Ran \(call.label)" : "\(call.label) did not run")
+            // Past tense, because by here it has. The row above it said what was running —
+            // in the capability's own words when it has a title, so a dictionary read reads
+            // as one instead of as an id.
+            let ranLabel: String = {
+                if let id = announced?.capabilityID,
+                    let title = CapabilityRegistry.shared.capability(id: id)?.title
+                {
+                    return title.replacingOccurrences(of: " (asks each time)", with: "")
+                }
+                return call.label
+            }()
+            onStatus?(
+                call.success
+                    ? (ranLabel == call.label ? "Ran \(call.label)" : ranLabel)
+                    : "\(ranLabel) did not run")
             loopHistory.append(ChatMessage(role: .user, content: loopQuery))
             loopHistory.append(ChatMessage(role: .assistant, content: raw))
             loopQuery = Self.toolResultFollowUp(
