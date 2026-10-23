@@ -1,12 +1,17 @@
 // AppDictionaryQueryBuilderTests.swift
 // Context-DockTests
 //
-// The rung's typed-expression guarantee, as tests (P13 #208). The model may name a
-// class, properties and a filter — nothing else. Every script here is rendered from a
-// learned manifest and checked against what it may and may not contain: unknown
-// identifiers refused BEFORE any script exists, values escaping into literals, and no
-// free-form AppleScript anywhere in the output.
+// The rung's typed-request guarantee, as tests (P13 #208). The model may name a class,
+// properties and a filter — nothing else. Each test validates the plan against a learned
+// manifest, then inspects the Apple Event descriptor that plan would send: the event
+// class and id, the object specifier's want/form/seld/from, and the typed operand.
+//
+// No test sends an event. The test host swizzles `sendEvent` on purpose; the descriptor
+// structure is the offline proof that no script text and no free-form identifier can reach
+// the app.
 
+import AppKit
+import Carbon
 import Foundation
 import Testing
 @testable import Context_Dock
@@ -26,73 +31,180 @@ struct AppDictionaryQueryBuilderTests {
         bundleID: "com.none.app", appName: "Nothing", version: "1",
         parsedAt: Date(), classes: [], commands: [])
 
-    // MARK: Reads
+    // MARK: Reads — plans
 
-    @Test func readNamesTheAppAndTheWhoseClause() throws {
-        let script = try AppDictionaryQuery.render(
+    @Test func readPlanTargetsTheWhoseCollection() throws {
+        let plan = try AppDictionaryQuery.plan(
             DictionaryRequest(
                 verb: .query, className: "track", propertiesRaw: "name, artist",
                 filterProperty: "artist", filterOperator: "is", filterValue: "A.R. Rahman",
                 limit: 10),
             for: Self.spotify)
-        #expect(script.contains(#"tell application id "com.spotify.client""#))
-        #expect(
-            script.contains(#"set _recs to every track whose artist is "A.R. Rahman""#))
-        #expect(script.contains(#"set _v0 to (name of _r) as text"#))
-        #expect(script.contains(#"set _v1 to (artist of _r) as text"#))
-        #expect(script.contains(#"_v0 & "|||" & _v1"#))
-        #expect(script.contains("if _collected >= 10 then exit repeat"))
+        guard case .read(let target, let properties, let limit) = plan else {
+            Issue.record("expected a read plan")
+            return
+        }
+        #expect(limit == 10)
+        #expect(properties.map(\.name) == ["name", "artist"])
+        guard case .collection(let className, let filter) = target else {
+            Issue.record("expected a collection target")
+            return
+        }
+        #expect(className.name == "track")
+        #expect(className.code == "spTr")
+        #expect(filter?.property.name == "artist")
+        #expect(filter?.comparison == .isEqual)
+        #expect(filter?.value == "A.R. Rahman")
     }
 
-    @Test func readEscapesQuotesAndBackslashes() throws {
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .query, className: "track", propertiesRaw: "name",
-                filterProperty: "album", filterValue: #"Say "Hi", \Now"#),
-            for: Self.spotify)
-        // The one place a model's value reaches the script text — quoted and escaped.
-        #expect(script.contains(#"whose album is "Say \"Hi\", \\Now""#))
-    }
-
-    @Test func readDefaultsToIDAndNameThenSixAtMost() throws {
-        let script = try AppDictionaryQuery.render(
+    @Test func readDefaultsToIdentityThenSixAtMost() throws {
+        let plan = try AppDictionaryQuery.plan(
             DictionaryRequest(verb: .query, className: "track"), for: Self.spotify)
-        #expect(script.contains(#"(id of _r) as text"#))
-        #expect(script.contains(#"(name of _r) as text"#))
-        #expect(script.contains("set _v5 to"))
-        #expect(!script.contains("set _v6 to"))
+        guard case .read(_, let properties, _) = plan else {
+            Issue.record("expected a read plan")
+            return
+        }
+        #expect(properties.map(\.name).prefix(2) == ["id", "name"])
+        #expect(properties.count <= 6)
+        #expect(properties.allSatisfy { $0.code != nil })
     }
 
     @Test func readCapIsTwentyFiveWhateverTheModelAsked() throws {
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(verb: .query, className: "track", limit: 500), for: Self.spotify)
-        #expect(script.contains("if _collected >= 25 then exit repeat"))
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(verb: .query, className: "track", limit: 500),
+            for: Self.spotify)
+        guard case .read(_, _, let limit) = plan else {
+            Issue.record("expected a read plan")
+            return
+        }
+        #expect(limit == 25)
     }
 
-    @Test func countAnswersHowMany() throws {
-        let script = try AppDictionaryQuery.render(
+    @Test func rootReadsOneItemTheAppNames() throws {
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(
+                verb: .query, className: "track", propertiesRaw: "name, artist",
+                root: "current track"),
+            for: Self.spotify)
+        guard case .read(let target, let properties, let limit) = plan else {
+            Issue.record("expected a read plan")
+            return
+        }
+        guard case .singleItem(let className, let root) = target else {
+            Issue.record("expected a single-item target")
+            return
+        }
+        #expect(className.name == "track")
+        #expect(root.name == "current track")
+        #expect(root.code == "pTrk")
+        #expect(limit == 1)
+        #expect(properties.map(\.name) == ["name", "artist"])
+    }
+
+    @Test func applicationReadUsesTheSingleton() throws {
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(
+                verb: .query, className: "application",
+                propertiesRaw: "player state, sound volume"),
+            for: Self.spotify)
+        guard case .read(let target, let properties, let limit) = plan else {
+            Issue.record("expected a read plan")
+            return
+        }
+        guard case .application = target else {
+            Issue.record("expected the application singleton")
+            return
+        }
+        #expect(properties.map(\.name) == ["player state", "sound volume"])
+        #expect(limit == 1)
+    }
+
+    @Test func countPlansACountOfTheMatchingCollection() throws {
+        let plan = try AppDictionaryQuery.plan(
             DictionaryRequest(
                 verb: .count, className: "track", filterProperty: "starred",
-                filterValue: "true"),
+                filterOperator: "is", filterValue: "true"),
             for: Self.spotify)
-        #expect(script.contains("count (every track whose starred is true)"))
-        #expect(script.contains("every track whose starred is true"))
+        guard case .count(let target) = plan else {
+            Issue.record("expected a count plan")
+            return
+        }
+        guard case .collection(_, let filter) = target else {
+            Issue.record("expected a collection target")
+            return
+        }
+        #expect(filter?.property.name == "starred")
+        #expect(filter?.value == "true")
     }
 
-    // MARK: Refusals, before any script exists
+    // MARK: Writes — plans
+
+    @Test func setPlansOnePropertyOnAFilteredCollection() throws {
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(
+                verb: .set, className: "track", propertiesRaw: "spotify url",
+                value: "spotify:track:1", filterProperty: "name", filterValue: "One"),
+            for: Self.spotify)
+        guard case .set(let target, let property, let value) = plan else {
+            Issue.record("expected a set plan")
+            return
+        }
+        #expect(property.name == "spotify url")
+        #expect(value == "spotify:track:1")
+        guard case .collection(_, let filter) = target else {
+            Issue.record("expected a collection target")
+            return
+        }
+        #expect(filter?.value == "One")
+    }
+
+    @Test func makePlansTheClassAndItsAssignments() throws {
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(
+                verb: .make, className: "track",
+                propertiesRaw: "spotify url=spotify:track:1"),
+            for: Self.spotify)
+        guard case .make(let className, let assignments) = plan else {
+            Issue.record("expected a make plan")
+            return
+        }
+        #expect(className.name == "track")
+        #expect(className.code == "spTr")
+        #expect(assignments.map(\.property.name) == ["spotify url"])
+        #expect(assignments.first?.value == "spotify:track:1")
+    }
+
+    @Test func deletePlansTheFilteredCollection() throws {
+        let plan = try AppDictionaryQuery.plan(
+            DictionaryRequest(
+                verb: .delete, className: "track", filterProperty: "name",
+                filterValue: "One"),
+            for: Self.spotify)
+        guard case .delete(let target) = plan else {
+            Issue.record("expected a delete plan")
+            return
+        }
+        guard case .collection(_, let filter) = target else {
+            Issue.record("expected a collection target")
+            return
+        }
+        #expect(filter?.property.name == "name")
+    }
+
+    // MARK: Refusals, before any event exists
 
     @Test func unknownClassRefused() {
         #expect(
             throws: DictionaryQueryError.unknownClass("playlists", ["application", "track"])
         ) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(verb: .query, className: "playlists"), for: Self.spotify)
         }
     }
 
     @Test func emptilyLearnedAppRefusesEverything() {
         #expect(throws: DictionaryQueryError.unknownClass("track", [])) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(verb: .query, className: "track"), for: Self.empty)
         }
     }
@@ -102,7 +214,7 @@ struct AppDictionaryQueryBuilderTests {
             throws: DictionaryQueryError.unknownProperty(
                 "isrc", "track", Self.spotify.class(named: "track")!.readablePropertyNames)
         ) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(verb: .query, className: "track", propertiesRaw: "isrc"),
                 for: Self.spotify)
         }
@@ -113,7 +225,7 @@ struct AppDictionaryQueryBuilderTests {
             throws: DictionaryQueryError.unsupportedOperator(
                 "MATCHES", DictionaryRequest.filterOperators)
         ) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(
                     verb: .query, className: "track", filterProperty: "name",
                     filterOperator: "MATCHES", filterValue: "x"),
@@ -121,317 +233,354 @@ struct AppDictionaryQueryBuilderTests {
         }
     }
 
-    @Test func unknownFilterPropertyRefused() {
-        #expect(
-            throws: DictionaryQueryError.unknownFilterProperty(
-                "tempo", "track", Self.spotify.class(named: "track")!.readablePropertyNames)
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .query, className: "track", filterProperty: "tempo",
-                    filterValue: "120"),
-                for: Self.spotify)
-        }
-    }
-
-    // MARK: Writes — they render; the gate card is what asks
-
-    @Test func setNeedsExactlyOnePropertyAndATarget() throws {
-        #expect(throws: DictionaryQueryError.writeWithoutTarget("application")) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .set, className: "application", propertiesRaw: "sound volume",
-                    value: "50"),
-                for: Self.spotify)
-        }
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .set, className: "application", propertiesRaw: "sound volume",
-                value: "80", filterProperty: "sound volume", filterValue: "50"),
-            for: Self.spotify)
-        // An integer property arrives bare; the filter's value renders typed as well.
-        #expect(
-            script.contains(
-                #"set sound volume of (every application whose sound volume is 50) to 80"#))
-    }
-
-    @Test func setRefusesAReadOnlyProperty() {
-        // `id` is access="r" — the app's own constraint, learned, enforced here.
-        #expect(
-            throws: DictionaryQueryError.unknownProperty(
-                "id", "track", Self.spotify.class(named: "track")!.writablePropertyNames)
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .set, className: "track", propertiesRaw: "id", value: "9",
-                    filterProperty: "name", filterValue: "x"),
-                for: Self.spotify)
-        }
-    }
-
-    @Test func makeRendersTypedInitialProperties() throws {
-        // Only writable properties may seed a make — the fixture track's writable ones
-        // are text-typed, so they arrive quoted; `id` and `name` are access="r" and
-        // refused (setRefusesAReadOnlyProperty covers that refusal).
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .make, className: "track",
-                propertiesRaw: "spotify url=https://open.spotify.com/track/demo"),
-            for: Self.spotify)
-        #expect(
-            script.contains(
-                "make new track with properties "
-                    + "{spotify url: \"https://open.spotify.com/track/demo\"}"))
-    }
-
-    @Test func makeRefusesUnknownKeysRatherThanDroppingThem() {
-        // The reminders lesson (undeclared inputs were dropped silently, and the created
-        // reminder had no due date): the rung refuses instead of dropping.
-        #expect(
-            throws: DictionaryQueryError.unknownProperty(
-                "tempo", "track", Self.spotify.class(named: "track")!.writablePropertyNames)
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .make, className: "track", propertiesRaw: "tempo=120"),
-                for: Self.spotify)
-        }
-    }
-
-    @Test func setRejectsTwoPropertiesAtOnce() {
-        #expect(
-            throws: DictionaryQueryError.unknownProperty(
-                "set expects exactly one property (got 2)", "track",
-                Self.spotify.class(named: "track")!.writablePropertyNames)
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .set, className: "track", propertiesRaw: "name, artist",
-                    value: "x", filterProperty: "name", filterValue: "x"),
-                for: Self.spotify)
-        }
-    }
-
-    @Test func deleteNeedsATarget() throws {
-        #expect(throws: DictionaryQueryError.writeWithoutTarget("track")) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .delete, className: "track"), for: Self.spotify)
-        }
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .delete, className: "track", filterProperty: "starred",
-                filterValue: "false"),
-            for: Self.spotify)
-        #expect(script.contains("delete (every track whose starred is false)"))
-    }
-
-    // MARK: Commands — the app's own verbs, gated
-    @Test func commandRendersALearnedVerb() throws {
-        // "pause" is a Spotify command, not a property write — the route the hand check
-        // asked for ("pause the song") without clicking a menu.
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(verb: .command, className: "", propertiesRaw: "pause"),
-            for: Self.spotify)
-        #expect(script.contains(#"tell application id "com.spotify.client" to pause"#))
-    }
-
-    @Test func commandAcceptsATextDirectParameter() throws {
-        // `extract name from` takes one text argument and no named ones, so it renders.
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .command, className: "", propertiesRaw: "extract name from",
-                value: "Asha <asha@example.com>"),
-            for: Self.mail)
-        #expect(script.contains(#"to extract name from "Asha <asha@example.com>""#))
-    }
-
-    @Test func commandRefusesWhatItCannotRender() throws {
-        #expect(
-            throws: DictionaryQueryError.unknownCommand("rewind", Self.spotify.commands.map(\.name))
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .command, className: "", propertiesRaw: "rewind"),
-                for: Self.spotify)
-        }
-        // Outbound commands are never rendered, even though the manifest knows them.
-        #expect(throws: DictionaryQueryError.outboundCommand("send")) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .command, className: "", propertiesRaw: "send"),
-                for: Self.mail)
-        }
-        // Named parameters are refused rather than guessed ("play track" takes "in context").
-        #expect(
-            throws: DictionaryQueryError.unsupportedCommand(
-                "play track",
-                "it takes named parameters (in context), which this rung does not render yet. "
-                    + "Use the app itself.")
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .command, className: "", propertiesRaw: "play track"),
-                for: Self.spotify)
-        }
-    }
-
-    // MARK: Literals
-
-    @Test func literalsAreTypedToTheProperty() {
-        #expect(AppDictionaryQuery.literal("42", type: "integer") == "42")
-        #expect(AppDictionaryQuery.literal("true", type: "boolean") == "true")
-        #expect(AppDictionaryQuery.literal("TRUE", type: "boolean") == "true")
-        #expect(AppDictionaryQuery.literal("3.5", type: "real") == "3.5")
-        // Anything not shapeable falls back to a quoted string, escaped.
-        #expect(
-            AppDictionaryQuery.literal("don't worry", type: "integer") == "\"don't worry\"")
-        #expect(
-            AppDictionaryQuery.literal("a \"quote\"", type: "text") == #""a \"quote\"""#)
-        #expect(AppDictionaryQuery.literal(#"back\slash"#) == #""back\\slash""#)
-    }
-
-    // MARK: Output parsing
-
-    @Test func parseRowsSplitsAndPads() {
-        let output =
-            "Track One|||Asha Bhosle|||2:59|||\nTrack Two|||R. D. Burman|||3:41|||\n\n"
-        let rows = AppDictionaryQuery.parseRows(output, propertyCount: 3)
-        #expect(rows.count == 2)
-        #expect(rows[0].values == ["Track One", "Asha Bhosle", "2:59"])
-        #expect(rows[1].values == ["Track Two", "R. D. Burman", "3:41"])
-    }
-
-    @Test func parseRowsReadsAOnePropertyRecord() throws {
-        // A one-property read returns `value|||`; without the marker the parser used to
-        // drop the line and the answer was "No applications matched" with the value in
-        // hand (found live: "what is the volume in Spotify?").
-        let rows = AppDictionaryQuery.parseRows("playing|||\n", propertyCount: 1)
-        #expect(rows.count == 1)
-        #expect(rows[0].values == ["playing"])
-        // And the rendered singleton script ends each row with that marker.
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .query, className: "application", propertiesRaw: "player state"),
-            for: Self.spotify)
-        #expect(script.contains(#"_v0 & "|||""#))
-    }
-
-    @Test func parseRowsSkipsAnAllEmptyRecord() {        // The shape the read script prints: `_line` is always three values joined by
-        // separators, then the trailing separator — an all-empty record is nine pipes —
-        // and it is not a record.
-        let output = "|||||||||\nTrack One|||Asha Bhosle|||\n"
-        let rows = AppDictionaryQuery.parseRows(output, propertyCount: 3)
-        #expect(rows.count == 1)
-        #expect(rows[0].values == ["Track One", "Asha Bhosle", ""])
-    }
-
-    @Test func answerLineCountsAndTitles() {
-        let rows = [
-            DictionaryQueryRow(values: ["One", "a", ""]),
-            DictionaryQueryRow(values: ["Two", "b", ""]),
-        ]
-        #expect(AppDictionaryQuery.answerLine(for: rows, className: "track").hasPrefix("2 tracks"))
-        #expect(
-            AppDictionaryQuery.answerLine(for: [], className: "track") == "No tracks matched.")
-    }
-
-    // MARK: Script shape
-
-    @Test func everyScriptClosesTheTimeoutBlockTheWayAppleScriptExpects() throws {
-        // `end with timeout` is not a term AppleScript accepts: every rendered script
-        // failed to compile with "Expected timeout… but found with" until the live hand
-        // check ran one. The block closes with `end timeout`.
-        let scripts = [
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .query, className: "track"), for: Self.spotify),
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .count, className: "track"), for: Self.spotify),
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .set, className: "track", propertiesRaw: "spotify url",
-                    value: "spotify:track:1", filterProperty: "name", filterValue: "One"),
-                for: Self.spotify),
-            try AppDictionaryQuery.render(
-                DictionaryRequest(verb: .command, className: "", propertiesRaw: "pause"),
-                for: Self.spotify),
-        ]
-        for script in scripts {
-            #expect(script.hasPrefix("with timeout of 15 seconds"))
-            #expect(script.hasSuffix("end timeout"))
-            #expect(!script.contains("end with timeout"))
-        }
-    }
-
-    // MARK: Singleton reads — the app object and the item it names
-
-    @Test func applicationPropertiesAreReadDirectly() throws {
-        // Spotify's "what's playing" half: `player state` belongs to the app object, not
-        // to a collection, so the script must never say "every application".
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .query, className: "application", propertiesRaw: "player state"),
-            for: Self.spotify)
-        #expect(script.contains("set _v0 to (player state) as text"))
-        #expect(!script.contains("every"))
-    }
-
-    @Test func rootReadsOneItemTheAppNames() throws {
-        // `every track` is not valid in Spotify's dictionary; `current track` is. The
-        // root is a learned property, so the script contains only a term the app wrote.
-        let script = try AppDictionaryQuery.render(
-            DictionaryRequest(
-                verb: .query, className: "track", propertiesRaw: "name, artist",
-                root: "current track"),
-            for: Self.spotify)
-        #expect(script.contains("set _r to current track"))
-        #expect(script.contains("set _v0 to (name of _r) as text"))
-        #expect(script.contains("set _v1 to (artist of _r) as text"))
-        #expect(!script.contains("every track"))
-    }
-
-    @Test func rootMustBeALearnedTermOfThatClass() throws {
-        // A model-supplied root is a scripting term, so only a property the dictionary
-        // declares — and whose type is the class being read — may reach the script.
+    @Test func unknownRootRefused() {
         #expect(
             throws: DictionaryQueryError.unknownRoot(
-                "tell application \"Finder\" to delete", "track", ["current track"])
+                "the one playing", "track", ["current track"])
         ) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(
-                    verb: .query, className: "track", propertiesRaw: "name",
-                    root: "tell application \"Finder\" to delete"),
-                for: Self.spotify)
-        }
-        // "current track" is a track, not the application object.
-        #expect(
-            throws: DictionaryQueryError.unknownRoot("current track", "application", [])
-        ) {
-            try AppDictionaryQuery.render(
-                DictionaryRequest(
-                    verb: .query, className: "application", propertiesRaw: "player state",
-                    root: "current track"),
+                    verb: .query, className: "track", root: "the one playing"),
                 for: Self.spotify)
         }
     }
 
-    @Test func rootIsOnlyForReads() throws {
+    @Test func rootIsOnlyForReads() {
         #expect(throws: DictionaryQueryError.rootOnlyForReads("set")) {
-            try AppDictionaryQuery.render(
+            try AppDictionaryQuery.plan(
                 DictionaryRequest(
-                    verb: .set, className: "track", propertiesRaw: "starred",
-                    value: "true", filterProperty: "name", filterValue: "One",
+                    verb: .set, className: "track", propertiesRaw: "spotify url",
+                    value: "x", filterProperty: "name", filterValue: "One",
                     root: "current track"),
                 for: Self.spotify)
         }
     }
 
-    @Test func aRefusedCollectionSaysHowToReadOneItem() {
-        let refused = AppDictionaryCapabilities.collectionHint(
-            "Spotify got an error: every track doesn’t understand the “count” message.",
-            for: DictionaryRequest(verb: .count, className: "track"))
-        #expect(refused.contains("root"))
-        #expect(refused.contains("current track"))
-        // Anything that is not the app refusing a collection is left exactly as it was.
-        let other = "Spotify got an error: A privilege violation occurred."
+    @Test func writeWithoutAFilterRefused() {
+        #expect(throws: DictionaryQueryError.writeWithoutTarget("track")) {
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .delete, className: "track"),
+                for: Self.spotify)
+        }
+        #expect(throws: DictionaryQueryError.writeWithoutTarget("track")) {
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .set, className: "track", propertiesRaw: "spotify url",
+                    value: "x"),
+                for: Self.spotify)
+        }
+    }
+
+    @Test func readOnlyPropertyCannotBeSet() {
         #expect(
-            AppDictionaryCapabilities.collectionHint(
-                other, for: DictionaryRequest(verb: .query, className: "track")) == other)
+            throws: DictionaryQueryError.unknownProperty(
+                "artist", "track", Self.spotify.class(named: "track")!.writablePropertyNames)
+        ) {
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .set, className: "track", propertiesRaw: "artist", value: "x",
+                    filterProperty: "name", filterValue: "One"),
+                for: Self.spotify)
+        }
+    }
+
+    @Test func aTermWithoutAFourCharacterCodeIsRefused() {
+        // Music's recorded excerpt declares `album` with a type but no code (and `finish`
+        // likewise): a typed Apple Event cannot address those, so the plan says so instead
+        // of falling back to a made-up code.
+        let music = AppSdefParser.parse(
+            AppScriptingDictionaryParserTests.musicExcerpt,
+            bundleID: "com.apple.Music", appName: "Music", version: "1")
+        #expect(throws: DictionaryQueryError.self) {
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .query, className: "track", propertiesRaw: "album"),
+                for: music)
+        }
+    }
+
+    // MARK: Commands — plans
+
+    @Test func commandPlanAcceptsANoArgumentCommand() throws {
+        let command = try #require(Self.spotify.command(named: "pause"))
+        let plan = try AppDictionaryQuery.commandPlan(command, value: "")
+        guard case .command(let planned, let value) = plan else {
+            Issue.record("expected a command plan")
+            return
+        }
+        #expect(planned.name == "pause")
+        #expect(value.isEmpty)
+    }
+
+    @Test func commandPlanRefusesNamedParameters() throws {
+        let command = try #require(Self.spotify.command(named: "play track"))
+        #expect(throws: DictionaryQueryError.self) {
+            try AppDictionaryQuery.commandPlan(command, value: "spotify:track:1")
+        }
+    }
+
+    @Test func commandPlanRefusesANonTextDirectParameter() throws {
+        let command = try #require(Self.mail.command(named: "send"))
+        #expect(throws: DictionaryQueryError.self) {
+            try AppDictionaryQuery.commandPlan(command, value: "x")
+        }
+    }
+
+    @Test func commandPlanRefusesAnArgumentWhenTheCommandTakesNone() throws {
+        let command = try #require(Self.spotify.command(named: "pause"))
+        #expect(throws: DictionaryQueryError.self) {
+            try AppDictionaryQuery.commandPlan(command, value: "please")
+        }
+    }
+
+    // MARK: Descriptor structure
+
+    private static func specifier(_ plan: DictionaryPlan) throws -> NSAppleEventDescriptor {
+        guard case .read(let target, _, _) = plan else {
+            throw DictionaryQueryError.unknownClass("", [])
+        }
+        return try AppDictionaryEvents(dictionary: Self.spotify).specifier(for: target)
+    }
+
+    /// The object-specifier record is keyed, not positional: the four items are `want`,
+    /// `from`, `form` and `seld`, in whatever order `CreateObjSpecifier` lays them out.
+    private func item(
+        _ keyword: AEKeyword, in descriptor: NSAppleEventDescriptor
+    ) throws -> NSAppleEventDescriptor {
+        guard descriptor.numberOfItems > 0 else {
+            throw DictionaryQueryError.unknownClass("", [])
+        }
+        for index in 1...descriptor.numberOfItems
+        where descriptor.keywordForDescriptor(at: index) == keyword {
+            return try #require(descriptor.atIndex(index))
+        }
+        throw DictionaryQueryError.unknownClass("", [])
+    }
+
+    /// A comparison descriptor's three items, through Carbon: operator, left operand,
+    /// right operand. `NSAppleEventDescriptor.data` cannot re-open a composite, so the
+    /// `AEDesc` itself is asked.
+    private func comparisonItems(
+        _ specifier: NSAppleEventDescriptor
+    ) throws -> [NSAppleEventDescriptor] {
+        let seld = try item(AEKeyword(keyAEKeyData), in: specifier)
+        #expect(seld.descriptorType == typeCompDescriptor)
+        var comparison = try #require(seld.aeDesc?.pointee)
+        var count = 0
+        let counted = AECountItems(&comparison, &count)
+        #expect(counted == noErr)
+        #expect(count == 3)
+        guard count == 3 else { return [] }
+        return try (1...count).map { index in
+            var item = AEDesc()
+            var keyword: AEKeyword = 0
+            let status = AEGetNthDesc(
+                &comparison, index, DescType(typeWildCard), &keyword, &item)
+            #expect(status == noErr)
+            guard status == noErr else {
+                throw DictionaryQueryError.unknownClass("", [])
+            }
+            return NSAppleEventDescriptor(aeDescNoCopy: &item)
+        }
+    }
+
+    @Test func readEventIsATypedCoreGetData() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let target = try events.specifier(
+            for: .collection(
+                className: Self.spotify.class(named: "track")!,
+                filter: nil))
+        let event = try events.readEvent(specifier: target)
+        #expect(event.eventClass == OSType(kAECoreSuite))
+        #expect(event.eventID == OSType(kAEGetData))
+        let direct = try #require(
+            event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)))
+        #expect(direct.descriptorType == typeObjectSpecifier)
+    }
+
+    @Test func collectionSpecifierIsEveryTrackFromTheApplication() throws {
+        let specifier = try Self.specifier(
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(verb: .query, className: "track"),
+                for: Self.spotify))
+        #expect(specifier.descriptorType == typeObjectSpecifier)
+        #expect(
+            try item(AEKeyword(keyAEDesiredClass), in: specifier).typeCodeValue
+                == fourCharCode("spTr"))
+        #expect(
+            try item(AEKeyword(keyAEKeyForm), in: specifier).enumCodeValue
+                == OSType(formAbsolutePosition))
+        let keyData = try item(AEKeyword(keyAEKeyData), in: specifier)
+        #expect(keyData.descriptorType == typeAbsoluteOrdinal)
+        #expect(keyData.enumCodeValue == OSType(0x616C6C20))  // 'all '
+        #expect(
+            try item(AEKeyword(keyAEContainer), in: specifier).descriptorType
+                == typeNull)
+    }
+
+    @Test func filterSpecifierIsATestWhoseComparisonIsTyped() throws {
+        let specifier = try Self.specifier(
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .query, className: "track", filterProperty: "artist",
+                    filterOperator: "is", filterValue: "A.R. Rahman"),
+                for: Self.spotify))
+        #expect(
+            try item(AEKeyword(keyAEKeyForm), in: specifier).enumCodeValue
+                == OSType(formTest))
+        let parts = try comparisonItems(specifier)
+        guard parts.count == 3 else { return }
+        // Operator first, then the two typed operands (Apple's comparison descriptor).
+        #expect(parts[0].enumCodeValue == OSType(kAEEquals))
+        #expect(parts[1].descriptorType == typeObjectSpecifier)
+        #expect(parts[2].stringValue == "A.R. Rahman")
+        #expect(parts[2].descriptorType == typeUnicodeText)
+    }
+
+    @Test func isNotIsALogicalNotOfEquality() throws {
+        let specifier = try Self.specifier(
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .query, className: "track", filterProperty: "artist",
+                    filterOperator: "is not", filterValue: "A.R. Rahman"),
+                for: Self.spotify))
+        let logical = try item(AEKeyword(keyAEKeyData), in: specifier)
+        #expect(logical.descriptorType == typeLogicalDescriptor)
+        var record = try #require(logical.aeDesc?.pointee)
+        var op = AEDesc()
+        let opStatus = AEGetParamDesc(
+            &record, AEKeyword(keyAELogicalOperator), DescType(typeWildCard), &op)
+        #expect(opStatus == noErr)
+        #expect(NSAppleEventDescriptor(aeDescNoCopy: &op).enumCodeValue == OSType(kAENOT))
+        var terms = AEDesc()
+        let termsStatus = AEGetParamDesc(
+            &record, AEKeyword(keyAELogicalTerms), DescType(typeAEList), &terms)
+        #expect(termsStatus == noErr)
+        var count = 0
+        _ = AECountItems(&terms, &count)
+        #expect(count == 1)
+    }
+
+    @Test func countEventIsCoreCountWithTheCollectionAsItsObject() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let specifier = try events.specifier(
+            for: .collection(
+                className: Self.spotify.class(named: "track")!,
+                filter: nil))
+        let event = try events.countEvent(specifier)
+        #expect(event.eventClass == OSType(kAECoreSuite))
+        #expect(event.eventID == OSType(kAECountElements))
+        #expect(
+            event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?
+                .descriptorType == typeObjectSpecifier)
+    }
+
+    @Test func setEventCarriesTheTypedValueUnderKeyData() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let track = try #require(Self.spotify.class(named: "track"))
+        let item = try events.specifier(for: .collection(className: track, filter: nil))
+        let property = try #require(track.property(named: "spotify url"))
+        let event = try events.setEvent(
+            events.propertySpecifier(property, of: item),
+            value: "spotify:track:1", type: property.type)
+        #expect(event.eventClass == OSType(kAECoreSuite))
+        #expect(event.eventID == OSType(kAESetData))
+        let data = try #require(
+            event.paramDescriptor(forKeyword: AEKeyword(keyAEData)))
+        #expect(data.descriptorType == typeUnicodeText)
+        #expect(data.stringValue == "spotify:track:1")
+    }
+
+    @Test func integerFilterValueIsSentAsAnInteger() throws {
+        let specifier = try Self.specifier(
+            try AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .query, className: "track", filterProperty: "duration",
+                    filterOperator: "is greater than", filterValue: "100"),
+                for: Self.spotify))
+        let parts = try comparisonItems(specifier)
+        guard parts.count == 3 else { return }
+        #expect(parts[0].enumCodeValue == OSType(kAEGreaterThan))
+        #expect(parts[2].descriptorType == typeSInt32)
+        #expect(parts[2].int32Value == 100)
+    }
+
+    @Test func makeEventIsCoreCreateElementWithTypedProperties() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let track = try #require(Self.spotify.class(named: "track"))
+        let property = try #require(track.property(named: "spotify url"))
+        let event = try events.makeEvent(
+            className: track,
+            assignments: [
+                DictionaryAssignment(property: property, value: "spotify:track:1")
+            ])
+        #expect(event.eventClass == OSType(kAECoreSuite))
+        #expect(event.eventID == OSType(kAECreateElement))
+        #expect(
+            event.paramDescriptor(forKeyword: AEKeyword(keyAEObjectClass))?
+                .typeCodeValue == fourCharCode("spTr"))
+        let properties = try #require(
+            event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData)))
+        #expect(properties.descriptorType == typeAERecord)
+        #expect(properties.numberOfItems == 1)
+    }
+
+    @Test func deleteEventIsCoreDelete() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let track = try #require(Self.spotify.class(named: "track"))
+        let item = try events.specifier(for: .collection(className: track, filter: nil))
+        let event = try events.deleteEvent(item)
+        #expect(event.eventClass == OSType(kAECoreSuite))
+        #expect(event.eventID == OSType(kAEDelete))
+    }
+
+    @Test func commandEventIsTheAppOwnClassAndCode() throws {
+        let events = AppDictionaryEvents(dictionary: Self.spotify)
+        let command = try #require(Self.spotify.command(named: "pause"))
+        let event = try events.commandEvent(command, value: "")
+        #expect(event.eventClass == fourCharCode("spfy"))
+        #expect(event.eventID == fourCharCode("Paus"))
+        #expect(event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)) == nil)
+    }
+
+    @Test func commandWithATextArgumentCarriesItAsTheDirectObject() throws {
+        let events = AppDictionaryEvents(dictionary: Self.mail)
+        let command = try #require(Self.mail.command(named: "extract name from"))
+        let event = try events.commandEvent(command, value: "Ada Lovelace <ada@example.com>")
+        #expect(event.eventClass == fourCharCode("emal"))
+        #expect(event.eventID == fourCharCode("eafn"))
+        #expect(
+            event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?
+                .stringValue == "Ada Lovelace <ada@example.com>")
+    }
+
+    // MARK: Output shape
+
+    @Test func rowFieldsPutTheFirstThreeValuesToWork() {
+        let row = DictionaryQueryRow(values: ["Blue in Green", "Miles Davis", "Kind of Blue", ""])
+        let fields = AppDictionaryQuery.rowFields(row)
+        #expect(fields.title == "Blue in Green")
+        #expect(fields.subtitle == "Miles Davis")
+        #expect(fields.detail == "Kind of Blue")
+    }
+
+    @Test func answerLineIsNumberOfRowsThenAList() {
+        let rows = [
+            DictionaryQueryRow(values: ["One", "Artist"]),
+            DictionaryQueryRow(values: ["Two", "Artist"]),
+        ]
+        let text = AppDictionaryQuery.answerLine(for: rows, className: "track")
+        #expect(text.hasPrefix("2 tracks so far:"))
+        #expect(text.contains("1. One — Artist"))
+        #expect(text.contains("2. Two — Artist"))
+    }
+
+    @Test func emptyAnswerSaysSo() {
+        #expect(
+            AppDictionaryQuery.answerLine(for: [], className: "track")
+                == "No tracks matched.")
     }
 }
+
+

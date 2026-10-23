@@ -114,6 +114,11 @@ struct CornerLivePanel: View {
         .animation(.smooth(duration: 0.18), value: steps.map(\.status))
         .animation(.smooth(duration: 0.18), value: files)
         .task(id: appBundleID) { loadCanDo() }
+        // A scan that lands after the card opened must repaint "Can do here" — otherwise the
+        // dictionary the app just taught DoraX is invisible until the card is reopened.
+        .onReceive(NotificationCenter.default.publisher(for: .appDictionaryChanged)) { _ in
+            loadCanDo()
+        }
         .task(id: filesKey) { await loadFiles() }
     }
 

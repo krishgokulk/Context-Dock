@@ -8,10 +8,15 @@
 // reader, not an Apple Event, so scanning never launches or activates the app — with a
 // hard watchdog, then parses (AppSdefParser), then stores.
 //
-// An app is re-scanned only when its version changes from the cached manifest's, which
-// is exactly when a dictionary could have changed with it. The kick comes from two
-// places: AppKnowledgeSkillRefresher (every known app, at launch and after a change)
-// and the scoped-chat preflight (the app the user is talking to right now).
+// Staleness has two causes, and both re-scan: the app's version changed (its dictionary
+// could have changed with it), or the manifest is older than the parser schema (a cached
+// manifest from before typed codes and enumerations existed cannot drive typed Apple
+// Events). The kick comes from AppKnowledgeSkillRefresher (every known app, at launch and
+// after a change) and from each chat preflight for the apps that turn may reach.
+//
+// The first turn after a cold cache must not race the scan: `ensureScanned` awaits the
+// scan (bounded) so the prompt and the capability list are built from the manifest that
+// lands, rather than from the empty cache the turn started with.
 //
 // Apps whose dictionary is unknown are simply absent — the rung is invisible until its
 // first scan lands, and every consumer treats absence as "no dictionary". The test host
@@ -29,15 +34,20 @@ final class AppDictionaryStore {
     nonisolated private static let log = Logger(
         subsystem: "com.krishgokul.ContextDock", category: "AppDictionaryStore")
 
+    /// How long a cold-cache turn waits for the scan before answering from what it has.
+    /// `sdef` is a local command-line read and normally lands well inside this.
+    private static let coldCacheWait: TimeInterval = 8
+
     /// bundleID → manifest, newest version per app.
     private(set) var dictionaries: [String: AppScriptingDictionary] = [:]
 
     private let directory: URL
-    /// Bundle ids whose scan is running, so the per-turn kick fires the scan once.
-    private var scansInFlight: Set<String> = []
-    /// The bundle id of the app its capability list should come from. Empty while no
-    /// app-scoped turn has named one this launch.
-    private var lastScopedBundleID: String = ""
+    /// One task per bundle id, shared by every caller — the kick and a cold-cache await
+    /// must not start two `sdef` processes for the same app.
+    private var scansInFlight: [String: Task<AppScriptingDictionary?, Never>] = [:]
+    /// Bundle ids a scan has already been attempted for this launch and failed (the app is
+    /// missing, or sdef refused). Absence is not retried every turn.
+    private var failedScans: Set<String> = []
 
     /// Injectable for tests: a store pointed at a scratch directory writes nothing to
     /// the real Application Support.
@@ -90,45 +100,103 @@ final class AppDictionaryStore {
         try? data.write(to: file, options: .atomic)
     }
 
+    // MARK: Staleness
+
+    /// True when the cache cannot answer for the app as it is installed today: no manifest,
+    /// an app version change, or a parser schema older than this build's.
+    func isStale(bundleID: String) -> Bool {
+        guard let cached = dictionaries[bundleID] else { return true }
+        if cached.schema < AppScriptingDictionary.currentSchema { return true }
+        let installed = Self.installedVersion(bundleID: bundleID)
+        return !installed.isEmpty && cached.version != installed
+    }
+
     // MARK: Scanning
 
-    /// Kick a scan for the app's current version when the cached one is stale. Returns
-    /// nothing and costs nothing when the cache is current or a scan is already running.
+    /// Kick a scan when the cached manifest is stale. Returns nothing and costs nothing
+    /// when the cache is current or a scan is already running.
     ///
     /// A scan that finds an empty dictionary (a non-scriptable app, sdef prints nothing)
     /// stores an empty marker manifest, so the absence is cached too and the same app is
     /// not re-scanned on every turn.
-    func kickScanIfStale(bundleID: String, appName: String) {
+    ///
+    /// - Parameter grants: Apps the calling surface is allowed to reach. A scan that lands
+    ///   for one of them re-registers the learned capabilities; an ungranted scan never
+    ///   grants anything by itself.
+    func kickScanIfStale(
+        bundleID: String, appName: String, grants: Set<String> = []
+    ) {
         guard !bundleID.isEmpty, !bundleID.hasPrefix("scope://") else { return }
         guard !AppDelegate.isHostingTests else { return }
-        guard scansInFlight.insert(bundleID).inserted else { return }
+        guard isStale(bundleID: bundleID) else { return }
+        _ = scanTask(bundleID: bundleID, appName: appName, grants: grants)
+    }
 
-        lastScopedBundleID = bundleID
+    /// The cold-cache path: await the scan (bounded) and return the manifest the turn
+    /// should use. Current cache returns synchronously; a scan already in flight is joined,
+    /// not duplicated.
+    func ensureScanned(
+        bundleID: String, appName: String, grants: Set<String>
+    ) async -> AppScriptingDictionary? {
+        guard !bundleID.isEmpty, !bundleID.hasPrefix("scope://") else {
+            return dictionaries[bundleID]
+        }
+        guard !AppDelegate.isHostingTests else { return dictionaries[bundleID] }
+        guard isStale(bundleID: bundleID) else { return dictionaries[bundleID] }
+        guard !failedScans.contains(bundleID) else { return dictionaries[bundleID] }
+
+        let task = scanTask(bundleID: bundleID, appName: appName, grants: grants)
+        let scanned = await withTaskGroup(
+            of: AppScriptingDictionary?.self, returning: AppScriptingDictionary?.self
+        ) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(Self.coldCacheWait * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        // A timed-out scan keeps running; the notification it posts refreshes the panel
+        // and the next turn finds the manifest. This turn answers from the cache.
+        return scanned ?? dictionaries[bundleID]
+    }
+
+    private func scanTask(
+        bundleID: String, appName: String, grants: Set<String>
+    ) -> Task<AppScriptingDictionary?, Never> {
+        if let running = scansInFlight[bundleID] { return running }
+
         let displayName = appName.isEmpty ? bundleName(bundleID: bundleID) : appName
         let version = Self.installedVersion(bundleID: bundleID)
-        if let cached = dictionaries[bundleID],
-            !version.isEmpty, cached.version == version
-        {
-            scansInFlight.remove(bundleID)
-            return
-        }
-
-        Task { [weak self] in
-            guard let self else { return }
+        let task = Task { [weak self] in
             let manifest = await Self.scan(
                 bundleID: bundleID, appName: displayName, version: version)
-            self.scansInFlight.remove(bundleID)
-            guard let manifest else { return }
+            guard let self else { return manifest }
+            self.scansInFlight[bundleID] = nil
+            guard let manifest else {
+                self.failedScans.insert(bundleID)
+                return nil
+            }
             self.write(manifest)
             let counts = String(manifest.classes.count) + " classes, "
                 + String(manifest.commands.count) + " commands"
             Self.log.notice(
                 "dictionary scanned: \(bundleID, privacy: .public) v\(manifest.version) — \(counts, privacy: .public)")
-            // Newly-learned dictionaries reach the prompt the same way built-ins do.
-            if self.lastScopedBundleID == bundleID {
-                CapabilityRegistry.shared.refreshBuiltInMCPs()
+            // Tell the scope panel the manifest it is showing just changed. This is the
+            // fix for the panel staying on an empty/stale dictionary after a scan.
+            NotificationCenter.default.post(name: .appDictionaryChanged, object: nil)
+            // Re-register for a surface that asked. An ungranted scan deliberately does
+            // not refresh: scanning an installed app is discovery, not consent.
+            if !grants.isEmpty {
+                CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: grants)
             }
+            return manifest
         }
+        scansInFlight[bundleID] = task
+        return task
     }
 
     /// One scan: `sdef` output in, manifest out. Nil when the app cannot be found or sdef

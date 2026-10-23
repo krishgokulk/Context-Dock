@@ -5009,7 +5009,16 @@ extension DockCore {
         // capability families for every request so added/edited/disabled Global Commands
         // and MCP toggles cannot leave classification and execution using different views.
         CapabilityRegistry.shared.refreshGlobalCommands()
-        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        // The dictionary rung is granted only the apps this chat is focused on — the same
+        // explicit set that bounds every other tool in the turn. A cold cache is awaited so
+        // the first question about an app is not answered from an empty manifest.
+        let dictionaryGrants = Set(chatFocusApps.map(\.bundleId))
+        for app in chatFocusApps
+        where AppAdapterManager.shared.adapter(for: app.bundleId) == nil {
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: app.bundleId, appName: app.name, grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
 
         await MainActor.run {
             aiMode.loadingStatus = attachments.isEmpty
@@ -6078,8 +6087,18 @@ extension DockCore {
         async throws -> String
     {
         // Pick up MCPs toggled on this session so scoped chat sees them without relaunch.
-        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        // The dictionary rung is granted the app this thread is about, and no other.
         let scopedForRead = currentContextDockChatScope
+        let dictionaryGrants = scopedForRead.bundleId.isEmpty
+            ? Set<String>() : [scopedForRead.bundleId]
+        if let bundleID = dictionaryGrants.first,
+            AppAdapterManager.shared.adapter(for: bundleID) == nil
+        {
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: bundleID, appName: scopedForRead.appName,
+                grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
         let isMessagesScope = scopedForRead.bundleId.caseInsensitiveCompare(
             "com.apple.MobileSMS") == .orderedSame
             || scopedForRead.appName.lowercased().contains("messages")

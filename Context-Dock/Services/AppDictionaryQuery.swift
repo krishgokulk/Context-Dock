@@ -1,16 +1,14 @@
 // AppDictionaryQuery.swift
 // Context-Dock
 //
-// The typed expression the dictionary rung runs. The model never hands over AppleScript;
-// it names a class, properties and a filter, and this builder renders the one script the
-// app's own manifest allows, validating every identifier against it. Anything unknown is
-// refused before a single Apple Event moves — that is what makes this a typed request and
-// not a personality injection to `osascript`.
+// The typed request the dictionary rung validates — and the plan it turns into. The model
+// never hands over AppleScript; it names a class, properties and a filter, and every
+// identifier is checked against the app's own learned manifest before a single Apple Event
+// is built. Anything unknown is refused here, with a sentence naming what to fix.
 //
-// The rendered script is text, so the executor can run it through the same hardened
-// subprocess pattern the Notes reader uses (temp file, hard watchdog, drained pipes).
-// Values are escaped; identifiers never carry user data because each one must exist in
-// the learned manifest first.
+// A plan is data, not text: `AppDictionaryEvents` turns it into typed Apple Event
+// descriptors (`NSAppleEventDescriptor`) and sends them straight to the app. Nothing is
+// rendered into a script, and no `osascript` process exists in this rung.
 
 import Foundation
 
@@ -23,11 +21,12 @@ enum DictionaryQueryError: LocalizedError, Equatable {
     case unknownFilterProperty(String, String, [String])
     case unsupportedOperator(String, [String])
     case writeWithoutTarget(String)
-    case outboundCommand(String)
-    case unknownCommand(String, [String])
     case unsupportedCommand(String, String)
     case unknownRoot(String, String, [String])
     case rootOnlyForReads(String)
+    /// The app's sdef declares the term but gave it no four-character code, so a typed
+    /// Apple Event cannot address it. Re-scanning does not help; the app itself omitted it.
+    case missingCode(String)
 
     var errorDescription: String? {
         switch self {
@@ -48,12 +47,6 @@ enum DictionaryQueryError: LocalizedError, Equatable {
         case .writeWithoutTarget(let className):
             return "A \(className) write must say WHICH item: give a filter, or DoraX would "
                 + "change every \(className) there is."
-        case .outboundCommand(let command):
-            return "\"\(command)\" sends something outside this Mac; the dictionary rung "
-                + "never sends. Use the app itself for anything that sends."
-        case .unknownCommand(let name, let known):
-            return "The scripting dictionary has no command \"\(name)\". Known commands: "
-                + (known.sorted().prefix(24).joined(separator: ", "))
         case .unsupportedCommand(let command, let reason):
             return "Cannot run \"\(command)\": \(reason)"
         case .unknownRoot(let root, let className, let known):
@@ -64,11 +57,14 @@ enum DictionaryQueryError: LocalizedError, Equatable {
         case .rootOnlyForReads(let verb):
             return "root selects one item, so it only applies to a read (query). "
                 + "\"\(verb)\" needs a class collection and a filter."
+        case .missingCode(let term):
+            return "\(term) has no four-character code in the app's dictionary, so a typed "
+                + "Apple Event cannot address it. Use another learned term that has one."
         }
     }
 }
 
-/// What the model asked, before rendering. All Strings — `AIActionPlan` carries
+/// What the model asked, before validation. All Strings — `AIActionPlan` carries
 /// `[String: String]`.
 struct DictionaryRequest: Equatable, Sendable {
     enum Verb: String, Equatable, Sendable {
@@ -77,7 +73,6 @@ struct DictionaryRequest: Equatable, Sendable {
         case set     // write: change a property of the matching items (gated)
         case make    // write: create one item (gated)
         case delete  // write: delete the matching items (gated)
-        case command // write: run one learned, non-sending command ("pause") (gated)
     }
 
     static let filterOperators = [
@@ -88,11 +83,9 @@ struct DictionaryRequest: Equatable, Sendable {
     var verb: Verb
     var className: String
     /// A read: comma-separated property names in one string. `make`: "k=v" pairs.
-    /// `set`: exactly one property name. `command`: the learned command's name (commands
-    /// are app-global in AppleScript, so `className` is unused for this verb).
+    /// `set`: exactly one property name.
     var propertiesRaw: String
-    /// The `make`/`set`/command value, rendered per the property's or parameter's learned
-    /// type.
+    /// The `set`/`make` value, typed per the property's learned type.
     var value: String
     var filterProperty: String
     var filterOperator: String
@@ -101,7 +94,7 @@ struct DictionaryRequest: Equatable, Sendable {
     var limit: Int
     /// Reads only: one item the app names, instead of "every <class>". The term must be a
     /// property of a learned class whose type is this class — Spotify's "current track" —
-    /// so it is validated against the manifest and never reaches the script as free text.
+    /// so it is validated against the manifest and never reaches the event as free text.
     var root: String
 
     init(
@@ -121,13 +114,77 @@ struct DictionaryRequest: Equatable, Sendable {
         self.root = root
     }
 
-    /// Parse the property list the model sent — comma-separated Names, trimmed.
+    /// Parse the property list the model sent — comma-separated names, trimmed.
     static func propertyNames(from raw: String) -> [String] {
         raw
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }
+}
+
+/// A `whose` test: one learned property, a fixed operator, and the value to compare.
+struct DictionaryFilter: Equatable, Sendable {
+    enum Comparison: String, CaseIterable, Sendable {
+        case isEqual = "is"
+        case isNot = "is not"
+        case contains
+        case beginsWith = "begins with"
+        case endsWith = "ends with"
+        case greaterThan = "is greater than"
+        case lessThan = "is less than"
+
+        static func parse(_ raw: String) -> Comparison? {
+            let needle = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            return allCases.first { $0.rawValue == needle }
+        }
+    }
+
+    let property: ScriptingProperty
+    let comparison: Comparison
+    let value: String
+
+    var operatorText: String { comparison.rawValue }
+}
+
+/// Which object the plan addresses.
+enum DictionaryTarget: Equatable, Sendable {
+    /// The app object itself (`player state` of Spotify) — a singleton, never "every
+    /// application".
+    case application(ScriptingClass)
+    /// One item the app names with a learned property (`current track`).
+    case singleItem(className: ScriptingClass, root: ScriptingProperty)
+    /// Every item of a class, optionally narrowed by a `whose` test.
+    case collection(className: ScriptingClass, filter: DictionaryFilter?)
+
+    var className: ScriptingClass {
+        switch self {
+        case .application(let value): return value
+        case .singleItem(let value, _): return value
+        case .collection(let value, _): return value
+        }
+    }
+
+    var isCollection: Bool {
+        if case .collection = self { return true }
+        return false
+    }
+}
+
+struct DictionaryAssignment: Equatable, Sendable {
+    let property: ScriptingProperty
+    let value: String
+}
+
+/// A validated, typed operation. No text, no script — just the pieces an Apple Event is
+/// built from.
+enum DictionaryPlan: Equatable, Sendable {
+    case read(target: DictionaryTarget, properties: [ScriptingProperty], limit: Int)
+    case count(target: DictionaryTarget)
+    case set(target: DictionaryTarget, property: ScriptingProperty, value: String)
+    case make(className: ScriptingClass, assignments: [DictionaryAssignment])
+    case delete(target: DictionaryTarget)
+    case command(ScriptingCommand, value: String)
 }
 
 /// One record a read returned, shaped for result rows and for the answer text.
@@ -138,145 +195,219 @@ struct DictionaryQueryRow: Equatable, Sendable {
 enum AppDictionaryQuery {
 
     /// How many rows a read returns at most, whatever the model asked for.
-    private static let maximumRows = 25
-    /// Field separator in the rendered script's output — the house convention is already
-    /// `|||` (AppleAppsAPI's mail reader uses the same).
+    static let maximumRows = 25
+    /// A write touches at most this many objects per card. A filter that matches more is
+    /// refused so the approval the user saw stays the set of objects it named.
+    static let maximumWrites = 25
+    /// Field separator the answer text uses between a row's values.
     static let fieldSeparator = "|||"
 
-    // MARK: Rendering
+    // MARK: Planning
 
-    /// Validate the request against the manifest and render the one script it allows.
-    /// Never sends (the rung's rule): an outbound request is refused upstream, before any
-    /// script exists; `set`/`make`/`delete` render fine and go through the gate as cards.
-    static func render(_ request: DictionaryRequest, for dictionary: AppScriptingDictionary)
-        throws -> String
-    {
-        // Commands are app-global, so they render before the class lookup: "pause" names
-        // no class.
-        if request.verb == .command {
-            return try renderCommand(request, dictionary)
+    /// Validate the request against the manifest and build the one operation it allows.
+    static func plan(
+        _ request: DictionaryRequest, for dictionary: AppScriptingDictionary
+    ) throws -> DictionaryPlan {
+        let knownClasses = dictionary.classes.map(\.name)
+        guard let targetClass = dictionary.class(named: request.className) else {
+            throw DictionaryQueryError.unknownClass(request.className, knownClasses)
         }
         if !request.root.isEmpty, request.verb != .query {
             throw DictionaryQueryError.rootOnlyForReads(request.verb.rawValue)
         }
-        let knownClasses = dictionary.classes.map(\.name)
-        guard let target = dictionary.class(named: request.className) else {
-            throw DictionaryQueryError.unknownClass(request.className, knownClasses)
-        }
+
         switch request.verb {
-        case .query: return try renderRead(request, target, dictionary)
-        case .count: return try renderCount(request, target, dictionary)
-        case .set: return try renderSet(request, target, dictionary)
-        case .make: return try renderMake(request, target, dictionary)
-        case .delete: return try renderDelete(request, target, dictionary)
-        case .command: return try renderCommand(request, dictionary)
+        case .query:
+            if !request.root.isEmpty {
+                let root = try validatedRoot(request.root, for: targetClass, in: dictionary)
+                let properties = try readableProperties(request, target: targetClass)
+                return .read(
+                    target: .singleItem(className: targetClass, root: root),
+                    properties: properties,
+                    limit: 1)
+            }
+            let properties = try readableProperties(request, target: targetClass)
+            if targetClass.name.lowercased() == "application" {
+                return .read(
+                    target: .application(targetClass), properties: properties, limit: 1)
+            }
+            let filter = try filter(request, target: targetClass)
+            let limit = max(1, min(request.limit, maximumRows))
+            return .read(
+                target: .collection(className: targetClass, filter: filter),
+                properties: properties, limit: limit)
+
+        case .count:
+            guard targetClass.name.lowercased() != "application" else {
+                throw DictionaryQueryError.unsupportedCommand(
+                    "count", "the application object is not a collection.")
+            }
+            return .count(
+                target: .collection(
+                    className: targetClass, filter: try filter(request, target: targetClass)))
+
+        case .set:
+            let names = DictionaryRequest.propertyNames(from: request.propertiesRaw)
+            guard names.count == 1 else {
+                throw DictionaryQueryError.unknownProperty(
+                    "set expects exactly one property (got \(names.count))",
+                    targetClass.name, targetClass.writablePropertyNames)
+            }
+            guard let property = targetClass.property(named: names[0]), !property.isReadOnly
+            else {
+                throw DictionaryQueryError.unknownProperty(
+                    names[0], targetClass.name, targetClass.writablePropertyNames)
+            }
+            guard property.code != nil else {
+                throw DictionaryQueryError.missingCode(
+                    "property \"\(property.name)\" of \(targetClass.name)")
+            }
+            guard let filter = try requiredFilter(request, target: targetClass) else {
+                throw DictionaryQueryError.writeWithoutTarget(targetClass.name)
+            }
+            return .set(
+                target: .collection(className: targetClass, filter: filter),
+                property: property, value: request.value)
+
+        case .make:
+            guard targetClass.code != nil else {
+                throw DictionaryQueryError.missingCode("class \"\(targetClass.name)\"")
+            }
+            var assignments: [DictionaryAssignment] = []
+            for pairRaw in DictionaryRequest.propertyNames(from: request.propertiesRaw) {
+                // "k=v" pairs; the first '=' splits them, so a value may contain more.
+                guard let separator = pairRaw.firstIndex(of: "=") else {
+                    throw DictionaryQueryError.unknownProperty(
+                        pairRaw, targetClass.name, targetClass.writablePropertyNames)
+                }
+                let key = String(pairRaw[pairRaw.startIndex..<separator])
+                    .trimmingCharacters(in: .whitespaces)
+                let rawValue = String(pairRaw[pairRaw.index(after: separator)...])
+                guard let property = targetClass.property(named: key), !property.isReadOnly
+                else {
+                    throw DictionaryQueryError.unknownProperty(
+                        key, targetClass.name, targetClass.writablePropertyNames)
+                }
+                guard property.code != nil else {
+                    throw DictionaryQueryError.missingCode(
+                        "property \"\(property.name)\" of \(targetClass.name)")
+                }
+                assignments.append(DictionaryAssignment(property: property, value: rawValue))
+            }
+            return .make(className: targetClass, assignments: assignments)
+
+        case .delete:
+            guard let filter = try requiredFilter(request, target: targetClass) else {
+                throw DictionaryQueryError.writeWithoutTarget(targetClass.name)
+            }
+            return .delete(target: .collection(className: targetClass, filter: filter))
         }
     }
 
-    /// The `whose` clause for the request's filter, or "" when none was given. The filter
-    /// property must exist on the class and the operator must be from the fixed set; the
-    /// value is rendered as a literal typed to the property, so "id is 42" filters on the
-    /// number rather than the word.
-    private static func whoseClause(_ request: DictionaryRequest, target: ScriptingClass)
-        throws -> String
-    {
-        guard !request.filterProperty.isEmpty else { return "" }
-        guard let filterTarget = target.property(named: request.filterProperty) else {
+    /// A per-command capability's plan. The command must carry an event class and id, take
+    /// no named parameters, and — when it takes an argument — take text. Anything else is
+    /// refused rather than guessed at.
+    static func commandPlan(
+        _ command: ScriptingCommand, value: String
+    ) throws -> DictionaryPlan {
+        guard command.code != nil, command.eventClass != nil else {
+            throw DictionaryQueryError.missingCode("command \"\(command.name)\"")
+        }
+        guard command.parameterNames.isEmpty else {
+            throw DictionaryQueryError.unsupportedCommand(
+                command.name,
+                "it takes named parameters (\(command.parameterNames.joined(separator: ", "))), "
+                    + "which this rung does not send yet. Use the app itself.")
+        }
+        if let directType = command.directType {
+            guard directType.lowercased() == "text" else {
+                throw DictionaryQueryError.unsupportedCommand(
+                    command.name,
+                    "its argument is \(directType), which this rung does not send yet.")
+            }
+        } else if !value.isEmpty {
+            throw DictionaryQueryError.unsupportedCommand(
+                command.name, "it takes no argument.")
+        }
+        return .command(command, value: value)
+    }
+
+    private static func filter(
+        _ request: DictionaryRequest, target: ScriptingClass
+    ) throws -> DictionaryFilter? {
+        let propertyName = request.filterProperty.trimmingCharacters(in: .whitespaces)
+        guard !propertyName.isEmpty else { return nil }
+        guard let property = target.property(named: propertyName) else {
             throw DictionaryQueryError.unknownFilterProperty(
-                request.filterProperty, target.name, target.readablePropertyNames)
+                propertyName, target.name, target.readablePropertyNames)
+        }
+        guard property.code != nil else {
+            throw DictionaryQueryError.missingCode(
+                "filter property \"\(property.name)\" of \(target.name)")
         }
         let operatorText = request.filterOperator.isEmpty ? "is" : request.filterOperator
-        guard DictionaryRequest.filterOperators.contains(operatorText) else {
+        guard let comparison = DictionaryFilter.Comparison.parse(operatorText) else {
             throw DictionaryQueryError.unsupportedOperator(
                 operatorText, DictionaryRequest.filterOperators)
         }
-        return " whose \(request.filterProperty) \(operatorText) "
-            + literal(request.filterValue, type: filterTarget.type)
+        return DictionaryFilter(
+            property: property, comparison: comparison, value: request.filterValue)
     }
 
-    private static func renderRead(
-        _ request: DictionaryRequest,
-        _ target: ScriptingClass,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
+    private static func requiredFilter(
+        _ request: DictionaryRequest, target: ScriptingClass
+    ) throws -> DictionaryFilter? {
+        guard !request.filterProperty.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return nil
+        }
+        return try filter(request, target: target)
+    }
+
+    /// The properties a read may ask for. A named property must exist, be readable, and
+    /// carry a code. Nothing named means the identity defaults: id and name first, then
+    /// the remaining readable properties, at most six all told.
+    private static func readableProperties(
+        _ request: DictionaryRequest, target: ScriptingClass
+    ) throws -> [ScriptingProperty] {
         let named = DictionaryRequest.propertyNames(from: request.propertiesRaw)
-        var requested: [ScriptingProperty] = []
-        if named.isEmpty {
-            // Nothing named means the identity defaults: id and name first, then the
-            // remaining readable properties, at most six all told.
-            let names = target.readablePropertyNames
-                .filter { $0.lowercased() == "id" || $0.lowercased() == "name" }
-            let rest = target.readablePropertyNames
-                .filter { name in !names.contains(name) }
-                .sorted { $0.lowercased() < $1.lowercased() }
-            requested = (names + rest)
-                .compactMap { target.property(named: $0) }
-                .prefix(6).map { $0 }
-        } else {
+        if !named.isEmpty {
+            var requested: [ScriptingProperty] = []
             for name in named {
                 guard let property = target.property(named: name), !property.isWriteOnly else {
                     throw DictionaryQueryError.unknownProperty(
                         name, target.name, target.readablePropertyNames)
                 }
+                guard property.code != nil else {
+                    throw DictionaryQueryError.missingCode(
+                        "property \"\(property.name)\" of \(target.name)")
+                }
                 requested.append(property)
             }
+            return requested
         }
+        let readable = target.properties.filter { !$0.isWriteOnly && $0.code != nil }
+        let identity = readable.filter {
+            ["id", "name"].contains($0.name.lowercased())
+        }
+        let rest = readable
+            .filter { property in !identity.contains(where: { $0.name == property.name }) }
+            .sorted { $0.name.lowercased() < $1.name.lowercased() }
+        let requested = Array((identity + rest).prefix(6))
         guard !requested.isEmpty else {
-            throw DictionaryQueryError.unknownProperty(
-                target.name, target.name, target.readablePropertyNames)
+            throw DictionaryQueryError.missingCode(
+                "no readable property of \(target.name)")
         }
-        let whose = try whoseClause(request, target: target)
-        let limit = max(1, min(request.limit, maximumRows))
-
-        // A read can name one item instead of a collection. Spotify is the shape that
-        // needs this: its dictionary has `application` and a `track` value type, but no
-        // `every track` collection at all, so "what's playing" is `name of current track`.
-        // `root` is validated against a learned property whose type is this class, so the
-        // script can only contain a term the app itself declared.
-        if let root = try validatedRoot(request.root, for: target, in: dictionary) {
-            return singleItemScript(
-                root: root, requested: requested, bundleID: dictionary.bundleID)
-        }
-        // The app object is a singleton as well: `player state` is read directly, never
-        // as "every application".
-        if target.name.lowercased() == "application" {
-            return propertyScript(requested: requested, bundleID: dictionary.bundleID)
-        }
-
-        var lines: [String] = [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\"",
-            "    set _recs to every \(target.name)\(whose)",
-            "    set _out to \"\"",
-            "    set _collected to 0",
-            "    repeat with _r in _recs",
-            "        if _collected >= \(limit) then exit repeat",
-        ]
-        for (index, property) in requested.enumerated() {
-            lines.append("        set _v\(index) to \"\"")
-            lines.append("        try")
-            lines.append("            set _v\(index) to (\(property.name) of _r) as text")
-            lines.append("        end try")
-        }
-        lines.append("        set _line to \(rowExpression(requested))")
-        lines.append("        set _collected to _collected + 1")
-        lines.append("        set _out to _out & _line & linefeed")
-        lines.append("    end repeat")
-        lines.append("    return _out")
-        lines.append("end tell")
-        lines.append("end timeout")
-        return lines.joined(separator: "\n")
+        return requested
     }
 
     /// The learned term that selects one item, or nil when the read wants a collection.
     /// A root is only allowed when it is a property the dictionary declares and that
     /// property's type is the class being read — so `current track` may root a `track`
-    /// read, and anything the app never wrote cannot reach the script.
+    /// read, and anything the app never wrote cannot reach the event.
     private static func validatedRoot(
         _ raw: String, for target: ScriptingClass, in dictionary: AppScriptingDictionary
-    ) throws -> String? {
+    ) throws -> ScriptingProperty {
         let needle = raw.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return nil }
         let roots = dictionary.classes
             .flatMap(\.properties)
             .filter { $0.type.lowercased() == target.name.lowercased() }
@@ -284,269 +415,20 @@ enum AppDictionaryQuery {
             throw DictionaryQueryError.unknownRoot(
                 raw, target.name, Array(Set(roots.map(\.name))).sorted())
         }
-        return match.name
-    }
-
-    /// One item the app names (`current track`), read for its properties. Same row shape
-    /// as a collection read, so the answer text and the chips do not have two formats.
-    private static func singleItemScript(
-        root: String, requested: [ScriptingProperty], bundleID: String
-    ) -> String {
-        (
-            [
-                "with timeout of 15 seconds",
-                "tell application id \"\(bundleID)\"",
-                "    set _r to \(root)",
-            ] + valueLines(requested, of: "_r") + [
-                "    return \(rowExpression(requested))",
-                "end tell",
-                "end timeout",
-            ]
-        ).joined(separator: "\n")
-    }
-
-    /// The app object's own properties (`player state`), read directly.
-    private static func propertyScript(
-        requested: [ScriptingProperty], bundleID: String
-    ) -> String {
-        (
-            [
-                "with timeout of 15 seconds",
-                "tell application id \"\(bundleID)\"",
-            ] + valueLines(requested, of: nil) + [
-                "    return \(rowExpression(requested))",
-                "end tell",
-                "end timeout",
-            ]
-        ).joined(separator: "\n")
-    }
-
-    /// One `try`-guarded `set _vN` per property — an app that refuses one property does
-    /// not lose the rest of the row. `of` nil means the property of the app itself.
-    private static func valueLines(
-        _ requested: [ScriptingProperty], of reference: String?
-    ) -> [String] {
-        var lines: [String] = []
-        for (index, property) in requested.enumerated() {
-            let value = reference.map { "\(property.name) of \($0)" } ?? property.name
-            lines.append("    set _v\(index) to \"\"")
-            lines.append("    try")
-            lines.append("        set _v\(index) to (\(value)) as text")
-            lines.append("    end try")
+        guard match.code != nil else {
+            throw DictionaryQueryError.missingCode(
+                "property \"\(match.name)\" of \(target.name)")
         }
-        return lines
-    }
-
-    private static func rowExpression(_ requested: [ScriptingProperty]) -> String {
-        // Always terminated by the separator: `parseRows` reads a record by that marker,
-        // and without it a one-property read returned "No applications matched" — the
-        // value was there and the parser dropped the line.
-        var expression = "_v0"
-        for index in Array(requested.indices.dropFirst()) {
-            expression += " & \"\(fieldSeparator)\" & _v\(index)"
-        }
-        return expression + " & \"\(fieldSeparator)\""
-    }
-
-    private static func renderCount(
-        _ request: DictionaryRequest,
-        _ target: ScriptingClass,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
-        let whose = try whoseClause(request, target: target)
-        return [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\"",
-            "    return count (every \(target.name)\(whose))",
-            "end tell",
-            "end timeout",
-        ].joined(separator: "\n")
-    }
-
-    private static func renderSet(
-        _ request: DictionaryRequest,
-        _ target: ScriptingClass,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
-        let names = DictionaryRequest.propertyNames(from: request.propertiesRaw)
-        guard names.count == 1 else {
-            throw DictionaryQueryError.unknownProperty(
-                "set expects exactly one property (got \(names.count))",
-                target.name, target.writablePropertyNames)
-        }
-        guard let property = target.property(named: names[0]), !property.isReadOnly else {
-            throw DictionaryQueryError.unknownProperty(
-                names[0], target.name, target.writablePropertyNames)
-        }
-        let whose = try whoseClause(request, target: target)
-        guard !whose.isEmpty else {
-            throw DictionaryQueryError.writeWithoutTarget(target.name)
-        }
-        return [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\"",
-            "    set \(property.name) of (every \(target.name)\(whose)) to "
-                + literal(request.value, type: property.type),
-            "end tell",
-            "end timeout",
-        ].joined(separator: "\n")
-    }
-
-    private static func renderMake(
-        _ request: DictionaryRequest,
-        _ target: ScriptingClass,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
-        var assignments: [String] = []
-        for pairRaw in DictionaryRequest.propertyNames(from: request.propertiesRaw) {
-            // "k=v" pairs; the first '=' splits them, so a value may contain more.
-            guard let separator = pairRaw.firstIndex(of: "=") else {
-                throw DictionaryQueryError.unknownProperty(
-                    pairRaw, target.name, target.writablePropertyNames)
-            }
-            let key = String(pairRaw[pairRaw.startIndex..<separator])
-                .trimmingCharacters(in: .whitespaces)
-            let rawValue = String(pairRaw[pairRaw.index(after: separator)...])
-            guard let property = target.property(named: key), !property.isReadOnly else {
-                throw DictionaryQueryError.unknownProperty(
-                    key, target.name, target.writablePropertyNames)
-            }
-            assignments.append("\(key): \(literal(rawValue, type: property.type))")
-        }
-        let withProperties = assignments.isEmpty
-            ? "" : " with properties {\(assignments.joined(separator: ", "))}"
-        return [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\"",
-            "    make new \(target.name)\(withProperties)",
-            "end tell",
-            "end timeout",
-        ].joined(separator: "\n")
-    }
-
-    private static func renderDelete(
-        _ request: DictionaryRequest,
-        _ target: ScriptingClass,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
-        let whose = try whoseClause(request, target: target)
-        guard !whose.isEmpty else {
-            throw DictionaryQueryError.writeWithoutTarget(target.name)
-        }
-        return [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\"",
-            "    delete (every \(target.name)\(whose))",
-            "end tell",
-            "end timeout",
-        ].joined(separator: "\n")
-    }
-
-    /// One learned command, by name — "pause", "playpause", "next track". The name must
-    /// exist in the manifest, and a command the dictionary classifies outbound never
-    /// renders. The write gate already asked; this is the typed event the card approved.
-    ///
-    /// Named parameters are refused rather than guessed: Spotify's `play track` takes
-    /// "in context", and rendering "play track with in context …" from a model's guess is
-    /// how a typed rung starts inventing AppleScript. Only a text direct parameter is
-    /// accepted, because that is the one shape this builder can render correctly.
-    private static func renderCommand(
-        _ request: DictionaryRequest,
-        _ dictionary: AppScriptingDictionary
-    ) throws -> String {
-        let name = request.propertiesRaw.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, let command = dictionary.command(named: name) else {
-            throw DictionaryQueryError.unknownCommand(
-                name, dictionary.commands.map(\.name))
-        }
-        if command.verbClass == .outbound {
-            throw DictionaryQueryError.outboundCommand(command.name)
-        }
-        if !command.parameterNames.isEmpty {
-            throw DictionaryQueryError.unsupportedCommand(
-                command.name,
-                "it takes named parameters (\(command.parameterNames.joined(separator: ", "))), "
-                    + "which this rung does not render yet. Use the app itself.")
-        }
-        let call: String
-        if let directType = command.directType {
-            guard directType.lowercased() == "text" else {
-                throw DictionaryQueryError.unsupportedCommand(
-                    command.name,
-                    "its argument is \(directType), which this rung does not render yet.")
-            }
-            call = "\(command.name) \(literal(request.value, type: directType))"
-        } else {
-            call = command.name
-        }
-        return [
-            "with timeout of 15 seconds",
-            "tell application id \"\(dictionary.bundleID)\" to \(call)",
-            "end timeout",
-        ].joined(separator: "\n")
-    }
-
-    // MARK: Literals
-
-    /// An AppleScript string literal, with the backslash and quote escaped — the one
-    /// place a value the model sent reaches the script text.
-    static func literal(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
-    }
-
-    /// A literal typed to the property's learned type, so an integer arrives as 42 and a
-    /// boolean as true — a text-typed "42" against an integer property is how a write
-    /// fails the one way that would look like the app's fault.
-    static func literal(_ value: String, type: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespaces)
-        switch type.lowercased() {
-        case "integer":
-            if Int(trimmed) != nil { return trimmed }
-        case "real", "number":
-            if Double(trimmed) != nil { return trimmed }
-        case "boolean", "bool":
-            if ["true", "false"].contains(trimmed.lowercased()) {
-                return trimmed.lowercased()
-            }
-        default:
-            break
-        }
-        return literal(trimmed)
+        return match
     }
 
     // MARK: Output
 
-    /// Parse the read script's output into rows. Each collected row is
-    /// `value ||| value ||| … \u{2026} |||` — a trailing separator always follows a
-    /// complete record, so a line without one is either an empty result or a straggler
-    /// and both read as no rows.
-    static func parseRows(_ output: String, propertyCount: Int) -> [DictionaryQueryRow] {
-        var rows: [DictionaryQueryRow] = []
-        for line in output.split(separator: "\n") {
-            let text = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard text.contains(fieldSeparator) else { continue }
-            var values = text
-                .dropLast(fieldSeparator.count)
-                .components(separatedBy: fieldSeparator)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-            if propertyCount > 0 {
-                while values.count < propertyCount { values.append("") }
-                values = Array(values.prefix(propertyCount))
-            }
-            // A record whose every field failed to read is not a record.
-            guard values.contains(where: { !$0.isEmpty }) else { continue }
-            rows.append(DictionaryQueryRow(values: values))
-            if rows.count >= maximumRows { break }
-        }
-        return rows
-    }
-
     /// Convenience for the executor: the first three meaningful values of a row, made
     /// into title / subtitle / detail.
-    static func rowFields(_ row: DictionaryQueryRow) -> (title: String, subtitle: String, detail: String) {
+    static func rowFields(_ row: DictionaryQueryRow)
+        -> (title: String, subtitle: String, detail: String)
+    {
         let meaningful = row.values.filter { !$0.isEmpty }
         return (
             title: meaningful.first ?? "",

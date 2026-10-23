@@ -281,27 +281,88 @@ enum ScopedAppPromptBuilder {
                 ? "- MCP servers: none linked"
                 : "- MCP servers (read the app's data with the run_mcp_tool tool): "
                     + mcpServers.map(\.name).joined(separator: ", "))
-        // The dictionary rung (P13 #208): learned from the app's own sdef, one typed
-        // query capability. Absent for an app DoraX already serves through a built-in
-        // adapter — the adapter keeps that job (plan §2c).
+        // The dictionary rung (P13 #208): learned from the app's own sdef. The line names
+        // the ids that are actually registered for this turn, and the schema fields each
+        // one requires — the model cannot invent an id or omit a field and still be right.
+        // Absent for an app DoraX already serves through a built-in adapter (plan §2c).
         func dictionaryLine() -> String? {
+            // An app DoraX already serves through an adapter keeps that adapter; the
+            // learned dictionary is not a second way in (plan §2c).
+            guard AppAdapterManager.shared.adapter(for: bundleId) == nil else { return nil }
             guard let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleId),
-                !dictionary.classes.isEmpty
+                !dictionary.classes.isEmpty || !dictionary.commands.isEmpty
             else { return nil }
-            let classes = dictionary.classes.map(\.name).sorted().prefix(10)
-                .joined(separator: ", ")
-            return "- Scripting dictionary (read the app's data directly; no window opens): "
-                + "the live facts above are partial, so for any value they do not show "
-                + "(player state, volume, repeat, track fields) read it here first — do not "
-                + "answer that it is unavailable. "
-                + "classes \(classes). Call it with run_capability(dict.query.\(bundleId), "
-                + "input {class: …, properties?, filterProperty?, filterOperator?, filterValue?, count?, limit?, root?}). "
-                + "When the app has no collection of a class, read one item it names with "
-                + "root: {class: \"track\", root: \"current track\", properties: \"name, artist\"}. "
-                + "Learned commands: "
-                + (dictionary.commands.map(\.name).prefix(10).joined(separator: ", "))
-                + ". Run one with dict.modify {verb: \"command\", command: \"<name>\"}; "
-                + "property changes go through dict.modify too, and every change asks first."
+            let capabilities = CapabilityRegistry.shared.capabilities(for: bundleId)
+            guard capabilities.contains(where: {
+                $0.id.hasPrefix(AppDictionaryCapabilities.idPrefix)
+            }) else {
+                // Learned but not granted for this turn: say the app has a dictionary, but
+                // do not advertise an id the model cannot run.
+                return "- Scripting dictionary: learned for \(appName), but not enabled for "
+                    + "this chat. Do not claim to have read it; ask the user to scope the "
+                    + "chat to \(appName) (or enable it) if the answer needs it."
+            }
+            let query = capabilities.first { $0.id == "dict.query.\(bundleId)" }
+            let modify = capabilities.first { $0.id == "dict.modify.\(bundleId)" }
+            let commandCaps = capabilities.filter { $0.id.hasPrefix("dict.command.") }
+            let outboundCaps = capabilities.filter { $0.id.hasPrefix("dict.outbound.") }
+            func requiredFields(_ capability: AICapability?) -> String {
+                guard let capability else { return "" }
+                let required = capability.inputSchema.fields
+                    .filter(\.required)
+                    .map(\.name)
+                return required.isEmpty ? "no required fields" : required.joined(separator: ", ")
+            }
+            var line = "- Scripting dictionary (typed Apple Events; no window opens): the live "
+                + "facts above are partial, so for any value they do not show (player state, "
+                + "volume, repeat, track fields) read it here first — do not answer that it is "
+                + "unavailable. "
+            let classes = dictionary.classes.filter { $0.code != nil }
+                .prefix(12).map(\.name).joined(separator: ", ")
+            if let query {
+                line += "Classes: \(classes). Read with run_capability(\(query.id), input "
+                    + "{class: …, properties?, filterProperty?, filterOperator?, filterValue?, "
+                    + "count?, limit?, root?}) — required: \(requiredFields(query)). "
+            }
+            if let modify {
+                let writable = dictionary.classes.compactMap { className -> String? in
+                    let properties = className.properties
+                        .filter { !$0.isReadOnly && $0.code != nil }
+                        .prefix(6).map(\.name)
+                    return properties.isEmpty
+                        ? nil : "\(className.name) (\(properties.joined(separator: ", ")))"
+                }.prefix(6).joined(separator: "; ")
+                line += "Change with run_capability(\(modify.id), input {verb: set/make/delete, "
+                    + "class: …, filterProperty?, filterOperator?, filterValue?, property?, value?}) "
+                    + "— required: \(requiredFields(modify)); every change asks first. "
+                if !writable.isEmpty { line += "Writable: \(writable). " }
+            }
+            let roots = dictionary.classes
+                .flatMap(\.properties)
+                .filter { property in
+                    dictionary.classes.contains {
+                        $0.name.lowercased() == property.type.lowercased()
+                    }
+                }
+            if let root = roots.first {
+                line += "When a class is not a collection in this app, read one item it names "
+                    + "with root, e.g. {class: \"\(root.type)\", root: \"\(root.name)\"}. "
+            }
+            if !commandCaps.isEmpty {
+                line += "Learned commands (each its own capability, use its exact id): "
+                    + commandCaps.prefix(12)
+                    .map { "\($0.id) — \($0.title)" }
+                    .joined(separator: "; ")
+                    + ". "
+            }
+            if !outboundCaps.isEmpty {
+                line += "Outbound commands (they send from the account or app; each asks first): "
+                    + outboundCaps.prefix(8)
+                    .map { "\($0.id) — \($0.title)" }
+                    .joined(separator: "; ")
+                    + "."
+            }
+            return line
         }
         if let dictionaryLine = dictionaryLine() {
             lines.append(dictionaryLine)
@@ -494,6 +555,38 @@ struct ScopeInventory {
                 Group(
                     title: "Built-in tools", symbol: "sparkles",
                     items: Array(builtIns.prefix(12))))
+        }
+
+        // The dictionary rung's learned manifest (P13 #208). Read straight from the store,
+        // so a scan that lands after this panel opened is reflected as soon as the view is
+        // told (`.appDictionaryChanged`), not frozen at whatever the cache held at open.
+        if AppAdapterManager.shared.adapter(for: bundleId) == nil,
+            let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleId),
+            !dictionary.classes.isEmpty || !dictionary.commands.isEmpty
+        {
+            var items: [String] = []
+            let readableClasses = dictionary.classes.filter { cls in
+                cls.properties.contains { !$0.isWriteOnly && $0.code != nil }
+            }
+            items.append(contentsOf: readableClasses.prefix(5).map { cls in
+                let count = cls.properties.count { !$0.isWriteOnly && $0.code != nil }
+                return "\(cls.name) — \(count) readable "
+                    + (count == 1 ? "property" : "properties")
+            })
+            let runnable = dictionary.commands.filter {
+                $0.code != nil && $0.eventClass != nil && $0.parameterNames.isEmpty
+            }
+            if !runnable.isEmpty {
+                items.append(
+                    "Commands — " + runnable.prefix(6).map(\.name).joined(separator: ", "))
+            }
+            let registered = CapabilityRegistry.shared.capabilities(for: bundleId)
+                .contains { $0.id.hasPrefix(AppDictionaryCapabilities.idPrefix) }
+            if !registered {
+                items.append("Learned, not enabled for this chat yet")
+            }
+            groups.append(
+                Group(title: "Scripting dictionary", symbol: "applescript", items: items))
         }
 
         let servers = MCPServerManager.shared.servers(forBundleId: bundleId)

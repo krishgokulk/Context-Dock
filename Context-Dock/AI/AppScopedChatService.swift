@@ -1142,7 +1142,8 @@ enum AppScopedChatService {
     /// routing: labels such as History entries can answer a question, while pressing one
     /// would navigate the app and answer nothing about the list as a whole.
     static func menuSnapshotEvidence(
-        query: String, appName: String, paths: [[String]], age: TimeInterval?
+        query: String, appName: String, paths: [[String]], age: TimeInterval?,
+        hasDictionaryReader: Bool = false
     ) -> ObservedMenuEvidence? {
         let normalized = query.lowercased()
         let queryWords = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
@@ -1161,9 +1162,14 @@ enum AppScopedChatService {
         // "what's playing?" matched it and was answered with that list — from a snapshot,
         // with no reader tried. A present-tense media question must fall through to a
         // reader; only a question about the menu itself may be answered by the menu.
+        // This only applies when the app actually HAS a reader (a learned scripting
+        // dictionary here). Suppressing the menu for every app made the menu evidence
+        // disappear for apps whose only truthful answer is the menu — a video player with
+        // no dictionary was told nothing at all when the snapshot did hold the answer.
         let presentTenseMedia: Set<String> = ["playing", "watching", "listening"]
         let menuWords: Set<String> = ["menu", "menus", "command", "commands", "option", "options"]
-        if !queryWords.isDisjoint(with: presentTenseMedia),
+        if hasDictionaryReader,
+            !queryWords.isDisjoint(with: presentTenseMedia),
             queryWords.isDisjoint(with: menuWords)
         {
             return nil
@@ -1248,9 +1254,12 @@ enum AppScopedChatService {
     }
 
     static func menuSnapshotFactBlock(
-        query: String, appName: String, paths: [[String]], age: TimeInterval?
+        query: String, appName: String, paths: [[String]], age: TimeInterval?,
+        hasDictionaryReader: Bool = false
     ) -> String? {
-        menuSnapshotEvidence(query: query, appName: appName, paths: paths, age: age)?.promptBlock
+        menuSnapshotEvidence(
+            query: query, appName: appName, paths: paths, age: age,
+            hasDictionaryReader: hasDictionaryReader)?.promptBlock
     }
 
     static func observedMenuEvidence(
@@ -1273,8 +1282,13 @@ enum AppScopedChatService {
             age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleID)
         }
         let paths = items.filter(\.isLeaf).map(\.path)
+        // Only a dictionary-backed app has a better reader to fall through to, so only
+        // then does a present-tense media question suppress the menu evidence.
+        let hasDictionaryReader = AppDictionaryStore.shared
+            .dictionary(forBundleID: bundleID).map { !$0.isEmpty } ?? false
         return menuSnapshotEvidence(
-            query: query, appName: appName, paths: paths, age: age)
+            query: query, appName: appName, paths: paths, age: age,
+            hasDictionaryReader: hasDictionaryReader)
     }
 
     static func observedMenuFacts(bundleID: String, appName: String, query: String) -> String? {
@@ -1362,13 +1376,35 @@ enum AppScopedChatService {
         // until some other chat happened to refresh it. The hand check showed exactly
         // that: Spotify answered "what's playing" from its window title, "list tracks"
         // said "no linked reader", and "Can do here" listed menu commands only.
-        // Refresh here, and kick the store's version check so a manifest from an older
-        // app version is re-scanned (sdef is a command-line reader — no launch, no
-        // AppleScript, and the store no-ops when the cache is current).
-        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        //
+        // A cold cache must not lose the first turn: await the scan here, for the app this
+        // thread is scoped to and any app the user attached. The grant is explicit — the
+        // thread's own app, plus the attached apps; scanning alone never registers
+        // anything — and the prompt below is built from the manifest that landed.
+        var dictionaryGrants: Set<String> = []
         if case .app(let bundleID) = scope, !bundleID.isEmpty {
-            AppDictionaryStore.shared.kickScanIfStale(bundleID: bundleID, appName: appName)
+            dictionaryGrants.insert(bundleID)
         }
+        for name in extraAppNames {
+            let bundleID =
+                NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == name }?.bundleIdentifier
+                ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+            if let bundleID { dictionaryGrants.insert(bundleID) }
+        }
+        for bundleID in dictionaryGrants
+        where AppAdapterManager.shared.adapter(for: bundleID) == nil {
+            // The chat's own app name is the human one; an attached app's name is resolved
+            // by the store from its bundle, so a folder/CLI thread never labels app B as A.
+            var name = ""
+            if case .app(let scopedBundleID) = scope, scopedBundleID == bundleID {
+                name = appName
+            }
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: bundleID, appName: name, grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
 
         // Local inspection precedes app access and specialist bridges. "Is Claude Code
         // installed?" is not a request for Claude Code to inspect a repository, and "is

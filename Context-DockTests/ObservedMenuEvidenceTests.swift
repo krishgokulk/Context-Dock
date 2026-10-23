@@ -100,7 +100,7 @@ struct ObservedMenuEvidenceTests {
 
     /// Present-tense playback is live state. Spotify's Playback menu holds Next/Pause/
     /// Previous, and "what's playing?" was answered with that list instead of the track.
-    @Test func whatIsPlayingNowNeverComesFromAMenu() {
+    @Test func whatIsPlayingNowNeverComesFromAMenuWhenTheAppHasAReader() {
         let spotifyMenus: [[String]] = [
             ["Playback", "Next"],
             ["Playback", "Pause"],
@@ -112,7 +112,8 @@ struct ObservedMenuEvidenceTests {
             "what am i listening to?",
         ] {
             let evidence = AppScopedChatService.menuSnapshotEvidence(
-                query: query, appName: "Spotify", paths: spotifyMenus, age: 2_580)
+                query: query, appName: "Spotify", paths: spotifyMenus, age: 2_580,
+                hasDictionaryReader: true)
             #expect(
                 evidence == nil,
                 "\"\(query)\" is about live state; the Playback menu cannot answer it")
@@ -122,5 +123,19 @@ struct ObservedMenuEvidenceTests {
             query: "what's in the playback menu?", appName: "Spotify", paths: spotifyMenus,
             age: 2_580)
         #expect(menuQuestion?.root.lowercased() == "playback")
+    }
+
+    @Test func anAppWithoutAReaderStillAnswersFromItsMenu() {
+        // A video player with no scripting dictionary has no better reader; suppressing
+        // its menu evidence would turn a truthful answer into "I don't know". The
+        // present-tense rule is for apps whose dictionary can actually answer.
+        let menus: [[String]] = [
+            ["Playback", "Pause"], ["Playback", "Next"],
+        ]
+        let evidence = AppScopedChatService.menuSnapshotEvidence(
+            query: "what's playing?", appName: "Some Player", paths: menus, age: 30,
+            hasDictionaryReader: false)
+        #expect(evidence != nil)
+        #expect(evidence?.root.lowercased() == "playback")
     }
 }

@@ -35,6 +35,28 @@ struct ScriptingProperty: Codable, Equatable, Sendable {
     /// The sdef description, capped — it goes into nothing per-turn, but the manifest
     /// should stay small on disk.
     let summary: String
+    /// The property's four-character sdef code ('pnam'). A typed Apple Event addresses a
+    /// property by this code, so a property without one cannot be read or written by the
+    /// rung and is left out of the readable/writable lists below.
+    var code: String? = nil
+}
+
+/// One value an enumeration can take, with the four-character code the app sends.
+struct ScriptingEnumerationCase: Codable, Equatable, Sendable {
+    let name: String
+    let code: String
+}
+
+/// An sdef enumeration (`player state` is stopped/playing/paused). Read replies carry the
+/// code; the name is what the user and the model read.
+struct ScriptingEnumeration: Codable, Equatable, Sendable {
+    let name: String
+    let code: String
+    var cases: [ScriptingEnumerationCase]
+
+    func name(forCode code: String) -> String? {
+        cases.first { $0.code == code }?.name
+    }
 }
 
 /// What one scripting class is, plus the properties and contained classes it declares.
@@ -50,6 +72,8 @@ struct ScriptingClass: Codable, Equatable, Sendable {
     var elementTypes: [String]
     /// Commands this class answers for, from `<responds-to>`.
     var respondsTo: [String]
+    /// The class's four-character sdef code ('mssg').
+    var code: String? = nil
 
     func property(named: String) -> ScriptingProperty? {
         let needle = named.lowercased()
@@ -66,6 +90,13 @@ struct ScriptingClass: Codable, Equatable, Sendable {
     }
 }
 
+/// One command parameter, as declared in the sdef.
+struct ScriptingParameter: Codable, Equatable, Sendable {
+    let name: String
+    let type: String
+    var code: String? = nil
+}
+
 /// What one scripting command is, already classified for the gate.
 struct ScriptingCommand: Codable, Equatable, Sendable {
     let name: String
@@ -74,11 +105,39 @@ struct ScriptingCommand: Codable, Equatable, Sendable {
     let verbClass: CLIVerbClass
     /// The type of the direct parameter, when the command takes one.
     let directType: String?
-    let parameterNames: [String]
+    var parameters: [ScriptingParameter] = []
+    /// The command's four-character event id ('Paus'), and the event class it is sent to
+    /// ('spfy'). sdef often prints both together in `code` ("spfyPaus"); the parser splits
+    /// that into these two fields.
+    var code: String? = nil
+    var eventClass: String? = nil
+
+    var parameterNames: [String] { parameters.map(\.name) }
+}
+
+extension ScriptingCommand {
+    /// Old manifests (schema 0/1) have no `parameters`/`code`/`eventClass`; they must still
+    /// decode, because the store compares the schema to decide whether to re-scan.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        suite = try container.decode(String.self, forKey: .suite)
+        verbClass = try container.decode(CLIVerbClass.self, forKey: .verbClass)
+        directType = try container.decodeIfPresent(String.self, forKey: .directType)
+        parameters = try container.decodeIfPresent(
+            [ScriptingParameter].self, forKey: .parameters) ?? []
+        code = try container.decodeIfPresent(String.self, forKey: .code)
+        eventClass = try container.decodeIfPresent(String.self, forKey: .eventClass)
+    }
 }
 
 /// A whole app's learned scripting manifest.
 struct AppScriptingDictionary: Codable, Equatable, Sendable {
+    /// Bumped whenever the manifest gains a field a stored copy may not have (codes,
+    /// enumerations). A cached manifest below this is re-scanned rather than used, so the
+    /// typed executor never meets half a manifest.
+    static let currentSchema = 2
+
     let bundleID: String
     let appName: String
     /// The app version the manifest was scanned from. A version change is what makes
@@ -87,6 +146,8 @@ struct AppScriptingDictionary: Codable, Equatable, Sendable {
     var parsedAt: Date
     var classes: [ScriptingClass]
     var commands: [ScriptingCommand]
+    var enumerations: [ScriptingEnumeration] = []
+    var schema: Int = AppScriptingDictionary.currentSchema
 
     var isEmpty: Bool { classes.isEmpty && commands.isEmpty }
 
@@ -112,6 +173,23 @@ struct AppScriptingDictionary: Codable, Equatable, Sendable {
             + (readable.isEmpty ? "" : " (\(readable))")
             + " and \(commands.count) command\(commands.count == 1 ? "" : "s") — "
             + "\(writes) are writes that ask first."
+    }
+}
+
+extension AppScriptingDictionary {
+    /// `schema`/`enumerations` are newer than the first stored manifests; a missing schema
+    /// decodes as 0, which the store treats as stale and re-scans.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bundleID = try container.decode(String.self, forKey: .bundleID)
+        appName = try container.decode(String.self, forKey: .appName)
+        version = try container.decode(String.self, forKey: .version)
+        parsedAt = try container.decode(Date.self, forKey: .parsedAt)
+        classes = try container.decode([ScriptingClass].self, forKey: .classes)
+        commands = try container.decode([ScriptingCommand].self, forKey: .commands)
+        enumerations = try container.decodeIfPresent(
+            [ScriptingEnumeration].self, forKey: .enumerations) ?? []
+        schema = try container.decodeIfPresent(Int.self, forKey: .schema) ?? 0
     }
 }
 
@@ -221,12 +299,16 @@ enum AppSdefParser {
                 verbClass: AppDictionaryCommandClassifier.verbClass(ofCommandName: raw.name)
                     ?? .write,
                 directType: raw.directType,
-                parameterNames: raw.parameterNames)
+                parameters: raw.parameters,
+                code: raw.eventID,
+                eventClass: raw.eventClass)
         }
 
         return AppScriptingDictionary(
             bundleID: bundleID, appName: appName, version: version,
-            parsedAt: Date(), classes: classes, commands: commands)
+            parsedAt: Date(), classes: classes, commands: commands,
+            enumerations: delegate.collectedEnumerations,
+            schema: AppScriptingDictionary.currentSchema)
     }
 
     // MARK: XML delegate
@@ -237,20 +319,33 @@ enum AppSdefParser {
         /// property inside it.
         private struct PendingProperty {
             let name: String
+            let code: String?
             let access: String
             let description: String
             var hidden: Bool
             var nestedTypes: [String]
         }
 
+        private struct PendingEnumeration {
+            let name: String
+            let code: String
+            var cases: [ScriptingEnumerationCase] = []
+        }
+
         private var suiteName = ""
+        private var suiteCode = ""
         private var pendingClass: ScriptingClassBuilder?
         private var pendingCommand: ScriptingCommandBuilder?
         private var pendingProperty: PendingProperty?
+        private var pendingEnumeration: PendingEnumeration?
 
         var collectedClasses: [ScriptingClass] = []
         var collectedExtensions: [ScriptingClass] = []
-        var collectedCommands: [(name: String, suite: String, hidden: Bool, directType: String?, parameterNames: [String])] = []
+        var collectedEnumerations: [ScriptingEnumeration] = []
+        var collectedCommands: [(
+            name: String, suite: String, hidden: Bool, directType: String?,
+            eventClass: String?, eventID: String?, parameters: [ScriptingParameter]
+        )] = []
 
         private func trim(_ raw: String?) -> String {
             (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -269,9 +364,21 @@ enum AppSdefParser {
             switch elementName {
             case "suite":
                 suiteName = trim(attributeDict["name"])
+                suiteCode = trim(attributeDict["code"])
+            case "enumeration":
+                pendingEnumeration = PendingEnumeration(
+                    name: trim(attributeDict["name"]), code: trim(attributeDict["code"]))
+            case "enumerator":
+                if let name = attributeDict["name"], let code = attributeDict["code"],
+                    !trim(name).isEmpty, !trim(code).isEmpty
+                {
+                    pendingEnumeration?.cases.append(
+                        ScriptingEnumerationCase(name: trim(name), code: trim(code)))
+                }
             case "class":
                 pendingClass = ScriptingClassBuilder(
                     name: trim(attributeDict["name"]), suite: suiteName,
+                    code: trim(attributeDict["code"]),
                     plural: trim(attributeDict["plural"]).isEmpty
                         ? trim(attributeDict["name"]) : trim(attributeDict["plural"]),
                     hidden: hidden)
@@ -279,10 +386,12 @@ enum AppSdefParser {
                 // Extends the Standard application; the merge pass below applies it.
                 pendingClass = ScriptingClassBuilder(
                     name: trim(attributeDict["extends"]), suite: suiteName,
+                    code: trim(attributeDict["code"]),
                     plural: trim(attributeDict["extends"]), hidden: hidden, isExtension: true)
             case "command", "event", "application-command":
                 pendingCommand = ScriptingCommandBuilder(
-                    name: trim(attributeDict["name"]), suite: suiteName, hidden: hidden)
+                    name: trim(attributeDict["name"]), suite: suiteName,
+                    code: trim(attributeDict["code"]), suiteCode: suiteCode, hidden: hidden)
             case "responds-to":
                 if let target = trim(attributeDict["command"]).isEmpty ? nil : attributeDict["command"] {
                     pendingClass?.respondsTo.append(target)
@@ -290,6 +399,7 @@ enum AppSdefParser {
             case "property":
                 pendingProperty = PendingProperty(
                     name: trim(attributeDict["name"]),
+                    code: trim(attributeDict["code"]).isEmpty ? nil : trim(attributeDict["code"]),
                     access: trim(attributeDict["access"]),
                     description: summary(attributeDict["description"]),
                     hidden: hidden,
@@ -307,7 +417,15 @@ enum AppSdefParser {
                 pendingCommand?.nestedDirectTypeCounter += 1
             case "parameter":
                 if !hidden {
-                    pendingCommand?.parameterNames.append(trim(attributeDict["name"]))
+                    let name = trim(attributeDict["name"])
+                    let type = trim(attributeDict["type"])
+                    let code = trim(attributeDict["code"])
+                    if !name.isEmpty {
+                        pendingCommand?.parameters.append(
+                            ScriptingParameter(
+                                name: name, type: type.lowercased(),
+                                code: code.isEmpty ? nil : code))
+                    }
                 }
             case "type":
                 // Nested: `<type type="signature"/>` in a property, or
@@ -331,6 +449,16 @@ enum AppSdefParser {
             switch elementName {
             case "suite":
                 suiteName = ""
+                suiteCode = ""
+            case "enumeration":
+                if let finished = pendingEnumeration, !finished.name.isEmpty,
+                    !finished.code.isEmpty, !finished.cases.isEmpty
+                {
+                    collectedEnumerations.append(
+                        ScriptingEnumeration(
+                            name: finished.name, code: finished.code, cases: finished.cases))
+                }
+                pendingEnumeration = nil
             case "class", "class-extension":
                 if let finished = pendingClass {
                     // Hidden or nameless declarations are dropped whole: the manifest is
@@ -354,7 +482,8 @@ enum AppSdefParser {
                             (
                                 name: finished.name, suite: finished.suite,
                                 hidden: finished.hidden, directType: finished.resolvedDirectType,
-                                parameterNames: finished.parameterNames
+                                eventClass: finished.eventClass, eventID: finished.eventID,
+                                parameters: finished.parameters
                             ))
                     }
                     pendingCommand = nil
@@ -373,7 +502,8 @@ enum AppSdefParser {
                         type: type.lowercased(),
                         isReadOnly: finished.access == "r",
                         isWriteOnly: finished.access == "w",
-                        summary: finished.description)
+                        summary: finished.description,
+                        code: finished.code)
                     owner.properties.append(property)
                 }
                 pendingProperty = nil
@@ -395,6 +525,7 @@ enum AppSdefParser {
     private final class ScriptingClassBuilder {
         let name: String
         let suite: String
+        let code: String
         let plural: String
         let hidden: Bool
         /// A class-extension extends an existing class by name (`extends="application"`).
@@ -403,9 +534,13 @@ enum AppSdefParser {
         var elementTypes: [String] = []
         var respondsTo: [String] = []
 
-        init(name: String, suite: String, plural: String, hidden: Bool, isExtension: Bool = false) {
+        init(
+            name: String, suite: String, code: String, plural: String, hidden: Bool,
+            isExtension: Bool = false
+        ) {
             self.name = name
             self.suite = suite
+            self.code = code
             self.plural = plural
             self.hidden = hidden
             self.isExtension = isExtension
@@ -414,23 +549,47 @@ enum AppSdefParser {
         func manifest() -> ScriptingClass {
             ScriptingClass(
                 name: name, suite: suite, plural: plural, properties: properties,
-                elementTypes: elementTypes, respondsTo: respondsTo)
+                elementTypes: elementTypes, respondsTo: respondsTo,
+                code: code.isEmpty ? nil : code)
         }
+    }
+
+    /// Splits an sdef command `code` into the event class and event id a typed Apple
+    /// Event needs. sdef prints the pair together for most apps (`spfyPaus` → class
+    /// `spfy`, id `Paus`), a bare id for a few, and `????`/`****` for the Standard Suite.
+    static func splitCommandCode(
+        _ code: String, suiteCode: String
+    ) -> (eventClass: String?, eventID: String?) {
+        let chars = Array(code)
+        if chars.count == 8 {
+            return (String(chars[0..<4]), String(chars[4..<8]))
+        }
+        if chars.count == 4 {
+            let usableSuite = suiteCode.count == 4 && !suiteCode.contains("?")
+                && !suiteCode.contains("*")
+            return (usableSuite ? suiteCode : nil, code)
+        }
+        return (nil, nil)
     }
 
     private final class ScriptingCommandBuilder {
         let name: String
         let suite: String
         let hidden: Bool
+        let eventClass: String?
+        let eventID: String?
         var directType: String?
         var nestedDirectTypeCounter = 0
         var nestedDirectTypeName: String?
-        var parameterNames: [String] = []
+        var parameters: [ScriptingParameter] = []
 
-        init(name: String, suite: String, hidden: Bool) {
+        init(name: String, suite: String, code: String, suiteCode: String, hidden: Bool) {
             self.name = name
             self.suite = suite
             self.hidden = hidden
+            let split = AppSdefParser.splitCommandCode(code, suiteCode: suiteCode)
+            self.eventClass = split.eventClass
+            self.eventID = split.eventID
         }
 
         /// An attribute-declared direct type, else the nested `<type name="…">` one.

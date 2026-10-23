@@ -1,11 +1,12 @@
 // AppDictionaryRegistrationTests.swift
 // Context-DockTests
 //
-// How the dictionary rung surfaces (P13 #208): one `dict.query.<bundleID>` and one
-// `dict.modify.<bundleID>` pair per learned app, registered off the store on every
-// preflight — and skipped for an app a built-in adapter already serves, so the rung
-// never stands in Mail's, Messages' or Music's way (plan §2c). The registration path
-// touches only in-memory state; no scan, no sdef, no Apple Event — offline.
+// How the dictionary rung surfaces (P13 #208): `dict.query.<bundleID>`,
+// `dict.modify.<bundleID>`, and one capability per learned command — registered off the
+// store on every preflight, only for an app the turn granted, and skipped for an app a
+// built-in adapter already serves, so the rung never stands in Mail's, Messages' or
+// Music's way (plan §2c). Registration touches only in-memory state; no scan, no sdef, no
+// Apple Event — offline.
 
 import Foundation
 import Testing
@@ -19,7 +20,7 @@ struct AppDictionaryRegistrationTests {
     private static let testBundleID = "com.dictrung.testapp"
     /// The prefixes registration and the fake adapter use, for clean-up between tests.
     private static let registryPrefixes = [
-        "dict.query.", "dict.modify.", "test.adapter.",
+        "dict.query.", "dict.modify.", "dict.command.", "dict.outbound.", "test.adapter.",
     ]
 
     private func learnedManifest() -> AppScriptingDictionary {
@@ -32,14 +33,43 @@ struct AppDictionaryRegistrationTests {
         for prefix in Self.registryPrefixes {
             CapabilityRegistry.shared.removeCapabilities(withPrefixes: [prefix])
         }
+        AppDictionaryCapabilities.setActiveGrants([])
         AppDictionaryStore.shared._injectForTesting(
             bundleID: Self.testBundleID, manifest: nil)
     }
 
-    // MARK: The pair
+    // MARK: The grant boundary
 
-    @Test func registersQueryAndModifyForALearnedApp() throws {
+    @Test func nothingIsRegisteredUntilTheTurnGrantsTheApp() throws {
         reset()
+        AppDictionaryStore.shared._injectForTesting(
+            bundleID: Self.testBundleID, manifest: learnedManifest())
+
+        AppDictionaryCapabilities.registerLearned(in: CapabilityRegistry.shared)
+
+        // Discovery is not consent: a manifest on disk grants nothing.
+        #expect(CapabilityRegistry.shared.capability(
+            id: "dict.query." + Self.testBundleID) == nil)
+        #expect(CapabilityRegistry.shared.capability(
+            id: "dict.modify." + Self.testBundleID) == nil)
+        #expect(!CapabilityRegistry.shared.capabilities(for: Self.testBundleID)
+            .contains { $0.id.hasPrefix("dict.command.") })
+
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
+        AppDictionaryCapabilities.registerLearned(in: CapabilityRegistry.shared)
+
+        #expect(CapabilityRegistry.shared.capability(
+            id: "dict.query." + Self.testBundleID) != nil)
+        #expect(CapabilityRegistry.shared.capability(
+            id: "dict.modify." + Self.testBundleID) != nil)
+        reset()
+    }
+
+    // MARK: The pair and the per-command capabilities
+
+    @Test func registersQueryModifyAndOneCapabilityPerCommand() throws {
+        reset()
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
         AppDictionaryStore.shared._injectForTesting(
             bundleID: Self.testBundleID, manifest: learnedManifest())
 
@@ -60,13 +90,53 @@ struct AppDictionaryRegistrationTests {
         #expect(modify.riskLevel == .medium)
         #expect(modify.needsRunningApp)
         #expect(modify.runsWithoutAdapter)
-        // Commands ("pause") are writable through the same gated card.
-        #expect(modify.inputSchema.fields.contains { $0.name == "command" })
+        // Commands have their own ids now; the modify card is set/make/delete only.
+        #expect(!modify.inputSchema.fields.contains { $0.name == "command" })
+        #expect(modify.inputSchema.fields.contains { $0.name == "verb" })
+
+        // "pause" is one learned command with its own executable id.
+        let pause = try #require(
+            CapabilityRegistry.shared.capability(
+                id: "dict.command." + Self.testBundleID + ".pause"))
+        #expect(pause.appBundleID == Self.testBundleID)
+        #expect(pause.needsRunningApp)
+        #expect(pause.runsWithoutAdapter)
+        #expect(pause.title.contains("Pause"))
+        // A command with a named parameter cannot be typed yet, so it is not advertised.
+        #expect(CapabilityRegistry.shared.capability(
+            id: "dict.command." + Self.testBundleID + ".play-track") == nil)
+        reset()
+    }
+
+    @Test func anOutboundCommandGetsItsOwnHighRiskCapability() throws {
+        reset()
+        // A minimal learned manifest whose one command the sdef classifies outbound. This
+        // is the P6/P13 shape: an outbound command is represented, gated, not erased.
+        var dictionary = learnedManifest()
+        dictionary.commands = [
+            ScriptingCommand(
+                name: "send track", suite: "DictApp Suite", verbClass: .outbound,
+                directType: "text", parameters: [], code: "send", eventClass: "dcta")
+        ]
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
+        AppDictionaryStore.shared._injectForTesting(
+            bundleID: Self.testBundleID, manifest: dictionary)
+
+        AppDictionaryCapabilities.registerLearned(in: CapabilityRegistry.shared)
+
+        let outbound = try #require(
+            CapabilityRegistry.shared.capability(
+                id: "dict.outbound." + Self.testBundleID + ".send-track"))
+        #expect(outbound.riskLevel == .high)
+        #expect(outbound.needsRunningApp)
+        #expect(outbound.title.lowercased().contains("asks first"))
+        #expect(outbound.inputSchema.fields.contains { $0.name == "value" })
         reset()
     }
 
     @Test func skipsAnAppTheAdapterRungAlreadyServes() throws {
         reset()
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
         AppDictionaryStore.shared._injectForTesting(
             bundleID: Self.testBundleID, manifest: learnedManifest())
         // The fake stands for a built-in adapter: owned by the app the manifest targets.
@@ -87,11 +157,14 @@ struct AppDictionaryRegistrationTests {
             id: "dict.query." + Self.testBundleID) == nil)
         #expect(CapabilityRegistry.shared.capability(
             id: "dict.modify." + Self.testBundleID) == nil)
+        #expect(!CapabilityRegistry.shared.capabilities(for: Self.testBundleID)
+            .contains { $0.id.hasPrefix("dict.command.") })
         reset()
     }
 
     @Test func reregisteringDropsASinceRemovedManifest() throws {
         reset()
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
         AppDictionaryStore.shared._injectForTesting(
             bundleID: Self.testBundleID, manifest: learnedManifest())
         AppDictionaryCapabilities.registerLearned(in: CapabilityRegistry.shared)
@@ -106,6 +179,8 @@ struct AppDictionaryRegistrationTests {
             id: "dict.query." + Self.testBundleID) == nil)
         #expect(CapabilityRegistry.shared.capability(
             id: "dict.modify." + Self.testBundleID) == nil)
+        #expect(!CapabilityRegistry.shared.capabilities(for: Self.testBundleID)
+            .contains { $0.id.hasPrefix("dict.command.") })
         reset()
     }
 
@@ -114,8 +189,9 @@ struct AppDictionaryRegistrationTests {
         // Absence caching puts empty manifests in the store (a non-scriptable app);
         // the rung stays invisible for it.
         let empty = AppScriptingDictionary(
-            bundleID: Self.testBundleID, appName: "Dic珍App", version: "1",
+            bundleID: Self.testBundleID, appName: "DictApp", version: "1",
             parsedAt: Date(), classes: [], commands: [])
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
         AppDictionaryStore.shared._injectForTesting(
             bundleID: Self.testBundleID, manifest: empty)
 
@@ -125,6 +201,23 @@ struct AppDictionaryRegistrationTests {
             id: "dict.query." + Self.testBundleID) == nil)
         #expect(CapabilityRegistry.shared.capability(
             id: "dict.modify." + Self.testBundleID) == nil)
+        reset()
+    }
+
+    @Test func thePromptNamesRegisteredIdsAndTheirRequiredFields() throws {
+        reset()
+        AppDictionaryCapabilities.setActiveGrants([Self.testBundleID])
+        AppDictionaryStore.shared._injectForTesting(
+            bundleID: Self.testBundleID, manifest: learnedManifest())
+        AppDictionaryCapabilities.registerLearned(in: CapabilityRegistry.shared)
+
+        let query = try #require(
+            CapabilityRegistry.shared.capability(id: "dict.query." + Self.testBundleID))
+        let modify = try #require(
+            CapabilityRegistry.shared.capability(id: "dict.modify." + Self.testBundleID))
+        let required = query.inputSchema.fields.filter(\.required).map(\.name)
+        #expect(required == ["class"])
+        #expect(modify.inputSchema.fields.filter(\.required).map(\.name) == ["verb", "class"])
         reset()
     }
 }

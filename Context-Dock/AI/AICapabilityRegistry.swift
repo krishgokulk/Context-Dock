@@ -304,7 +304,15 @@ final class CapabilityRegistry {
     /// enable flags. registerBuiltIns only runs once at launch, so toggling an MCP
     /// in Settings did nothing until relaunch — call this before every chat (and on
     /// toggle) so enabled MCPs are immediately available in both chat surfaces.
-    func refreshBuiltInMCPs() {
+    /// - Parameter dictionaryGrants: The apps this turn is allowed to reach through their
+    ///   scripting dictionaries. A learned manifest is discovered by scanning, but scanning
+    ///   an installed app is not consent, so the rung registers nothing until a surface says
+    ///   which apps the user brought into the turn. Pass a concrete set (possibly empty) from
+    ///   a per-turn preflight; pass nil to re-register the existing set after a scan lands.
+    func refreshBuiltInMCPs(dictionaryGrants: Set<String>? = nil) {
+        if let dictionaryGrants {
+            AppDictionaryCapabilities.setActiveGrants(dictionaryGrants)
+        }
         let families: [(prefix: String, enabled: Bool, register: () -> Void)] = [
             ("notes.", AppSettings.shared.noteMCPEnabled,
                 { AppleNotesMCPCapabilities.register(in: self) }),
@@ -335,8 +343,9 @@ final class CapabilityRegistry {
                 }
             }
         }
-        // The dictionary rung (P13 #208): learned manifests ride the same preflight.
-        // Apps that already have a built-in adapter keep it, inside the helper.
+        // The dictionary rung (P13 #208): learned manifests ride the same preflight, but
+        // only for the apps this turn granted. Apps that already have a built-in adapter
+        // keep it, inside the helper.
         AppDictionaryCapabilities.registerLearned(in: self)
     }
 
