@@ -92,8 +92,10 @@ enum AppleNotesMCPCapabilities {
                 ChatResultRowCollector.shared.add(
                     results.map { note in
                         ChatResultRow(
-                            kind: .note, id: note.id, title: note.title,
-                            subtitle: note.folder, detail: note.snippet,
+                            kind: .note, id: note.id,
+                            title: NotePreviewRedaction.redact(note.title),
+                            subtitle: note.folder,
+                            detail: NotePreviewRedaction.redact(note.snippet),
                             bundleID: "com.apple.Notes", date: note.modifiedDate)
                     },
                     scope: request.chatScope)
@@ -605,5 +607,26 @@ enum AppleNotesMCPCapabilities {
         }
         md = md.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+
+/// Search metadata is useful UI context but may contain credentials. Redact common token
+/// shapes before a title/snippet reaches the transcript or screenshot surface. Moved here from
+/// the Notes keyword shortcut (issue 204) so the `notes.search` rows keep the protection.
+enum NotePreviewRedaction {
+    static func redact(_ text: String) -> String {
+        let patterns = [
+            #"\b(?:sk|ghp|github_pat|xox[baprs]|AIza)[-_A-Za-z0-9]{12,}\b"#,
+            #"\b(?:api[_ -]?key|token|secret|password)\s*[:=]\s*\S+"#,
+        ]
+        return patterns.reduce(text) { value, pattern in
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern, options: [.caseInsensitive])
+            else { return value }
+            return regex.stringByReplacingMatches(
+                in: value, range: NSRange(value.startIndex..., in: value),
+                withTemplate: "[redacted]")
+        }
     }
 }
