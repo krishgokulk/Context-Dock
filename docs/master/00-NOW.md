@@ -10,9 +10,9 @@
 
 ## In progress
 
-Coordinator: Planner (Claude Code session) — since 2026-10-25 18:02 UTC. **Fresh `/planner` session: take over here** (previous one ended to save tokens — long sessions re-bill a big context; the repo is the handoff). On takeover rewrite this line.
+Coordinator: Planner (Claude Code session) — since 2026-10-25 ~21:30 UTC (fresh session took over; previous ended to save tokens). On takeover rewrite this line.
 
-**Fresh planner, start here (2026-10-25 ~21:00 UTC):** builder session live on **#318** (unify Dock surface) — watch for its design note, relay it to the owner, then review. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidates not yet `ready`: **#316** (refusal-text-as-answer), **#205 P11**, **#208 P13** (its PR #312 needs a rebase — builder's). **#310** config PR OPEN, auto-merge stalled on BEHIND. Builder sessions the planner spawns must be set to **Sonnet**.
+**Fresh planner, start here:** builder live on **#318** (unify Dock surface), PR **#320** DRAFT — **design note posted and relayed to the owner** (one `SurfaceFocus` + pure `SurfaceFocusRules.decide`; behaviour-preserving; job-separation stays via lane). Builder still building steps 2–5; review when #320 undrafts + CI green. **#208 P13** PR #312 DRAFT CONFLICTING — builder to rebase. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). **#310** config PR: branch updated this session, auto-merge should fire on green. Queue candidate not yet `ready`: **#316** (refusal-text-as-answer). Builder sessions the planner spawns must be set to **Sonnet**. Queue fed: `ready` = #208, #205.
 
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
