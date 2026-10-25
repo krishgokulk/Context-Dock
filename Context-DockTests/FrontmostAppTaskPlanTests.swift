@@ -95,4 +95,51 @@ struct FrontmostAppTaskPlanTests {
         AgentToolRegistry.shared.prepareTurnBudget(
             query: "", provider: .openAI, allowedToolNames: nil)
     }
+
+    // MARK: - Issue 204: a find/search in a record-set app is a data read, not a UI action
+
+    /// "find notes with links." began with a verb `ChatRouteResolver.isActionRequest` treats as
+    /// a GUI command, so the turn was planned as an action: menu tools and `operate_app` were
+    /// offered, the model drove the screen, and its "ambiguous" refusal came back as the answer.
+    /// Notes owns a record set, so the sentence is a read: `notes.search`, no UI-lane tools
+    /// (plan 2a rule 7: Computer Use is never the first choice for data).
+    @Test("A find or search in Notes is a read and gets no UI-lane tools")
+    func findInNotesIsADataRead() {
+        for query in ["find notes with links.", "search notes for passport",
+                      "list my notes about the roof"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: query, bundleId: "com.apple.Notes", appName: "Notes")
+            #expect(plan.intent == .read, "\"\(query)\"")
+            #expect(!plan.permitsUIAutomation, "\"\(query)\"")
+            for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
+                #expect(!plan.allowedToolNames.contains(tool), "\"\(query)\" offered \(tool)")
+            }
+        }
+    }
+
+    @Test("Opening or changing in Notes stays an action")
+    func notesActionsKeepTheirTools() {
+        for query in ["create a note about the roof quote", "find the note and open it"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: query, bundleId: "com.apple.Notes", appName: "Notes")
+            #expect(plan.permitsUIAutomation, "\"\(query)\"")
+        }
+    }
+
+    @Test("Finder find is unchanged: Finder owns no record set")
+    func finderFindIsUnchanged() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "find my passport pdf", bundleId: "com.apple.finder", appName: "Finder")
+        #expect(plan.permitsUIAutomation)
+    }
+
+    @Test("A records read in Notes gets a tool round, not the direct no-tools route")
+    func notesRecordsReadIsBounded() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "find notes with links.", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(plan.complexity == .bounded)
+        let chat = FrontmostAppTaskPlan.make(
+            query: "hello there", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(chat.complexity == .direct)
+    }
 }

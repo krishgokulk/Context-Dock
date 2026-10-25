@@ -721,4 +721,89 @@ struct NotesShortcutRetirementTests {
         #expect(redacted.contains("[redacted]"))
         #expect(NotePreviewRedaction.redact("roof quote from Alex") == "roof quote from Alex")
     }
+
+    /// Both directions of the find/search lane split (issue 204). "find notes with links." is
+    /// a data read in an app that owns records: `notes.search`, and no menu or `operate_app`
+    /// tool. A "find" that is a real interface action elsewhere stays an action.
+    @Test func findIsADataReadInNotesAndAnActionInTheUI() {
+        let notes = FrontmostAppTaskPlan.make(
+            query: "find notes with links.", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(notes.intent == .read)
+        for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
+            #expect(!notes.allowedToolNames.contains(tool), "Notes find offered \(tool)")
+        }
+        // The same verb about the interface is the UI lane, even in Notes.
+        let notesUI = FrontmostAppTaskPlan.make(
+            query: "find the sidebar in the window", bundleId: "com.apple.Notes",
+            appName: "Notes")
+        #expect(notesUI.permitsUIAutomation)
+        // A find in an app that owns no record set is untouched.
+        for (query, bundle, app) in [
+            ("find on this page", "com.apple.Safari", "Safari"),
+            ("find my passport pdf", "com.apple.finder", "Finder"),
+        ] {
+            let plan = FrontmostAppTaskPlan.make(query: query, bundleId: bundle, appName: app)
+            #expect(plan.permitsUIAutomation, "\"\(query)\" in \(app)")
+        }
+    }
+
+    /// "find notes with links." is a read of Notes' own records: fresh read, and the prompt
+    /// names the typed read tool instead of leaving the model to answer from the window.
+    @Test func findInNotesIsAFreshRecordsRead() {
+        let decision = AgentSourceAuthority.decide(
+            query: "find notes with links.", scopeBundleId: "com.apple.Notes")
+        #expect(decision.primary == .liveState)
+        #expect(decision.requiresFreshRead)
+        #expect(decision.promptRule.contains("notes.search"))
+        // Not in a scope that owns no records, and not when the sentence is about the UI.
+        #expect(AgentSourceAuthority.decide(
+            query: "find notes with links.", scopeBundleId: "com.apple.finder").primary
+            != .liveState)
+        #expect(!ScopedRecordRead.matches(
+            query: "find the sidebar in the window", bundleId: "com.apple.Notes"))
+    }
+
+    /// The pre-fetched Notes block is what a provider with no tools gets to read. "Notes with
+    /// links" means notes containing URLs, so the search term is "http", not the word "links";
+    /// and, like notes.search, the block never carries a credential.
+    @Test func notesPrefetchSearchesForUrlsAndRedacts() {
+        #expect(AppleLiveDataContext.noteSearchTerm(for: "find notes with links.") == "http")
+        #expect(AppleLiveDataContext.noteSearchTerm(for: "any notes with urls") == "http")
+        #expect(AppleLiveDataContext.noteSearchTerm(for: "find my bookmarks note") == "bookmarks")
+        #expect(AppleLiveDataContext.noteSearchTerm(for: "show my notes").isEmpty)
+        let block = AppleLiveDataContext.noteLines([
+            ["title": "bank password: hunter2", "body": "key ghp_abcdefghijklmnop1234 end"],
+            ["title": "roof quote", "body": "call Alex"],
+        ])
+        #expect(!block.contains("hunter2"))
+        #expect(!block.contains("ghp_abcdefghijklmnop1234"))
+        #expect(block.contains("roof quote: call Alex"))
+    }
+
+    /// A tool-less provider cannot call notes.count, so a total is pre-fetched for it.
+    @Test func notesTotalIsPrefetchedForCountQuestions() {
+        for q in ["how many notes do I have?", "count my notes", "what is the number of notes"] {
+            #expect(AppleLiveDataContext.asksForNoteTotal(q), "\"\(q)\"")
+        }
+        for q in ["find notes with links.", "show my notes", "create a note"] {
+            #expect(!AppleLiveDataContext.asksForNoteTotal(q), "\"\(q)\"")
+        }
+    }
+
+    /// What the model reads is redacted too, not only the card rows (review of PR 314).
+    @Test func modelFacingSearchOutputRedactsCredentials() {
+        let entry = AppleNotesMCPCapabilities.searchEntry(
+            id: "1", title: "bank password: hunter2", folder: "Notes", modified: "today",
+            snippet: "deploy key ghp_abcdefghijklmnop1234")
+        #expect(!entry.contains("hunter2"))
+        #expect(!entry.contains("ghp_abcdefghijklmnop1234"))
+        #expect(entry.contains("[redacted]"))
+    }
+
+    /// A total is not a search: the count is its own capability, registered and free.
+    @Test func countIsItsOwnFreeCapability() {
+        let count = CapabilityRegistry.shared.capability(id: "notes.count")
+        #expect(count != nil)
+        #expect(count?.riskLevel.requiresApproval == false)
+    }
 }
