@@ -721,4 +721,21 @@ struct NotesShortcutRetirementTests {
         #expect(redacted.contains("[redacted]"))
         #expect(NotePreviewRedaction.redact("roof quote from Alex") == "roof quote from Alex")
     }
+
+    /// What the model reads is redacted too, not only the card rows (review of PR 314).
+    @Test func modelFacingSearchOutputRedactsCredentials() {
+        let entry = AppleNotesMCPCapabilities.searchEntry(
+            id: "1", title: "bank password: hunter2", folder: "Notes", modified: "today",
+            snippet: "deploy key ghp_abcdefghijklmnop1234")
+        #expect(!entry.contains("hunter2"))
+        #expect(!entry.contains("ghp_abcdefghijklmnop1234"))
+        #expect(entry.contains("[redacted]"))
+    }
+
+    /// A total is not a search: the count is its own capability, registered and free.
+    @Test func countIsItsOwnFreeCapability() {
+        let count = CapabilityRegistry.shared.capability(id: "notes.count")
+        #expect(count != nil)
+        #expect(count?.riskLevel.requiresApproval == false)
+    }
 }

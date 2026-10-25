@@ -67,7 +67,7 @@ struct NotesAdapterEvalTests {
 
     @Test func readsAreFreeAndWritesAreGated() {
         let registry = CapabilityRegistry.shared
-        for id in ["notes.search", "notes.link_related", "notes.extract_tasks", "notes.summarize"]
+        for id in ["notes.search", "notes.count", "notes.link_related", "notes.extract_tasks", "notes.summarize"]
         {
             guard let capability = registry.capability(id: id) else {
                 Issue.record("\(id) is not registered"); continue
