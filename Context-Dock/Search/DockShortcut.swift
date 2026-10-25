@@ -1,7 +1,7 @@
 // DockShortcut.swift
 // Context-Dock
 //
-// The ~15 keyword shortcuts in `handleL2Query` run before any model and used to leave no
+// The keyword shortcuts in `handleL2Query` run before any model and used to leave no
 // trace, so when one claimed a turn the panel still said "Answered without running anything"
 // (issue #198, plan §3). Each shortcut that claims a turn now names itself with one step in
 // the same trace the tool loop uses — `dockTraceStep` → `L2State.routerTrace` →
@@ -18,7 +18,6 @@ import Foundation
 enum DockShortcut: String, CaseIterable, Sendable {
     case triggerRule
     case systemCommand
-    case notes
     case githubInstall
     case appFind
     case menuCommand
@@ -37,7 +36,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         switch self {
         case .triggerRule: return "Trigger Rule"
         case .systemCommand: return "System Command"
-        case .notes: return "Notes"
         case .githubInstall: return "GitHub Install"
         case .appFind: return "App Find"
         case .menuCommand: return "Menu Command"
@@ -59,7 +57,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         switch self {
         case .triggerRule: return "a saved trigger phrase"
         case .systemCommand: return "a built-in system command"
-        case .notes: return "a Notes command"
         case .githubInstall: return "link a GitHub tool"
         case .appFind: return "find … in this app"
         case .menuCommand: return "an app menu command"

@@ -19,10 +19,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.systemCommand.step == "Shortcut: System Command — matched 'a built-in system command'")
     }
 
-    @Test func notesStep() {
-        #expect(DockShortcut.notes.step == "Shortcut: Notes — matched 'a Notes command'")
-    }
-
     @Test func githubInstallStep() {
         #expect(DockShortcut.githubInstall.step == "Shortcut: GitHub Install — matched 'link a GitHub tool'")
     }

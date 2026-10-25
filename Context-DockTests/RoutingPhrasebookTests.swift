@@ -38,11 +38,13 @@ struct RoutingPhrasebookTests {
         case finderChat = "Finder chat"
         case safariChat = "Safari chat"
         case generalChat = "General Chat"
+        case notesChat = "Notes chat"
 
         var scopedApp: String? {
             switch self {
             case .finderChat: return "Finder"
             case .safariChat: return "Safari"
+            case .notesChat: return "Notes"
             case .generalChat: return nil
             }
         }
@@ -115,6 +117,7 @@ struct RoutingPhrasebookTests {
     private static let findMyCopy = menu("Find My", ["Edit", "Copy"])
     private static let shortcutsRun = menu("Shortcuts", ["Shortcut", "Run"])
     private static let finderFind = menu("Finder", ["File", "Find"])
+    private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
 
     // MARK: - The phrasebook
     //
@@ -241,6 +244,23 @@ struct RoutingPhrasebookTests {
                        menu("Finder", ["Edit", "Copy"]),
                        menu("Finder", ["File", "Find"])],
                expected: .none),
+
+        // Issue 204 (P10, E12): the Notes keyword shortcut (`tryHandleNotesMCPQuery`) is gone.
+        // It claimed any Notes-scope sentence containing "find", "search", "count", "link",
+        // "url", "with " or "any ", before a model read it. These sentences are reads: no
+        // action is offered, the turn reaches the model with `notes.search` (data lane,
+        // plan 2b), and the answer's note rows come from the capability. A write is the
+        // model's, through notes.create with its approval card.
+        Phrase(surface: .notesChat, sentence: "how many notes do I have?",
+               found: [notesCreate], expected: .none),
+        Phrase(surface: .notesChat, sentence: "find notes with links",
+               found: [notesCreate], expected: .none),
+        Phrase(surface: .notesChat, sentence: "any notes about the roof quote",
+               found: [notesCreate], expected: .none),
+        Phrase(surface: .notesChat, sentence: "search notes for passport",
+               found: [notesCreate], expected: .none),
+        Phrase(surface: .notesChat, sentence: "create a note about the roof quote",
+               found: [notesCreate], expected: .model),
     ]
 
     // MARK: - Running a row
@@ -670,5 +690,34 @@ struct MailboxSearchCommandTests {
         for sentence in sentences {
             #expect(MailboxSearchCommand.claims(sentence) == nil, "\"\(sentence)\"")
         }
+    }
+}
+
+
+// MARK: - Issue 204: Notes reads keep the shortcut's safety and its scope
+
+@MainActor
+struct NotesShortcutRetirementTests {
+
+    /// The sentences the shortcut used to claim are still reads of the scope's own records,
+    /// so the Notes chat grounds them in a fresh `notes.search` read.
+    @Test func notesScopeSentencesAreFreshReads() {
+        for sentence in ["how many notes do I have?", "find notes with links",
+                         "any notes about the roof quote", "search notes for passport"] {
+            #expect(ReadOnlyDataRouter.domain(for: sentence) == .notes, "\"\(sentence)\"")
+        }
+        let decision = AgentSourceAuthority.decide(
+            query: "how many notes do i have?", scopeBundleId: "com.apple.Notes")
+        #expect(decision.requiresFreshRead)
+    }
+
+    /// The shortcut redacted credentials from titles and snippets before they reached the
+    /// transcript; the rows `notes.search` hands the card carry the same redaction.
+    @Test func noteRowsRedactCredentials() {
+        let redacted = NotePreviewRedaction.redact("deploy key ghp_abcdefghijklmnop1234 and password: hunter2")
+        #expect(!redacted.contains("ghp_abcdefghijklmnop1234"))
+        #expect(!redacted.contains("hunter2"))
+        #expect(redacted.contains("[redacted]"))
+        #expect(NotePreviewRedaction.redact("roof quote from Alex") == "roof quote from Alex")
     }
 }
