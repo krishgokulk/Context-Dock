@@ -924,6 +924,7 @@ final class AIExecutionEngine {
             "github.list_issues",
             "github.list_prs",
             "mcp.listTools",
+            "notes.count",
             "notes.extract_tasks",
             "notes.read",
             "notes.search",
