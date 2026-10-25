@@ -247,18 +247,19 @@ struct RoutingPhrasebookTests {
 
         // Issue 204 (P10, E12): the Notes keyword shortcut (`tryHandleNotesMCPQuery`) is gone.
         // It claimed any Notes-scope sentence containing "find", "search", "count", "link",
-        // "url", "with " or "any ", before a model read it. These sentences are reads: no
-        // action is offered, the turn reaches the model with `notes.search` (data lane,
-        // plan 2b), and the answer's note rows come from the capability. A write is the
-        // model's, through notes.create with its approval card.
+        // "url", "with " or "any ", before a model read it. Now no action is offered for any
+        // of them: a question is answered from reads (.none); an imperative read goes to the
+        // model with `notes.search` (.model; data lane, plan 2b). The answer's note rows come
+        // from the capability. A write is the model's, through notes.create with its
+        // approval card.
         Phrase(surface: .notesChat, sentence: "how many notes do I have?",
                found: [notesCreate], expected: .none),
         Phrase(surface: .notesChat, sentence: "find notes with links",
-               found: [notesCreate], expected: .none),
+               found: [notesCreate], expected: .model),
         Phrase(surface: .notesChat, sentence: "any notes about the roof quote",
-               found: [notesCreate], expected: .none),
+               found: [notesCreate], expected: .model),
         Phrase(surface: .notesChat, sentence: "search notes for passport",
-               found: [notesCreate], expected: .none),
+               found: [notesCreate], expected: .model),
         Phrase(surface: .notesChat, sentence: "create a note about the roof quote",
                found: [notesCreate], expected: .model),
     ]
@@ -703,7 +704,7 @@ struct NotesShortcutRetirementTests {
     /// so the Notes chat grounds them in a fresh `notes.search` read.
     @Test func notesScopeSentencesAreFreshReads() {
         for sentence in ["how many notes do I have?", "find notes with links",
-                         "any notes about the roof quote", "search notes for passport"] {
+                         "any notes about the roof quote"] {
             #expect(ReadOnlyDataRouter.domain(for: sentence) == .notes, "\"\(sentence)\"")
         }
         let decision = AgentSourceAuthority.decide(
