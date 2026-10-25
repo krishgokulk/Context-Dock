@@ -79,8 +79,19 @@ struct FrontmostAppTaskPlan: Equatable {
         // was handed run_adapter_action AND an inventory naming the saved action, and then
         // told in its own task contract that its job was to answer a question. It described
         // the action instead of calling it, which is exactly what the contract asked for.
-        let hasAction = actionWords.contains(where: lower.contains)
-            || ChatRouteResolver.isActionRequest(intentQuery)
+        // "find"/"search"/"list" lead the resolver's GUI-verb list, so "find notes with links."
+        // planned as an action and the model was handed `operate_app`. In an app that IS a
+        // record set (Notes, Mail, Reminders…) those words ask for a data read: no UI-lane
+        // tools (plan 2a). The lane is the one `RequestLane` decides: a sentence about the
+        // interface ("find the sidebar") is UI and stays an action, as does an explicit action
+        // word ("open", "create"…).
+        let hasExplicitAction = actionWords.contains(where: lower.contains)
+        let readsScopeRecords = ReadOnlyDataDomain(scopeBundleId: bundleId) != nil
+            && RequestLane.decide(intentQuery) == .data
+            && ["find ", "search ", "list "].contains(where: lower.contains)
+            && !hasExplicitAction
+        let hasAction = hasExplicitAction
+            || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery))
         let hasRead = readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 

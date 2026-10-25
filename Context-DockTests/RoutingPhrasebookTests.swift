@@ -722,6 +722,31 @@ struct NotesShortcutRetirementTests {
         #expect(NotePreviewRedaction.redact("roof quote from Alex") == "roof quote from Alex")
     }
 
+    /// Both directions of the find/search lane split (issue 204). "find notes with links." is
+    /// a data read in an app that owns records: `notes.search`, and no menu or `operate_app`
+    /// tool. A "find" that is a real interface action elsewhere stays an action.
+    @Test func findIsADataReadInNotesAndAnActionInTheUI() {
+        let notes = FrontmostAppTaskPlan.make(
+            query: "find notes with links.", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(notes.intent == .read)
+        for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
+            #expect(!notes.allowedToolNames.contains(tool), "Notes find offered \(tool)")
+        }
+        // The same verb about the interface is the UI lane, even in Notes.
+        let notesUI = FrontmostAppTaskPlan.make(
+            query: "find the sidebar in the window", bundleId: "com.apple.Notes",
+            appName: "Notes")
+        #expect(notesUI.permitsUIAutomation)
+        // A find in an app that owns no record set is untouched.
+        for (query, bundle, app) in [
+            ("find on this page", "com.apple.Safari", "Safari"),
+            ("find my passport pdf", "com.apple.finder", "Finder"),
+        ] {
+            let plan = FrontmostAppTaskPlan.make(query: query, bundleId: bundle, appName: app)
+            #expect(plan.permitsUIAutomation, "\"\(query)\" in \(app)")
+        }
+    }
+
     /// What the model reads is redacted too, not only the card rows (review of PR 314).
     @Test func modelFacingSearchOutputRedactsCredentials() {
         let entry = AppleNotesMCPCapabilities.searchEntry(
