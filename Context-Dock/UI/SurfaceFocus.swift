@@ -29,14 +29,13 @@ enum SurfaceFocusEvent: Equatable {
     case zoomIn
     /// → on an empty field with nothing highlighted — step into an app.
     case stepIn
-    /// Esc (or ← off the first app) with nothing left to unwind — step back.
-    case stepBack
+    /// ← off the first app, or Backspace on an empty field — home to Global. (Esc is not a
+    /// focus move: it unwinds query → selection → turn, then closes, from every focus.)
+    case leaveApp
 }
 
 enum SurfaceFocusOutcome: Equatable {
     case focus(SurfaceFocus)
-    /// Put the surface away.
-    case close
     /// The key means nothing here.
     case none
 }
@@ -61,8 +60,8 @@ enum SurfaceFocusRules {
         // → walks into an app from any focus; from a chosen app it walks on to the next.
         case (.stepIn, _): return .focus(.app)
 
-        case (.stepBack, .app): return .focus(.global)
-        case (.stepBack, .global), (.stepBack, .frontmost): return .close
+        case (.leaveApp, .app): return .focus(.global)
+        case (.leaveApp, .global), (.leaveApp, .frontmost): return .none
         }
     }
 }

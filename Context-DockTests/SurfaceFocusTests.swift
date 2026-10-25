@@ -35,11 +35,11 @@ struct SurfaceFocusTests {
         }
     }
 
-    @Test("Esc steps back from a chosen app to Global, then closes")
-    func escapeStepsBack() {
-        #expect(SurfaceFocusRules.decide(.stepBack, from: .app) == .focus(.global))
-        #expect(SurfaceFocusRules.decide(.stepBack, from: .global) == .close)
-        #expect(SurfaceFocusRules.decide(.stepBack, from: .frontmost) == .close)
+    @Test("← off the first app and Backspace go home to Global; nowhere else to go from Global or the front app")
+    func leavingAnAppGoesHome() {
+        #expect(SurfaceFocusRules.decide(.leaveApp, from: .app) == .focus(.global))
+        #expect(SurfaceFocusRules.decide(.leaveApp, from: .global) == .none)
+        #expect(SurfaceFocusRules.decide(.leaveApp, from: .frontmost) == .none)
     }
 
     @Test("Layer keys and swipes agree: CornerNavigation lands where SurfaceFocusRules says")
