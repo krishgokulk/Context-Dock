@@ -816,19 +816,28 @@ class TerminalAIBridge: ObservableObject {
     /// chain. The environment is rebuilt rather than inherited: the user's dotfiles are the
     /// reason `zsh -lc` exists on the approved path, and they are exactly what must not
     /// influence a command running without approval.
+    /// `extraPathDirectories` are prepended to the fixed system PATH. They come only from a
+    /// trusted, hard-coded install-dir list (never `$PATH` or dotfiles), so a script CLI whose
+    /// shebang is `#!/usr/bin/env node` can still find its interpreter in Homebrew or a user
+    /// bin directory without reintroducing dotfile influence.
     nonisolated static func runArgv(
         executable: URL,
         arguments: [String],
         onLine: (@Sendable (String) -> Void)? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        extraPathDirectories: [String] = []
     ) async -> (output: String, exitCode: Int32) {
         await CancellableProcessRunner.run { box in
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
+            let systemPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+            let path = extraPathDirectories.isEmpty
+                ? systemPath
+                : extraPathDirectories.joined(separator: ":") + ":" + systemPath
             process.environment = [
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": path,
                 "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
                 "LANG": "en_US.UTF-8",
                 "TERM": "dumb",
@@ -916,16 +925,18 @@ class TerminalAIBridge: ObservableObject {
             environment["TERM"] = "xterm-256color"
             environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
             let currentPath = environment["PATH"] ?? "/usr/bin:/bin"
-            // The directories the user's own pinned tools actually live in come first.
-            // terminal-browser installs to ~/.local/bin, which is on PATH only if a dotfile
-            // puts it there — so a tool DoraX scanned, listed and scoped could still fail to
-            // run as "command not found". We know each tool's resolved path; use it.
+            // The directories the user's own pinned tools actually live in come first, then
+            // EVERY directory the scanner ever looks in. That was the drift that failed a
+            // go-installed CLI the app itself offered: the scan listed mail-app-cli from
+            // ~/go/bin ("CLI tools · 1"), and this PATH had only the Homebrew list —
+            // so the very route find_route had just returned died with
+            // "zsh:3: command not found". `userBinDirectories()` is the one list the
+            // scanner and the runner must both read; `zsh -lc` never sources .zshrc, so
+            // a PATH line in a dotfile still does not leak into the sandbox from here.
             environment["PATH"] =
                 (toolDirectories
-                    + [
-                        "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
-                        "/usr/bin", "/bin",
-                    ]).joined(separator: ":") + ":" + currentPath
+                    + TerminalPackageManager.userBinDirectories()
+                    + ["/usr/bin", "/bin"]).joined(separator: ":") + ":" + currentPath
             process.environment = environment
 
             // The thread's directory when it has one, home otherwise.

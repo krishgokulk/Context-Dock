@@ -732,7 +732,8 @@ extension DockCore {
                             subjectiveEvaluation: self.aiMode.pendingSubjectiveEvaluation,
                             enableAppRequest: enableReq,
                             trace: self.aiMode.routerTrace,
-                            actionChoices: choices)
+                            actionChoices: choices,
+                            noRouteOptions: AgentToolRegistry.consumeLastNoRouteOptions())
                         self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
                         self.aiMode.pendingEvidenceReceipts = []

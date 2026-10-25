@@ -84,6 +84,59 @@ struct LanePlanTests {
         #expect(plan.startsHidden)  // data-style prep: hidden start, no focus change
     }
 
+    // MARK: - The data→UI fall (§2a: no data rung fits → visible menu step)
+
+    @Test func dataWordsOnAMenuRouteFallToAVisibleMenuStep() {
+        // "Archive the newest email" reads data by its words, but the only route is the
+        // Message ▸ Archive menu command. §2a names this exact case: the fall to the UI
+        // lane is a VISIBLE step with a plan card — never a silent attempt to press menus
+        // the user cannot see, and never a refusal because the app is closed.
+        let plan = LanePlan.decide(
+            request: "archive the newest email", appName: "Mail",
+            needsRunningApp: false, bringsAppForward: true,
+            state: .init(isRunning: true, isFrontmost: false, previousFrontmostBundleID: "com.apple.Safari"))
+        #expect(plan.lane == .data, "the lane stays what the words decided; the card shows the fall")
+        #expect(plan.bringsForward)
+        #expect(plan.returnsFocusTo == "com.apple.Safari")
+        #expect(plan.planCard?.contains("Bring Mail forward") == true)
+    }
+
+    @Test func dataMenuFallOnAClosedAppSaysItStarts() {
+        // Mail not running, CLI unlinked: the plan's U1 row — "the app must start; the
+        // plan card says it opens" — so the closed case names the START, not a shrug.
+        let plan = LanePlan.decide(
+            request: "archive the newest email", appName: "Mail",
+            needsRunningApp: false, bringsAppForward: true,
+            state: .init(isRunning: false, isFrontmost: false, previousFrontmostBundleID: "com.apple.Safari"))
+        #expect(plan.bringsForward)
+        #expect(!plan.startsHidden, "a menu fall starts visibly; hidden is the data rung's prep alone")
+        #expect(plan.returnsFocusTo == "com.apple.Safari")
+        #expect(plan.planCard?.contains("Start Mail") == true)
+    }
+
+    @Test func dataMenuFallLeavesAFrontmostAppAlone() {
+        let plan = LanePlan.decide(
+            request: "archive the newest email", appName: "Mail",
+            needsRunningApp: false, bringsAppForward: true,
+            state: .init(isRunning: true, isFrontmost: true, previousFrontmostBundleID: nil))
+        #expect(!plan.bringsForward, "already in front — nothing moves, no card")
+        #expect(plan.planCard == nil)
+        #expect(plan.returnsFocusTo == nil)
+    }
+
+    @Test func dataReadWithoutAMenuRouteNeverBringsForward() {
+        // The fall needs the menu signal (bringsAppForward). A plain data read of a
+        // background app must STILL touch nothing — unchanged from before. Mail is not
+        // running: a read whose only routes need the app events starts it hidden (the
+        // needsRunningApp gate now reads the capability alone, writes included).
+        let plan = LanePlan.decide(
+            request: "what did Salman text me today", appName: "Messages",
+            needsRunningApp: false, bringsAppForward: false,
+            state: .init(isRunning: false, isFrontmost: false, previousFrontmostBundleID: "com.apple.Safari"))
+        #expect(!plan.bringsForward)
+        #expect(plan.planCard == nil)
+    }
+
     // MARK: - Menu-click activation gate (§2a rule 1)
 
     @Test func onlyTheUILaneActivatesForAMenuClick() {

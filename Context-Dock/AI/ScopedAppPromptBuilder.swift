@@ -258,8 +258,24 @@ enum ScopedAppPromptBuilder {
             clis.isEmpty
                 ? "- CLI tools: none linked"
                 : "- CLI tools (fallback only; request with typed terminal_call JSON only when no adapter/MCP/API/Shortcut/menu route fits): "
-                    + clis.map { "\($0.command)\($0.isInstalled ? "" : " (not installed)")" }
-                        .joined(separator: ", "))
+                    + clis.map { cli -> String in
+                        // The bare tool name taught the model nothing about how to call
+                        // it — the owner saw "mail-app-cli archive" die with "unknown
+                        // command" while the real verb lives under the messages noun
+                        // ("messages archive <ids>"). What the scan learned IS the
+                        // calling syntax: say it, bounded to the manifest the review
+                        // already names.
+                        var text = "\(cli.command)\(cli.isInstalled ? "" : " (not installed)")"
+                        var paths = cli.helpText.map {
+                            TerminalPackageManager.commandPaths(inDeepHelp: $0, binary: cli.command)
+                        } ?? []
+                        if paths.isEmpty { paths = cli.subcommands }
+                        if !paths.isEmpty {
+                            text += " — learned commands: \(paths.prefix(24).joined(separator: ", "))"
+                        }
+                        return text
+                    }
+                    .joined(separator: "; "))
         lines.append(
             mcpServers.isEmpty
                 ? "- MCP servers: none linked"
