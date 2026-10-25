@@ -10,7 +10,7 @@
 
 ## In progress
 
-Coordinator: Planner (desktop/cloud planner session) — since 2026-10-18.
+Coordinator: Planner (Claude Code session, branch `claude/now-coordinator-1025`) — since 2026-10-25 18:02 UTC.
 
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
@@ -39,6 +39,13 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - Owner 2026-10-22: the Settings sidebar reads as clutter (App Packs / Integrations / Plugins / Plugin Creator all take capabilities) — flagged, no issue filed yet, not part of #203.
 - **Next: #208 P13 (scripting-dictionary rung)** → #204 P10 → #205/#206.
 
+**State (2026-10-25):**
+- **#200 P6 and #201 P7 closed** (done, hand-checked). P1–P9 complete.
+- **#208 P13** in review on PR #312 (draft). Commits pushed (typed Apple Events, gated registration, read-back verify; hand-check rounds 5–6). CI green on the last build but the PR went **CONFLICTING** — base `general-chat-agent` moved under it; the builder must rebase before it can undraft/merge. Planner leaves it to the builder.
+- **Queue fed:** `ready` = #208 (in-flight), **#205 P11**, **#204 P10** (two fresh ahead of the builder). #205 deps P5/#299 + E2/#170 are merged. #206 P12 stays blocked (needs #205 + E19a).
+- **#310** (opencode.json config, non-queue) set to squash auto-merge on the owner's "merge 310"; `--admin` was blocked by the auto-mode classifier this session (no `Bash(gh pr merge:*)` allow rule), so auto-merge is the path. Branch was `BEHIND`; may need a re-update if auto-merge stalls.
+- **Next: #208 P13** (builder to finish) → #204 P10 → #205/#206.
+
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
 > stale release base, ~788 commits behind** — its tip is still PR #8; it only advances when a release PR
@@ -52,7 +59,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · **#200 P6** · **#201 P7** · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
