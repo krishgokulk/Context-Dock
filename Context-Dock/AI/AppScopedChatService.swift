@@ -1528,6 +1528,7 @@ enum AppScopedChatService {
             // Questions may use genuine read-only data integrations, but never screen-driving
             // menu commands or writes. A menu click is not a way to find out what a menu lists.
             let permitted = GeneralAIActionResolver.shared.asksOnly(query)
+                || ScopedRecordRead.matches(query: query, bundleId: bundleId)
                 ? resolvedRoutes.filter { $0.isReadOnly && !$0.kind.takesTheScreen }
                 : resolvedRoutes
             // A destructive command is not an answer to a constructive request. Asked to

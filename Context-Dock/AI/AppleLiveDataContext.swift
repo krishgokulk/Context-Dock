@@ -15,6 +15,32 @@ import Foundation
 @MainActor
 enum AppleLiveDataContext {
 
+    /// What to search Notes for. "Notes with links" asks for notes that CONTAIN links, and no
+    /// note says the word "links", so a subject made only of link words searches for "http".
+    nonisolated static func noteSearchTerm(for query: String) -> String {
+        let subject = DataSubject.subject(in: query)
+        let linkWords: Set<String> = ["link", "links", "url", "urls", "hyperlink", "hyperlinks"]
+        let words = subject.split(separator: " ").map(String.init)
+        return !words.isEmpty && words.allSatisfy(linkWords.contains) ? "http" : subject
+    }
+
+    /// Whether the sentence asks for a total. A search returns a bounded page, so the total is
+    /// read separately — a provider with no tools cannot call `notes.count` itself.
+    nonisolated static func asksForNoteTotal(_ query: String) -> Bool {
+        let q = query.lowercased()
+        return ["how many", "count ", "number of"].contains(where: q.contains)
+    }
+
+    /// The matches as prompt lines. Titles and bodies pass through `NotePreviewRedaction`: this
+    /// block goes to the provider, and a note can hold a token or a password.
+    nonisolated static func noteLines(_ notes: [[String: Any]]) -> String {
+        notes.map { n -> String in
+            let title = NotePreviewRedaction.redact((n["title"] as? String) ?? "(untitled)")
+            let body = NotePreviewRedaction.redact(String(((n["body"] as? String) ?? "").prefix(120)))
+            return body.isEmpty ? "- \(title)" : "- \(title): \(body)"
+        }.joined(separator: "\n")
+    }
+
     static func appleAppsContextBlock(for query: String) async -> String {
         let q = query.lowercased()
         let api = AppleAppsAPI.shared
@@ -103,15 +129,16 @@ enum AppleLiveDataContext {
             // sentence typed in lower case had no term at all and this listed recent notes
             // instead of searching — with the subject sitting in the sentence, unused.
             // "find my bookmarks note and summarise that" is the reported case.
-            let subject = DataSubject.subject(in: query)
+            let subject = noteSearchTerm(for: query)
             let notes =
                 subject.isEmpty ? api.getNotes(limit: 15) : api.searchNotes(query: subject)
+            if asksForNoteTotal(query), AppSettings.shared.noteMCPEnabled,
+                let total = try? await AppleNotesMCPServer.shared.noteCount()
+            {
+                blocks.append("## Notes — total: \(total) notes in total.")
+            }
             if !notes.isEmpty {
-                let lines = notes.prefix(15).map { n -> String in
-                    let title = (n["title"] as? String) ?? "(untitled)"
-                    let body = ((n["body"] as? String) ?? "").prefix(120)
-                    return body.isEmpty ? "- \(title)" : "- \(title): \(body)"
-                }.joined(separator: "\n")
+                let lines = noteLines(Array(notes.prefix(15)))
                 blocks.append("## Notes — matches:\n\(lines)")
             }
         }

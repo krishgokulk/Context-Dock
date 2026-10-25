@@ -21,8 +21,11 @@ struct AgentSourceDecision: Equatable {
         case .liveState:
             return """
                 SOURCE AUTHORITY: This asks about changing live state. Answer only from a live
-                reader included below. Do not use conversation history, model knowledge, or saved
-                memory as factual evidence. If the live reader has no answer, say it was not readable.
+                reader: one included below, or a typed read tool you call (for example
+                notes.search or notes.count for Notes). Do not use conversation history, model
+                knowledge, or saved memory as factual evidence. Do not tell the user to search or
+                select things themselves while a read tool for the request exists. If no live
+                reader has the answer, say it was not readable.
                 """
         case .officialReference:
             return """
@@ -67,7 +70,7 @@ enum AgentSourceAuthority {
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
         }
         if let scopeBundleId, ReadOnlyDataDomain(scopeBundleId: scopeBundleId) != nil,
-            asksAboutScopedRecords(q)
+            asksAboutScopedRecords(q) || ScopedRecordRead.matches(query: q, bundleId: scopeBundleId)
         {
             return AgentSourceDecision(
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)

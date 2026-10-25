@@ -132,4 +132,14 @@ struct FrontmostAppTaskPlanTests {
             query: "find my passport pdf", bundleId: "com.apple.finder", appName: "Finder")
         #expect(plan.permitsUIAutomation)
     }
+
+    @Test("A records read in Notes gets a tool round, not the direct no-tools route")
+    func notesRecordsReadIsBounded() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "find notes with links.", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(plan.complexity == .bounded)
+        let chat = FrontmostAppTaskPlan.make(
+            query: "hello there", bundleId: "com.apple.Notes", appName: "Notes")
+        #expect(chat.complexity == .direct)
+    }
 }
