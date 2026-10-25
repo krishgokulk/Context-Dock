@@ -43,11 +43,6 @@ Installed skills trigger automatically on the matching task:
 `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general
 bridging) — use whichever matches the task.
 
-Vendored skills live in `.claude/skills/<name>/SKILL.md`, copied from upstream:
-- swiftui-pro ← https://github.com/twostraws/SwiftUI-Agent-Skill
-- swift-concurrency-pro ← https://github.com/twostraws/Swift-Concurrency-Agent-Skill
-- app-intents ← https://github.com/n0an/App-Intents-Agent-Skill
-- core-data-expert ← https://github.com/AvdLee/Core-Data-Agent-Skill
-- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ←
-  https://github.com/rgmez/apple-accessibility-skills (shared docs in
-  `.claude/skills/apple-accessibility-shared/`)
+Vendored skills live in `.claude/skills/<name>/SKILL.md` — swiftui-pro, swift-concurrency-pro,
+app-intents, core-data-expert, and the three accessibility auditors (shared docs in
+`.claude/skills/apple-accessibility-shared/`); copied from upstream repos (URLs in git history).

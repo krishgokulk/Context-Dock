@@ -1,5 +1,34 @@
 import Foundation
 
+/// "find notes with links." in an app that owns a record set (Notes, Mail, Reminders…) is a read
+/// of those records, not a GUI command. One predicate, used by every pipeline that plans an
+/// app-scoped turn (the Corner's task plan, the source authority, and `AppScopedChatService`
+/// behind the MCP and CLI), so the rule cannot drift between them.
+///
+/// The lane is the one `RequestLane` decides: a sentence about the interface ("find the
+/// sidebar") is UI and stays an action, as does any explicit action word ("open", "create"…).
+enum ScopedRecordRead {
+    /// Words that ask the app to do something rather than to look something up.
+    static let actionWords = [
+        "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
+        "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
+        "quit ", "enable ", "disable ", "export ",
+    ]
+
+    static func hasExplicitAction(_ query: String) -> Bool {
+        let lower = query.lowercased()
+        return actionWords.contains(where: lower.contains)
+    }
+
+    static func matches(query: String, bundleId: String) -> Bool {
+        let lower = query.lowercased()
+        return ReadOnlyDataDomain(scopeBundleId: bundleId) != nil
+            && RequestLane.decide(query) == .data
+            && ["find ", "search ", "list "].contains(where: lower.contains)
+            && !hasExplicitAction(query)
+    }
+}
+
 /// A deterministic contract for one app-scoped turn, decided before optional context reads.
 struct FrontmostAppTaskPlan: Equatable {
     enum Intent: String { case answer = "answer a question", read = "read app data", act = "perform an app action", workflow = "complete a multi-step task" }
@@ -58,7 +87,13 @@ struct FrontmostAppTaskPlan: Equatable {
             current: query, previousUserRequests: previousUserRequests)
         let lower = intentQuery.lowercased()
         let subjectContext = lower + "\n" + priorConversation.lowercased()
-        let complexity = TaskComplexityRouter.route(intentQuery)
+        // A records read needs a tool round: the "direct" instruction ("answer without tools")
+        // is why the model answered "find notes with links." from the window and told the user
+        // to search themselves.
+        let routed = TaskComplexityRouter.route(intentQuery)
+        let complexity: TaskComplexityRoute =
+            routed == .direct && ScopedRecordRead.matches(query: intentQuery, bundleId: bundleId)
+            ? .bounded : routed
         // "update the app" was not an action here, which is how agreeing to run Check for
         // Updates still produced a turn with no menu tool. The words a person uses to ask an
         // app to do something are wider than create/draft/send.
@@ -67,7 +102,7 @@ struct FrontmostAppTaskPlan: Equatable {
         // date?" — a noun, in a question, granted UI automation. A word that is as often a
         // noun as a verb cannot be read as intent by substring, which is the lesson "trash"
         // already taught this file's neighbours.
-        let actionWords = ["create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ", "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ", "quit ", "enable ", "disable ", "export "]
+        let actionWords = ScopedRecordRead.actionWords
         let readWords = ["find ", "search ", "list ", "show ", "read ", "what ", "which ", "who ", "when ", "how many", "summar", "check "]
         // The window verbs are deliberately not added to `actionWords` above: matched by
         // substring they would read "how do i hide the sidebar?" as a command. They live in
@@ -79,8 +114,12 @@ struct FrontmostAppTaskPlan: Equatable {
         // was handed run_adapter_action AND an inventory naming the saved action, and then
         // told in its own task contract that its job was to answer a question. It described
         // the action instead of calling it, which is exactly what the contract asked for.
+        // "find"/"search"/"list" lead the resolver's GUI-verb list, so "find notes with links."
+        // planned as an action and the model was handed `operate_app`. In a record-set app they
+        // ask for a data read: no UI-lane tools (plan 2a). See `ScopedRecordRead`.
+        let readsScopeRecords = ScopedRecordRead.matches(query: intentQuery, bundleId: bundleId)
         let hasAction = actionWords.contains(where: lower.contains)
-            || ChatRouteResolver.isActionRequest(intentQuery)
+            || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery))
         let hasRead = readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 

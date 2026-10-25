@@ -10,7 +10,9 @@
 
 ## In progress
 
-Coordinator: Planner (desktop/cloud planner session) — since 2026-10-18.
+Coordinator: Planner (Claude Code session) — since 2026-10-25 18:02 UTC. **Fresh `/planner` session: take over here** (previous one ended to save tokens — long sessions re-bill a big context; the repo is the handoff). On takeover rewrite this line.
+
+**Fresh planner, start here (2026-10-25 ~21:00 UTC):** builder session live on **#318** (unify Dock surface) — watch for its design note, relay it to the owner, then review. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidates not yet `ready`: **#316** (refusal-text-as-answer), **#205 P11**, **#208 P13** (its PR #312 needs a rebase — builder's). **#310** config PR OPEN, auto-merge stalled on BEHIND. Builder sessions the planner spawns must be set to **Sonnet**.
 
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
@@ -39,6 +41,18 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - Owner 2026-10-22: the Settings sidebar reads as clutter (App Packs / Integrations / Plugins / Plugin Creator all take capabilities) — flagged, no issue filed yet, not part of #203.
 - **Next: #208 P13 (scripting-dictionary rung)** → #204 P10 → #205/#206.
 
+**State (2026-10-25):**
+- **#200 P6 and #201 P7 closed** (done, hand-checked). P1–P9 complete.
+- **#208 P13** in review on PR #312 (draft). Commits pushed (typed Apple Events, gated registration, read-back verify; hand-check rounds 5–6). CI green on the last build but the PR went **CONFLICTING** — base `general-chat-agent` moved under it; the builder must rebase before it can undraft/merge. Planner leaves it to the builder.
+- **Queue fed:** `ready` = #208 (in-flight), **#205 P11**, **#204 P10** (two fresh ahead of the builder). #205 deps P5/#299 + E2/#170 are merged. #206 P12 stays blocked (needs #205 + E19a).
+- **#310** (opencode.json config, non-queue) set to squash auto-merge on the owner's "merge 310"; `--admin` was blocked by the auto-mode classifier this session (no `Bash(gh pr merge:*)` allow rule), so auto-merge is the path. Branch was `BEHIND`; may need a re-update if auto-merge stalls.
+- **#204 P10 shortcut 1 (Notes) done & merged** — #314 (retire the Notes keyword shortcut; owner hand-checked "314 passed") + follow-up #315 (`3cbee5ab`: owner hand check found gaps #314 missed — a **credential-redaction security fix** so note titles/snippets no longer reach the AI provider via `notes.search` model output; `notes.count` for real totals; and a tightly-scoped lane fix so find/search in a record-set app routes as a read, not `operate_app` screen-driving — `isActionRequest` untouched, two-sided test). Owner hand-checked "315 passed". #204 stays OPEN — ~14 more shortcuts, one PR each — but **HELD by the owner (2026-10-25, weekly-limit)**; resume by re-labelling `ready`.
+- **#316 filed** (from #315 hand check): a tool's model-facing refusal text can surface to the user as the answer (`.ambiguous` branch of `operate_app` in `ComputerUseTool.swift`); #315 removed only this one trigger — other refusal branches/tools share the shape. Queue candidate, not yet `ready`.
+- **#318 unify Dock surface — OWNER CONFIRMED, builder live (2026-10-25).** Merge Global Context + Context Dock (frontmost-app scope) into **one surface**: frontmost app = default focus, ⌘ zooms to Global, one shared state/row/input; lanes (headless read / UI act) unchanged. Overrides the blueprint's "never merge layers" rule (job-separation kept via query intent + lane; only shell/state merge) — brain decision `bea3d04e`. Issue #318 `in-progress`; a Sonnet builder session is running on branch `claude/issue-318-unify-dock-surface`, posting a **design note in the PR first** (reviewed before deep edits), then building. The work also rewords the "never merge layers" rule in AGENTS.md/CLAUDE.md/blueprint.
+- **#310** (opencode.json config) still OPEN — squash auto-merge enabled but stalled on `BEHIND`; needs a branch re-update or manual nudge.
+- **Model routing:** planner stays Opus; **builder sessions the planner spawns must be set to Sonnet** (`start_session model=claude-sonnet-5-5`) — see memory `planner-spawns-builder-sessions-on-sonnet`.
+- **Next: #208 P13** (builder to finish) → (#204 resumes when the owner unholds) → #205/#206.
+
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
 > stale release base, ~788 commits behind** — its tip is still PR #8; it only advances when a release PR
@@ -52,7 +66,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · **#200 P6** · **#201 P7** · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)

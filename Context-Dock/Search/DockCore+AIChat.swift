@@ -2206,80 +2206,6 @@ extension DockCore {
         return true
     }
 
-    func tryHandleNotesMCPQuery(_ query: String, scopedBundleId: String) -> Bool {
-        guard scopedBundleId == "com.apple.Notes",
-              AppSettings.shared.noteMCPEnabled
-        else { return false }
-
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let wantsCount = normalized.contains("how many")
-            || normalized.contains("count")
-            || normalized.contains("number of")
-        let wantsSearch = normalized.contains("find")
-            || normalized.contains("search")
-            || normalized.hasPrefix("any ")
-            || normalized.contains(" any ")
-            || normalized.contains("with ")
-            || normalized.contains("link")
-            || normalized.contains("url")
-        guard wantsCount || wantsSearch else { return false }
-
-        let userMessage = AIChatMessage(role: .user, content: query)
-        l2.chatMessages.append(userMessage)
-        l2.isLoading = true
-        l2.loadingStatus = "Looking at Notes capabilities…"
-        let requestID = beginL2AIRequest()
-
-        l2.currentTask = Task {
-            do {
-                let response: String
-                var noteMatches: [NoteMetadata] = []
-                if wantsCount && !wantsSearch {
-                    // Single Apple Event — no full metadata refresh for a count question.
-                    let count = try await AppleNotesMCPServer.shared.noteCount()
-                    response = "There are \(count) notes."
-                } else {
-                    let notes = try await AppleNotesMCPServer.shared.allMetadata()
-                    let searchTerm = notesSearchTerm(from: normalized)
-                    noteMatches = searchTerm.isEmpty
-                        ? notes
-                        : try await AppleNotesMCPServer.shared.search(
-                            query: searchTerm, maxResults: 8)
-                    response = formatNotesSearchResponse(noteMatches, query: searchTerm)
-                }
-                await MainActor.run {
-                    l2.isLoading = false
-                    let rows = noteMatches.map {
-                        NoteSearchAction(
-                            id: $0.id, title: redactNotePreview($0.title),
-                            folder: $0.folder, snippet: redactNotePreview($0.snippet),
-                            modifiedDate: $0.modifiedDate)
-                    }
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant, content: response,
-                            noteResults: rows,
-                            mcpToolsRan: ["DoraX Notes MCP · notes.search"])
-                    )
-                    finishL2AIRequest(requestID)
-                }
-            } catch {
-                await MainActor.run {
-                    l2.isLoading = false
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "Notes MCP failed: \(error.localizedDescription)",
-                            isError: true
-                        )
-                    )
-                    finishL2AIRequest(requestID)
-                }
-            }
-        }
-        return true
-    }
-
     private func notesSearchTerm(from query: String) -> String {
         let cleaned = query
             .replacingOccurrences(of: "?", with: " ")
@@ -2310,23 +2236,6 @@ extension DockCore {
         }
         return "Found \(matches.count) note\(matches.count == 1 ? "" : "s")"
             + (query.isEmpty ? "." : " matching “\(query)”.")
-    }
-
-    /// Search metadata is useful UI context but may contain credentials. Redact common
-    /// token shapes before a title/snippet reaches the transcript or screenshot surface.
-    private func redactNotePreview(_ text: String) -> String {
-        let patterns = [
-            #"\b(?:sk|ghp|github_pat|xox[baprs]|AIza)[-_A-Za-z0-9]{12,}\b"#,
-            #"\b(?:api[_ -]?key|token|secret|password)\s*[:=]\s*\S+"#,
-        ]
-        return patterns.reduce(text) { value, pattern in
-            guard let regex = try? NSRegularExpression(
-                pattern: pattern, options: [.caseInsensitive])
-            else { return value }
-            return regex.stringByReplacingMatches(
-                in: value, range: NSRange(value.startIndex..., in: value),
-                withTemplate: "[redacted]")
-        }
     }
 
     /// Pure: whether a query is tried as a saved trigger rule or a system command before it
@@ -2560,11 +2469,6 @@ extension DockCore {
             l2.currentTask = nil
             l2.isLoading = false
             l2.activeRequestID = nil
-        }
-
-        if tryHandleNotesMCPQuery(query, scopedBundleId: scopedBundleId) {
-            dockShortcutStep(.notes)
-            return
         }
 
         if tryHandleGitHubInstallRequest(query, scopedBundleId: scopedBundleId) {

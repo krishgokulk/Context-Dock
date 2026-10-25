@@ -41,6 +41,7 @@ enum AppleNotesMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerSearch(registry)
+        registerCount(registry)
         registerRead(registry)
         registerCreate(registry)
         registerAppend(registry)
@@ -92,8 +93,10 @@ enum AppleNotesMCPCapabilities {
                 ChatResultRowCollector.shared.add(
                     results.map { note in
                         ChatResultRow(
-                            kind: .note, id: note.id, title: note.title,
-                            subtitle: note.folder, detail: note.snippet,
+                            kind: .note, id: note.id,
+                            title: NotePreviewRedaction.redact(note.title),
+                            subtitle: note.folder,
+                            detail: NotePreviewRedaction.redact(note.snippet),
                             bundleID: "com.apple.Notes", date: note.modifiedDate)
                     },
                     scope: request.chatScope)
@@ -101,11 +104,45 @@ enum AppleNotesMCPCapabilities {
                 dateFormatter.dateStyle = .medium
                 dateFormatter.timeStyle = .short
                 let body = results.map { n in
-                    let modified = dateFormatter.string(from: n.modifiedDate)
-                    let snippet = n.snippet.isEmpty ? "(no preview)" : n.snippet
-                    return "ID: \(n.id)\nTitle: \(n.title)\nFolder: \(n.folder.isEmpty ? "—" : n.folder)\nModified: \(modified)\nSnippet: \(snippet)"
+                    searchEntry(
+                        id: n.id, title: n.title, folder: n.folder,
+                        modified: dateFormatter.string(from: n.modifiedDate), snippet: n.snippet)
                 }.joined(separator: "\n---\n")
                 return .init(success: true, output: "Found \(results.count) note(s) matching '\(query)':\n\n\(body)")
+            }
+        )
+    }
+
+    /// One result as the model reads it. Titles and snippets are redacted here too, not only
+    /// on the card rows: the provider and the transcript must never see a token or password
+    /// that a note happens to contain.
+    nonisolated static func searchEntry(
+        id: String, title: String, folder: String, modified: String, snippet: String
+    ) -> String {
+        let preview = snippet.isEmpty ? "(no preview)" : NotePreviewRedaction.redact(snippet)
+        return "ID: \(id)\nTitle: \(NotePreviewRedaction.redact(title))\n"
+            + "Folder: \(folder.isEmpty ? "—" : folder)\nModified: \(modified)\nSnippet: \(preview)"
+    }
+
+    // MARK: - notes.count
+
+    /// "How many notes do I have?" is a total, not a search: `notes.search` needs a term and
+    /// returns a bounded page of matches. The retired Notes shortcut counted through
+    /// `noteCount()`; this is that same one-Apple-Event count, now a tool the model calls.
+    private static func registerCount(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "notes.count",
+                title: "Count Apple Notes",
+                appBundleID: "com.apple.Notes",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                guard AppSettings.shared.noteMCPEnabled else {
+                    throw AppleNotesError.notEnabled
+                }
+                let count = try await AppleNotesMCPServer.shared.noteCount()
+                return .init(success: true, output: "There are \(count) notes in total.")
             }
         )
     }
@@ -605,5 +642,26 @@ enum AppleNotesMCPCapabilities {
         }
         md = md.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+
+/// Search metadata is useful UI context but may contain credentials. Redact common token
+/// shapes before a title/snippet reaches the transcript or screenshot surface. Moved here from
+/// the Notes keyword shortcut (issue 204) so the `notes.search` rows keep the protection.
+enum NotePreviewRedaction {
+    static func redact(_ text: String) -> String {
+        let patterns = [
+            #"\b(?:sk|ghp|github_pat|xox[baprs]|AIza)[-_A-Za-z0-9]{12,}\b"#,
+            #"\b(?:api[_ -]?key|token|secret|password)\s*[:=]\s*\S+"#,
+        ]
+        return patterns.reduce(text) { value, pattern in
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern, options: [.caseInsensitive])
+            else { return value }
+            return regex.stringByReplacingMatches(
+                in: value, range: NSRange(value.startIndex..., in: value),
+                withTemplate: "[redacted]")
+        }
     }
 }
