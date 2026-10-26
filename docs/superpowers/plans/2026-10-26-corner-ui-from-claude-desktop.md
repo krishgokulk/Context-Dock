@@ -120,6 +120,32 @@ the stable size rules. Each spec says what it borrows from Claude and where it m
   Esc, ←/→ General Chat toggle, the vertical swipes from §4b). `[ours]`
 - Opens from a key `[owner]` and from a `?` hint in the Footer. Closes on Esc. No window.
 
+### 2.7 Expand affordance — grow in place, Raycast-style (owner idea 2026-10-26) — Adopt
+
+The explicit model the owner wants: **tiny launcher ↔ corner, and when the user expands it, it
+becomes the full General Chat — same UI throughout — with an expand icon that appears automatically
+so the user knows more detail is available.** This is the Raycast pattern, and it has one hard
+constraint that defines it.
+
+- **Raycast grows one panel; it never opens a second window.** So the expand grows the **same
+  `UnifiedDockShell`** into a larger size (more transcript, bigger content area) — a new size phase
+  (e.g. `expanded` added to `AppChatPromptPhase`), **not** a new window. This is the compact-first
+  rule taken to its end: the card "grows as far as the task needs," and expand is the user's override
+  to go all the way large. Same input family, row family, material, chips — only size and visible
+  history change (stable-state / one-look rules).
+- **The expand glyph appears automatically, but only when there is more to show** — a transcript
+  exists, or content exceeds the compact height. Not always-on (that reads as decoration); conditional
+  (reads as "there's more here, go bigger"). A collapse glyph returns to compact; Esc steps back as
+  always. `[proposal]`
+- **Same behaviour in every scope that has a transcript** (General Chat, App Chat). Global Context
+  search does not expand into a chat — it is search, not conversation (layer rule). `[proposal]`
+- **Decision vs the existing separate Chat Window (⌃C).** `[owner]` Today the full-window chat is a
+  *separate window by design* (`00-DOCK-AND-CORNER.md` §4). Raycast-expand grows in place and does
+  **not** open that window. **Recommendation:** the inline **expand grows the Corner shell**; keep
+  **⌃C as an explicit detach / pop-out** into the standalone window for when the user wants a real
+  movable window on another Space. Two gestures, two outcomes — do not collapse "expand" and "detach"
+  into one, or the big chat has two contradictory meanings.
+
 ---
 
 ## 3. What stays DoraX (the non-negotiables this plan keeps)
@@ -149,10 +175,13 @@ the stable size rules. Each spec says what it borrows from Claude and where it m
    are ephemeral today, decide persistence before the board. `[owner]`
 4. **Hotkeys.** Side Thread (§2.2) and Keys overlay (§2.6) need keys that don't clash; assign them in
    the recorder that requires a modifier. `[owner]`
-5. **Scope of v1.** My ranked recommendation if you want the highest ratio of Claude-feel to effort:
-   **(1) Live panel detail modes §2.5** (already-structured, pure win), **(2) Keys overlay §2.6**
-   (cheap, discoverability), **(3) Side Thread §2.2** (the one new idea worth it), then **(4)
-   Conversations board §2.1** and **(5) usage chip §2.3** after #318. `[proposal]`
+5. **Expand vs detach.** (§2.7) Confirm the inline expand **grows the Corner in place** and ⌃C stays
+   the separate pop-out window — not the same thing. `[owner]`
+6. **Scope of v1.** My ranked recommendation if you want the highest ratio of Claude-feel to effort:
+   **(1) Expand affordance §2.7** (the owner's own ask, and it is the Raycast feel in one gesture),
+   **(2) Live panel detail modes §2.5** (already-structured, pure win), **(3) Keys overlay §2.6**
+   (cheap, discoverability), **(4) Side Thread §2.2** (the one new idea worth it), then **(5)
+   Conversations board §2.1** and **(6) usage chip §2.3** after #318. `[proposal]`
 
 ---
 
