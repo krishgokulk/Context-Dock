@@ -38,6 +38,15 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
+    /// The Corner's expand glyph (#323): the window opens on its Chat tab, on the thread the
+    /// compact chat was showing. `seed` is that chat's transcript, applied only if the thread
+    /// is still empty, so a turn the dock has not saved yet is not lost on the way over.
+    func show(opening scope: GeneralChatScope, title: String, seed: [AIChatMessage] = []) {
+        GeneralChatWindowChromeState.shared.mode = .chat
+        GeneralChatWindowModel.shared.openSession(scope, title: title, seed: seed)
+        show()
+    }
+
     func show() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
