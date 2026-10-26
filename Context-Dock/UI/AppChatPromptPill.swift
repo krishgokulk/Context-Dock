@@ -435,6 +435,9 @@ enum AppChatPromptMetrics {
 
 struct AppChatPromptPill: View {
     @ObservedObject var model: AppChatPromptModel
+    // Observed here so the live panel, now fed by parameters (#323), still repaints as the
+    // turn's steps land — it no longer watches the store itself.
+    @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @ObservedObject private var approvals = ApprovalCenter.shared
     /// Watched, not asked once: the clipboard can arm while this field is already up, and
@@ -861,7 +864,10 @@ struct AppChatPromptPill: View {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
                             appIcon: appIcon, messages: model.messages,
-                            isAnswering: model.isAnswering, liveSteps: model.liveSteps)
+                            isAnswering: model.isAnswering, liveSteps: model.liveSteps,
+                            liveActivity: conversation.liveActivity,
+                            activityByMessageID: conversation.activityByMessageID,
+                            density: .compact)
                             .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
                             .padding(.vertical, 8)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))

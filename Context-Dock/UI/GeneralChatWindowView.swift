@@ -1277,11 +1277,7 @@ struct GeneralChatWindowView: View {
     }
 
     private var sidePanel: some View {
-        // Read once per scope change, not per redraw. This calls into AX and the capability
-        // stores; doing it on every frame put main-thread work behind every animation in
-        // the window.
-        let inventory = cachedInventory ?? model.activeScopeInventory
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             // Scope pill, not a title: the panel belongs to a thread, and the thread is
             // named by its app.
             HStack(spacing: 8) {
@@ -1343,132 +1339,120 @@ struct GeneralChatWindowView: View {
             }
 
             if effectivePanelTab == .scope {
-                ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let subtitle = inventory.subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .textSelection(.enabled)
-                    }
-
-                    ForEach(inventory.groups) { group in
-                        inventoryGroup(group)
-                    }
-
-                    if inventory.groups.isEmpty {
-                        Text(
-                            "Nothing is linked to this scope yet. Actions, skills, MCP servers "
-                            + "and CLI tools you add show up here and in what the model can do."
-                        )
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if let bundleId = model.activeScopeBundleId {
-                        let remembered = ChatRoutePreferenceStore.remembered(bundleId: bundleId)
-                        if !remembered.isEmpty {
-                            VStack(alignment: .leading, spacing: 5) {
-                                sectionLabel(
-                                    "Preferred routes", symbol: "arrow.triangle.branch",
-                                    count: remembered.count)
-                                ForEach(remembered, id: \.intent) { entry in
-                                    HStack(alignment: .top, spacing: 6) {
-                                        Image(systemName: entry.kind.symbol)
-                                            .font(.system(size: 9))
-                                            .foregroundStyle(.tertiary)
-                                            .padding(.top, 2)
-                                        Text("“\(entry.intent)” → \(entry.kind.routeLabel)")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.primary.opacity(0.85))
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        Spacer(minLength: 0)
-                                    }
-                                }
-                                Button {
-                                    ChatRoutePreferenceStore.forget(bundleId: bundleId)
-                                    routeResetToken += 1
-                                } label: {
-                                    Text("Always ask again")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Forget these choices and ask each time")
-                            }
-                            .id(routeResetToken)
-                        }
-
-                        // Where this app documents itself.
-                        //
-                        // DoraX finds an app's docs from its adapter's links, its Sparkle
-                        // feed, Homebrew, the App Store listing and the URLs compiled into
-                        // its binary — and refuses to guess when none of those know it. That
-                        // leaves a long tail of small apps whose homepage is sitting in their
-                        // own Help menu as a title we can read and a URL we cannot. For those,
-                        // the user is the authority: one pasted link and the app is
-                        // documented, and answers about it come from its own pages instead of
-                        // from a list of menu items.
-                        appDocumentationField(bundleId: bundleId)
-
-                        Button {
-                            AppDelegate.shared?.showSettings()
-                            // The settings window has to exist before it can be navigated.
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                                // One typed post carries the app itself, so Settings opens on
-                                // this integration rather than on whichever was last selected.
-                                NotificationCenter.default.post(
-                                    name: .openSettingsPage, object: nil,
-                                    userInfo: SettingsRouteResolver.notificationPayload(
-                                        for: IntegrationDestination(
-                                            scope: .apps,
-                                            bundleID: bundleId,
-                                            tab: .actions)))
-                                NotificationCenter.default.post(
-                                    name: .openAppAdapter, object: nil,
-                                    userInfo: ["bundleId": bundleId])
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text("Add tools for \(model.activeScopeTitle)")
-                                    .font(.system(size: 11.5, weight: .medium))
-                                Spacer(minLength: 0)
-                            }
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.accentColor.opacity(0.12))
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open Settings → App Adapters for this app")
-                    }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        sectionLabel("Provider", symbol: "brain.head.profile", count: nil)
-                        HStack(spacing: 6) {
-                            AIProviderIcon(
-                                provider: AppSettings.shared.selectedAIProvider, size: 12)
-                            Text(AppSettings.shared.selectedAIProvider.displayName)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.primary.opacity(0.85))
-                        }
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                // One rail, two densities (#323): the same panel the compact Corner shows,
+                // here at full density. Scope / Usage / Progress / Connectors / Can do here /
+                // App Pack / Outputs, with this scope's config actions in the trailing slot.
+                // The window's per-message activity rides on each message, so live steps are
+                // passed empty.
+                CornerLivePanel(
+                    appName: model.activeScopeAppName ?? model.activeScopeTitle,
+                    appBundleID: model.activeScopeBundleId ?? "",
+                    appIcon: GeneralChatSessionStore.icon(for: model.activeScope),
+                    messages: model.messages,
+                    isAnswering: model.isSending,
+                    liveSteps: windowLiveProgressSteps,
+                    liveActivity: [],
+                    activityByMessageID: [:],
+                    density: .full,
+                    trailing: AnyView(scopeConfigActions))
             }
         }
         .background(Theme.surface(dark))
+    }
+
+    /// The scope tab's config actions, carried in the shared rail's trailing slot (#323):
+    /// the routes this app prefers, where it documents itself, and a way to add tools. The
+    /// read-only context (pack, connectors, outputs, usage) is the rail's own cards now.
+    @ViewBuilder
+    private var scopeConfigActions: some View {
+        if let bundleId = model.activeScopeBundleId {
+            VStack(alignment: .leading, spacing: 16) {
+                Divider().opacity(0.4)
+                let remembered = ChatRoutePreferenceStore.remembered(bundleId: bundleId)
+                if !remembered.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        sectionLabel(
+                            "Preferred routes", symbol: "arrow.triangle.branch",
+                            count: remembered.count)
+                        ForEach(remembered, id: \.intent) { entry in
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: entry.kind.symbol)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 2)
+                                Text("“\(entry.intent)” → \(entry.kind.routeLabel)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary.opacity(0.85))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        Button {
+                            ChatRoutePreferenceStore.forget(bundleId: bundleId)
+                            routeResetToken += 1
+                        } label: {
+                            Text("Always ask again")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Forget these choices and ask each time")
+                    }
+                    .id(routeResetToken)
+                }
+
+                // Where this app documents itself.
+                //
+                // DoraX finds an app's docs from its adapter's links, its Sparkle feed,
+                // Homebrew, the App Store listing and the URLs compiled into its binary — and
+                // refuses to guess when none of those know it. That leaves a long tail of small
+                // apps whose homepage is sitting in their own Help menu as a title we can read
+                // and a URL we cannot. For those, the user is the authority: one pasted link
+                // and the app is documented, and answers about it come from its own pages
+                // instead of from a list of menu items.
+                appDocumentationField(bundleId: bundleId)
+
+                Button {
+                    AppDelegate.shared?.showSettings()
+                    // The settings window has to exist before it can be navigated.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        // One typed post carries the app itself, so Settings opens on this
+                        // integration rather than on whichever was last selected.
+                        NotificationCenter.default.post(
+                            name: .openSettingsPage, object: nil,
+                            userInfo: SettingsRouteResolver.notificationPayload(
+                                for: IntegrationDestination(
+                                    scope: .apps,
+                                    bundleID: bundleId,
+                                    tab: .actions)))
+                        NotificationCenter.default.post(
+                            name: .openAppAdapter, object: nil,
+                            userInfo: ["bundleId": bundleId])
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Add tools for \(model.activeScopeTitle)")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open Settings → App Adapters for this app")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+        }
     }
 
     /// Scope is a tab like the others. It used to sit permanently under whatever the

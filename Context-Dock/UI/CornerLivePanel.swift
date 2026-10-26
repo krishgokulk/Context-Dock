@@ -25,11 +25,26 @@ struct CornerLivePanel: View {
     let isAnswering: Bool
     /// The narration, for the moments before the first step is recorded.
     let liveSteps: [String]
+    /// The turn's steps as they run, and the finished steps by message id. Passed in, not read
+    /// from `AppChatConversation.shared`, so the panel is one component the window can host too
+    /// (#323) rather than being wired to the compact chat's store.
+    let liveActivity: [ActivityStep]
+    let activityByMessageID: [UUID: [ActivityStep]]
+    /// Compact beside the Corner, full in the window. `CornerRailRules` decides which cards a
+    /// density draws; compact is exactly today's panel.
+    var density: CornerRailDensity = .compact
+    /// Scope-specific affordances the window appends under the cards (add tools, app docs,
+    /// preferred routes). Compact passes nothing, so it is unchanged. Kept here, inside the
+    /// one scroll, rather than wrapping the panel in a second one.
+    var trailing: AnyView? = nil
 
-    @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var servers = MCPServerManager.shared
     /// What the app can do, read once per app: it does not change while a turn runs.
     @State private var canDo: [CanDoLine] = []
+    /// The app's pack in full: the inventory's groups (actions, skills, menus, tools), shown
+    /// in detail by the window's rail. The compact "Can do here" card summarises the same
+    /// groups as counts.
+    @State private var groups: [ScopeInventory.Group] = []
     /// The files the last finished answer made or named, found off the main thread.
     @State private var files: [URL] = []
     /// Sections the user folded, by title — Claude's chevrons.
@@ -56,7 +71,7 @@ struct CornerLivePanel: View {
 
     private var finishedSteps: [ActivityStep] {
         guard let answer = lastTurnAnswer else { return [] }
-        let recorded = conversation.activityByMessageID[answer.id] ?? answer.activity
+        let recorded = activityByMessageID[answer.id] ?? answer.activity
         return ActivityStep.steps(recorded: recorded, receipts: answer.evidenceReceipts)
     }
 
@@ -66,7 +81,7 @@ struct CornerLivePanel: View {
     /// "No steps recorded" (#199).
     private var progressRows: [PanelProgressRow] {
         if isAnswering {
-            return L.progressRows(reasoning: liveSteps, steps: conversation.liveActivity)
+            return L.progressRows(reasoning: liveSteps, steps: liveActivity)
         }
         guard let answer = lastTurnAnswer else { return [] }
         return L.progressRows(reasoning: answer.trace, steps: finishedSteps)
@@ -74,36 +89,17 @@ struct CornerLivePanel: View {
 
     var body: some View {
         let steps = L.steps(
-            isAnswering: isAnswering, live: conversation.liveActivity, finished: finishedSteps)
+            isAnswering: isAnswering, live: liveActivity, finished: finishedSteps)
         let uploads = L.uploads(messages.filter { $0.role == .user }.map(\.attachments))
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                PanelHeader(
-                    icon: appIcon, title: appName.isEmpty ? "This app" : appName,
-                    subtitle: subtitle(steps), status: isAnswering ? .orange : .green)
-                section("Progress", count: progressRows.count) { progress(progressRows) }
-                if let shell = L.terminalStep(in: steps) {
-                    section(shell.status == .running ? "Terminal — running" : "Terminal") {
-                        terminal(shell)
-                    }
+                // One order for both densities, decided by the rules: the compact list is
+                // exactly today's panel, the window adds the rest. Never a second design.
+                ForEach(CornerRailRules.cards(for: density), id: \.self) { card in
+                    self.card(card, steps: steps, uploads: uploads)
                 }
-                if !files.isEmpty {
-                    section("Files", count: files.count) {
-                        ForEach(files, id: \.self) { fileRow($0) }
-                    }
-                }
-                if !uploads.isEmpty {
-                    section("Uploads", count: uploads.count) {
-                        ForEach(uploads, id: \.self) { fileRow($0) }
-                    }
-                }
-                section("Connectors") { connectors(steps) }
-                if !canDo.isEmpty {
-                    section("Can do here", count: canDo.count) {
-                        ForEach(canDo) { line in
-                            PanelRow(symbol: line.symbol, value: line.title, trailing: "\(line.count)")
-                        }
-                    }
+                if let trailing {
+                    trailing
                 }
             }
             .padding(.horizontal, 14)
@@ -120,6 +116,103 @@ struct CornerLivePanel: View {
             loadCanDo()
         }
         .task(id: filesKey) { await loadFiles() }
+    }
+
+    /// One card, drawn the same whatever density asked for it. The full-density cards
+    /// (usage, app pack, skills, mods) are wired when the window hosts this panel; compact
+    /// never lists them, so it is unaffected.
+    @ViewBuilder
+    private func card(_ card: CornerRailCard, steps: [ActivityStep], uploads: [URL]) -> some View {
+        switch card {
+        case .scope:
+            PanelHeader(
+                icon: appIcon, title: appName.isEmpty ? "This app" : appName,
+                subtitle: subtitle(steps), status: isAnswering ? .orange : .green)
+        case .progress:
+            section("Progress", count: progressRows.count) { progress(progressRows) }
+            if let shell = L.terminalStep(in: steps) {
+                section(shell.status == .running ? "Terminal — running" : "Terminal") {
+                    terminal(shell)
+                }
+            }
+        case .outputs:
+            if !files.isEmpty {
+                section("Files", count: files.count) {
+                    ForEach(files, id: \.self) { fileRow($0) }
+                }
+            }
+            if !uploads.isEmpty {
+                section("Uploads", count: uploads.count) {
+                    ForEach(uploads, id: \.self) { fileRow($0) }
+                }
+            }
+        case .connectors:
+            section("Connectors") { connectors(steps) }
+        case .canDoHere:
+            if !canDo.isEmpty {
+                section("Can do here", count: canDo.count) {
+                    ForEach(canDo) { line in
+                        PanelRow(symbol: line.symbol, value: line.title, trailing: "\(line.count)")
+                    }
+                }
+            }
+        case .usage:
+            section("Usage") {
+                HStack(spacing: 6) {
+                    AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 12)
+                    Text(AppSettings.shared.selectedAIProvider.displayName)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary.opacity(0.85))
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 2)
+            }
+        case .appPack:
+            if !groups.isEmpty {
+                section("App Pack", count: groups.count) {
+                    ForEach(groups) { group in groupRow(group) }
+                }
+            }
+        case .skills, .mods:
+            // Skills are one of the App Pack's groups, so they ride in that card rather than
+            // repeating. Mods wait until one applies to the scope (owner 2026-10-26).
+            EmptyView()
+        }
+    }
+
+    /// One inventory group in the App Pack card: its title and count, then its items — the
+    /// detail the window's scope tab used to show, now inside the shared rail.
+    private func groupRow(_ group: ScopeInventory.Group) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: group.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(group.title)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 0)
+                Text("\(group.items.count)")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            ForEach(Array(group.items.prefix(8)), id: \.self) { item in
+                Text(item)
+                    .font(.system(size: 11, design: group.isMonospaced ? .monospaced : .default))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, 22)
+            }
+            if group.items.count > 8 {
+                Text("+\(group.items.count - 8) more")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 22)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func subtitle(_ steps: [ActivityStep]) -> String {
@@ -391,7 +484,9 @@ struct CornerLivePanel: View {
     // MARK: Can do
 
     private func loadCanDo() {
-        canDo = ScopeInventory.app(bundleId: appBundleID, appName: appName).canDoGroups
+        let inventory = ScopeInventory.app(bundleId: appBundleID, appName: appName)
+        groups = inventory.groups
+        canDo = inventory.canDoGroups
             .prefix(6)
             .map { CanDoLine(title: $0.title, symbol: $0.symbol, count: $0.items.count) }
     }
