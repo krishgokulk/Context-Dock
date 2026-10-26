@@ -62,8 +62,13 @@ enum CornerNavigation {
         // scroll, so the trackpad's scrolling-direction setting does not flip it.
         case .leftKey, .swipeSideways(right: true): return .general
         case .rightKey, .swipeSideways(right: false): return nil
-        case .layerUp: return mode == .frontmostApp ? .globalContext : nil
-        case .layerDown: return mode == .globalContext ? .frontmostApp : nil
+        // The layers are one surface's focus (#318): the decision lives in `SurfaceFocusRules`.
+        case .layerUp, .layerDown:
+            let focus: SurfaceFocus = mode == .frontmostApp ? .frontmost : .global
+            guard case .focus(let next) = SurfaceFocusRules.decide(
+                move == .layerUp ? .zoomOut : .zoomIn, from: focus)
+            else { return nil }
+            return next == .frontmost ? .frontmostApp : .globalContext
         }
     }
 }

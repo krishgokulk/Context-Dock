@@ -22,16 +22,16 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 
 ## DoraX architecture rule
 
-Never merge product layers.
+One surface, focus-scoped; job separation via intent + lane (owner 2026-10-25, #318).
 
-- Global Context is not Chat Mode.
-- Context Dock is not Global Context.
-- Context Dock Chat Mode is not General Chat Mode.
-- Selection Shortcut Sheet is not a launcher.
-- Media Dock is not a chat surface.
-
-Each surface must keep one job: search, frontmost app actions, general chat, app-scoped chat, media,
-or selection-aware actions.
+- Global Context and the frontmost-app Context Dock are ONE surface: the frontmost app is the
+  default focus, ⌘ zooms out to Global (cross-app) and back. One state, one running-apps row, one
+  input; focus (`SurfaceFocus`, `UI/SurfaceFocus.swift`) is the only difference.
+- What still must not merge: General Chat, Media Dock and the Selection Shortcut Sheet keep their own
+  jobs (general chat, media, selection-aware actions); Selection Shortcut Sheet is not a launcher;
+  Media Dock is not a chat surface.
+- Behaviour is decided per request by query intent + lane (`RequestLane`/`LanePlan`/`LaneCoordinator`:
+  data lane = headless read, UI lane = menu click) — never by which scope you are in.
 
 Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specific content. Do not
 create separate floating visual containers per mode; use shared shell, input, row, animation, and
