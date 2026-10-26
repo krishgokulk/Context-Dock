@@ -49,4 +49,21 @@ struct AppDictionaryLiveReadTests {
         #expect(
             AppDictionaryCapabilities.askedApplicationProperties(query: "volume", in: empty).isEmpty)
     }
+
+    @Test func listingAClassTheAppDoesNotExposeAsACollectionNamesTheBoundary() throws {
+        let note = try #require(
+            AppDictionaryCapabilities.collectionBoundary(
+                query: "list all tracks", in: Self.spotify))
+        #expect(note.contains("tracks"))
+        // The way out the dictionary does offer: the item the app names.
+        #expect(note.contains("current track"))
+    }
+
+    @Test func aQuestionThatIsNotAListingHasNoBoundaryNote() {
+        for text in ["what is the current track", "current volume level?"] {
+            #expect(
+                AppDictionaryCapabilities.collectionBoundary(query: text, in: Self.spotify) == nil,
+                "\"\(text)\"")
+        }
+    }
 }

@@ -456,6 +456,36 @@ enum AppDictionaryCapabilities {
         }.map(\.name)
     }
 
+    /// What a "list all tracks" question hits when the app's dictionary names the class but
+    /// declares no collection of it on the application (Spotify has `current track` and no
+    /// `every track`). Said to the model as a fact, so a provider with no tools states the
+    /// boundary instead of answering from the window title.
+    nonisolated static func collectionBoundary(
+        query: String, in dictionary: AppScriptingDictionary
+    ) -> String? {
+        let words = Set(query.lowercased().split { !$0.isLetter }.map(String.init))
+        guard !words.isDisjoint(with: ["list", "all", "every", "each"]),
+            let application = dictionary.class(named: "application")
+        else { return nil }
+        let elements = Set(application.elementTypes.map { $0.lowercased() })
+        for scripted in dictionary.classes where scripted.name.lowercased() != "application" {
+            let name = scripted.name.lowercased()
+            let plural = scripted.plural.lowercased()
+            guard words.contains(name) || words.contains(plural),
+                !elements.contains(name)
+            else { continue }
+            let roots = dictionary.classes.flatMap(\.properties)
+                .filter { $0.type.lowercased() == name }.map(\.name)
+            let way = roots.isEmpty
+                ? ""
+                : " It can read one item the app names instead: \(roots.joined(separator: ", "))."
+            return "\(dictionary.appName)'s scripting dictionary declares no collection of "
+                + "\(plural), so it cannot list them.\(way) Tell the user this plainly; do not "
+                + "answer from the window title."
+        }
+        return nil
+    }
+
     /// An exact read of the application properties the question names, ahead of the model,
     /// for a provider that is given no tools and so can never ask for one. Empty — not an
     /// error — when nothing applies: the app is not running (a typed event would launch
@@ -480,9 +510,13 @@ enum AppDictionaryCapabilities {
             return ""
         }
         let names = askedApplicationProperties(query: query, in: dictionary)
+        let boundary = collectionBoundary(query: query, in: dictionary)
         guard !names.isEmpty else {
-            DoraXTurnLog.record("dict.liveRead skipped: question names no application property")
-            return ""
+            DoraXTurnLog.record(
+                boundary == nil
+                    ? "dict.liveRead skipped: question names no application property"
+                    : "dict.liveRead boundary: no collection to list")
+            return boundary ?? ""
         }
         let plan: DictionaryPlan
         do {
@@ -502,6 +536,6 @@ enum AppDictionaryCapabilities {
         }
         DoraXTurnLog.record("dict.liveRead ok: \(names.joined(separator: ", "))")
         return "Read from \(appName) just now through its scripting dictionary — exact values, "
-            + "no window opened:\n\(outcome.text)"
+            + "no window opened:\n\(outcome.text)" + (boundary.map { "\n\n" + $0 } ?? "")
     }
 }
