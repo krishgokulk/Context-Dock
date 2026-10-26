@@ -125,6 +125,11 @@ struct GeneralChatWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             model.refreshFinderSelection()
         }
+        // A dictionary scan lands asynchronously; the panel is cached per scope, so without
+        // this it kept showing the empty or old manifest the scope opened with.
+        .onReceive(NotificationCenter.default.publisher(for: .appDictionaryChanged)) { _ in
+            cachedInventory = model.activeScopeInventory
+        }
         .onChange(of: routeResetToken) { _, _ in
             cachedInventory = model.activeScopeInventory
         }

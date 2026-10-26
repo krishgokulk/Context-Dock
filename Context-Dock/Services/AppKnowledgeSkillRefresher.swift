@@ -71,6 +71,11 @@ enum AppKnowledgeSkillRefresher {
         // the content being current, not about overriding that decision.
         if let existing { skill.isEnabled = existing.isEnabled }
         SkillStore.shared.upsert(skill)
+
+        // The scripting-dictionary rung (P13 #208) keys on the same version: a version
+        // change is what makes its manifest stale, so the refresh that already knows
+        // both facts kicks its rescan. Fire-and-forget; absent or cached costs nothing.
+        AppDictionaryStore.shared.kickScanIfStale(bundleID: bundleId, appName: appName)
     }
 
     // MARK: - Sources

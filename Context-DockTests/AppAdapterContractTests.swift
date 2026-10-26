@@ -132,8 +132,13 @@ struct PriorityAdapterContractTests {
             "com.apple.Preview", "com.apple.Photos", "com.apple.dt.Xcode",
             "com.microsoft.VSCode", "com.spotify.client",
         ] {
+            // The scripting-dictionary rung (P13 #208) is not an adapter's typed write: it
+            // registers one query/one modify pair per app the app itself describes, and the
+            // modify half is gated. What this test forbids is an *adapter* declaring a write
+            // the app never offered — so the rung's own ids are excluded, not the rule.
             let writeCapabilities = CapabilityRegistry.shared.all.filter {
                 $0.appBundleID == bundleID && $0.riskLevel.requiresApproval
+                    && !$0.id.hasPrefix(AppDictionaryCapabilities.idPrefix)
             }
             #expect(writeCapabilities.isEmpty, "\(bundleID) unexpectedly exposes typed writes")
         }
