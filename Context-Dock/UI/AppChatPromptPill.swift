@@ -26,8 +26,11 @@ enum AppChatPromptMetrics {
     /// picture itself for an image, a card for anything else. 60pt tile + 8pt above and below.
     static let attachmentTileRowHeight: CGFloat = 76
     /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
-    /// the composer.
-    static let chatHeight: CGFloat = 340
+    /// the composer. Raised to read like Raycast's centred panel — roomy enough to use
+    /// without expanding (#323) — the same number whether the corner is edge-anchored or
+    /// centred, since both read this one constant. The width stays the owner-blessed
+    /// Raycast/Spotlight 600 (`DockShellWidth.base`); only the height grows.
+    static let chatHeight: CGFloat = 480
 
     /// How much a card grows per message, and how far it may grow.
     ///
