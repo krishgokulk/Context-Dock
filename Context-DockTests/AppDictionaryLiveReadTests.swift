@@ -28,6 +28,15 @@ struct AppDictionaryLiveReadTests {
         }
     }
 
+    @Test func aQuestionNamingAValueOfAnEnumerationReadsThatProperty() {
+        for text in ["is it playing?", "is it paused right now", "has it stopped"] {
+            #expect(
+                AppDictionaryCapabilities.askedApplicationProperties(
+                    query: text, in: Self.spotify) == ["player state"],
+                "\"\(text)\"")
+        }
+    }
+
     @Test func aQuestionThatNamesNoPropertyReadsNothing() {
         #expect(
             AppDictionaryCapabilities.askedApplicationProperties(

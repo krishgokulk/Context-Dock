@@ -450,9 +450,13 @@ enum AppDictionaryCapabilities {
             guard !property.isWriteOnly, property.code != nil,
                 values.contains(property.type.lowercased())
             else { return false }
-            return property.name.split(separator: " ").contains {
+            if property.name.split(separator: " ").contains(where: {
                 $0.count >= 4 && $0.lowercased() != "current" && asked.contains(stem($0))
-            }
+            }) { return true }
+            // "is it playing?" names a value of `player state`, not the property.
+            let cases = dictionary.enumerations
+                .first { $0.name.lowercased() == property.type.lowercased() }?.cases ?? []
+            return cases.contains { asked.contains(stem(Substring($0.name))) }
         }.map(\.name)
     }
 
