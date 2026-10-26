@@ -1502,19 +1502,31 @@ final class CornerDockController: NSObject {
             // One field (owner 2026-10-09): from Global, ⌘ steps into the app in front inside
             // Global — the "← Name" chip, as stepping into any running app does — and from any
             // app, ⌘ comes home to Global, as Backspace does.
+            let focus: SurfaceFocus
             switch self.chatPresentation.mode {
-            case .frontmostApp: self.chatPresentation.show(.globalContext)
-            case .globalContext:
-                if self.prompt.returnsToGlobalScope {
+            case .frontmostApp: focus = .frontmost
+            case .globalContext: focus = self.prompt.returnsToGlobalScope ? .app : .global
+            case .general: return
+            }
+            // ⌘ is a zoom (#318): `SurfaceFocusRules` says where it lands; this carries it out.
+            guard case .focus(let next) = SurfaceFocusRules.decide(.commandTap, from: focus)
+            else { return }
+            switch next {
+            case .global:
+                if focus == .app {
                     _ = self.prompt.leaveScopeForGlobal()
-                } else if let target = AppDelegate.shared?.frontmostChatTarget(),
+                } else {
+                    self.chatPresentation.show(.globalContext)
+                }
+            case .app: break
+            case .frontmost:
+                if let target = AppDelegate.shared?.frontmostChatTarget(),
                     !target.bundleID.isEmpty
                 {
                     self.prompt.scopeIntoApp(name: target.name, bundleID: target.bundleID)
                 } else {
                     self.chatPresentation.show(.frontmostApp)
                 }
-            case .general: break
             }
         }
         pendingCommandSwitch = work

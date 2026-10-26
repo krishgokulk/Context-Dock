@@ -30,6 +30,8 @@ Detail → [`00-COMPLETE-APP-PLAN.md`](00-COMPLETE-APP-PLAN.md) (every feature w
 
 ## Part 2 — The architecture
 
+> **Product-layer rule (2026-10-25, #318):** "never merge product layers" is now "one surface, focus-scoped; job separation via intent + lane" — Global Context and the frontmost-app Context Dock are one surface. See `AGENTS.md`.
+
 ### 2.1 Five layers, one direction
 
 ```
