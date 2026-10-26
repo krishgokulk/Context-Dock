@@ -120,31 +120,47 @@ the stable size rules. Each spec says what it borrows from Claude and where it m
   Esc, ←/→ General Chat toggle, the vertical swipes from §4b). `[ours]`
 - Opens from a key `[owner]` and from a `?` hint in the Footer. Closes on Esc. No window.
 
-### 2.7 Expand affordance — grow in place, Raycast-style (owner idea 2026-10-26) — Adopt
+### 2.7 Expand → open in the full window, + Raycast-comfortable compact size (owner decision 2026-10-26)
 
-The explicit model the owner wants: **tiny launcher ↔ corner, and when the user expands it, it
-becomes the full General Chat — same UI throughout — with an expand icon that appears automatically
-so the user knows more detail is available.** This is the Raycast pattern, and it has one hard
-constraint that defines it.
+**Decision, from the owner's screenshots + words (2026-10-26):** *"keep same size window that fits
+like centre window like Raycast — now it's smaller; show an expand icon at the bottom next to settings
+and the open/pin icon; when the user clicks it, open that app chat in a window; both corner and centre
+launcher, same side panels."* This **overrides** the earlier grow-in-place draft of this section:
+expand **opens the existing full window**, it does not grow the panel in place.
 
-- **Raycast grows one panel; it never opens a second window.** So the expand grows the **same
-  `UnifiedDockShell`** into a larger size (more transcript, bigger content area) — a new size phase
-  (e.g. `expanded` added to `AppChatPromptPhase`), **not** a new window. This is the compact-first
-  rule taken to its end: the card "grows as far as the task needs," and expand is the user's override
-  to go all the way large. Same input family, row family, material, chips — only size and visible
-  history change (stable-state / one-look rules).
-- **The expand glyph appears automatically, but only when there is more to show** — a transcript
-  exists, or content exceeds the compact height. Not always-on (that reads as decoration); conditional
-  (reads as "there's more here, go bigger"). A collapse glyph returns to compact; Esc steps back as
-  always. `[proposal]`
-- **Same behaviour in every scope that has a transcript** (General Chat, App Chat). Global Context
-  search does not expand into a chat — it is search, not conversation (layer rule). `[proposal]`
-- **Decision vs the existing separate Chat Window (⌃C).** `[owner]` Today the full-window chat is a
-  *separate window by design* (`00-DOCK-AND-CORNER.md` §4). Raycast-expand grows in place and does
-  **not** open that window. **Recommendation:** the inline **expand grows the Corner shell**; keep
-  **⌃C as an explicit detach / pop-out** into the standalone window for when the user wants a real
-  movable window on another Space. Two gestures, two outcomes — do not collapse "expand" and "detach"
-  into one, or the big chat has two contradictory meanings.
+Two changes, applied **identically to the corner dock and the centre launcher** (parity is explicit):
+
+1. **Compact size — make it Raycast-comfortable.** The compact App Chat panel is too small today
+   (owner screenshots 4–5). Grow the default compact size so it "fits like the centre window" — roomy
+   enough to read without expanding, like Raycast's centred panel. Same shell, **same size in corner
+   and centre** (one-size rule, owner 2026-09-25). This is a size change, not a new window.
+2. **Expand control in the footer.** Put the expand glyph (⤢) in the **footer bar, beside the gear
+   (settings) and the pin/open icon** — consistent in every scope. Today it sits top-right in App Chat
+   (screenshot 4) while Global and Finder show gear/pin in the footer (screenshots 1–2); unify the
+   placement. Clicking it **opens the current conversation in the full window** (the tabbed
+   Chat/Work/Dashboard window, screenshot 3), on its **Chat tab**.
+
+**The real work is parity of the side panels, not the button.** `[proposal]` The compact App Chat
+shows a right panel — **Progress / Connectors / Can do here** — plus the running-app strip
+(screenshots 4–5). The full window today opens on "What are we working on?" and does **not** render
+that same panel (screenshot 3). "Same side panels etc." means: expand lands on the Chat tab, carries
+the live conversation, and shows the **identical** right panel — the full window already has a
+right-panel toggle, so it must host the **same component**, never a second design. Reuse the one
+panel; do not build a parallel one.
+
+**Feasibility: yes, perfectly — the pieces already exist.** `[proposal]`
+- The full window exists (tabbed Chat/Work/Dashboard, screenshot 3) and has a right-panel toggle.
+- The expand control exists (top of App Chat, screenshot 4).
+- So the task is: (a) bump compact size, (b) move/standardise the expand control into the footer across
+  scopes, (c) route expand → the full window's Chat tab with the live conversation + the shared right
+  panel.
+- **One thing to verify in code first** `[guess]`: that the compact App Chat and the full window share
+  one chat model (likely `AppScopedChatService`), so the conversation survives the hand-off. If they
+  don't, that wiring is the actual work; if they do, this is mostly placement + size + panel reuse.
+
+**What stays:** ⌃C still opens the full window from a hotkey; expand is the same destination via a
+click, carrying the current chat. Esc / collapse returns focus to the compact shell. Global Context
+search does not expand into a chat — only chat scopes (General Chat, App Chat) do (layer rule).
 
 ---
 
@@ -175,10 +191,12 @@ constraint that defines it.
    are ephemeral today, decide persistence before the board. `[owner]`
 4. **Hotkeys.** Side Thread (§2.2) and Keys overlay (§2.6) need keys that don't clash; assign them in
    the recorder that requires a modifier. `[owner]`
-5. **Expand vs detach.** (§2.7) Confirm the inline expand **grows the Corner in place** and ⌃C stays
-   the separate pop-out window — not the same thing. `[owner]`
+5. **Expand → full window: resolved** (owner 2026-10-26, §2.7) — expand opens the current chat in the
+   existing full window; not grow-in-place. **Still open:** the full window must render the *same*
+   right panel (Progress / Connectors / Can do here) as the compact App Chat, or "same side panels"
+   isn't met. Confirm that is in scope. `[owner]`
 6. **Scope of v1.** My ranked recommendation if you want the highest ratio of Claude-feel to effort:
-   **(1) Expand affordance §2.7** (the owner's own ask, and it is the Raycast feel in one gesture),
+   **(1) Compact-size + expand-to-full-window §2.7** (the owner's explicit ask; biggest felt change),
    **(2) Live panel detail modes §2.5** (already-structured, pure win), **(3) Keys overlay §2.6**
    (cheap, discoverability), **(4) Side Thread §2.2** (the one new idea worth it), then **(5)
    Conversations board §2.1** and **(6) usage chip §2.3** after #318. `[proposal]`
