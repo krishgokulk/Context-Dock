@@ -2001,8 +2001,17 @@ enum AppScopedChatService {
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
         log.notice("stage: live apple data")
-        let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
+        var liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+        }
+        // A provider with no tools cannot ask for the dictionary read that holds a value the
+        // live facts lack (volume, repeat), and answered from the window title instead.
+        if !provider.supportsNativeTools, let routingBundleId, !routingBundleId.isEmpty {
+            let dictionaryRead = await AppDictionaryCapabilities.liveRead(
+                bundleID: routingBundleId, appName: appName, query: query)
+            if !dictionaryRead.isEmpty {
+                liveAppleData += (liveAppleData.isEmpty ? "" : "\n\n") + dictionaryRead
+            }
         }
         prompt.append(.liveAppData, liveAppleData)
 

@@ -425,4 +425,59 @@ enum AppDictionaryCapabilities {
         }
         ChatResultRowCollector.shared.add(appRows, scope: scope)
     }
+
+    // MARK: - Reading for a provider that holds no tools
+
+    /// The application properties a question names, as plain values (`sound volume` for
+    /// "current volume level?"). A property whose type is another class — `current track` —
+    /// is an object, read through `root`, so it is never offered here. Matching is by word,
+    /// so "volume" finds `sound volume` without the user knowing the dictionary's name.
+    nonisolated static func askedApplicationProperties(
+        query: String, in dictionary: AppScriptingDictionary
+    ) -> [String] {
+        guard let application = dictionary.class(named: "application") else { return [] }
+        let values = Set(
+            ["text", "integer", "real", "number", "boolean", "double integer", "string"]
+                + dictionary.enumerations.map { $0.name.lowercased() })
+        func stem(_ word: Substring) -> String {
+            let lower = word.lowercased()
+            if lower.count > 5, lower.hasSuffix("ing") { return String(lower.dropLast(3)) }
+            if lower.count > 3, lower.hasSuffix("s") { return String(lower.dropLast()) }
+            return lower
+        }
+        let asked = Set(query.split { !$0.isLetter }.map(stem))
+        return application.properties.filter { property in
+            guard !property.isWriteOnly, property.code != nil,
+                values.contains(property.type.lowercased())
+            else { return false }
+            return property.name.split(separator: " ").contains {
+                $0.count >= 4 && $0.lowercased() != "current" && asked.contains(stem($0))
+            }
+        }.map(\.name)
+    }
+
+    /// An exact read of the application properties the question names, ahead of the model,
+    /// for a provider that is given no tools and so can never ask for one. Empty — not an
+    /// error — when nothing applies: the app is not running (a typed event would launch
+    /// it), the user has not brought it into this turn, or the question names no property.
+    static func liveRead(bundleID: String, appName: String, query: String) async -> String {
+        guard activeGrants.contains(bundleID),
+            CapabilityRegistry.shared.capability(id: queryPrefix + bundleID) != nil,
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                .contains(where: { !$0.isTerminated }),
+            let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleID)
+        else { return "" }
+        let names = askedApplicationProperties(query: query, in: dictionary)
+        guard !names.isEmpty,
+            let plan = try? AppDictionaryQuery.plan(
+                DictionaryRequest(
+                    verb: .query, className: "application",
+                    propertiesRaw: names.joined(separator: ", "), limit: 1),
+                for: dictionary)
+        else { return "" }
+        let outcome = await run(plan, dictionary: dictionary)
+        guard outcome.success, !outcome.text.isEmpty else { return "" }
+        return "Read from \(appName) just now through its scripting dictionary — exact values, "
+            + "no window opened:\n\(outcome.text)"
+    }
 }
