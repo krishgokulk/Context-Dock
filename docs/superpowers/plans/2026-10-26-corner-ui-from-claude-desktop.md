@@ -164,6 +164,53 @@ search does not expand into a chat — only chat scopes (General Chat, App Chat)
 
 ---
 
+### 2.8 Full-window side panels — DoraX's rails, not Claude's code panes (owner direction 2026-10-26)
+
+The owner points at the Claude **desktop app's own** right rail (Environment · Context % · Connectors ·
+Outputs · Changes), its Files panel, its split-pane arrange (Move / Fill and arrange / Open in new
+window) and its smooth rounded edges, and wants the **DoraX full window** to have the equivalent,
+filled with **our** domain: app scope, app-specific connectors, App Packs/plugins, skills, mods,
+outputs.
+
+**One context-rail component, two densities** `[proposal]` — the rule that stops this becoming two
+panel designs:
+- The right panel the compact App Chat already shows (Progress / Connectors / Can do here) is the
+  **same component** as the full window's rail. Compact shows the essential cards; the full window,
+  with room, shows the full set. One implementation, responsive density — never a second.
+
+**Rail cards, mapped Claude desktop → DoraX:**
+
+| Claude desktop rail | DoraX rail card | Source |
+|---|---|---|
+| Environment | **Scope** — Global / app name / General, app icon + "Running" dot | compact header today |
+| Context (usage %) | **Usage** — provider + context used (the §2.3 chip as a card) | §2.3 |
+| Connectors (N connected) | **Connectors** — linked to *this app/scope* ("Nothing linked to Claude yet" today) | screenshot 4 |
+| — | **Can do here** — CLI tools + Menu commands counts | screenshots 1, 4 |
+| — | **App Pack / Plugins** — this app's pack (actions, skills, menus, tools) | `docs/architecture/PLUGINS.md` |
+| — | **Skills** — skills available in this scope | `.claude/skills`, App Packs |
+| — | **Mods** — DoraX interface mods that apply here | plugin-authoring "mods" |
+| Outputs | **Outputs** — files this chat produced (`~/Documents/DoraX Outputs`) | §2.4, #125 |
+| Changes / Mark ready | — code-review concept, not ours | **Reject** |
+
+**Full-window-only affordances (Adapt, not copy):**
+- **Arrange / split** (Claude's Move + Fill and arrange): worth it only if the full window hosts more
+  than one pane (chat + rail + outputs). Keep minimal — a rail show/hide toggle (the full window
+  already has one, screenshot 3) and perhaps left/right rail placement. **Do not** build a free-form
+  drag grid (Rejected for the shell in §0; the full window may earn a *light* version). `[owner]`
+- **Open in new window** (Claude's popover): the full window may detach further; low priority. `[owner]`
+- **Files tree** (Claude's code tree): **Reject as a code tree** — DoraX is not an IDE. Adapt to the
+  **Outputs/attachments** card above. `[proposal]`
+
+**Smooth edges / material:** rounded corners + Liquid Glass are already the shell material
+(`glassDarkness`). The full window must match — same corner radius, material, light/dark — so compact
+and full read as one product (one-look rule). `[proposal]`
+
+**The boundary that keeps the architecture intact:** the **compact Corner stays one shell** (phases,
+one right panel, no arrangeable panes — §0, Unified Dock Surface rule). The **richer multi-card rail
+and any arrange/split live in the full window only**, which is already a separate window by design.
+"Same side panels" = same rail *component and cards*, denser in compact, fuller in the window — never
+a second design.
+
 ## 3. What stays DoraX (the non-negotiables this plan keeps)
 
 1. **One shell, modes as content.** Everything above plugs into `UnifiedDockShell`; nothing recreates
@@ -191,10 +238,12 @@ search does not expand into a chat — only chat scopes (General Chat, App Chat)
    are ephemeral today, decide persistence before the board. `[owner]`
 4. **Hotkeys.** Side Thread (§2.2) and Keys overlay (§2.6) need keys that don't clash; assign them in
    the recorder that requires a modifier. `[owner]`
-5. **Expand → full window: resolved** (owner 2026-10-26, §2.7) — expand opens the current chat in the
-   existing full window; not grow-in-place. **Still open:** the full window must render the *same*
-   right panel (Progress / Connectors / Can do here) as the compact App Chat, or "same side panels"
-   isn't met. Confirm that is in scope. `[owner]`
+5. **Expand → full window + side-panel parity: in scope** (owner 2026-10-26, §2.7 + §2.8) — expand
+   opens the current chat in the existing full window; the full window renders the *same* rail
+   component as the compact App Chat (Scope / Usage / Connectors / Can do here / App Pack / Skills /
+   Mods / Outputs), denser in compact and fuller in the window. **Open sub-decisions:** whether the
+   full window gets light arrange/split + open-in-new-window (§2.8), and the Mods card's exact
+   content. `[owner]`
 6. **Scope of v1.** My ranked recommendation if you want the highest ratio of Claude-feel to effort:
    **(1) Compact-size + expand-to-full-window §2.7** (the owner's explicit ask; biggest felt change),
    **(2) Live panel detail modes §2.5** (already-structured, pure win), **(3) Keys overlay §2.6**
