@@ -461,22 +461,46 @@ enum AppDictionaryCapabilities {
     /// error — when nothing applies: the app is not running (a typed event would launch
     /// it), the user has not brought it into this turn, or the question names no property.
     static func liveRead(bundleID: String, appName: String, query: String) async -> String {
-        guard activeGrants.contains(bundleID),
-            CapabilityRegistry.shared.capability(id: queryPrefix + bundleID) != nil,
-            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                .contains(where: { !$0.isTerminated }),
-            let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleID)
-        else { return "" }
+        guard activeGrants.contains(bundleID) else {
+            DoraXTurnLog.record("dict.liveRead skipped: \(bundleID) not granted this turn")
+            return ""
+        }
+        guard CapabilityRegistry.shared.capability(id: queryPrefix + bundleID) != nil else {
+            DoraXTurnLog.record("dict.liveRead skipped: dict.query.\(bundleID) not registered")
+            return ""
+        }
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .contains(where: { !$0.isTerminated })
+        else {
+            DoraXTurnLog.record("dict.liveRead skipped: \(bundleID) not running")
+            return ""
+        }
+        guard let dictionary = AppDictionaryStore.shared.dictionary(forBundleID: bundleID) else {
+            DoraXTurnLog.record("dict.liveRead skipped: no manifest for \(bundleID)")
+            return ""
+        }
         let names = askedApplicationProperties(query: query, in: dictionary)
-        guard !names.isEmpty,
-            let plan = try? AppDictionaryQuery.plan(
+        guard !names.isEmpty else {
+            DoraXTurnLog.record("dict.liveRead skipped: question names no application property")
+            return ""
+        }
+        let plan: DictionaryPlan
+        do {
+            plan = try AppDictionaryQuery.plan(
                 DictionaryRequest(
                     verb: .query, className: "application",
                     propertiesRaw: names.joined(separator: ", "), limit: 1),
                 for: dictionary)
-        else { return "" }
+        } catch {
+            DoraXTurnLog.record("dict.liveRead plan refused: \(error.localizedDescription)")
+            return ""
+        }
         let outcome = await run(plan, dictionary: dictionary)
-        guard outcome.success, !outcome.text.isEmpty else { return "" }
+        guard outcome.success, !outcome.text.isEmpty else {
+            DoraXTurnLog.record("dict.liveRead read failed: \(outcome.text)")
+            return ""
+        }
+        DoraXTurnLog.record("dict.liveRead ok: \(names.joined(separator: ", "))")
         return "Read from \(appName) just now through its scripting dictionary — exact values, "
             + "no window opened:\n\(outcome.text)"
     }

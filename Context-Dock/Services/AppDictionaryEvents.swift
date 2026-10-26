@@ -651,8 +651,22 @@ struct AppDictionaryEvents: Sendable {
             throw AppDictionaryEventError.notRunning(appName)
         }
         do {
-            return try event.sendEvent(
+            let reply = try event.sendEvent(
                 options: [.waitForReply, .neverInteract], timeout: Self.timeout)
+            // `sendEvent` hands back the whole reply event, not the value. The value is its
+            // direct object and an app's refusal is its `errn` — reading the event itself as
+            // a value is how every read came back empty.
+            if let number = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorNumber)),
+                number.int32Value != 0
+            {
+                let message = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorString))?
+                    .stringValue
+                throw NSError(
+                    domain: NSOSStatusErrorDomain, code: Int(number.int32Value),
+                    userInfo: message.map { [NSLocalizedDescriptionKey: $0] })
+            }
+            return reply.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))
+                ?? NSAppleEventDescriptor.null()
         } catch let error as NSError {
             throw AppDictionaryEventError.appSaid(describe(error))
         }
