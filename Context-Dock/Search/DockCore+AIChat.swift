@@ -3451,9 +3451,33 @@ extension DockCore {
                         scopedAppName: scopedAppName
                     )
                 }
-                let appleData = canUseAppleAppsContext
+                var appleData = canUseAppleAppsContext
                     ? await self.appleAppsAndWeatherContext(for: query)
                     : ""
+                // The dictionary rung (P13 #208) for the app this chat is scoped to: a cold
+                // cache is awaited so the first question is not answered from an empty
+                // manifest, and the grant is this one app. A provider with no tools can
+                // never ask for the read, so the values the question names are read here.
+                if !scopedBundleId.isEmpty, !scopedBundleId.hasPrefix("scope://"),
+                    AppAdapterManager.shared.adapter(for: scopedBundleId) == nil
+                {
+                    let grants: Set<String> = [scopedBundleId]
+                    _ = await AppDictionaryStore.shared.ensureScanned(
+                        bundleID: scopedBundleId, appName: scopedAppName, grants: grants)
+                    await MainActor.run {
+                        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: grants)
+                    }
+                    if !provider.supportsNativeTools {
+                        let dictionaryRead = await AppDictionaryCapabilities.liveRead(
+                            bundleID: scopedBundleId,
+                            appName: scopedAppName.isEmpty
+                                ? (frontmostName ?? frontmost.name) : scopedAppName,
+                            query: query)
+                        if !dictionaryRead.isEmpty {
+                            appleData += (appleData.isEmpty ? "" : "\n\n") + dictionaryRead
+                        }
+                    }
+                }
                 // Live MCP tools linked to this app (App Adapters → Linked MCP).
                 let mcpBlock = await MCPRuntime.shared.toolPromptBlock(forBundleId: scopedBundleId)
                 // Live browser page (URL + text + selection) from the Safari Web
