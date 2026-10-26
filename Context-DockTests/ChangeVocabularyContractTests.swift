@@ -100,6 +100,12 @@ struct ChangeVocabularyContractTests {
         where capability.riskLevel.requiresApproval {
             if Self.dispatchedWithoutPhrasing.contains(capability.id) { continue }
             if Self.isGlobalCommand(capability.id) { continue }
+            // The dictionary rung (P13 #208) registers a per-app pair at runtime from the
+            // app's own `sdef`, so it cannot have a static row in `phrasing`. It is reached
+            // from the model's plan rather than from a person's sentence, and every change
+            // it makes shows the standard approval card — the same reason the ids in
+            // `dispatchedWithoutPhrasing` are excused.
+            if capability.id.hasPrefix(AppDictionaryCapabilities.idPrefix) { continue }
             guard let asked = Self.phrasing[capability.id] else {
                 unlisted.append(capability.id)
                 continue

@@ -3451,9 +3451,33 @@ extension DockCore {
                         scopedAppName: scopedAppName
                     )
                 }
-                let appleData = canUseAppleAppsContext
+                var appleData = canUseAppleAppsContext
                     ? await self.appleAppsAndWeatherContext(for: query)
                     : ""
+                // The dictionary rung (P13 #208) for the app this chat is scoped to: a cold
+                // cache is awaited so the first question is not answered from an empty
+                // manifest, and the grant is this one app. A provider with no tools can
+                // never ask for the read, so the values the question names are read here.
+                if !scopedBundleId.isEmpty, !scopedBundleId.hasPrefix("scope://"),
+                    AppAdapterManager.shared.adapter(for: scopedBundleId) == nil
+                {
+                    let grants: Set<String> = [scopedBundleId]
+                    _ = await AppDictionaryStore.shared.ensureScanned(
+                        bundleID: scopedBundleId, appName: scopedAppName, grants: grants)
+                    await MainActor.run {
+                        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: grants)
+                    }
+                    if !provider.supportsNativeTools {
+                        let dictionaryRead = await AppDictionaryCapabilities.liveRead(
+                            bundleID: scopedBundleId,
+                            appName: scopedAppName.isEmpty
+                                ? (frontmostName ?? frontmost.name) : scopedAppName,
+                            query: query)
+                        if !dictionaryRead.isEmpty {
+                            appleData += (appleData.isEmpty ? "" : "\n\n") + dictionaryRead
+                        }
+                    }
+                }
                 // Live MCP tools linked to this app (App Adapters → Linked MCP).
                 let mcpBlock = await MCPRuntime.shared.toolPromptBlock(forBundleId: scopedBundleId)
                 // Live browser page (URL + text + selection) from the Safari Web
@@ -5009,7 +5033,16 @@ extension DockCore {
         // capability families for every request so added/edited/disabled Global Commands
         // and MCP toggles cannot leave classification and execution using different views.
         CapabilityRegistry.shared.refreshGlobalCommands()
-        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        // The dictionary rung is granted only the apps this chat is focused on — the same
+        // explicit set that bounds every other tool in the turn. A cold cache is awaited so
+        // the first question about an app is not answered from an empty manifest.
+        let dictionaryGrants = Set(chatFocusApps.map(\.bundleId))
+        for app in chatFocusApps
+        where AppAdapterManager.shared.adapter(for: app.bundleId) == nil {
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: app.bundleId, appName: app.name, grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
 
         await MainActor.run {
             aiMode.loadingStatus = attachments.isEmpty
@@ -6078,8 +6111,18 @@ extension DockCore {
         async throws -> String
     {
         // Pick up MCPs toggled on this session so scoped chat sees them without relaunch.
-        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        // The dictionary rung is granted the app this thread is about, and no other.
         let scopedForRead = currentContextDockChatScope
+        let dictionaryGrants = scopedForRead.bundleId.isEmpty
+            ? Set<String>() : [scopedForRead.bundleId]
+        if let bundleID = dictionaryGrants.first,
+            AppAdapterManager.shared.adapter(for: bundleID) == nil
+        {
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: bundleID, appName: scopedForRead.appName,
+                grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
         let isMessagesScope = scopedForRead.bundleId.caseInsensitiveCompare(
             "com.apple.MobileSMS") == .orderedSame
             || scopedForRead.appName.lowercased().contains("messages")

@@ -375,6 +375,10 @@ enum OutboundGate {
             let command = input["command"] ?? input["cmd"] ?? ""
             return command.isEmpty || shellReachesNetwork(command) ? shellTarget : nil
         }
+        // The dictionary rung names a learned outbound command with its own prefix. That is
+        // a send by construction (the sdef classified it outbound), not by what its id
+        // happens to spell.
+        if lower.hasPrefix("dict.outbound.") { return sendTarget }
         let sending = ["compose", "send", "share", "upload", "publish", "post", "createdraft",
                        "newmessage", "messages.new", "reply", "forward"]
         if sending.contains(where: { lower.contains($0) }) { return sendTarget }

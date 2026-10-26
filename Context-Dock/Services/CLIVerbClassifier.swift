@@ -9,7 +9,7 @@
 import Foundation
 
 /// What running a command does, in gate terms.
-enum CLIVerbClass: Equatable, Sendable {
+enum CLIVerbClass: String, Codable, Equatable, Sendable {
     /// Reads or lists; runs without a card.
     case read
     /// Changes local state (delete/move/archive/…); asks the owner first.

@@ -710,7 +710,8 @@ enum AppScopedChatService {
     ///
     /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
     /// for Updates…", not "running an operateApp invocation".
-    nonisolated static func runningLabel(for invocation: AITypedInvocation) -> String {
+    @MainActor
+    static func runningLabel(for invocation: AITypedInvocation) -> String {
         switch invocation.kind {
         case .menuAction:
             let path = (invocation.arguments["path"] ?? "")
@@ -735,10 +736,14 @@ enum AppScopedChatService {
         case .adapterAction:
             let action = invocation.arguments["actionId"] ?? ""
             return action.isEmpty ? "Running an app action…" : "Running \(action)…"
-        case .mcp:
-            return "Running \(invocation.capabilityID)…"
-        case .capability:
-            return "Running \(invocation.capabilityID)…"
+        case .mcp, .capability:
+            // The capability's own title is the human sentence — "Read Spotify through
+            // its scripting dictionary" — where the id ("dict.query.com.spotify.client")
+            // tells a person nothing about what was read or how.
+            let title = CapabilityRegistry.shared.capability(id: invocation.capabilityID)?
+                .title
+                .replacingOccurrences(of: " (asks each time)", with: "")
+            return title.map { "\($0)…" } ?? "Running \(invocation.capabilityID)…"
         case .share:
             return "Sharing…"
         }
@@ -848,7 +853,8 @@ enum AppScopedChatService {
             // Say what is about to happen before it happens. The directive is already in the
             // answer text; reading it here costs nothing and is the difference between a live
             // row and a receipt.
-            if let announced = AITypedInvocationResolver.invocation(from: raw) {
+            let announced = AITypedInvocationResolver.invocation(from: raw)
+            if let announced {
                 onStatus?(Self.runningLabel(for: announced))
             }
             let call = await GeneralChatCapabilityHub.shared.execute(
@@ -888,8 +894,21 @@ enum AppScopedChatService {
 
             executedAnything = true
             toolChips.append(call.label)
-            // Past tense, because by here it has. The row above it said what was running.
-            onStatus?(call.success ? "Ran \(call.label)" : "\(call.label) did not run")
+            // Past tense, because by here it has. The row above it said what was running —
+            // in the capability's own words when it has a title, so a dictionary read reads
+            // as one instead of as an id.
+            let ranLabel: String = {
+                if let id = announced?.capabilityID,
+                    let title = CapabilityRegistry.shared.capability(id: id)?.title
+                {
+                    return title.replacingOccurrences(of: " (asks each time)", with: "")
+                }
+                return call.label
+            }()
+            onStatus?(
+                call.success
+                    ? (ranLabel == call.label ? "Ran \(call.label)" : ranLabel)
+                    : "\(ranLabel) did not run")
             loopHistory.append(ChatMessage(role: .user, content: loopQuery))
             loopHistory.append(ChatMessage(role: .assistant, content: raw))
             loopQuery = Self.toolResultFollowUp(
@@ -1123,7 +1142,8 @@ enum AppScopedChatService {
     /// routing: labels such as History entries can answer a question, while pressing one
     /// would navigate the app and answer nothing about the list as a whole.
     static func menuSnapshotEvidence(
-        query: String, appName: String, paths: [[String]], age: TimeInterval?
+        query: String, appName: String, paths: [[String]], age: TimeInterval?,
+        hasDictionaryReader: Bool = false
     ) -> ObservedMenuEvidence? {
         let normalized = query.lowercased()
         let queryWords = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
@@ -1134,6 +1154,24 @@ enum AppScopedChatService {
         // the contents of the Notes menu, from a snapshot 1700 minutes old, and the count was
         // never attempted. Counting questions belong to a reader.
         guard !normalized.contains("how many"), !normalized.contains("how much") else {
+            return nil
+        }
+
+        // What is playing *now* is live state, not a menu. Spotify's Playback menu lists
+        // Next/Pause/Previous/Shuffle and says nothing about the current track, yet
+        // "what's playing?" matched it and was answered with that list — from a snapshot,
+        // with no reader tried. A present-tense media question must fall through to a
+        // reader; only a question about the menu itself may be answered by the menu.
+        // This only applies when the app actually HAS a reader (a learned scripting
+        // dictionary here). Suppressing the menu for every app made the menu evidence
+        // disappear for apps whose only truthful answer is the menu — a video player with
+        // no dictionary was told nothing at all when the snapshot did hold the answer.
+        let presentTenseMedia: Set<String> = ["playing", "watching", "listening"]
+        let menuWords: Set<String> = ["menu", "menus", "command", "commands", "option", "options"]
+        if hasDictionaryReader,
+            !queryWords.isDisjoint(with: presentTenseMedia),
+            queryWords.isDisjoint(with: menuWords)
+        {
             return nil
         }
 
@@ -1216,9 +1254,12 @@ enum AppScopedChatService {
     }
 
     static func menuSnapshotFactBlock(
-        query: String, appName: String, paths: [[String]], age: TimeInterval?
+        query: String, appName: String, paths: [[String]], age: TimeInterval?,
+        hasDictionaryReader: Bool = false
     ) -> String? {
-        menuSnapshotEvidence(query: query, appName: appName, paths: paths, age: age)?.promptBlock
+        menuSnapshotEvidence(
+            query: query, appName: appName, paths: paths, age: age,
+            hasDictionaryReader: hasDictionaryReader)?.promptBlock
     }
 
     static func observedMenuEvidence(
@@ -1241,8 +1282,13 @@ enum AppScopedChatService {
             age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleID)
         }
         let paths = items.filter(\.isLeaf).map(\.path)
+        // Only a dictionary-backed app has a better reader to fall through to, so only
+        // then does a present-tense media question suppress the menu evidence.
+        let hasDictionaryReader = AppDictionaryStore.shared
+            .dictionary(forBundleID: bundleID).map { !$0.isEmpty } ?? false
         return menuSnapshotEvidence(
-            query: query, appName: appName, paths: paths, age: age)
+            query: query, appName: appName, paths: paths, age: age,
+            hasDictionaryReader: hasDictionaryReader)
     }
 
     static func observedMenuFacts(bundleID: String, appName: String, query: String) -> String? {
@@ -1323,6 +1369,42 @@ enum AppScopedChatService {
         // never appear under this turn's answer, which is worse than showing none — a stale
         // card looks current.
         ChatResultRowCollector.shared.begin(scope: scope)
+
+        // The registry is refreshed per turn by the dock engine's preflight, but this
+        // surface assembles its own prompt and never went through that path — so a
+        // dictionary the store had learned for this app (P13 #208) stayed unregistered
+        // until some other chat happened to refresh it. The hand check showed exactly
+        // that: Spotify answered "what's playing" from its window title, "list tracks"
+        // said "no linked reader", and "Can do here" listed menu commands only.
+        //
+        // A cold cache must not lose the first turn: await the scan here, for the app this
+        // thread is scoped to and any app the user attached. The grant is explicit — the
+        // thread's own app, plus the attached apps; scanning alone never registers
+        // anything — and the prompt below is built from the manifest that landed.
+        var dictionaryGrants: Set<String> = []
+        if case .app(let bundleID) = scope, !bundleID.isEmpty {
+            dictionaryGrants.insert(bundleID)
+        }
+        for name in extraAppNames {
+            let bundleID =
+                NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == name }?.bundleIdentifier
+                ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+            if let bundleID { dictionaryGrants.insert(bundleID) }
+        }
+        for bundleID in dictionaryGrants
+        where AppAdapterManager.shared.adapter(for: bundleID) == nil {
+            // The chat's own app name is the human one; an attached app's name is resolved
+            // by the store from its bundle, so a folder/CLI thread never labels app B as A.
+            var name = ""
+            if case .app(let scopedBundleID) = scope, scopedBundleID == bundleID {
+                name = appName
+            }
+            _ = await AppDictionaryStore.shared.ensureScanned(
+                bundleID: bundleID, appName: name, grants: dictionaryGrants)
+        }
+        CapabilityRegistry.shared.refreshBuiltInMCPs(dictionaryGrants: dictionaryGrants)
 
         // Local inspection precedes app access and specialist bridges. "Is Claude Code
         // installed?" is not a request for Claude Code to inspect a repository, and "is
@@ -1672,6 +1754,19 @@ enum AppScopedChatService {
             let block = resolved.promptBlock()
             prompt.set(.resolvedContext, block)
             log.notice("context \(resolved.summary, privacy: .public)")
+            // Say what was read, not just that something was. "what's playing" was
+            // answered from Spotify's window title (`Hosanna`), and the Progress panel
+            // showed "Understood: answer a question" and nothing about the evidence —
+            // so a correct answer looked like a guess, and a guess would have looked
+            // the same. Name the slot and its reader.
+            if let window = resolved.value("window"), !window.isEmpty {
+                onStatus?(
+                    "Read \(appName)'s window — \(String(window.prefix(70))) (AX)")
+            } else if !resolved.gaps.isEmpty {
+                onStatus?(
+                    "No window readable from \(appName) — "
+                        + "\(resolved.gaps.map(\.name).joined(separator: ", ")) unavailable")
+            }
             // What the app is doing right now — its project, branch, changes, running
             // agents — and what its vendor documents about it. Both were the dock's alone,
             // so the window could describe an app's tool inventory and nothing about the
@@ -1906,8 +2001,17 @@ enum AppScopedChatService {
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
         log.notice("stage: live apple data")
-        let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
+        var liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+        }
+        // A provider with no tools cannot ask for the dictionary read that holds a value the
+        // live facts lack (volume, repeat), and answered from the window title instead.
+        if !provider.supportsNativeTools, let routingBundleId, !routingBundleId.isEmpty {
+            let dictionaryRead = await AppDictionaryCapabilities.liveRead(
+                bundleID: routingBundleId, appName: appName, query: query)
+            if !dictionaryRead.isEmpty {
+                liveAppleData += (liveAppleData.isEmpty ? "" : "\n\n") + dictionaryRead
+            }
         }
         prompt.append(.liveAppData, liveAppleData)
 
