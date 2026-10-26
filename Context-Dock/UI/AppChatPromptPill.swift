@@ -1011,13 +1011,25 @@ struct AppChatPromptPill: View {
                 .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
             }
 
-            // Stop lives in the composer, which is drawn in every phase this header is —
-            // one job, one button, rather than two of them 300 points apart.
-            Button { model.openInDock() } label: {
-                headerGlyph("arrow.up.left.and.arrow.down.right")
+            // Expand opens this conversation in the full window on its Chat tab, seeded with
+            // the transcript the dock has not flushed yet (#323). Never in Global search
+            // (layer rule), and inert while a turn is running — it waits for the answer
+            // (owner 2026-10-26). `CornerRailRules` is the one place that decides this.
+            let expand = CornerRailRules.expand(
+                isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
+            if expand != .hidden {
+                Button {
+                    GeneralChatWindowController.shared.show(
+                        opening: CornerRailRules.windowScope(appBundleID: model.appBundleID),
+                        title: model.appName,
+                        seed: AppChatConversation.shared.messages)
+                } label: {
+                    headerGlyph("arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(expand == .disabled)
+                .help("Open this conversation in the full window")
             }
-            .buttonStyle(.plain)
-            .help("Open this conversation in the dock")
 
             Button { model.newConversation() } label: {
                 headerGlyph("trash")
