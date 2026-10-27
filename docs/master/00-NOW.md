@@ -72,7 +72,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
   Pets after a connect approval; headless first; one shared native layer (selection, clipboard,
   windows, sharing, notifications, files). Open owner question: does a selection made before launch
   auto-attach to the frontmost Pet, or open the Selection Scope first?
-- **#321** (draft Corner UI/UX plan) is superseded by #324 + #327; the owner closes it.
+- **#321** (draft Corner UI/UX plan) is superseded by #324 + #327; closed on the owner's request 2026-10-27.
 - **Next:** #205 P11 (`ready`). #204 P10 stays held by the owner. #316 is a queue candidate.
 - **Correction:** the 2026-10-27 daily brief compared against `main` (a stale release base), so its
   "00-NOW is 4 days stale" and "start at #208 P13" lines were wrong. The brief script should read
@@ -89,6 +89,22 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
   files. Delete once the owner has triaged the old local branches.
 - **Worktrees:** removed `cd-docs-312` (#326 merged) and `issue-323-corner-ui` (#324 merged); pruned
   the stale `omnirouter-pricing-001390` entry.
+- **Housekeeping (2026-10-27, owner-approved, Cowork session):** moved 12 stale worktrees to the
+  macOS Trash (not `rm`; empty the Trash to free the space): `/private/tmp/ctx-323-verify`,
+  `../Context-Dock-p13-check`, `../Context-Dock-t9`, `../Context-Dock-test`, `../Context-Dock-test-204b`,
+  and `.claude/worktrees/` `daily-brief-2026-10-27`, `issue-150`, `issue-180-safari-follow-link`,
+  `issue-208-handcheck`, `jolly-morse-b51c3e`, `skills-folder-setup-2ed3e5`, `task-189`; then
+  `git worktree prune`. Kept: main checkout, both `~/.codex/worktrees/*`, `issue-327-app-pets-blueprint`.
+  Their uncommitted work was checked before removal and not committed: t9's ~1,150 of 1,170 added
+  lines were already on `general-chat-agent`; `-test` only reverted the droplet split; `issue-150` and
+  `skills-folder-setup` were mode-bit and `caveman*` symlink noise; `task-189` turned the pbxproj
+  `Icon\r` sweep into `Icon\n` (a bug). Patches are kept in
+  `~/Developer/Context-Dock-worktree-backups/2026-10-27/`; detached commits not on the base are kept as
+  local branches `backup/wt-{ctx-323-verify,Context-Dock-p13-check,Context-Dock-test-204b,issue-208-handcheck}`.
+  Branches (incl. `claude/issue-180-safari-follow-link`, 1 unmerged commit) were left in place.
+- **Personal files:** the two untracked résumé `.docx` files in the main checkout were moved to
+  `~/Documents/Cv's/`. Other untracked items (Kanban Pro files, `skills/`, `.freebuff`, `.superpowers`,
+  `release-beta.sh`, `sync-agents.sh`, `docs/ENGINEERING_TODO.md`) are project tooling and stayed.
 - **graphify:** the main graph had not been rebuilt since 2026-09-22 — worktree updates never reached
   it. Rebuilt 2026-10-27; git hooks installed; worktree `--graph` rule and llmbrain lookup order
   added to `AGENTS.md`; OpenCode graph plugin added.
