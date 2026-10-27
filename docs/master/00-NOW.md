@@ -105,6 +105,13 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - **Personal files:** the two untracked résumé `.docx` files in the main checkout were moved to
   `~/Documents/Cv's/`. Other untracked items (Kanban Pro files, `skills/`, `.freebuff`, `.superpowers`,
   `release-beta.sh`, `sync-agents.sh`, `docs/ENGINEERING_TODO.md`) are project tooling and stayed.
+- **Untracked sweep (2026-10-27, owner-approved, `0a1e0b3`):** gitignored the agent/tooling scratch
+  so it stops showing as untracked — `.kanban/`, `.superpowers/`, `.freebuff/`, `skills/`,
+  `attachments/`, `tickets/`, `MAPPING.md`, `sync-agents.sh`, `*.local-bak`,
+  `.claude/skills/finish-before-expanding/`. Also deleted the orphan
+  `Context-Dock/Services/OnDeviceStructuredStubs.swift` (never tracked, absent from `project.pbxproj`,
+  zero callers). Left untracked for the owner to triage: `.gitattributes`,
+  `.github/copilot-instructions.md`, `ORGANOGRAM.md`, `docs/ENGINEERING_TODO.md`, `scripts/release-beta.sh`.
 - **graphify:** the main graph had not been rebuilt since 2026-09-22 — worktree updates never reached
   it. Rebuilt 2026-10-27; git hooks installed; worktree `--graph` rule and llmbrain lookup order
   added to `AGENTS.md`; OpenCode graph plugin added.
