@@ -300,15 +300,25 @@ struct CornerGeneralChatView: View {
 
             Spacer(minLength: 6)
 
-            Button { GeneralChatWindowController.shared.show() } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
+            // Expand opens General Chat in the full window on its Chat tab, seeded with this
+            // transcript (#323). Inert while a turn is running — it waits for the answer
+            // (owner 2026-10-26); General is always a chat scope, so it is never hidden here.
+            let expand = CornerRailRules.expand(isChatScope: true, isAnswering: model.isSending)
+            if expand != .hidden {
+                Button {
+                    GeneralChatWindowController.shared.show(
+                        opening: .general, title: "General Chat", seed: model.messages)
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(expand == .disabled)
+                .help("Open this conversation in the full window")
             }
-            .buttonStyle(.plain)
-            .help("Open in General Chat")
 
             // Beside expand, because both are about this card rather than this question.
             Button {

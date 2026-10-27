@@ -145,4 +145,16 @@ struct AppChatPromptMetricsDockTests {
         #expect(held.leadingInset == M.dockInset)
         #expect(abs(held.appSpread * 3 - (held.width - natural.width)) < 0.001)
     }
+
+    /// #323: the compact App Chat opens Raycast-roomy, at one height whether the corner is
+    /// edge-anchored or centred — both read this one constant, so there is nothing to keep
+    /// in sync between them. It stays within the growth ceiling.
+    @Test func compactChatOpensRaycastRoomy() {
+        #expect(M.chatHeight == 440)
+        #expect(M.chatHeight(messages: 0) == 440)
+        #expect(M.chatHeight(messages: 0) <= M.maximumChatHeight)
+        // Two messages' growth lands on the shared ceiling, so App and General still reach
+        // the same height — one surface (bothModesGrowAtTheSameRateToTheSameCeiling).
+        #expect(M.chatHeight(messages: 2) == M.maximumChatHeight)
+    }
 }

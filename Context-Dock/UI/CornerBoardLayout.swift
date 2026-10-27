@@ -50,8 +50,10 @@ enum CornerBoardLayout {
     /// The hairline between the two halves.
     static let dividerWidth: CGFloat = 1
     /// The least height the card keeps while a preview shows, so a short list still leaves
-    /// the preview room to read.
-    static let minimumPreviewHeight: CGFloat = 280
+    /// the preview room to read. Held equal to the app card's floor so every result sheet —
+    /// a menu command, a file, an app — opens at the same comfortable height, rather than the
+    /// menu-command sheet reading short beside the app one (owner 2026-10-27).
+    static let minimumPreviewHeight: CGFloat = AppScopeBoardMetrics.height
 
     /// The list's column: the whole card, or its left half beside a preview.
     static func listWidth(board: CGFloat, preview: CornerBoardPreview?) -> CGFloat {
@@ -196,12 +198,10 @@ enum CornerBoardLayout {
     /// The whole card: always the list's width — the field's — and, while a preview shows,
     /// at least tall enough for it.
     static func boardSize(list: CGSize, preview: CornerBoardPreview?) -> CGSize {
-        guard let preview else { return list }
-        // The app's card reads as a card of its own, so the board keeps its height for it.
-        let floor: CGFloat
-        if preview.appCard != nil { floor = AppScopeBoardMetrics.height } else {
-            floor = minimumPreviewHeight
-        }
+        guard preview != nil else { return list }
+        // Every result sheet keeps the same floor, so a menu command, a file and an app all
+        // open at one comfortable height rather than the menu sheet reading short.
+        let floor = minimumPreviewHeight
         guard floor > list.height else { return list }
         // Grown by whole rows, so the list beside the preview never shows half a row.
         let row = AppChatListMetrics.rowHeight

@@ -770,12 +770,6 @@ final class AppChatPromptModel: ObservableObject {
     /// the next — `UserDefaults.standard` is one real domain shared by the whole process.
     static let pinnedDefaultsKey = "cornerChatPinned"
 
-    /// Opens the same conversation in the dock, for when the corner is too small for it.
-    func openInDock() {
-        Self.handOff(app: appName, bundleID: appBundleID, query: "", attachments: attachments)
-        dismiss()
-    }
-
     /// Stop the turn that is running.
     ///
     /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing

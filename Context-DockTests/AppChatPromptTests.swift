@@ -574,16 +574,6 @@ struct AppChatPromptTests {
         // the hand-off and surface transition, which are synchronous and testable here.
         #expect(model.query.isEmpty)
     }
-
-    /// Opening in the dock is still offered for when the corner is too small.
-    @Test func openingInTheDockClosesTheCorner() {
-        let model = AppChatPromptModel()
-        model.summon(app: "Safari", bundleID: "com.apple.Safari")
-
-        model.openInDock()
-
-        #expect(model.phase == .hidden)
-    }
 }
 
 // MARK: - Controls

@@ -85,6 +85,7 @@ struct CornerGeneralChatTests {
             hasAttachments: false, slashMatchCount: 0)
 
         #expect(oneResult > CornerGeneralChatMetrics.compactHeight)
+        #expect(longThread == CornerGeneralChatMetrics.maximumHeight)
         #expect(longThread == 620)
     }
 

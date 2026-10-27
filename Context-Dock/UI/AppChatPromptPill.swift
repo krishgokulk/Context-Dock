@@ -26,8 +26,15 @@ enum AppChatPromptMetrics {
     /// picture itself for an image, a card for anything else. 60pt tile + 8pt above and below.
     static let attachmentTileRowHeight: CGFloat = 76
     /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
-    /// the composer.
-    static let chatHeight: CGFloat = 340
+    /// the composer. Raised to read like Raycast's centred panel (#323), the same number
+    /// whether the corner is edge-anchored or centred, since both read this one constant.
+    /// The width stays the owner-blessed Raycast/Spotlight 600 (`DockShellWidth.base`).
+    ///
+    /// Held at 440 so the two modes still grow a whole message at a time to their shared
+    /// ceiling: 440 + two messages' growth lands exactly on `maximumChatHeight` (620), so
+    /// App and General stay one surface. A taller ceiling would need General's own growth
+    /// formula raised to match, or the two diverge — a separate change.
+    static let chatHeight: CGFloat = 440
 
     /// How much a card grows per message, and how far it may grow.
     ///
@@ -435,6 +442,9 @@ enum AppChatPromptMetrics {
 
 struct AppChatPromptPill: View {
     @ObservedObject var model: AppChatPromptModel
+    // Observed here so the live panel, now fed by parameters (#323), still repaints as the
+    // turn's steps land — it no longer watches the store itself.
+    @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @ObservedObject private var approvals = ApprovalCenter.shared
     /// Watched, not asked once: the clipboard can arm while this field is already up, and
@@ -861,7 +871,10 @@ struct AppChatPromptPill: View {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
                             appIcon: appIcon, messages: model.messages,
-                            isAnswering: model.isAnswering, liveSteps: model.liveSteps)
+                            isAnswering: model.isAnswering, liveSteps: model.liveSteps,
+                            liveActivity: conversation.liveActivity,
+                            activityByMessageID: conversation.activityByMessageID,
+                            density: .compact)
                             .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
                             .padding(.vertical, 8)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -1005,13 +1018,25 @@ struct AppChatPromptPill: View {
                 .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
             }
 
-            // Stop lives in the composer, which is drawn in every phase this header is —
-            // one job, one button, rather than two of them 300 points apart.
-            Button { model.openInDock() } label: {
-                headerGlyph("arrow.up.left.and.arrow.down.right")
+            // Expand opens this conversation in the full window on its Chat tab, seeded with
+            // the transcript the dock has not flushed yet (#323). Never in Global search
+            // (layer rule), and inert while a turn is running — it waits for the answer
+            // (owner 2026-10-26). `CornerRailRules` is the one place that decides this.
+            let expand = CornerRailRules.expand(
+                isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
+            if expand != .hidden {
+                Button {
+                    GeneralChatWindowController.shared.show(
+                        opening: CornerRailRules.windowScope(appBundleID: model.appBundleID),
+                        title: model.appName,
+                        seed: AppChatConversation.shared.messages)
+                } label: {
+                    headerGlyph("arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(expand == .disabled)
+                .help("Open this conversation in the full window")
             }
-            .buttonStyle(.plain)
-            .help("Open this conversation in the dock")
 
             Button { model.newConversation() } label: {
                 headerGlyph("trash")
