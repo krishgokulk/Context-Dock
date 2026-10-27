@@ -175,7 +175,7 @@ The planner labels the next issue `ready` when the one before it is in review.
 
 Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5).
 
-**After #327 is owner-verified:** write a staged implementation plan and split it into issues in
+**#327 owner-verified (2026-10-27, “okay. perfect”):** write a staged implementation plan and split it into issues in
 this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
 `/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
 Corner, stores, capability index and shared executor; no second engine or registry.
@@ -319,15 +319,9 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-27 | Headless first: do not launch when a route can finish headlessly; start hidden if only the process is needed; explicit open/show launches directly; visible UI used only as fallback asks before taking focus. |
 | 2026-10-27 | Selection, clipboard, windows, files, native sharing and notifications are shared host capabilities available to all Pets through one scope/approval/execution/verification layer. |
 | 2026-10-27 | Command or empty Backspace returns an App Pet to Global Context without recreating the Dock or discarding typed text. |
+| 2026-10-27 | #327 architecture confirmed after clarification: headless means structured adapter/API/MCP/CLI/Shortcut work, not Computer Use; Computer Use is the visible-UI last resort. Clicking a running-app icon changes the active Pet inside the same Dock and does not foreground the underlying app or create a window; dragging detaches it. |
 
 ## Open decisions (owner)
 
 - E5: in on-device-only mode, may DoraX *offer* a cloud model when a task is too big, or never mention it? Needed before #152.
-- **#327 verification:** confirm the recommended selection boundary—normal launch always opens the
-  frontmost Pet; Selection Scope opens only from its hotkey/explicit attach action, so selection is
-  never silently sent to a Pet/provider.
-- **#327 verification:** confirm the implementation defaults in the canonical design: zero-Pet
-  DoraX Chat remains valid; every running app can be a generic Pet; one detached Pet per app in v1;
-  reopen resumes the active thread; provenance-based memory admission; `/mods` targets the focused
-  participant in Combined Chat.
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?
