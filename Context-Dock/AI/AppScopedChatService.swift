@@ -1655,6 +1655,20 @@ enum AppScopedChatService {
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection)
             }
+            // Act by default: no exact match, no learned pick, and no read to run on its own —
+            // but the ranking still names one clear primary. Run it rather than handing a
+            // settled request to the model (deterministic before probabilistic). Only on an
+            // action request, so a question never drives a write; the route's own execution
+            // consent still gates a menu press or MCP write at the point of acting.
+            if ChatRouteResolver.isActionRequest(query),
+                let route = ChatRouteResolver.clearPrimaryRoute(routes)
+            {
+                log.notice("stage: clear primary route \(route.kind.rawValue, privacy: .public)")
+                return await execute(
+                    route: route, query: query, history: history, scope: scope,
+                    appName: appName, attachments: attachments,
+                    extraAppNames: extraAppNames, finderSelection: finderSelection)
+            }
         }
 
         if case .cli(let command) = scope {

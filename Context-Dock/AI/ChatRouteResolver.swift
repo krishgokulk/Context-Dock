@@ -588,17 +588,38 @@ enum ChatRouteResolver {
         }
     }
 
+    /// The one route that plainly wins, when the ranking names a clear primary.
+    ///
+    /// Routes arrive deterministically ordered (`kind.rank`, then read-over-write, then
+    /// shorter title — see `routes(for:)`), so the first is the highest-confidence way to
+    /// carry out the request. It is a *clear* primary unless the runner-up is tied with it
+    /// on both axes that decide consequence — same rank and same risk — in which case
+    /// neither is obviously right and the user should make the call. This is the app-scoped
+    /// twin of the General AI path's `confidence < 0.7` gate
+    /// (`DockCore+GeneralAIActions.swift`): deterministic ranking stands in for confidence.
+    static func clearPrimaryRoute(_ routes: [ChatRoute]) -> ChatRoute? {
+        guard let primary = routes.first else { return nil }
+        guard routes.count > 1 else { return primary }
+        let runnerUp = routes[1]
+        let tied = primary.kind.rank == runnerUp.kind.rank
+            && primary.isReadOnly == runnerUp.isReadOnly
+        return tied ? nil : primary
+    }
+
     /// True when the user should be asked which route to take.
     ///
-    /// Only when the routes differ in consequence — several exist, at least one changes
-    /// something or takes the screen, and the user has not already answered this question
-    /// for this app.
+    /// Act by default: several routes existing is not a question. We ask only when at least
+    /// one route changes something or takes the screen, the user has not already answered
+    /// this for the app, AND the ranking names no clear primary — the top two routes are
+    /// genuinely tied (same rank, same risk). A request with an obvious default route
+    /// ("open a new tab") runs rather than over-asking "which should I use?".
     static func shouldAsk(routes: [ChatRoute], bundleId: String, query: String) -> Bool {
         guard isActionRequest(query) else { return false }
         guard routes.count > 1 else { return false }
         guard ChatRoutePreferenceStore.preferredKind(bundleId: bundleId, query: query) == nil
         else { return false }
-        return routes.contains { !$0.isReadOnly }
+        guard routes.contains(where: { !$0.isReadOnly }) else { return false }
+        return clearPrimaryRoute(routes) == nil
     }
 
     /// Runs a route and returns what it produced, verbatim, for the Console and for the
