@@ -179,6 +179,11 @@ Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the bluepri
 this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
 `/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
 Corner, stores, capability index and shared executor; no second engine or registry.
+Plan written: [`2026-10-27-app-pets-rollout.md`](../superpowers/plans/2026-10-27-app-pets-rollout.md).
+Implementation issues: **#338** identity/scope → **#339** promotion/consent → **#340** memory →
+**#341** `/mods` → **#342** detached presentation → **#343** proactive behavior. #338 has the
+detailed first-stage task plan; implementation waits for #327 / PR #337 to merge and for the owner
+to move this lane ahead of the current `ready` queue.
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
