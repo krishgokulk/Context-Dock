@@ -10,6 +10,9 @@
 
 ## In progress
 
+**Start here (2026-10-27):** read *State (2026-10-27)* below first — #324 and #328 merged, Codex's
+#327 (App Pets docs) is in progress, and the next `ready` task is **#205** (#204 P10 is still held).
+
 Coordinator: Planner `Context-Dock planner — land #312` (Opus) — since 2026-10-26 (fresh session took over to save tokens). On takeover rewrite this line.
 
 **Fresh planner, start here (2026-10-26):** **#318 MERGED** — PR **#320** (`fab61e8e`) unified Global Context + frontmost Context Dock into one surface (`SurfaceFocus` + pure `SurfaceFocusRules.decide` + tests; lanes/`DockEngine`/`DockCore` untouched; "never merge layers" reworded in AGENTS.md/CLAUDE.md/blueprint). Owner hand-checked "320 passed"; issue #318 closed. Planner review posted a swipe-up-in-General finding then **retracted it as a false positive** (`destination()` early-returns for `.general` before the layer branch; read the diff hunk without the unchanged top block — lesson: review the whole function). Also merged: **#310** (opencode.json, `6f920942`), **#322** (planner handoff docs). **Local worktree `issue-318-unify-dock-surface-561302` not removed** (held the owner's running hand-check app). Cleanup is the owner's, once the app is quit and after checking the tree — `git -C <wt> status` shows one **untracked** `docs/screenshots/318/frontmost-focus.png` (an extra not in the merged PR; the numbered shots 1–3 are committed and in `fab61e8e`). Preserve that file if wanted, then remove (the squash-merge leaves the branch reading "3 commits ahead" though its content is merged): `git worktree remove --force .claude/worktrees/issue-318-unify-dock-surface-561302` then `git branch -D claude/issue-318-unify-dock-surface-561302`. `--force` only after confirming nothing untracked there matters (AGENTS.md cleanup rule). **#208 P13 / PR #312 MERGED** (`42c0b70e`, owner "312 passed" 2026-10-26) — dictionary rung + tool-less-provider live property read; frontier moves to #204. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidate not yet `ready`: **#316** (refusal-text-as-answer). Builder sessions the planner spawns must be set to **Sonnet**; cross-session send can't reach a builder a *previous* planner spawned (memory `fresh-planner-cannot-reach-prior-builder`). Queue fed: `ready` = **#323** (Corner UI size/expand/side-rail — new, verify scope), **#205**. New: **#321** docs-only design proposal (owner's own cloud session) — owner's, not planner queue.
@@ -52,6 +55,43 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - **#310** (opencode.json config) still OPEN — squash auto-merge enabled but stalled on `BEHIND`; needs a branch re-update or manual nudge.
 - **Model routing:** planner stays Opus; **builder sessions the planner spawns must be set to Sonnet** (`start_session model=claude-sonnet-5-5`) — see memory `planner-spawns-builder-sessions-on-sonnet`.
 - **Next: #208 P13** (builder to finish) → (#204 resumes when the owner unholds) → #205/#206.
+
+**State (2026-10-27):**
+- Merged into `general-chat-agent`: **#324** (Task 323 Corner UI — Raycast-size compact chat, expand
+  to the full window with the transcript, shared rail; `6c6c1a2e`). Owner hand-checked it in the Codex
+  session ("its prefect", 00:17) and accepted expand staying in the conversation header rather than
+  the footer. Also **#328** (`1ebcfae9`): the seven daily briefs 2026-10-19 → 10-27 that had been
+  stranded on local branches.
+- **In progress — #327 (Codex, owner's session): App Pets + Combined Chat blueprint, docs only**, in
+  worktree `issue-327-app-pets-blueprint`. It edits `docs/master/DORAX-BLUEPRINT.md`,
+  `docs/architecture/PRODUCT_LAYERS.md`, `UNIFIED_DOCK_SURFACE.md`, `CHAT_SCOPES.md` and adds
+  `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`. **Do not edit those files
+  until #327 merges.** Direction the owner approved in that session: one Dock that opens as the
+  frontmost app's Pet (⌘ or Backspace on an empty field goes to Global Context); every running-app
+  icon is a dormant Pet that can be dragged out; General Chat becomes Combined Chat, recruiting other
+  Pets after a connect approval; headless first; one shared native layer (selection, clipboard,
+  windows, sharing, notifications, files). Open owner question: does a selection made before launch
+  auto-attach to the frontmost Pet, or open the Selection Scope first?
+- **#321** (draft Corner UI/UX plan) is superseded by #324 + #327; the owner closes it.
+- **Next:** #205 P11 (`ready`). #204 P10 stays held by the owner. #316 is a queue candidate.
+- **Correction:** the 2026-10-27 daily brief compared against `main` (a stale release base), so its
+  "00-NOW is 4 days stale" and "start at #208 P13" lines were wrong. The brief script should read
+  `general-chat-agent` and skip held or merged items.
+- **Repo repair (2026-10-27):** the pack index `pack-4eaf658c…` had lost its `.pack` data file, and a
+  stale `multi-pack-index` (Sep 24) referenced it — together they produced 10,611 `git fsck` errors.
+  The 54 objects that existed only there are unreachable and all still on GitHub. One reachable tree
+  (`acb5f4f4`, local branch `claude/skills-folder-setup-2ed3e5`) was rebuilt from that worktree's
+  index. The index files were moved to `~/cd-git-backup-20261027/` and `multi-pack-index` was
+  regenerated; `fsck` is now clean apart from macOS `Icon\r` files that something wrote into `.git`
+  on 2026-10-21 (owner to decide on removing them).
+- **Rescue snapshots:** local branches `rescue/20261027-1155/*` (7) snapshot every dirty or
+  branchless worktree as of 11:55. **Never merge them** — the main-checkout snapshot contains personal
+  files. Delete once the owner has triaged the old local branches.
+- **Worktrees:** removed `cd-docs-312` (#326 merged) and `issue-323-corner-ui` (#324 merged); pruned
+  the stale `omnirouter-pricing-001390` entry.
+- **graphify:** the main graph had not been rebuilt since 2026-09-22 — worktree updates never reached
+  it. Rebuilt 2026-10-27; git hooks installed; worktree `--graph` rule and llmbrain lookup order
+  added to `AGENTS.md`; OpenCode graph plugin added.
 
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a

@@ -136,6 +136,17 @@ its reference** — Global Context for other Corner scopes, the neighbouring boa
 them: shell width and height, padding, field size, pill and icon size, strip style, alignment, nothing
 clipped or truncated. Differences are fixed or listed in the PR; the screenshots go in the PR.
 
+## Project brain (llmbrain)
+
+Cross-session memory — owner decisions, issues, docs and past sessions — lives in the llmbrain
+brain, not in chat history. It is the cheapest way to get oriented.
+
+- Before planning, or answering "what was decided / where are we", search the brain first: the
+  llmbrain MCP tools, or `llmbrain search "<topic>"` and `llmbrain get <link>`.
+- Lookup order: brain (decisions, status) → `docs/master/00-NOW.md` (the work order) → graphify
+  (code structure) → raw source, reading only the line ranges you need.
+- A new owner decision is recorded in the brain and in `00-NOW.md` the same day.
+
 ## Codebase navigation
 
 Before grepping or reading raw source, ask the knowledge graph:
@@ -146,6 +157,14 @@ Before grepping or reading raw source, ask the knowledge graph:
   architecture review.
 - Dirty `graphify-out/` files after hooks are expected, not a reason to skip it.
 - After modifying code, run `graphify update .` (AST-only, no API cost).
+- **A worktree has no graph of its own** (`graphify-out/` is gitignored, one per checkout). Query
+  the main checkout's graph instead — same flag for `path` / `explain`:
+  `graphify query "<q>" --graph "$(git worktree list | head -1 | awk '{print $1}')/graphify-out/graph.json"`.
+  A missing local graph is never a reason to fall back to grepping.
+- The main checkout's graph refreshes through git hooks (`graphify hook install`: post-commit and
+  post-checkout, plus a local post-merge hook for pulls). If its `graph.json` is more than a few days
+  old, run `graphify update .` in the main checkout. OpenCode gets the graph reminder from
+  `.opencode/plugins/graphify.js`.
 
 Large files — read only the range you need: `Search/DockCore.swift` (1,602 lines),
 `Search/DockCore+ContextualActions.swift`.
