@@ -54,3 +54,15 @@ Icon?
 
 # Release DMGs live on GitHub Releases, never in git.
 *.dmg
+
+# Agent/tooling scratch — machine-local, regenerable, never DoraX code (#330 personal files).
+.kanban/
+.superpowers/
+.freebuff/
+skills/
+attachments/
+tickets/
+MAPPING.md
+sync-agents.sh
+*.local-bak
+.claude/skills/finish-before-expanding/
