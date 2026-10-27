@@ -118,6 +118,8 @@ enum ComputerUseRunner {
                     output: "\(bundleID) is not installed on this Mac, so there is nothing to "
                         + "start or operate. Say so plainly rather than trying another way.",
                     displayCommand: "operate_app(\(target))")
+                    .withUserSummary(
+                        "That app isn't installed on this Mac, so there's nothing to open.")
             }
             let nameGuess = url.deletingPathExtension().lastPathComponent
             let configuration = NSWorkspace.OpenConfiguration()
@@ -132,6 +134,8 @@ enum ComputerUseRunner {
                     output: "\(nameGuess) could not be started, so its screens cannot be "
                         + "operated. Say so plainly.",
                     displayCommand: "operate_app(\(target))")
+                    .withUserSummary(
+                        "\(nameGuess) couldn't be started, so its menus can't be operated.")
             }
             // openApplication returns when the process exists, not when it answers events —
             // the same readiness wait the data lane does before its first Apple Event.
@@ -151,6 +155,9 @@ enum ComputerUseRunner {
                 output: "The app started but is not answering, so there is nothing to "
                     + "operate yet. Say so and stop rather than pressing anything.",
                 displayCommand: "operate_app(\(target))")
+                .withUserSummary(
+                    "That app started but isn't responding yet, so there's nothing to "
+                    + "operate.")
         }
         let appName = app.localizedName ?? bundleID
 
@@ -171,6 +178,9 @@ enum ComputerUseRunner {
                     + "permission for this (System Settings → Privacy & Security → "
                     + "Accessibility). Say that plainly rather than trying another way.",
                 displayCommand: "operate_app(\(appName))")
+                .withUserSummary(
+                    "I couldn't read \(appName)'s menus. DoraX needs Accessibility permission "
+                    + "(System Settings → Privacy & Security → Accessibility).")
         }
 
         // A refusal that says which kind of refusal it is. "Not found", "greyed out" and
@@ -183,24 +193,14 @@ enum ComputerUseRunner {
             chosen = target
 
         case .ambiguous(let options):
-            let named = options.prefix(4).map(\.display).joined(separator: ", ")
             // End of the U3 rung, not the end of the plan. The screen rung only ever
             // reached this ambiguity because the ladder was skipped: the app's own route
             // list has ONE canonical archive route (its saved actions and verified menu
             // commands), and an exact route press is not a guess. Send the model back to
             // find_route first; only when no route fits at all does asking become right.
-            return AgentToolResult(
-                success: false,
-                output: "\"\(target)\" describes more than one thing in \(appName)'s live "
-                    + "menus equally well: \(named). Do not ask yet, and do not press — an "
-                    + "exact route beats guessing. Look the request up first: find_route and "
-                    + "find_menu_command return the app's saved routes and the few matching "
-                    + "menu paths, and one canonical command usually exists (the app's own "
-                    + "route list, not this live bar). Run that exact route, or press its "
-                    + "FULL path (\"Message ▸ Archive\" names one thing; the bare word "
-                    + "names several). Only if no route or path fits, name the live "
-                    + "options above and ask which one.",
-                displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
+            return Self.ambiguousResult(
+                appName: appName, target: target,
+                optionDisplays: options.prefix(4).map(\.display))
 
         case .disabled(let item):
             return AgentToolResult(
@@ -209,6 +209,9 @@ enum ComputerUseRunner {
                     + "the app will not accept it in this state. Say that — it is a fact about "
                     + "the app, not a missing feature.",
                 displayCommand: "operate_app(\(appName): \(target)) · disabled")
+                .withUserSummary(
+                    "\(appName) has \(item.display), but it's greyed out right now, so it "
+                    + "can't run in this state.")
 
         case .forbidden(let item):
             return AgentToolResult(
@@ -217,6 +220,10 @@ enum ComputerUseRunner {
                     + "never pressed from here. If the user wants it, it goes through the "
                     + "approval path for that kind of action, not through operate_app.",
                 displayCommand: "operate_app(\(appName): \(target)) · forbidden")
+                .withUserSummary(
+                    "\(item.display) is a destructive or outbound action, so DoraX won't press "
+                    + "it directly — it has to go through the approval path for that kind of "
+                    + "action.")
 
         case .noMatch:
             // The refusal the owner called perfect, kept — now with the live list behind it
@@ -233,6 +240,9 @@ enum ComputerUseRunner {
                     + "items: \(nearby). Do not press something else; say what is there and "
                     + "let the user choose.",
                 displayCommand: "operate_app(\(appName): \(target)) · no match")
+                .withUserSummary(
+                    "Nothing in \(appName)'s current menus matches \"\(target)\". "
+                    + "Nearby: \(nearby).")
         }
 
         // What the app looked like before. A click nobody can see afterwards is a click
@@ -266,6 +276,9 @@ enum ComputerUseRunner {
                         + "anything and do not ask again. Give them the other way instead, in "
                         + "one line: \(chosen.display), for them to click themselves.",
                     displayCommand: "operate_app(\(appName)) · not allowed")
+                    .withUserSummary(
+                        "You didn't allow DoraX to operate \(appName). You can run "
+                        + "\(chosen.display) yourself.")
             }
             store.grantFromChat(for: bundleID)
         } else if mode.requiresApprovalPerStep {
@@ -278,6 +291,7 @@ enum ComputerUseRunner {
                     output: "The user declined \(chosen.display). Do not try another route to "
                         + "the same thing — they said no to the outcome, not to the method.",
                     displayCommand: "operate_app(\(appName): \(chosen.display)) · declined")
+                    .withUserSummary("You declined \(chosen.display).")
             }
         }
 
@@ -288,6 +302,7 @@ enum ComputerUseRunner {
                 success: false,
                 output: "\(chosen.display) could not be pressed, so nothing happened.",
                 displayCommand: "operate_app(\(appName): \(chosen.display)) · failed")
+                .withUserSummary("\(chosen.display) couldn't be pressed, so nothing happened.")
         }
 
         // Let the app respond before reading it back; a window that has not appeared yet
@@ -308,6 +323,36 @@ enum ComputerUseRunner {
                 press anything else to produce one.
                 """ + (startedStep.map { "\n\n" + $0 } ?? ""),
             displayCommand: "operate_app(\(appName): \(chosen.display))")
+            .withUserSummary(
+                "Pressed \(chosen.display) in \(appName)."
+                + "\n\nBefore: \(before)\nAfter: \(after)"
+                + (startedStep.map { "\n\n" + $0 } ?? ""))
+    }
+
+    /// The `.ambiguous` result, as a pure function so the #316 rule is testable without a
+    /// live app. `output` keeps the model-facing guidance (run find_route, press the full
+    /// path) that steers the tool loop; `userSummary` is the plain line shown when this is
+    /// dispatched as the turn's final text, carrying none of that model-only instruction.
+    static func ambiguousResult(
+        appName: String, target: String, optionDisplays: [String]
+    ) -> AgentToolResult {
+        let named = optionDisplays.joined(separator: ", ")
+        return AgentToolResult(
+            success: false,
+            output: "\"\(target)\" describes more than one thing in \(appName)'s live "
+                + "menus equally well: \(named). Do not ask yet, and do not press — an "
+                + "exact route beats guessing. Look the request up first: find_route and "
+                + "find_menu_command return the app's saved routes and the few matching "
+                + "menu paths, and one canonical command usually exists (the app's own "
+                + "route list, not this live bar). Run that exact route, or press its "
+                + "FULL path (\"Message ▸ Archive\" names one thing; the bare word "
+                + "names several). Only if no route or path fits, name the live "
+                + "options above and ask which one.",
+            displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
+            .withUserSummary(
+                "More than one thing in \(appName) matches \"\(target)\": \(named). "
+                + "Tell me which one, or give the full menu path "
+                + "(for example \"Message ▸ Archive\").")
     }
 
     private static func flatten(_ items: [AXMenuItem]) -> [AXMenuItem] {

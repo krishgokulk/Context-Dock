@@ -4229,7 +4229,14 @@ extension DockCore {
             await setL2LoadingStatus("Reading \(scopeName)'s menus…", requestID: requestID)
             let result = await ComputerUseRunner.run(
                 target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
-            return (result.output, [result.displayCommand])
+            // #316: operate_app's `output` is model-facing throughout — even on success it tells
+            // the model to "report what changed" and "not invent an outcome". Dispatched here as
+            // the turn's final text, that would reach the user verbatim. Surface the user-facing
+            // summary each branch sets instead; never the raw output.
+            let answer = result.userFacingAnswer(
+                fallback: result.success
+                    ? "Done." : "DoraX couldn't carry that out in \(scopeName).")
+            return (answer, [result.displayCommand])
 
         case .capability:
             // `{"finder.copyFiles": {…}}` or `{"capability_call": …}` arriving as final text.
