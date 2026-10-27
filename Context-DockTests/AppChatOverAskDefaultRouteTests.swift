@@ -17,6 +17,9 @@ import Testing
 // is the app-scoped twin of the General AI path's `confidence < 0.7` gate; deterministic
 // ranking stands in for confidence. The learned-preference bypass is unchanged.
 
+// `ChatRouteResolver.shouldAsk`/`clearPrimaryRoute` are main-actor-isolated (they read the
+// preference store), so the suite is too — otherwise the synchronous `@Test` calls don't compile.
+@MainActor
 struct AppChatOverAskDefaultRouteTests {
 
     private static let safari = "com.apple.Safari"
