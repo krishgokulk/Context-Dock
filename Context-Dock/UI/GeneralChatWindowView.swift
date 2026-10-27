@@ -105,7 +105,11 @@ struct GeneralChatWindowView: View {
 
             contentColumn
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(contentBackground)
+                // The same Liquid Glass the compact shell draws (#323): the window reads as
+                // one material with the Corner rather than a flat panel. `glassDarkness` keeps
+                // it legible — a smoked tint in dark mode — and the window is already clear
+                // and non-opaque so the glass samples the desktop behind it.
+                .background(GlassBackground(cornerRadius: 0, isDark: dark))
         }
         .frame(minWidth: 720, minHeight: 480)
         .ignoresSafeArea()
