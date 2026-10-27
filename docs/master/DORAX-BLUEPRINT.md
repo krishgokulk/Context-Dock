@@ -3,7 +3,9 @@
 > **If I had built DoraX, this is how it would be put together.** One document, seven parts:
 > product → architecture → code → documents → workflow → plan → decisions.
 > Each part is short and links to the detailed file behind it. Read this one first.
-> Written 2026-09-24. Tags: `[code]` true in the repo today · `[judgment]` my recommendation.
+> Written 2026-09-24; product model updated 2026-10-27 in GitHub #327. Tags: `[code]` true in
+> the repo today · `[owner]` confirmed direction · `[target]` accepted end state not fully built.
+> Detailed App Pets design: [`2026-10-27-app-pets-combined-chat-design.md`](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 ---
 
@@ -11,13 +13,15 @@
 
 | Question | Answer |
 |---|---|
-| **What is it?** | A Mac layer that lets you tell any app what to do. It uses that app's own controls, asks before anything risky, and proves the result. |
-| **One sentence** | *Tell your Mac what to do, in any app — it uses the app's own controls, asks first, and proves it worked.* |
+| **What is it?** | One Mac-wide Dock where every app can become an intelligent Pet. Ask the app in front of you or combine Pets for a cross-app task; DoraX acts headlessly when possible, asks before risk, and proves the result. `[owner/target]` |
+| **One sentence** | *One Dock. Every app becomes an intelligent Pet. Ask, combine and finish work across your Mac—with approval and proof.* `[owner/target]` |
 | **First users** | Mac developers who already use Claude Code or Codex. |
 | **Why it wins** | Raycast and Alfred need someone to write an extension per app. DoraX reads any app's live menus and verifies every action. `[code]` |
-| **What the user sees** | Three verbs: **Find** (⌘⌘ double-press Command) · **Ask** (App Chat / Chat Window hotkeys, set by the user) · **Act on this** (selection auto-scopes on launch, or the Selection Scope hotkey) — see [Hotkeys as built](00-COMPLETE-APP-PLAN.md#hotkeys-as-built-code) |
-| **Names (owner decision 2026-09-24)** | The system-wide chat is **General Chat** — never "AI Assistant", "AI Assistant Mode" or "DoraX Action Chat". The chat scoped to one app is **App Chat**. Renamed in the app and in `docs/architecture/` on 2026-09-24 (display text only; type names unchanged) `[code]` |
-| **Two shells** | The **Dock** (⌥⌥, centre, original) and the **Corner** (⌘⌘ + app hotkeys, compact, bottom Left/Centre/Right) run the same engine with the same keys. Features move from Dock to Corner one at a time — status and rules in [`00-DOCK-AND-CORNER.md`](00-DOCK-AND-CORNER.md) |
+| **What the user sees** | One **Dock** opening as the frontmost **App Pet**; **Global Context** is the launcher/home; two or more Pets form **Combined Chat**; **Selection Scope** remains an explicit native input/action mode. `[owner/target]` |
+| **Names** | **App Pet** replaces user-facing Context Dock/App Chat. **Combined Chat** is the persistent multi-app form of General Chat. Compatibility type names may remain while code migrates. `[owner/target]` |
+| **One shell** | The **Corner is the only shell**. It may appear centred or at a chosen bottom corner; those are placements of one Dock, with one state/input/row/animation system. `[code/owner]` See [`00-DOCK-AND-CORNER.md`](00-DOCK-AND-CORNER.md). |
+| **Running apps** | Global Context's running-app icons are dormant Pets. Click to switch the Dock to that Pet; drag out to materialize a persistent desktop Pet. Detached Pets share scope, history, capability and safety state with the Dock. `[owner/target]` |
+| **Memory and modes** | Each Pet has active context, conversation memory and editable per-app long memory. `/mods` changes behavior/tool emphasis inside the same thread, never scope, authority or provider safety limits. `[owner/target]` |
 | **v1 includes** | Launcher basics (apps, files, calculator, conversions, quicklinks, clipboard, windows, hotkeys, ⌘K actions) + app-scoped and cross-app AI with verified actions + onboarding + signed install |
 | **Later (Labs)** | Memory vault, dashboard, coding-agent workers, media dock, drop shelf |
 | **Never** | Visual workflow editor, own extension store (MCP is the store), acting without asking |
@@ -30,14 +34,17 @@ Detail → [`00-COMPLETE-APP-PLAN.md`](00-COMPLETE-APP-PLAN.md) (every feature w
 
 ## Part 2 — The architecture
 
-> **Product-layer rule (2026-10-25, #318):** "never merge product layers" is now "one surface, focus-scoped; job separation via intent + lane" — Global Context and the frontmost-app Context Dock are one surface. See `AGENTS.md`.
+> **Product-layer rule (2026-10-27, #327):** one user-facing Dock and one orchestration harness,
+> with job separation preserved by focus, scope, intent and lane. Global Context, an App Pet and
+> Combined Chat are states/views of the same shell—not one mixed result mode. Media and Selection
+> retain their distinct jobs. See [`PRODUCT_LAYERS.md`](../architecture/PRODUCT_LAYERS.md).
 
 ### 2.1 Five layers, one direction
 
 ```
 ┌──────────────────────────── APP (what you see) ────────────────────────────┐
-│  Find          Ask            Act on this        Settings     Onboarding     │
-│  └──────────── one Shell: one window, one input, one row style ───────────┘ │
+│  Global Context    App Pet    Combined Chat    Selection    Settings          │
+│  └──────── one Dock shell: centre/corner/detached Pet presentations ──────┘ │
 └────────────────────────────────────┬────────────────────────────────────────┘
                                      ▼ uses
       ┌──────────────┬───────────────┴───────────┬─────────────────┐
@@ -69,15 +76,40 @@ everywhere without extra wiring. The existing `CapabilityRegistry` is the starti
 ### 2.3 One path for every AI request
 
 ```
-request → pick scope → ground (what this app can do) → choose route
-        → run (tool loop · plan · tool-less) → approval if risky
+request → pick Pet/participant scope → ground only relevant context → choose route
+        → build one typed task graph → run (headless first; UI only when required)
+        → connect another Pet if needed → approval if risky/outbound
         → verify (read back) → answer with ✓ verified / ⚠ unconfirmed / ✗ contradicted
 ```
 
 All of this exists today in `AppScopedChatService`, `ScopedTurnRunner`, `ApprovalCenter` and
 the verifiers. `[code — docs 03, 08]`
 
-Detail → [`08-AI-ENGINE.md`](08-AI-ENGINE.md) · [`10-CROSS-CUTTING.md`](10-CROSS-CUTTING.md)
+One provider is selected by the user for the conversation. The host—not the provider—owns scope,
+token/round/time budgets, capability discovery, approvals, execution, verification, receipts and
+memory. A provider without tool schemas reaches the same typed capability layer through its
+directive bridge; it receives no extra authority. `[owner/target]`
+
+### 2.4 App Pets are profiles over one harness
+
+Each Pet contributes identity, app knowledge, skills, connectors, capabilities, modes,
+conversation and per-app memory. It does **not** own a separate permanent model loop. Existing
+adapters, `AGENT.md` profiles, skills, MCP/CLI/Shortcut/menu routes and app chat stores are normalized
+into an **App Pet Profile** rather than copied into a new registry. Native selection, clipboard,
+windows, files, sharing and notifications remain shared host services available through the same
+scope/approval/execution/verification layer. `[owner/target]`
+
+### 2.5 Cross-app promotion
+
+A single-Pet conversation keeps one `ConversationID`. If a task needs another app, DoraX previews
+the required Pet and asks once to connect it. Accepting promotes the same thread to Combined Chat;
+it does not copy messages. Scope consent never authorizes a write: a send/delete/publish step still
+asks with its exact target and payload. Only verified, relevant outcomes flow back into each Pet's
+long memory. `[owner/target]`
+
+Detail → [`00-AI-ENGINE-PLAN.md`](00-AI-ENGINE-PLAN.md) ·
+[`AI_TURN_LIFECYCLE.md`](../architecture/AI_TURN_LIFECYCLE.md) ·
+[`SAFETY.md`](../architecture/SAFETY.md)
 
 ---
 
@@ -91,9 +123,10 @@ Context-Dock/
 │   ├── App/                 startup, hotkeys, routing
 │   ├── Shell/               the one dock shell + shared components
 │   ├── Surfaces/
-│   │   ├── Find/            Global Context + Context Dock
-│   │   ├── Ask/             chat in the dock and in the window
-│   │   ├── ActOnThis/       selection + clipboard
+│   │   ├── Global/          Global Context launcher/home
+│   │   ├── Pets/            app-scoped and detached Pet presentations
+│   │   ├── CombinedChat/    multi-Pet conversation and task progress
+│   │   ├── Selection/       explicit selection-aware actions/attachments
 │   │   └── Labs/            off by default
 │   ├── Settings/            one file per page
 │   └── Onboarding/
@@ -248,7 +281,7 @@ users · crash-free % · first-result accuracy in Find · AI corpus pass-rate ·
 |---|---|---|
 | 1 | The one sentence in Part 1 | Accept or rewrite it — everything follows from it |
 | 2 | First users | Mac developers with coding agents |
-| 3 | Scope | Three verbs; Media Dock cut; memory, workers, plugins → Labs |
+| 3 | Scope | One Dock; Global Context + App Pets + Combined Chat; Selection stays explicit; Media Dock stays separate/Labs |
 | 4 | Strategy vs Raycast | Match the basics, invest in the edge; MCP instead of an own store |
 | 5 | Architecture | Swift packages enforce the layers; one `Command` model |
 | 6 | Documents | One `docs/` tree as in Part 4 |
@@ -261,6 +294,11 @@ users · crash-free % · first-result accuracy in Find · AI corpus pass-rate ·
 **Owner's answers (2026-09-24):** all eleven recommendations accepted as written. #8 — yes,
 bought later (Phase 3). The ~15-week plan in Part 6 stands, with no fixed launch deadline
 (1.0 around early January 2027).
+
+**Owner direction (2026-10-27, #327):** the end-state product model is one Dock whose running-app
+icons become App Pets, with persistent per-Pet memory/modes and automatic, consented promotion to
+Combined Chat for cross-app work. This supersedes the older user-facing “two shells + separate
+General/App Chat products” description while preserving their internal scope boundaries.
 
 ---
 

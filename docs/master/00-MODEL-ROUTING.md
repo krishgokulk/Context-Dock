@@ -58,5 +58,15 @@ desktop app's plugin settings (see Context diet below).
 
 `AGENTS.md` is the neutral core any model can read. `CLAUDE.md` and `.agents/` carry provider-only
 depth (hooks, MCP, skills). Skills that exist in both trees must match
+
+## App Pets provider rule (2026-10-27, #327)
+
+- The provider selected for a conversation remains its default across App Pet and Combined Chat.
+- Adding a Pet or step never silently changes providers.
+- The host fits recent turns, rolling summary, relevant retrieved history, Pet profile and required
+  evidence to that provider's budget; the full local transcript is the source of truth.
+- The host owns tool/round/time/no-progress budgets, scope, approvals, execution and verification.
+- A provider without tool schemas uses the same typed capability layer through its supported
+  bridge; it receives no extra authority.
 (`scripts/check-skills-parity.sh`, run by the Stop hook). A local Ollama model gets `AGENTS.md` plus
 `graphify` output and narrow, reviewed tasks only.

@@ -4,6 +4,11 @@ The memory layer: what DoraX writes down, where it lives, and what still has to 
 built. Written after building steps 1–6 below, so the "done" half describes code that
 is in the app rather than a plan for it.
 
+> **App Pets target (2026-10-27, #327):** this vault is the durable tier beneath two conversation
+> tiers: active provider context and full local transcript + rolling summary. Per-app records become
+> visible/editable Pet long memory. Combined Chat writes back only verified, relevant facts. See the
+> [canonical design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md#6-short-memory-conversation-memory-and-long-memory).
+
 ## The shape of it
 
 DoraX is not the Obsidian pattern and should not become it.
@@ -70,6 +75,11 @@ timer that missed its slot never fires at all.
   prompt.
 - **One job per surface.** Memory is a layer the existing surfaces write into. Quick
   Note captures, chat distills, the dashboard views. It never becomes a seventh surface.
+- **Provider context is a projection.** The full transcript remains local; a provider receives
+  recent turns, rolling summary and retrieved relevant evidence fitted to its budget.
+- **Generated guesses are not facts.** A Pet may retain user statements and verified observations;
+  assistant inference remains labelled and cannot silently enter long memory.
+- **Pet memory is controllable.** The user can inspect, edit, pin and delete what each Pet knows.
 
 ## What is left
 

@@ -31,12 +31,16 @@ The Help menu is the underused one. It is a structured, vendor-authored index of
 own documentation, it is already in the cache, and reading it requires **no** interaction —
 the titles are in the AX tree whether or not anybody opens the menu.
 
-## The shape: one learned Skill per adapter
+## The shape: one App Pet Profile assembled per app
 
-`AdapterSkill` already exists and already fits — per bundle id, instructions only, never
+`AdapterSkill` already exists and supplies the knowledge/skills part—per bundle id, instructions only, never
 executes anything, versioned, user-editable, shown in Settings ▸ App Adapters ▸ Tools ▸
 Skills. `ChatRoute.Kind.skill` already routes to it and already says what it is: *"it
 steers the model rather than running anything."*
+
+The product-level **App Pet Profile** composes this learned skill with the app identity, granted
+capabilities, connectors, `/mods`, conversation state and memory policy. It is a view over existing
+registries, not a new executable `AGENT.md` system and not a seventh capability registry.
 
 What is missing is only that today's skill is **seeded from a hardcoded template**
 (`AdapterSkillSeeder`) rather than **learned from the app in front of us**.

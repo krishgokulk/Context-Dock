@@ -42,6 +42,12 @@ session, in order:
 **Start here (2026-10-27):** read *State (2026-10-27)* below first — #324 and #328 merged, Codex's
 #327 (App Pets docs) is in progress, and the next `ready` task is **#205** (#204 P10 is still held).
 
+**#327 App Pets product architecture (docs only, 2026-10-27):** update the blueprint and impacted
+architecture truth for one Dock, Global Context, App Pets, Combined Chat, memory and `/mods`.
+No product code starts from this document until the owner verifies the final decision card and an
+implementation plan is approved. Canonical spec:
+`docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`.
+
 Coordinator: Planner `Context-Dock planner — land #312` (Opus) — since 2026-10-26 (fresh session took over to save tokens). On takeover rewrite this line.
 
 **Fresh planner, start here (2026-10-26):** **#318 MERGED** — PR **#320** (`fab61e8e`) unified Global Context + frontmost Context Dock into one surface (`SurfaceFocus` + pure `SurfaceFocusRules.decide` + tests; lanes/`DockEngine`/`DockCore` untouched; "never merge layers" reworded in AGENTS.md/CLAUDE.md/blueprint). Owner hand-checked "320 passed"; issue #318 closed. Planner review posted a swipe-up-in-General finding then **retracted it as a false positive** (`destination()` early-returns for `.general` before the layer branch; read the diff hunk without the unchanged top block — lesson: review the whole function). Also merged: **#310** (opencode.json, `6f920942`), **#322** (planner handoff docs). **Local worktree `issue-318-unify-dock-surface-561302` not removed** (held the owner's running hand-check app). Cleanup is the owner's, once the app is quit and after checking the tree — `git -C <wt> status` shows one **untracked** `docs/screenshots/318/frontmost-focus.png` (an extra not in the merged PR; the numbered shots 1–3 are committed and in `fab61e8e`). Preserve that file if wanted, then remove (the squash-merge leaves the branch reading "3 commits ahead" though its content is merged): `git worktree remove --force .claude/worktrees/issue-318-unify-dock-surface-561302` then `git branch -D claude/issue-318-unify-dock-surface-561302`. `--force` only after confirming nothing untracked there matters (AGENTS.md cleanup rule). **#208 P13 / PR #312 MERGED** (`42c0b70e`, owner "312 passed" 2026-10-26) — dictionary rung + tool-less-provider live property read; frontier moves to #204. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidate not yet `ready`: **#316** (refusal-text-as-answer). Builder sessions the planner spawns must be set to **Sonnet**; cross-session send can't reach a builder a *previous* planner spawned (memory `fresh-planner-cannot-reach-prior-builder`). Queue fed: `ready` = **#323** (Corner UI size/expand/side-rail — new, verify scope), **#205**. New: **#321** docs-only design proposal (owner's own cloud session) — owner's, not planner queue.
@@ -168,6 +174,11 @@ The planner labels the next issue `ready` when the one before it is in review.
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
 Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5).
+
+**After #327 is owner-verified:** write a staged implementation plan and split it into issues in
+this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
+`/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
+Corner, stores, capability index and shared executor; no second engine or registry.
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
@@ -301,9 +312,22 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-05 | Merges (A): only the cloud planner merges, on the owner's words "merge <n>" in the planner chat. The Mac builder never merges, even after a passed hand check. |
 | 2026-10-05 | Owner "yes": the owner's "N passed" (hand check) is also permission to merge that PR once CI is green; docs-only PRs (no hand check) the planner merges itself once CI is green. |
 | 2026-10-06 | Adopted the app agent + plugin manager plan: two lanes (data never takes the window; UI lane's last rung is Computer Use), menus out of the default prompt, plugin manager fronting existing registries, CLI learner, curated catalog, solved-task library. P1–P12 = #195–#206; P1–P3 go before #180/#185 (`00-APP-AGENT-PLUGIN-PLAN.md`). |
+| 2026-10-27 | Product end state: **one Dock**. A normal launch opens the frontmost **App Pet**; Global Context is the launcher/home. Centre and corner are placements of the same shell. |
+| 2026-10-27 | Running/pinned app icons are dormant Pets: click switches the Dock to that Pet; drag out creates a persistent detached Pet backed by the same profile, conversation stores and agent harness. |
+| 2026-10-27 | Every Pet composes app identity, knowledge, skills, connectors, capability routes, conversation, short/long memory and `/mods`; it is not a permanent model process and not a new registry. |
+| 2026-10-27 | Cross-app requests connect the minimum required Pets and promote the same thread to **Combined Chat**. Connecting scope is separate from write/outbound approval. |
+| 2026-10-27 | Headless first: do not launch when a route can finish headlessly; start hidden if only the process is needed; explicit open/show launches directly; visible UI used only as fallback asks before taking focus. |
+| 2026-10-27 | Selection, clipboard, windows, files, native sharing and notifications are shared host capabilities available to all Pets through one scope/approval/execution/verification layer. |
+| 2026-10-27 | Command or empty Backspace returns an App Pet to Global Context without recreating the Dock or discarding typed text. |
 
 ## Open decisions (owner)
 
 - E5: in on-device-only mode, may DoraX *offer* a cloud model when a task is too big, or never mention it? Needed before #152.
-- What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
+- **#327 verification:** confirm the recommended selection boundary—normal launch always opens the
+  frontmost Pet; Selection Scope opens only from its hotkey/explicit attach action, so selection is
+  never silently sent to a Pet/provider.
+- **#327 verification:** confirm the implementation defaults in the canonical design: zero-Pet
+  DoraX Chat remains valid; every running app can be a generic Pet; one detached Pet per app in v1;
+  reopen resumes the active thread; provenance-based memory admission; `/mods` targets the focused
+  participant in Combined Chat.
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?

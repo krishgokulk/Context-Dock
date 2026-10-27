@@ -6,6 +6,10 @@
 >
 > Read this first. Docs `01`–`10` explain **how** DoraX works. This one says **what it is,
 > who it is for, what "done" means, and the order to get there.**
+>
+> **2026-10-27 product update (#327):** the user learns one Dock: frontmost App Pet by
+> default, Global Context as launcher/home, and Combined Chat when two or more Pets participate.
+> Canonical detail: [`2026-10-27-app-pets-combined-chat-design.md`](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 ---
 
@@ -40,8 +44,8 @@ None of those four is an engine problem. `[judgment]`
 
 ### 1.1 One sentence `[judgment]`
 
-> **DoraX — tell your Mac what to do, in any app. It uses the app's own controls, asks before
-> anything risky, and proves it worked.**
+> **DoraX — one Dock where every app becomes an intelligent Pet. Ask one app or combine Pets to
+> finish work across your Mac; it asks before risk and proves the result.**
 
 Every word maps to code that already exists:
 - *in any app* → menu execution + adapters + MCP + Shortcuts (`03 §5`)
@@ -76,18 +80,18 @@ that acts without you. It carries work **between** the tools you already use.
 
 ---
 
-## 2. Product shape: six surfaces become three verbs
+## 2. Product shape: one Dock, three focus jobs
 
-Users do not think in layers. They think in verbs. Keep the layers separate **in code**
-(the `PRODUCT_LAYERS.md` rule stands), but **present** them as three things:
+Users do not think in implementation layers. Keep jobs separate in code, but present one object:
 
-| Verb | What the user sees | Layers underneath | Hotkey |
+| Focus | What the user sees | Existing foundation | Entry |
 |---|---|---|---|
-| **Find** | One search bar. "This app" commands first, then everything else. | `01` Global Context + `02` Context Dock | ⌘⌘ double-press Command (today's Global Context default) `[code]` |
-| **Ask** | One chat with a scope chip: *This app · These apps · Everywhere* | `03` + `04` (already one engine, `04 §0`) | none by default — set under Settings → Hotkeys (App Chat / Chat Window) `[code]`; Tab from Find `[proposal]` |
-| **Act on this** | Act on a selection or clip | `05` Selection + Clipboard | none by default — a selection auto-scopes on launch, or set Selection Scope in Settings → Hotkeys `[code]` |
+| **Global Context** | Mac-wide launcher/home: search, commands, tools and running/pinned Pet icons. | `01` Global Context | explicit Global hotkey or Command/empty Backspace from a Pet `[target]` |
+| **App Pet** | Default Dock focus for the frontmost app: app conversation/actions, `/mods` and memory. | current `02` + `03`, one focus | normal Dock launch; click a Pet icon; drag out to detach `[target]` |
+| **Combined Chat** | One conversation/task graph across explicitly connected Pets. | current `04` + combined-chat store | proposed when a task needs another Pet, or explicit add `[target]` |
+| **Selection** | Explicit selection-aware actions or attachment to a Pet/chat. | `05` Selection + Clipboard | Selection Scope hotkey or attach; no silent normal-launch takeover `[owner/target]` |
 
-This is the Unified Dock Surface rule applied to naming: one shell, modes inside it.
+This is the Unified Dock Surface rule applied to product identity: one shell, focus-specific jobs.
 
 ### 2.1 What ships in v1.0 vs later `[judgment]`
 
@@ -142,8 +146,11 @@ Add a signpost-based perf test: hotkey → first frame, keystroke → results, `
 visible step. Budgets: **<100 ms open, <16 ms per keystroke** `[guess]`. Fail CI on regression.
 
 ### 3.7 Freeze rule
-From the day this plan is accepted until v1.0: **no new surface, no new spec** unless it
+From the day this plan is accepted until v1.0: **no new execution surface, no new spec** unless it
 fixes a v1 checklist item (§5). New ideas go to `docs/IDEAS.md`, dated, untouched.
+
+App Pets are the approved identity/presentation over the existing Corner, stores and one agent
+harness. A detached Pet must reuse those contracts rather than introduce a second engine.
 
 ---
 

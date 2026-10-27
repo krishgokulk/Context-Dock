@@ -1,5 +1,9 @@
 # 00 — Project Tree: every folder, one job
 
+> **2026-10-27 naming note (#327):** this inventory predates the final App Pets product model.
+> New surface folders follow [`PRODUCT_LAYERS.md`](../architecture/PRODUCT_LAYERS.md); existing
+> paths move only through approved migration PRs.
+
 > The DoraX layout drawn the way the popular "AI agent project structure" posters draw it:
 > one line per folder saying what it is for. Two trees: **the app** and **the agent harness**
 > (`.claude/`). Detail behind each line: [`00-APP-STRUCTURE.md`](00-APP-STRUCTURE.md),

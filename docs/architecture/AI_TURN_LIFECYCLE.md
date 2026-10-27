@@ -1,7 +1,8 @@
 # How one answer happens, start to finish
 
-Written 2026-09-22, from the code rather than from memory. If you read one file to understand
-DoraX's AI, read this one.
+Written 2026-09-22 from the code; product target updated 2026-10-27 for #327. If you read one file
+to understand DoraX's AI, read this one together with the
+[App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 The question this answers: **a person types something and an answer appears — what happened in
 between, what could have stopped it, and how do I tell which of those actually did?**
@@ -19,17 +20,17 @@ reason the pipeline is hard to see: it is not a line, it is a ladder with an exi
         │
         ▼
  ┌─────────────────┐
- │ 0. WHICH CHAT   │  dock app chat · General Chat · chat window · corner · MCP (an agent asking)
- └─────────────────┘  each builds a scope, then calls the SAME send()
+ │ 0. WHICH SCOPE  │  Global · one App Pet · Combined Chat · selection attachment · MCP caller
+ └─────────────────┘  every presentation builds one scope, then calls the SAME send()
         │
         ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ 1. CHEAP LOCAL ANSWERS         "is X installed?"               │──► ends here
- │ 2. ACCESS GATE                 needs an app this chat lacks    │──► ends here (offer to enable)
+ │ 2. SCOPE GATE                  needs a Pet this chat lacks     │──► pause (preview + connect)
  │ 3. SCOPE SUGGESTION            names no app but needs one      │──► ends here (ask which)
  │ 4. WORKBENCH INTENT            a saved multi-step recipe       │──► ends here
  │ 5. CLAUDE CODE BRIDGE          delegation to the CLI agent     │──► ends here
- │ 6. CROSS-APP PLAN              2+ apps, or "several steps"     │──► ends here (plan runs)
+ │ 6. TASK GRAPH                  2+ Pets, or "several steps"     │──► runs one combined plan
  │ 7. ROUTE RESOLUTION            one app, several ways to do it  │──► ends here (ask / run)
  │ 8. OBSERVED MENU ANSWER        the answer is a menu we read    │──► ends here
  └────────────────────────────────────────────────────────────────┘
@@ -64,25 +65,25 @@ reason the pipeline is hard to see: it is not a line, it is a ladder with an exi
 
 ## Stage by stage
 
-### 0. Which chat, and what it is scoped to
+### 0. Which conversation, Pets and mode
 
-`GeneralChatScope` is the answer to "what is this conversation about": `.app(bundleId:)`,
-`.folder`, `.cli`, `.thread`, or `.general`. Every surface — the dock's app chat, General Chat,
-the chat window, the corner, and an external agent through the MCP server — builds one and calls
-the same `AppScopedChatService.send`. **There is one pipeline.** When two surfaces behave
-differently, the cause is the scope they built, not a second code path.
+`GeneralChatScope` plus the conversation participant set answers “what may this turn use?”: no Pet,
+one app/tool Pet, or two or more Pets in Combined Chat. The active Pet mode is a bounded profile
+overlay, not authority. The Dock, detached Pet, full chat window and external MCP caller all build
+one scope and call the same `AppScopedChatService.send`. **There is one pipeline.** Presentation
+never creates a second executor, provider session or permission path.
 
 ### 1. Cheap local answers
 
 `LocalInstallationCheck` — "is Claude Code installed?" is answered by looking, not by asking a
 model. Ends the turn.
 
-### 2. The access gate
+### 2. The scope gate
 
-`appNeedingAccess` — the question needs an app this conversation is not about. DoraX does not
-reach; it offers, naming every app the sentence names *or implies*, and enabling them is one tap.
-**This is a boundary, not a nag**: a Safari chat may not read Notes, and a chat cannot widen its
-own scope.
+`appNeedingAccess` — the question needs an App Pet this conversation does not include. DoraX does
+not reach silently: it previews the minimum required Pet and why, then asks once to connect it.
+Acceptance promotes the same conversation to Combined Chat. **This is a scope boundary, not action
+approval**: a Safari Pet may not read Messages, and connecting Messages does not approve sending.
 
 ### 3. Scope suggestion
 
@@ -94,12 +95,13 @@ than answering from nothing.
 A saved multi-step workflow (`WorkbenchIntent`) runs. A coding-shaped request goes to the Claude
 Code CLI, which has its own tools and reports every one of them back as steps.
 
-### 6. The cross-app plan
+### 6. The Combined Chat task graph
 
-Two or more apps in scope, or a request the classifier calls multi-step: routes are resolved
-across every app the chat may touch, a model **orders those routes** (it can only choose from
-what already resolved — a hallucinated step is a rejected id, not an attempted action), and
-`ChatPlanRunner` runs them, narrating each step and reading the result back.
+Two or more Pets in scope, or a request the classifier calls multi-step: the host discovers the
+minimum participant set, resolves typed routes, and lets the selected provider order only those
+resolved ids. A hallucinated step is rejected, not attempted. `ChatPlanRunner` executes one graph,
+passing each Pet only step-required evidence, narrating progress and reading results back. The host
+keeps token/round/time/no-progress budgets and never silently changes provider.
 
 ### 7. Route resolution
 
@@ -120,9 +122,10 @@ Sometimes the question *is* the menu ("what can this app export?"), and reading 
 
 ### 9–12. Grounding, then one prompt
 
-What the app knows before the model is asked: the page in front of you, your open tabs, the
-Finder selection, the workspace, the app's own reference docs, its adapter inventory, its skills,
-its **AGENT.md profile**, and live Apple data when in scope. All of it is budgeted per provider
+What the participating Pets know before the model is asked: relevant live page/window facts,
+explicit attachments, conversation summary/retrieved turns, app reference knowledge, capability
+inventories, skills, App Pet profiles, and verified per-Pet memory. Selection remains local unless
+explicitly attached. All of it is budgeted per provider
 (`AIContextBudget`: 1 500 characters on-device, 4 000 for local endpoints, 12 000 for cloud) and
 compacted toward the question (`MarkItDownService.compact`).
 
@@ -149,7 +152,7 @@ DoraX offers — a route, a specialist worker, or Computer Use with the exact it
 
 | It stopped because | You see |
 |---|---|
-| The chat lacks the app | "Enable Notes and Safari for this chat" — one tap |
+| The chat lacks a Pet | “Connect Messages Pet to finish this task” with the reason — one tap |
 | Several routes differ in consequence | Pick-one buttons, never a paragraph to retype |
 | A capability needs approval | A card naming the app, the action and its inputs |
 | A plan step failed | "Failed step 2 · …", and the steps after it named as skipped |

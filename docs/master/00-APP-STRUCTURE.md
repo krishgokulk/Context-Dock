@@ -4,6 +4,11 @@
 > [`00-PRODUCT-PLAN.md`](00-PRODUCT-PLAN.md) (what to build) and
 > [`00-CODEBASE-PLAN.md`](00-CODEBASE-PLAN.md) (rules + migration order).
 > Every file named below exists today on `main` @ `341494a` unless marked **NEW**.
+>
+> **2026-10-27 naming update (#327):** `Surfaces/Find` and `Surfaces/Ask` below are historical
+> migration buckets. The durable product boundaries are `GlobalContext`, `AppPets`,
+> `CombinedChat`, explicit `Selection`, and Labs `Media`, all under one `Shell`. See
+> [`PRODUCT_LAYERS.md`](../architecture/PRODUCT_LAYERS.md).
 
 ---
 
@@ -78,15 +83,16 @@ Context-Dock/
 │                        FileThumbnailImage · SFSymbolPickerView · QuickLookPreview
 │
 ├── Surfaces/
-│   ├── Find/                                         (docs 01 + 02)
-│   │   ├── GlobalContext/  GlobalContextSurface · GlobalContextTypingModel · GlobalContextRow ·
-│   │   │                   PinnedAppsRow · CornerDockStrip · CornerWindowRow ·
-│   │   │                   FindModel.swift (NEW — owns the @State now in DockCore+Search*)
-│   │   ├── ContextDock/    ContextDockSurface · ContextDockPillCoordinator · FrontmostMenuMatcher ·
-│   │   │                   ContextDockModel.swift (NEW)
+│   ├── GlobalContext/                                (launcher/home)
+│   │   └── GlobalContextSurface · GlobalContextTypingModel · GlobalContextRow ·
+│   │                       PinnedAppsRow · CornerDockStrip · CornerWindowRow · FindModel
+│   │
+│   ├── AppPets/                                      (one-app scope/presentation)
+│   │   ├── PetSurface · PetProfile · PetPresentation · PetMode · PetMemoryView
+│   │   ├── ContextDockSurface · ContextDockPillCoordinator · FrontmostMenuMatcher
 │   │   └── Finder/         FinderContextViewModel · FinderSemanticModels
 │   │
-│   ├── Ask/                                          (docs 03 + 04)
+│   ├── CombinedChat/                                 (multi-Pet conversation/task graph)
 │   │   ├── Dock/           ContextDockChatSurface · GeneralChatSurface · CornerGeneralChatView ·
 │   │   │                   CornerChatPresentation · AppChatPromptPill · AppChatListCard
 │   │   ├── Window/         GeneralChatWindowController · GeneralChatWindowView ·
@@ -96,13 +102,13 @@ Context-Dock/
 │   │                       ChatAttachmentChip · LiveAgentProgressView · LiveAgentStepsView ·
 │   │                       AIMessageViews · FileChangesApprovalView · ChatSlashAppPicker
 │   │
-│   ├── ActOnThis/                                    (doc 05)
+│   ├── Selection/                                    (explicit selection/clipboard actions)
 │   │   ├── Selection/      SelectionScopeModel · SelectionScopeCard · ExtensionScopeCard ·
 │   │   │                   AppChatSelectionScope
 │   │   └── Clipboard/      ClipboardPanelWindow · ClipboardPreviewCard ·
 │   │                       ClipboardPreviewScratchFile · ClipboardModel.swift (NEW)
 │   │
-│   ├── Preview/            today's Preview/ folder (shared file preview, used by Find + ActOnThis)
+│   ├── Preview/            today's Preview/ folder (shared file preview)
 │   │
 │   └── Labs/               ← off by default in v1 (Settings → Labs)
 │       ├── MediaDock/      MediaDockSurface · MiniPlayerOverlay

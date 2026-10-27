@@ -1,6 +1,8 @@
 # Selection Shortcut Sheet
 
-> **As built (2026-09-24).** Long-press ⌘ was removed — ⌘ only tap-toggles scope now (`Search/DockCore+KeyboardNavigation.swift`). The selection opens in the corner as `SelectionScopeCard`; what that card still lacks is in `docs/master/00-DOCK-AND-CORNER.md` §4a.
+> **As built / target clarified 2026-10-27.** Long-press ⌘ was removed—⌘ toggles App Pet ↔
+> Global Context. Selection opens explicitly from its configured hotkey or attach action as
+> `SelectionScopeCard`; it does not silently replace a normal Pet launch or upload content.
 
 Selection Shortcut Sheet is DoraX selection-aware action engine.
 
@@ -16,6 +18,7 @@ Job:
 - Match triggers.
 - Show relevant actions.
 - Run selected action.
+- Attach selected content to the current App Pet or Combined Chat after the user chooses.
 
 ## Inputs
 
@@ -70,7 +73,9 @@ Rules:
 ## UI
 
 Rules:
-- Opens fast from the Selection Scope hotkey (Settings → Hotkeys → Custom Shortcuts), or by itself on launch when a selection exists and no hotkey is set.
+- Opens fast from the Selection Scope hotkey (Settings → Hotkeys → Custom Shortcuts) or an explicit
+  attach action. A normal Dock launch still opens the frontmost App Pet.
+- Selection remains local until the user chooses an action or attaches it to a conversation.
 - Keeps same sheet identity while results update.
 - Supports arrow navigation.
 - Supports pointer click.

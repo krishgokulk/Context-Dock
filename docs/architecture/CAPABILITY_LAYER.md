@@ -3,7 +3,7 @@
 Architecture truth for how a request becomes an action. Read with
 [Product Layers](PRODUCT_LAYERS.md) and [Chat Scopes](CHAT_SCOPES.md).
 
-## The two surfaces
+## Pet scopes and one capability layer
 
 ```
                          macOS
@@ -12,8 +12,8 @@ Architecture truth for how a request becomes an action. Read with
               │                         │
        WHAT I'M DOING              WHAT I WANT DONE
               ▼                         ▼
-       Context Dock Chat          General AI Chat
-     current app · window        whole Mac · several apps
+          App Pet                Combined Chat
+     one app · window/page       explicitly connected Pets
      page · selection · files    CLI · MCP · skills · APIs
               │                         │
               └────────────┬────────────┘
@@ -21,14 +21,14 @@ Architecture truth for how a request becomes an action. Read with
                  DoraX Capability Layer
 ```
 
-**Context Dock Chat** answers about *this*: the app in front of you, its window, its
-document, what you selected. Its scope is anchored, never chosen.
+**App Pet** answers about *this*: one app profile, its relevant window/document and explicitly
+attached input. Its scope is anchored to that Pet.
 
-**General AI Chat** coordinates *across*: several apps, tools and files at once. Its scope
-is chosen — attached apps, threads, CLI tools.
+**Combined Chat** coordinates *across*: several explicitly connected Pets, tools and files. Its
+scope is the participant set; adding a Pet requires scope consent.
 
-They are not merged, and not two implementations. One capability layer serves both; only
-scope resolution differs.
+They share one Dock and one implementation without merging their jobs. One capability layer serves
+both; scope resolution and participant count differ.
 
 ## The pipeline
 
@@ -52,8 +52,9 @@ costs. Ranking is fixed, and deliberately boring:
 | 1 | Native app action (adapter) | The app's own API. Deterministic, no UI theft. |
 | 2 | MCP tool | Structured, typed, no window opens. |
 | 3 | CLI | Deterministic and inspectable; output is a receipt. |
-| 4 | Menu command | Works for any app, but takes the screen. |
-| 5 | Model | Answers from context; runs nothing. |
+| 4 | Shortcut / automation | Typed when declared; may require the app process. |
+| 5 | Menu / keyboard / AX | Works broadly, but takes the screen; last resort. |
+| 6 | Model | Answers from context; runs nothing. |
 
 Read-only routes never require a decision from the user. When several routes differ in
 consequence — one opens a window, another does not — the user picks, and the choice is
@@ -71,3 +72,7 @@ remembered per app and per kind of request.
   request came from the dock, the window or a hotkey.
 - **One capability representation.** App actions, menu commands, CLI, MCP, API and skills
   reach the model through a single normalized shape, or the ranking above is fiction.
+- **Shared native services.** Selection, clipboard, windows, files, share and notifications are
+  host capabilities. Pet profiles reference them; they do not copy or privately reimplement them.
+- **Headless first.** A route that can run without visible UI wins. Starting/activating an app is
+  a route requirement to disclose, not the definition of an App Pet.

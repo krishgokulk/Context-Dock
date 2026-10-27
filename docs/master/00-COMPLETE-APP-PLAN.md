@@ -1,5 +1,9 @@
 # 00 — Complete App Plan: every feature, measured against Raycast and Alfred
 
+> **Product model update 2026-10-27 (#327):** “Find / Ask / Act on this” remain feature IDs below,
+> but the user-facing container is one Dock: Global Context, App Pets and Combined Chat. Selection
+> is explicit. See the [canonical App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
+
 > **Status: PROPOSAL — written as if I owned DoraX.** This is the master feature plan. It sits
 > above [`00-PRODUCT-PLAN.md`](00-PRODUCT-PLAN.md) (why + launch),
 > [`00-CODEBASE-PLAN.md`](00-CODEBASE-PLAN.md) (code rules) and
@@ -119,7 +123,7 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 | Global Context (extra shortcut) | unset | Hotkeys → Launch Shortcut, "or record a key" under Double-press Command — works with ⌘⌘ off |
 | App Chat (ask the frontmost app) | unset | Hotkeys → Custom Shortcuts |
 | Chat Window (General Chat) | unset | Hotkeys → Custom Shortcuts |
-| Selection Scope | unset — while unset, a selection auto-scopes on every launch | Hotkeys → Custom Shortcuts |
+| Selection Scope | unset — selection stays local until this hotkey or an explicit attach action | Hotkeys → Custom Shortcuts |
 | Clipboard Scope | unset | Hotkeys → Custom Shortcuts |
 | Quick Note | unset | Hotkeys → Custom Shortcuts |
 | Capture Text / Capture Area / Screenshot | unset | Hotkeys → Custom Shortcuts |
@@ -130,7 +134,8 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 | Key | Does |
 |---|---|
 | ⌘R | Refresh Context — re-scan the frontmost app's live menus |
-| ⌘ (tap) | Switch between Global Context and Context Dock |
+| ⌘ (tap) | Switch between Global Context and the active App Pet |
+| Backspace (empty field) | Walk back from an App Pet to Global Context without discarding text |
 | → | Autocomplete to scope the highlighted app |
 | ↩ | Run the focused result or pill |
 | Esc | Close — clear focus / dismiss the dock |
@@ -174,9 +179,11 @@ One root search. Everything is findable from here.
 Performance budget: open < 100 ms, keystroke → results < 16 ms, **no AX scan while typing**
 (existing rule, `PERFORMANCE_RULES.md`).
 
-### 2.2 ASK — App Chat / Chat Window hotkeys (unset by default), or Tab from Find `[proposal]`
+### 2.2 ASK — App Pet / Combined Chat in the one Dock `[target]`
 
-One chat. A **scope chip** at the top: `This app · These apps · Everywhere`.
+One conversation identity. A single participant is an App Pet thread; adding another Pet after
+scope consent promotes the same thread to Combined Chat. Participant chips replace an ambiguous
+`This app · These apps · Everywhere` switch.
 
 | # | Feature | Behaviour | Done when |
 |---|---|---|---|
@@ -188,16 +195,17 @@ One chat. A **scope chip** at the top: `This app · These apps · Everywhere`.
 | A6 | Save & replay | "save that as X" → "run X"; re-resolves steps against today's Mac | Replay refuses a step whose capability is gone, with a reason |
 | A7 | Attachments | Files, images (seen, not just OCR'd), selection, Finder folder | Attached items shown as chips |
 | A8 | Providers | On-device default; add Anthropic / OpenAI / Ollama keys in Settings | Works with zero keys configured |
-| A9 | History | Threads per scope; search history | Reopening a thread restores its scope |
-| A10 | Enable an app | "Enable Notes for this chat" one-tap grant | Grant visible and revocable |
+| A9 | History | Full local transcript + rolling summary + relevant retrieval; per-Pet long memory | Long conversations survive provider limits without losing local history |
+| A10 | Connect a Pet | Preview why another Pet is needed; one-tap thread scope grant | Grant visible/revocable and never treated as write approval |
+| A11 | Pet modes | `/mods` switches bounded app-specific behavior in the same thread | Mode visible; scope, provider limits and approvals unchanged |
 
-### 2.3 ACT ON THIS — selection auto-scopes on launch, or the Selection Scope hotkey (unset by default)
+### 2.3 ACT ON THIS — explicit Selection Scope or attach action
 
 Whatever is selected or just copied.
 
 | # | Feature | Behaviour | Done when |
 |---|---|---|---|
-| S1 | Selection card | Selected text / file / URL / image read while the source app is still in front | Works in Safari, Mail, Notes, Finder, Xcode, VS Code |
+| S1 | Selection card | Selected text / file / URL / image remains local until the user opens Selection Scope or attaches it | Works in Safari, Mail, Notes, Finder, Xcode, VS Code without changing normal Pet launch |
 | S2 | AI presets | Fix grammar, summarise, translate, explain, rewrite shorter — user-editable | Result replaces selection or copies, user's choice |
 | S3 | Send to | Notes, Reminders, Mail, a chat, a quicklink, a script | Uses the same route order and verification as Ask |
 | S4 | Clipboard history | Pill on copy → card of recent clips; search, pin, paste as plain text | Password-manager clips never stored (already true) |

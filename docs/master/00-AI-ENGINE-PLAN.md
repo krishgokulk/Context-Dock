@@ -6,6 +6,11 @@
 > [`00-NOW.md`](00-NOW.md). This file never sets the order — it defines the tasks.
 > Checked against `general-chat-agent` @ `c8f3acd` (2026-10-01).
 > Tags: `[code]` true in the repo today · `[judgment]` recommendation · `[guess]` to be measured.
+>
+> **2026-10-27 architecture update (#327):** E9/E19 now implement the App Pets memory model and
+> Combined Chat orchestration described in the
+> [canonical design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md). The engine
+> remains one shared harness; no Pet owns a separate model loop.
 
 ---
 
@@ -71,7 +76,9 @@ takes `ready` issues, so nothing starts until the owner labels one.
 
 | # | Task | Notes |
 |---|---|---|
-| E9 | Thread summary written on-device + `search_memory` tool | Old turns are summarized, not just dropped (`AI/ChatHistoryBudget.swift`) |
+| E9 | Three-tier memory: active provider context + full local transcript/rolling thread summary + verified per-Pet long memory | Old turns are summarized/retrieved, not dropped; user can inspect/edit/delete Pet memory; Combined Chat writes back only verified relevant facts |
+| E9a | Context-limit UX | Near a provider limit offer Keep active (condense), Archive and new chat, or New chat without saving memory; local transcript remains intact |
+| E9b | Pet modes (`/mods`) | Mode overlays instructions/tool emphasis/output shape inside the same thread; never changes scope, risk, approval or provider budgets |
 | E10 | Model policy per turn: privacy, availability, complexity; the user's setting is the ceiling | Folds in #70 (privacy routing settings) |
 | E11 | Parallel read tools | Measured with E2 |
 | E12 | Finish the capability index migration; retire old routers one at a time | `AI/CapabilityIndexShadow.swift`; #55, #57 |
@@ -85,7 +92,10 @@ takes `ready` issues, so nothing starts until the owner labels one.
 
 ### 5b. E19 App Assistant — the plan (owner confirmed 2026-10-04)
 
-**Goal.** Every app scope (Finder, Mail, Safari, any app) acts like a personal assistant for that app: it knows how *you* use it, offers the next step before you ask, and tells you what changed — inside the scope's existing Context Dock chat, never a new surface. Inspired by OpenAI Dots, built the DoraX way: local, read-only when proactive, approval to act.
+**Goal.** Every app scope (Finder, Mail, Safari, any app) becomes an App Pet: it knows how *you*
+use that app, offers the next step before you ask, and tells you what changed—inside the one Dock
+or a detached presentation backed by the same scope/store. Inspired by OpenAI Dots, built the
+DoraX way: local, read-only when proactive, approval to act.
 
 **Today vs. target.** Today a scope is smart only when asked: it reads the app (menus, Help menu, data readers) and acts with approval. It forgets your habits between threads and never speaks first.
 
@@ -105,11 +115,14 @@ takes `ready` issues, so nothing starts until the owner labels one.
 - Not built: checking the internet for *available* updates of other apps — it would send the owner's app list out past the gate; macOS already does it.
 
 **Rules** (all layers):
-1. No new surface — the scope's Dock/Corner chat and strip only (Unified Dock Surface rule).
+1. No new engine or custom shell—a detached Pet is a presentation of the existing Dock scope and
+   stores (Unified Dock Surface rule).
 2. Proactive = read-only; any write waits for the owner through the same card and gate; an approved write runs once (E7b).
 3. Interruption budget: at most one briefing per app switch, a few per day; off per app until switched on; an ignored suggestion type is learned and goes quiet.
 4. Memory is visible and editable per app; nothing learned leaves the Mac.
 5. Measured: every suggestion is traced (E2); an app whose suggestions are accepted less than an agreed share goes quiet; E8 replays guard quality.
+6. `/mods` changes behavior, never permission. Cross-app work connects the required Pet and becomes
+   Combined Chat; connecting it is not action approval.
 
 **Prerequisites:** E1b (#165), #177 (a choice list never acts in the same turn), E7b (#157), E8 (replays), E9 (memory). Proactivity on top of wrong routing multiplies wrong guesses, so these land first.
 

@@ -1,7 +1,9 @@
-# The frontmost-app agent
+# The frontmost App Pet
 
-One assistant, scoped to the app in front of you, that carries out what you asked using the
-capabilities you granted — and never by clicking a menu to find something out.
+One shared DoraX harness, focused through the app in front of you, that carries out what you asked
+using the capabilities you granted—and never by clicking a menu to find something out. **App Pet**
+is the product identity; it is not a permanent model process per app. Detailed target behavior:
+[App Pets, Global Context and Combined Chat](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 This is Gate B. Gate A closed on 21 Aug: every capability has an owner, an authority class,
 a canonical executor and a verification state. What follows is only possible because of
@@ -257,6 +259,14 @@ should come last, because remembering the wrong thing is worse than remembering 
 - **Nothing runs unattended that the user did not see offered.** Bounded steps, visible plan,
   stated approval.
 - **No new product layer.** This is Context Dock Chat becoming competent, not a new surface.
+- **One harness, many profiles.** Detaching or switching Pets must not duplicate the tool loop,
+  provider state, capability index, approvals or executor.
+- **Headless first.** If a route works headlessly, do not launch the app. Start hidden when only
+  the process is required; ask before taking focus when visible UI is only DoraX's fallback.
+- **Cross-app work promotes scope.** Preview and connect the required Pet, then run one typed
+  Combined Chat graph. Pet connection is never treated as write permission.
+- **Modes guide, never grant.** `/mods` may change instructions and tool emphasis, not scope,
+  authority, risk or provider limits.
 
 ---
 
