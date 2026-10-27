@@ -234,12 +234,35 @@ struct AgentToolResult {
     /// the vetted suggestions and the menu fallback, for the answer's card.
     var noRouteOptions: NoRouteOptionsCard? = nil
 
+    /// A plain, user-facing one-liner for the case where this result is shown to the user
+    /// directly — a directive dispatched as the turn's final text, not fed back through the
+    /// tool loop. `output` is written FOR THE MODEL: it may carry next-step instructions
+    /// ("run find_route first", "do not invent an outcome") that must never reach the user.
+    /// When a turn would otherwise surface `output` verbatim, it shows this instead. See #316.
+    var userSummary: String? = nil
+
     /// The result with its no-route card attached (a builder, because the tool closures
     /// construct results positionally).
     func withNoRouteOptions(_ card: NoRouteOptionsCard) -> AgentToolResult {
         var copy = self
         copy.noRouteOptions = card
         return copy
+    }
+
+    /// The result with a user-facing summary attached (a builder, because the tool closures
+    /// construct results positionally). See #316.
+    func withUserSummary(_ summary: String) -> AgentToolResult {
+        var copy = self
+        copy.userSummary = summary
+        return copy
+    }
+
+    /// The text to show the user when this result becomes a turn's final message. Never the
+    /// model-facing `output`: the `userSummary` if one was set, otherwise the caller's plain
+    /// fallback. This is the #316 rule — a turn must not end with a tool's raw `output`.
+    func userFacingAnswer(fallback: String) -> String {
+        if let userSummary, !userSummary.isEmpty { return userSummary }
+        return fallback
     }
 
     init(
