@@ -250,7 +250,8 @@ enum AppScopedChatService {
         // tool the gate refuses must fall through to `File ▸ New Tab`, not end the turn.
         if !result.success,
             let next = ChatRouteResolver.fallbackRoute(
-                after: route, output: result.output, in: alternatives)
+                after: route, output: result.output, wasCancelled: result.wasCancelled,
+                in: alternatives)
         {
             log.notice("route fell through: \(route.kind.rawValue, privacy: .public) → \(next.kind.rawValue, privacy: .public)")
             return await execute(

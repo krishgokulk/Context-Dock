@@ -43,6 +43,16 @@ struct MCPRouteFallbackTests {
         #expect(next == nil, "the user said no; a different route is not a way around it")
     }
 
+    @Test func aCancelledExecutorCardIsNotRetriedAnotherWay() {
+        // The executor's own approval card, not the browser gate's: its refusal text is
+        // `Cancelled … — nothing was executed.` and carries `wasCancelled`, not the prefix.
+        let cancelled = GeneralAIActionResult.cancelled(routeLabel: "create_tab")
+        let next = ChatRouteResolver.fallbackRoute(
+            after: newTab[0], output: cancelled.message, wasCancelled: cancelled.wasCancelled,
+            in: newTab)
+        #expect(next == nil, "cancelling the card is a no; the menu route must not ask again")
+    }
+
     @Test func aReadNeverEscalatesToAWrite() {
         let routes = [
             route(.mcpTool, "list_tabs", readOnly: true), route(.menuCommand, "File ▸ New Tab"),
