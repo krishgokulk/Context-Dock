@@ -606,6 +606,37 @@ enum ChatRouteResolver {
         return tied ? nil : primary
     }
 
+    /// The route to try when `failed` did not run: the next runnable one under the grants
+    /// that already filtered `routes`.
+    ///
+    /// A gated or broken MCP tool is the one top-ranked route that can fail for reasons that
+    /// say nothing about the request — the server is not connected, the call errored — while a
+    /// granted lower-rank route (the app's own menu command) would just work. Stopping on its
+    /// error is a dead end, not caution. Three things still stop the chain:
+    /// - the user said no (`MCPRuntime.userDeclinedPrefix`): that is a decision, not a fault;
+    /// - the next route would do more than the request asked (a read falling back to a write);
+    /// - the next route is not one `run` carries out (a skill, the model, Computer Use).
+    ///
+    /// The fallback keeps its own consent: `run` still applies `executionApproval`, so a menu
+    /// press asks at the point of acting exactly as it would have as the primary.
+    static func fallbackRoute(
+        after failed: ChatRoute, output: String, in routes: [ChatRoute]
+    ) -> ChatRoute? {
+        guard failed.kind == .mcpTool,
+            !output.contains(MCPRuntime.userDeclinedPrefix)
+        else { return nil }
+        return routes.first { candidate in
+            switch candidate.kind {
+            case .adapterAction, .menuCommand, .cli, .mcpTool: break
+            case .skill, .model, .computerUse: return false
+            }
+            return candidate.id != failed.id
+                && candidate.title.lowercased() != failed.title.lowercased()
+                && (candidate.isReadOnly || !failed.isReadOnly)
+                && candidate.kind.rank > failed.kind.rank
+        }
+    }
+
     /// True when the user should be asked which route to take.
     ///
     /// Act by default: several routes existing is not a question. We ask only when at least

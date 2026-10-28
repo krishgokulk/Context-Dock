@@ -42,6 +42,10 @@ actor MCPRuntime {
 
     private var clients: [UUID: MCPClient] = [:]  // keyed by MCPServerConfig.id
 
+    /// Opens the message of a tool call the user turned down. A route that failed with this
+    /// was an answer, not a fault, so nothing may quietly try another way (`ChatRouteResolver.fallbackRoute`).
+    nonisolated static let userDeclinedPrefix = "The user did not approve"
+
     private init() {}
 
     /// Connect (lazily) to every MCP server linked to `bundleId` and return the aggregate
@@ -118,7 +122,7 @@ actor MCPRuntime {
                         what: what, detail: detail, tool: tool, bundleId: bundleId)
                 guard approved else {
                     throw AICapabilityError.blocked(
-                        "The user did not approve \(what.lowercased()). Say so and stop — do "
+                        "\(Self.userDeclinedPrefix) \(what.lowercased()). Say so and stop — do "
                             + "not reach for another tool to do the same thing.")
                 }
             }
