@@ -211,6 +211,9 @@ nonisolated enum ActivityStepNaming {
     /// things done when one was.
     static let plumbingTools: Set<String> = [
         "find_capability", "find_route", "find_menu_command", "read_tool_result",
+        // run_mcp_tool is a pass-through router: the inner run_capability dispatch it triggers
+        // already records the call with the correct isReadOnly flag, so the wrapper is skipped.
+        "run_mcp_tool",
     ]
 
     /// Kind, title and one-line input for a DoraX tool call. `capabilityTitle` and
