@@ -43,12 +43,25 @@ enum ClaudeCodeCLIService {
                 return "Claude Code isn't installed. Install it, then run `claude` once to "
                     + "sign in with your Claude subscription."
             case .notAuthenticated:
-                return "Claude Code is installed but not signed in. Run `claude` in a "
-                    + "terminal and log in with your subscription."
+                return "Claude Code is installed but not signed in — your subscription "
+                    + "session may have expired. Run `claude` in a terminal and sign in again."
             case .failed(let detail):
                 return detail.isEmpty ? "Claude Code returned no answer." : detail
             }
         }
+    }
+
+    /// An auth or expired-session failure, told apart from an ordinary turn failure (a
+    /// permission prompt, a tool error) so the user gets the one action that fixes it —
+    /// signing in again — rather than the CLI's raw words. The `claude` CLI reports an expired
+    /// subscription as a structured `is_error` result ("Failed to authenticate: OAuth session
+    /// expired and could not be refreshed"), which the streaming and one-shot JSON paths would
+    /// otherwise surface verbatim (diagnostic 2026-10-28, claudeCode turn, scope codex).
+    nonisolated static func isAuthFailure(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return ["not logged in", "log in", "login", "authenticate", "authentication",
+                "oauth", "unauthorized", "session expired", "session has expired",
+                "could not be refreshed"].contains { text.contains($0) }
     }
 
     /// Where the CLI is, if it is anywhere.
@@ -504,7 +517,9 @@ enum ClaudeCodeCLIService {
                     }
                 })
             if stopped() { return .restartWithoutOutboundTools }
-            if let failure { throw Failure.failed(failure) }
+            if let failure {
+                throw isAuthFailure(failure) ? Failure.notAuthenticated : Failure.failed(failure)
+            }
             guard let answer, !answer.isEmpty else {
                 throw Failure.failed("Claude Code returned no answer.")
             }
@@ -517,7 +532,7 @@ enum ClaudeCodeCLIService {
         if stopped() { return .restartWithoutOutboundTools }
         guard let payload = decodeFirstObject(in: output) else {
             // The CLI prints its auth complaint as prose, not JSON.
-            if output.lowercased().contains("login") || output.lowercased().contains("auth") {
+            if isAuthFailure(output) {
                 throw Failure.notAuthenticated
             }
             throw Failure.failed(String(output.prefix(300)))
@@ -540,8 +555,8 @@ enum ClaudeCodeCLIService {
         }
 
         if payload["is_error"] as? Bool == true {
-            throw Failure.failed(
-                (payload["result"] as? String) ?? "Claude Code reported an error.")
+            let detail = (payload["result"] as? String) ?? "Claude Code reported an error."
+            throw isAuthFailure(detail) ? Failure.notAuthenticated : Failure.failed(detail)
         }
         guard let result = payload["result"] as? String, !result.isEmpty else {
             throw Failure.failed("Claude Code returned no answer.")

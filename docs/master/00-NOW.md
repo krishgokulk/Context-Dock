@@ -10,6 +10,27 @@
 
 ## In progress
 
+**Handoff (2026-10-28, cloud session → Mac): four cost/auth follow-ups.** Two PRs merged this
+session — **#347** (pin `"model": "sonnet"` in `.claude/settings.json`; cost-discipline section in
+`00-MODEL-ROUTING.md`) and **#348** (classify expired-OAuth `claude` CLI failures as
+`.notAuthenticated` instead of surfacing the raw "Failed to authenticate: OAuth session expired and
+could not be refreshed" text — new `ClaudeCodeCLIService.isAuthFailure`; Mac-verified green, 2904
+tests, new test `anExpiredSessionIsClassifiedAsAnAuthFailure` passed). Open follow-ups for a Mac
+session, in order:
+1. **Close the usage leak (biggest).** #347 defaults sessions to Sonnet, but the ~60% "Subagent"
+   burn is the account-level `/builder` / `/loop /builder` skill likely spawning the **Opus
+   `reviewer`** every iteration. That skill is NOT in this repo. Audit it: reviewer runs once per PR
+   (pre-ready), not per cycle; builder sessions must start on Sonnet. Fix the skill, not the repo —
+   see `00-MODEL-ROUTING.md` → Cost discipline rule 2.
+2. **Re-auth the real subscription login.** The owner's original "OAuth session expired" was likely
+   the Mac being out of disk (token cache can't write to a full disk; ~33 GB freed this session).
+   Run `claude login` / `codex login` and confirm the provider answers — #348 only made the *message*
+   actionable, it does not refresh a dead token.
+3. **Don't recharge a third account.** Verify one full day of Sonnet-default usage first.
+4. **Worktree cleanup.** Remove `.claude/worktrees/oauth-348` (merged as #348) and the ~2.3 GB
+   `issue-42-overask/.build` if that PR is done (AGENTS.md cleanup rule; never a dirty/unmerged tree
+   or one a running app was built from).
+
 **Start here (2026-10-27):** read *State (2026-10-27)* below first — #324 and #328 merged, Codex's
 #327 (App Pets docs) is in progress, and the next `ready` task is **#205** (#204 P10 is still held).
 
