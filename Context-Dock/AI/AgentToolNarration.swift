@@ -28,6 +28,44 @@ enum AgentToolNarration {
         return "\(verb) \(subject)…"
     }
 
+    /// The route a call is about to take, before it takes it: "Route: File ▸ New Tab · menu
+    /// command". Only tools that act through a route carry one; reads and searches return nil.
+    /// Passes `ProgressTraceRules` so the live panel shows it beside the step it belongs to (#44).
+    static func route(tool: String, arguments: [String: Any]) -> String? {
+        func text(_ key: String) -> String? {
+            let value = (arguments[key] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return value.isEmpty ? nil : value
+        }
+        switch tool {
+        case "run_menu_command":
+            guard let path = text("path") else { return nil }
+            let parts = path.components(separatedBy: "\u{1F}").flatMap {
+                $0.components(separatedBy: " > ")
+            }
+            return "Route: \(parts.filter { !$0.isEmpty }.joined(separator: " ▸ ")) · menu command"
+        case "operate_app":
+            return text("target").map { "Route: live menu bar · \($0)" }
+        case "run_adapter_action":
+            return text("action_id").map { "Route: app action · \($0)" }
+        case "run_capability", "run_mcp_tool", "run_route":
+            return text("capability_id").map { "Route: capability · \($0)" }
+        case "run_shortcut":
+            return text("name").map { "Route: Shortcuts · \($0)" }
+        case "run_command":
+            return "Route: command line"
+        default:
+            return nil
+        }
+    }
+
+    /// Whether the app a turn is about is up, said once before the first action. nil when the
+    /// turn is not about an app.
+    static func appState(name: String, isRunning: Bool) -> String? {
+        guard !name.isEmpty else { return nil }
+        return isRunning ? "App: \(name) is running" : "App: \(name) is not running"
+    }
+
     /// What came back, in one line: the first line of output, capped, or a plain statement
     /// that it produced nothing — never "done", which is a claim rather than evidence.
     static func finish(displayCommand: String, success: Bool, output: String) -> String {

@@ -14,6 +14,7 @@
 // window knows what a thread is scoped to. What must not be surface-specific is what happens
 // to the answer, and that is what lives here.
 
+import AppKit
 import Foundation
 import OSLog
 
@@ -113,6 +114,13 @@ enum ScopedTurnRunner {
         let complexity = scope.taskPlan.complexity
         log.notice("turn \(complexity.rawValue, privacy: .public) scope=\(scope.chatScope.storageKey, privacy: .public)")
         scope.taskPlan.initialProgress.forEach { onStatus?($0) }
+        let appIsRunning = !scope.bundleId.isEmpty && NSWorkspace.shared.runningApplications
+            .contains { $0.bundleIdentifier == scope.bundleId }
+        if !scope.bundleId.isEmpty,
+            let line = AgentToolNarration.appState(name: scope.appName, isRunning: appIsRunning)
+        {
+            onStatus?(line)
+        }
 
         // The prompt goes in the system slot and the question goes in the message slot.
         // The dock used to send the whole assembled prompt in *both*, which paid for every
