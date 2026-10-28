@@ -1999,6 +1999,9 @@ extension DockCore {
     /// and General Chat get. Shown beside the typing indicator now, kept on the finished
     /// answer as the "N steps" disclosure. Every line is work the app performed.
     func dockTraceStep(_ text: String) {
+        // Also into the turn log (off unless enabled), so a turn's steps can be read back
+        // without a screenshot of the panel.
+        DoraXTurnLog.record("trace \(text)")
         l2.loadingStatus = text
         l2.routerTrace.append(text)
     }
