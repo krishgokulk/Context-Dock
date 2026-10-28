@@ -99,11 +99,28 @@ nonisolated struct ActivityStep: Identifiable, Equatable, Sendable {
         return subject.isEmpty ? command : subject
     }
 
+    /// One row per action. A CLI turn calling DoraX's MCP server records the call
+    /// ("Ran dorax_run_menu_command via dorax") and DoraX records the tool it dispatched
+    /// ("Ran run_menu_command") — one click, two rows, which read as two clicks. The wrapper
+    /// goes when its inner step, same tool and same input, is there; a wrapper whose inner
+    /// step never ran (refused, still starting) stays so the call is not hidden.
+    static func collapsingMCPWrappers(_ steps: [ActivityStep]) -> [ActivityStep] {
+        steps.enumerated().filter { index, step in
+            guard step.kind == .mcp, step.title.hasPrefix("Ran dorax_") else { return true }
+            let tool = step.title.dropFirst("Ran dorax_".count)
+                .components(separatedBy: " via ").first ?? ""
+            return !steps[(index + 1)...].contains {
+                $0.kind != .mcp && $0.title == "Ran \(tool)" && $0.detail == step.detail
+            }
+        }.map(\.element)
+    }
+
     /// The steps a finished message shows: what the turn recorded, or — for a path that only
     /// wrote receipts — one step per receipt.
     @MainActor
     static func steps(recorded: [ActivityStep], receipts: [DoraXActionReceipt]) -> [ActivityStep] {
-        recorded.isEmpty ? receipts.map(ActivityStep.init(receipt:)) : recorded
+        collapsingMCPWrappers(
+            recorded.isEmpty ? receipts.map(ActivityStep.init(receipt:)) : recorded)
     }
 }
 

@@ -82,3 +82,44 @@ struct CLIActionsCountAsPerformedTests {
         #expect(AgentAnswerVerifier.performedActions(in: steps).isEmpty)
     }
 }
+
+// New Tab opens no window, so the window diff could not confirm it. The tab list can.
+struct TabCountExpectationTests {
+    @Test func tabMenuItemsPromiseATabCountChange() {
+        #expect(TabCountExpectation.delta(forMenuItem: "New Tab") == 1)
+        #expect(TabCountExpectation.delta(forMenuItem: "Close Tab") == -1)
+        #expect(TabCountExpectation.delta(forMenuItem: "New Private Window") == nil)
+        #expect(TabCountExpectation.delta(forMenuItem: "New Empty Tab Group") == nil)
+        #expect(TabCountExpectation.delta(forMenuItem: "Print…") == nil)
+    }
+
+    @Test func aMatchingCountIsVerifiedAnyOtherIsNot() {
+        let ok = TabCountExpectation.outcome(before: 3, after: 4, delta: 1, appName: "Safari")
+        #expect(ok.verified && ok.message == "Safari now has 4 tabs (was 3).")
+        let bad = TabCountExpectation.outcome(before: 3, after: 3, delta: 1, appName: "Safari")
+        #expect(!bad.verified && bad.message.contains("expected 4"))
+    }
+}
+
+struct CollapsingMCPWrapperTests {
+    private func step(_ kind: ActivityStep.Kind, _ title: String, _ detail: String) -> ActivityStep {
+        ActivityStep(kind: kind, title: title, detail: detail, status: .ok)
+    }
+
+    @Test func oneClickIsOneRow() {
+        let rows = ActivityStep.collapsingMCPWrappers([
+            step(.mcp, "Ran dorax_run_menu_command via dorax", "app Safari · path File > New Tab"),
+            step(.tool, "Ran run_menu_command", "app Safari · path File > New Tab"),
+        ])
+        #expect(rows.map(\.title) == ["Ran run_menu_command"])
+    }
+
+    @Test func aWrapperWithoutItsInnerStepStays() {
+        let wrapper = step(.mcp, "Ran dorax_run_menu_command via dorax", "app Safari · path File > New Tab")
+        #expect(ActivityStep.collapsingMCPWrappers([wrapper]).count == 1)
+        // Two clicks stay two rows.
+        let two = [wrapper, step(.tool, "Ran run_menu_command", "app Safari · path File > New Tab"), wrapper,
+            step(.tool, "Ran run_menu_command", "app Safari · path File > New Tab")]
+        #expect(ActivityStep.collapsingMCPWrappers(two).count == 2)
+    }
+}

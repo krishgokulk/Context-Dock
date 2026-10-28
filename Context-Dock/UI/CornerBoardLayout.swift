@@ -255,7 +255,7 @@ enum CornerLivePanelLayout {
     static func steps(
         isAnswering: Bool, live: [ActivityStep], finished: [ActivityStep]
     ) -> [ActivityStep] {
-        isAnswering ? live : finished
+        isAnswering ? ActivityStep.collapsingMCPWrappers(live) : finished
     }
 
     /// The Progress panel's one list (#199, plan §3): the reasoning a turn recorded — why it
