@@ -131,11 +131,21 @@ final class SolvedSkillToolCallCollector {
     static let shared = SolvedSkillToolCallCollector()
 
     private var callsByScope: [String: [SolvedSkillToolCall]] = [:]
+    /// Scopes whose current turn had a call that read its result back. Turn state only, not part
+    /// of the saved call. Per scope, like the calls, so two surfaces never share a verdict.
+    private var verifiedScopes: Set<String> = []
 
     private init() {}
 
     func begin(scope: GeneralChatScope?) {
         callsByScope[key(scope)] = []
+        verifiedScopes.remove(key(scope))
+    }
+
+    /// True when any call this turn was read back by `dispatch` (`verifiedByReadBack`), which is
+    /// the verification signal on both the native and the MCP path.
+    func hadVerifiedReadBack(scope: GeneralChatScope?) -> Bool {
+        verifiedScopes.contains(key(scope))
     }
 
     /// Records one successful tool dispatch. A `run_capability` call is replayable, so it is kept
@@ -143,8 +153,10 @@ final class SolvedSkillToolCallCollector {
     /// no typed replay, so it is kept as not-read-only and rule 4 refuses the whole turn.
     /// `find_capability`-style lookups and read-backs are plumbing and are not recorded.
     func record(
-        capability: String, input: [String: String], isReadOnly: Bool, scope: GeneralChatScope?
+        capability: String, input: [String: String], isReadOnly: Bool, verifiedReadBack: Bool,
+        scope: GeneralChatScope?
     ) {
+        if verifiedReadBack { verifiedScopes.insert(key(scope)) }
         let call = SolvedSkillToolCall(
             capability: capability, argTemplate: input, isReadOnly: isReadOnly)
         // The verifier's repair pass re-runs a call the turn already made; one entry is enough.

@@ -548,7 +548,7 @@ final class AgentToolRegistry {
     /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
     /// read-only so it keeps the turn from being saved.
     private static func noteForSolvedSkill(
-        name: String, arguments: [String: Any], scope: GeneralChatScope?
+        name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
     ) {
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
@@ -559,10 +559,11 @@ final class AgentToolRegistry {
             }
             SolvedSkillToolCallCollector.shared.record(
                 capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
-                scope: scope)
+                verifiedReadBack: verifiedReadBack, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(
-                capability: name, input: [:], isReadOnly: false, scope: scope)
+                capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,
+                scope: scope)
         }
     }
 
@@ -695,7 +696,9 @@ final class AgentToolRegistry {
             toolName: name, arguments: arguments, output: result.output,
             succeeded: result.success, turn: context.turn)
         if result.success {
-            Self.noteForSolvedSkill(name: name, arguments: arguments, scope: context.chatScope)
+            Self.noteForSolvedSkill(
+                name: name, arguments: arguments,
+                verifiedReadBack: result.verifiedByReadBack != nil, scope: context.chatScope)
         }
         if let stepID {
             ActivityRecorder.active?.finish(

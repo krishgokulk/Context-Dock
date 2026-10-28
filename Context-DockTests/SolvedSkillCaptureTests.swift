@@ -33,11 +33,12 @@ struct SolvedSkillCaptureTests {
 
     private func build(
         query: String? = nil, answer: AppScopedChatService.Answer? = nil,
-        calls: [SolvedSkillToolCall]? = nil
+        calls: [SolvedSkillToolCall]? = nil, verifiedReadBack: Bool = true
     ) -> SolvedSkill? {
         SolvedSkillCapture.build(
             query: query ?? self.query, answer: answer ?? self.answer(),
-            toolCalls: calls ?? [call()], bundleId: mail)
+            toolCalls: calls ?? [call()], bundleId: mail,
+            verifiedReadBack: verifiedReadBack)
     }
 
     @Test func aVerifiedMailReadSavesASenderAndDaySkill() throws {
@@ -52,10 +53,16 @@ struct SolvedSkillCaptureTests {
     }
 
     @Test func rule1_noVerifiedReadBackIsNotSaved() {
-        let unverified = answer(receipts: [
+        #expect(build(verifiedReadBack: false) == nil)
+    }
+
+    // The MCP path: the read-back happens inside dispatch, so the Answer carries no
+    // isVerification receipt, yet the turn verified.
+    @Test func rule1_aReadBackWithNoVerificationReceiptIsSaved() {
+        let mcpShaped = answer(receipts: [
             DoraXActionReceipt(command: "mail.search", output: "3 messages", success: true)
         ])
-        #expect(build(answer: unverified) == nil)
+        #expect(build(answer: mcpShaped) != nil)
     }
 
     @Test func rule1_aFailedReceiptIsNotSaved() {

@@ -24,11 +24,11 @@ enum SolvedSkillCapture {
         query: String,
         answer: AppScopedChatService.Answer,
         toolCalls: [SolvedSkillToolCall],
-        bundleId: String
+        bundleId: String,
+        verifiedReadBack: Bool
     ) -> SolvedSkill? {
-        // rule 1: only a verified, uncorrected success is kept. A read-back that passed, and
-        // nothing this turn that failed.
-        guard answer.evidenceReceipts.contains(where: { $0.isVerification && $0.success }),
+        // rule 1: a verified read-back this turn, and nothing that failed.
+        guard verifiedReadBack,
             !answer.evidenceReceipts.contains(where: { !$0.success })
         else { return nil }
 
@@ -85,7 +85,8 @@ enum SolvedSkillCapture {
     ) {
         guard case .app(let bundleId) = scope, !bundleId.isEmpty else { return }
         guard let skill = build(
-            query: query, answer: answer, toolCalls: toolCalls, bundleId: bundleId)
+            query: query, answer: answer, toolCalls: toolCalls, bundleId: bundleId,
+            verifiedReadBack: SolvedSkillToolCallCollector.shared.hadVerifiedReadBack(scope: scope))
         else { return }
         SolvedSkillStore.shared.save(skill)
     }
