@@ -21,12 +21,12 @@ Each time you run:
      "queue empty" in one line and stop.
 2. Claim it: `gh issue edit <n> --remove-label ready --add-label in-progress`, and comment
    "Builder: started on <branch>".
-3. Run it in a subagent in its own worktree under `.claude/worktrees/`, on a branch from
+3. Run it in a **Sonnet** subagent (`model: sonnet`; never inherit Opus) in its own worktree under `.claude/worktrees/`, on a branch from
    `origin/general-chat-agent` named in the issue (else `claude/issue-<n>-<slug>`). Open a **draft
    PR in its first commits**, titled as the issue and with `Closes #<n>` in the body. Push after
    every meaningful step.
 4. Done means: tests added or updated, `./scripts/check.sh --full` passes, CI "Build and test" is
-   green, a `/code-review` pass on the diff is clean, and for anything visible
+   green, a `/code-review` pass on the diff is clean (run the Opus `reviewer` agent **once**, right before marking the PR ready, never per loop cycle), and for anything visible
    `./scripts/dev-run.sh` plus screenshots of the changed surface and its reference, attached to
    the PR.
    **Skill review pass — required by what the diff touches** (installed in `.claude/skills/`;
