@@ -4280,13 +4280,22 @@ extension DockCore {
             for: userQuery, bundleId: bundleId, appName: appName)
             .filter { ActionReadiness.isOfferable($0, query: userQuery) }
         func say(_ line: String) async { await MainActor.run { dockTraceStep(line) } }
-        guard let refused = routes.first(where: { $0.kind == .mcpTool }) else {
-            await say("Fallback: no MCP route among \(routes.count) offerable route(s)")
-            return nil
-        }
-        guard let next = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
-        else {
-            await say("Fallback: no granted route below \(refused.title) in "
+        // The route that IS the request ("open new tab" and `File ▸ New Tab`) when exactly one
+        // is; else whatever sits below the MCP route that failed. The model reaches for the
+        // MCP tool from its own prompt even when route resolution found no MCP match, so a
+        // matching MCP route is not required.
+        let exact = ChatRouteResolver.soleExactRoute(routes, query: userQuery, appName: appName)
+        let next: ChatRoute
+        if let exact, exact.kind != .mcpTool, exact.kind != .skill, exact.kind != .model,
+            exact.kind != .computerUse
+        {
+            next = exact
+        } else if let refused = routes.first(where: { $0.kind == .mcpTool }),
+            let below = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
+        {
+            next = below
+        } else {
+            await say("Fallback: no single granted route for the request among "
                 + routes.map { "\($0.kind.rawValue):\($0.title)" }.joined(separator: ", "))
             return nil
         }
