@@ -7,8 +7,10 @@
 > Read this first. Docs `01`–`10` explain **how** DoraX works. This one says **what it is,
 > who it is for, what "done" means, and the order to get there.**
 >
-> **2026-10-27 product update (#327):** the user learns one Dock: frontmost App Pet by
-> default, Global Context as launcher/home, and Combined Chat when two or more Pets participate.
+> **2026-10-27 product update (#327), clarified 2026-10-28:** the user learns one Dock: frontmost
+> App Pet by default, Global Context as launcher/home, General Chat for Dora's Mac-wide conversation,
+> and Combined Chat when two or more Pets persistently participate. A temporary app route in General
+> Chat does not change its identity or load Pet memory.
 > Canonical detail: [`2026-10-27-app-pets-combined-chat-design.md`](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 ---
@@ -44,8 +46,8 @@ None of those four is an engine problem. `[judgment]`
 
 ### 1.1 One sentence `[judgment]`
 
-> **DoraX — one Dock where every app becomes an intelligent Pet. Ask one app or combine Pets to
-> finish work across your Mac; it asks before risk and proves the result.**
+> **DoraX — one Dock where Dora handles Mac-wide conversation and every app becomes an intelligent
+> Pet. Ask generally, ask one app, or combine Pets; it asks before risk and proves the result.**
 
 Every word maps to code that already exists:
 - *in any app* → menu execution + adapters + MCP + Shortcuts (`03 §5`)

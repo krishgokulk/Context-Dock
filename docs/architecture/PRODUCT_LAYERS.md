@@ -8,6 +8,7 @@
 **One Dock shell, one orchestration harness, several jobs that must remain explicit.**
 
 - Global Context and the active App Pet share shell/state and differ by `SurfaceFocus`.
+- General Chat is Dora's Mac-wide conversation and is not anchored to the frontmost app.
 - App Pet conversation is anchored to one app profile.
 - Combined Chat coordinates two or more explicitly connected Pet profiles.
 - Selection is an explicit input/action mode, not a launcher and not silently uploaded.
@@ -43,6 +44,23 @@ passes work through the same capability, approval, execution and verification co
 An App Pet replaces the user-facing split between “Context Dock” and “Context Dock Chat.” Search
 rows and conversation are still different content phases inside the Pet focus.
 
+## General Chat
+
+**Job:** talk to Dora across the Mac without pinning the conversation to one app.
+
+- Keep Dora identity and a Mac-wide conversation even when one turn uses an app ability.
+- Resolve the minimum app routes required by the request; show those routes as step/source chips,
+  not as a silent conversation rename.
+- Do not load an App Pet's long memory merely because a turn calls one of its abilities.
+- Use an explicitly named app immediately within existing grants (for example, “summarize my five
+  newest Mail messages”); preview/ask when Dora must infer a private app or broaden scope.
+- Ask separately for consequential writes, sends, deletes, quits or UI control.
+- Offer **Open in <App> Pet** when the user wants the conversation to become persistently
+  app-anchored and memory-aware.
+
+General Chat therefore may read Mail and then quit unrelated apps in the next turn. The Mail route
+was turn scope, not the identity or permanent authority boundary of the conversation.
+
 ## Combined Chat
 
 **Job:** one conversation and typed task graph across two or more Pets.
@@ -54,8 +72,9 @@ rows and conversation are still different content phases inside the Pet focus.
 - Keep participant consent separate from action approval.
 - Present one plan, live step status and combined receipt.
 
-“General Chat” may remain a compatibility name for a zero/one-participant conversation during
-migration. The target user-facing product is Combined Chat when multiple Pets participate.
+General Chat does not automatically become Combined Chat just because a plan invokes more than one
+app route. Promote only when the task needs persistent multi-app participants, shared cross-app
+context or ongoing per-Pet memory. The promotion is explicit and preserves the same conversation.
 
 ## Shared native capability layer
 

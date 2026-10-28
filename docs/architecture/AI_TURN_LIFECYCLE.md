@@ -67,8 +67,11 @@ reason the pipeline is hard to see: it is not a line, it is a ladder with an exi
 
 ### 0. Which conversation, Pets and mode
 
-`GeneralChatScope` plus the conversation participant set answers “what may this turn use?”: no Pet,
-one app/tool Pet, or two or more Pets in Combined Chat. The active Pet mode is a bounded profile
+Conversation identity and turn scope answer different questions. `ConversationKind` says whether
+the transcript is General Chat, one anchored App Pet, or Combined Chat. `GeneralChatScope` plus the
+participant set says what this turn may use. General Chat can borrow one or several app abilities
+for a request without changing identity or loading Pet memory; an App Pet stays anchored; Combined
+Chat has explicitly connected persistent participants. The active Pet mode is a bounded profile
 overlay, not authority. The Dock, detached Pet, full chat window and external MCP caller all build
 one scope and call the same `AppScopedChatService.send`. **There is one pipeline.** Presentation
 never creates a second executor, provider session or permission path.

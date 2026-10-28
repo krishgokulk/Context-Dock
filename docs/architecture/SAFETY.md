@@ -17,6 +17,11 @@ Notes. If a question needs another app, DoraX previews the required Pet and offe
 one tap promotes the same thread to Combined Chat. A conversation cannot widen its own scope, and
 connecting a Pet does not approve a write.
 
+**General Chat uses the minimum scope for each turn.** Naming Mail can route that request through
+the Mail ability, but it does not turn the transcript into Mail Pet, load Mail Pet memory, or trap
+later Mac-wide requests inside Mail. General Chat shows the temporary route and still applies the
+normal access and exact-action approvals.
+
 **Headless work does not steal your screen.** If a safe route can finish without launching the app,
 DoraX uses it. If only the process is required, it starts hidden. If visible UI is merely DoraX's
 fallback, DoraX asks before taking focus; an explicit “open/show” request is itself the launch

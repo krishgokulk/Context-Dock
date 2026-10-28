@@ -1,4 +1,4 @@
-# App Pets, Global Context and Combined Chat
+# App Pets, General Chat, Global Context and Combined Chat
 
 > **Status: owner-approved architecture (2026-10-27); ready for implementation planning.**
 > Written 2026-10-27 for GitHub #327. This is the canonical detailed design behind
@@ -18,8 +18,8 @@ The user should learn one object, not a collection of overlapping launchers and 
                                      │
              ┌───────────────────────┼────────────────────────┐
              │                       │                        │
-      Frontmost App Pet        Global Context          Combined Chat
-      ask/work with this       find apps/tools         coordinate 2+ Pets
+      Frontmost App Pet        Global Context          General / Combined Chat
+      app memory + work        find apps/tools         Dora across the Mac
              │                       │                        │
              └───────────────────────┴────────────────────────┘
                                      │
@@ -38,20 +38,32 @@ app-scoped conversation, cross-app orchestration, media, or selection-aware acti
 | **Global Context** | The Dock's home/launcher focus: search apps, files, commands, tools and running apps. |
 | **App Pet** | An app-scoped assistant with an identity, capability profile, conversation, modes and memory. A Pet can be shown inside the Dock or detached onto the desktop. |
 | **Pet strip** | Running and pinned app icons in Global Context. An icon is a dormant Pet entry point, not a separate agent process. |
-| **Combined Chat** | One conversation and task graph involving two or more Pets. This is the evolved General Chat product. |
+| **General Chat** | Dora's Mac-wide conversation. It can invoke app abilities per turn without becoming app-scoped or loading that Pet's long memory. |
+| **Combined Chat** | One explicitly connected conversation and task graph involving two or more persistent Pet participants. |
 | **App Pet Profile** | The app-owned instruction and capability bundle: identity, knowledge, skills, connectors, routes, modes, memory policy and safety limits. This may map to current `AGENT.md`/adapter data, but product docs call it a profile to avoid confusing it with repository `AGENTS.md`. |
 | **Mode (`/mods`)** | A Pet-specific behavior preset such as Browse, Research or Automate. A mode changes reasoning/tool emphasis and output shape, never authority. |
 
-Compatibility names may remain in code during migration (`Context Dock`, `App Chat`, `General
-Chat`, `Corner*`). New user-facing work should use **App Pet**, **Combined Chat**, **Global
-Context**, and **Dock**.
+Compatibility names may remain in code during migration (`Context Dock`, `App Chat`, `Corner*`).
+New user-facing work should use **General Chat**, **App Pet**, **Combined Chat**, **Global Context**,
+and **Dock** with those identities kept distinct.
 
-A provider-only conversation with no app participants remains valid. The UI calls it **New chat**
-or **DoraX Chat**; adding one Pet makes it an app-participating general thread, and two or more
-Pets display as **Combined Chat**. “General Chat” remains the architecture/compatibility umbrella
-for conversations whose participants are not anchored to one App Pet.
+A provider conversation with no permanent app anchor is **General Chat**. It remains General Chat
+when a turn temporarily invokes Mail, Finder or another app profile. **App Pet Chat** is created only
+when the user deliberately opens/anchors the conversation to that Pet; **Combined Chat** appears
+only when two or more Pets are persistently connected. A header such as “Mail General Chat” is
+invalid because it mixes two different conversation identities.
 
-## 3. One Dock, three focus states
+The distinction is:
+
+```text
+conversation identity: General Chat | <App> Pet | Combined Chat
+turn execution scope:  the minimum app/tool profiles used for this request
+```
+
+Execution scope is recorded in the plan and receipt, then expires. Conversation identity controls
+default grounding, memory and the header/sidebar name.
+
+## 3. One Dock, four conversational focus states
 
 The shell, input, state and conversation identity remain stable while focus changes.
 
@@ -68,7 +80,11 @@ open DoraX
    │                                  ├─ click app icon ───► that Pet in the Dock
    │                                  └─ drag app icon ────► detached persistent Pet
    │
-   └─ task needs another app ─────► Combined Chat (after scope consent)
+   ├─ New chat / Ask Dora ─────────► General Chat
+   │                                  ├─ one-turn app route ─► stays General Chat
+   │                                  └─ Open in App Pet ────► anchored App Pet Chat
+   │
+   └─ persistent cross-app task ───► Combined Chat (after scope consent)
 ```
 
 Rules:
@@ -82,8 +98,27 @@ Rules:
    model processes.
 5. Centre and corner use identical behavior, shell components, keyboard rules and data. They are
    placements of one Dock.
-6. Search, Pet conversation and Combined Chat render different content inside the shell. They do
+6. Search, General Chat, Pet conversation and Combined Chat render different content inside the shell. They do
    not become one ambiguous result list.
+
+### General Chat flow
+
+General Chat behaves like a capable Mac-wide assistant, not a hidden frontmost-app chat:
+
+1. The header uses Dora/General Chat identity, never an app icon plus “General Chat.”
+2. “Summarize my five newest emails” selects Mail as a turn-scoped ability because the user named
+   the source. The plan shows a Mail chip and the receipt records the Mail route.
+3. The conversation remains General Chat. Mail Pet memory is not loaded or updated merely because
+   its ability ran.
+4. The next request, “quit other apps except Claude and ChatGPT,” resolves Mac-wide app-control
+   routes and is not blocked by the previous Mail turn.
+5. Writes, sends, deletes, quits and UI control still receive their normal exact approval.
+6. If the user wants ongoing Mail context, Dora offers **Open in Mail Pet**. That explicit action
+   anchors the same conversation and enables Mail's default profile grounding and verified memory.
+
+When General Chat needs an app the user did not name, especially for private data, it previews the
+proposed source before reading. Explicitly naming the app supplies request scope but never grants a
+new permission or approves a consequential action.
 
 ## 4. What an App Pet owns
 
@@ -231,6 +266,14 @@ The coordinator discovers participants from the request, then shows them as Pet 
 can add/remove Pets explicitly. Each Pet receives only the data required for its step; connecting
 Messages does not expose the full Finder transcript to Messages tools.
 
+### From General Chat
+
+General Chat may use several app abilities in a bounded one-off plan without changing its identity;
+the visible plan and receipts make each route clear. Dora proposes Combined Chat only when the
+request needs persistent participants, shared cross-app context, ongoing Pet memory, or follow-up
+work that would otherwise repeatedly reconstruct scope. The user sees the participant preview and
+chooses; there is no silent promotion.
+
 Participant connection and action approval are separate gates:
 
 ```text
@@ -288,16 +331,19 @@ Minimum durable identities:
 ```text
 PetProfileID      = app bundle id (or stable cli/tool scope id)
 ConversationID    = one transcript/summary/provider state
+ConversationKind  = general | pet(PetProfileID) | combined
 ParticipantSet    = ordered PetProfileIDs connected to a conversation
+TurnScope          = temporary app/tool profiles used by one request
 ModeSelection     = mode active for a Pet in a conversation
 PetMemoryID       = PetProfileID + memory record id
 TaskRunID         = plan, approvals, steps, verification and receipts
 PetPresentation   = inDock | detached(position) | dormant
 ```
 
-A single-participant thread is an App Pet conversation. Adding a second participant promotes the
-same `ConversationID` to Combined Chat. Removing participants does not delete their history or
-memory.
+A General Chat thread can use zero, one or several temporary routes without changing kind. An
+explicitly anchored single-participant thread is an App Pet conversation. Adding a second persistent
+participant promotes the same `ConversationID` to Combined Chat. Removing participants does not
+delete their history or memory.
 
 Opening an App Pet resumes that app's latest active, non-archived conversation. **New chat** is an
 explicit action; archived threads never reopen automatically. In v1 there is one detached
@@ -322,8 +368,9 @@ the full chat window remains the thread switcher.
 ## 13. Migration without product-layer collapse
 
 1. Keep the current Corner as the only shell and treat centre/corner as placements.
-2. Rename the user model first: Context Dock/App Chat → App Pet; General Chat → Combined Chat when
-   participants exceed one. Keep compatibility type names while migrating.
+2. Rename the user model first: Context Dock/App Chat → App Pet; preserve General Chat as Dora's
+   unanchored Mac-wide chat; use Combined Chat only for explicitly persistent multi-Pet scope. Keep
+   compatibility type names while migrating.
 3. Add Pet presentation state (dormant, in-Dock, detached) over existing app-scoped stores.
 4. Normalize App Pet Profiles from existing adapters, `AGENT.md`, skills, connectors and routes;
    do not build a seventh registry.
@@ -353,6 +400,9 @@ The architecture is implemented correctly when all of these are true:
 - Ask Finder Pet to summarize Markdown files and message a contact: Messages scope is previewed,
   the thread becomes Combined Chat once connected, send approval shows the final payload, and one
   verified combined receipt closes the task.
+- In General Chat, summarize five recent Mail messages and then quit unrelated apps: the first turn
+  shows a Mail route chip, the header remains General Chat, Mail Pet memory is not implicitly loaded,
+  and the second turn is not restricted to Mail.
 - Trigger Selection Scope: selection stays local until attached or an action is chosen; normal Pet
   launch never silently uploads it.
 
@@ -365,3 +415,5 @@ The architecture is implemented correctly when all of these are true:
 - No mode-specific permission system.
 - No automatic app launch when a headless route exists.
 - No silent cross-app scope widening or provider switching.
+- No hybrid “Mail General Chat” identity and no app restriction leaking from one General Chat turn
+  into the next.

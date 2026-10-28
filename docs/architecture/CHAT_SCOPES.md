@@ -9,7 +9,9 @@
 
 ```text
 ConversationID
+  kind: general | pet(PetID) | combined
   participants: [] | [PetID] | [PetID, PetID, …]
+  turnScopes: app/tool profiles authorized for the current request only
   transcript: full local history
   summary: rolling factual conversation memory
   provider: user-selected default + provider projection state
@@ -23,12 +25,18 @@ is copied when a Pet is detached or the full window opens.
 
 | Participants | Product meaning | Compatibility storage |
 |---|---|---|
-| none | **New chat / DoraX Chat**; capability discovery starts with no app grant | current `.general` path |
-| one app/tool Pet | App Pet conversation when anchored there; otherwise a general thread with one connected participant | current `.app(bundleId)` / `.cli(command)` stores |
+| none | **General Chat**; Dora's Mac-wide conversation, with app routes selected per turn | current `.general` path |
+| one anchored app/tool Pet | **App Pet Chat**; profile and verified Pet memory are active by default | current `.app(bundleId)` / `.cli(command)` stores |
 | two or more Pets | Combined Chat | current combined-thread app set, promoted into first-class participants |
 
 Adding a Pet promotes the same `ConversationID`; removing a participant changes future scope but
 does not erase prior messages or that Pet's memory.
+
+Participant identity and turn execution scope are different. General Chat may invoke Mail for one
+explicit request without becoming Mail Chat, adopting Mail's long memory, or blocking the next turn
+from using another app. A temporary route appears in the plan/receipt and expires with the turn.
+Only **Open in Mail Pet** (or equivalent explicit anchoring) changes a general conversation into a
+one-Pet conversation. Only explicit persistent connection of multiple Pets creates Combined Chat.
 
 Opening an App Pet resumes its latest active non-archived conversation. New chat is explicit.
 The v1 detached Pet binds to that active conversation; one detached presentation per app prevents
@@ -36,7 +44,7 @@ ambiguous synchronization. The full chat window remains the place to browse/swit
 
 ## Scope connection
 
-When a request needs an app outside the current participant set:
+When an App Pet or Combined Chat request needs an app outside the current participant set:
 
 1. Resolve the minimum Pet set from the capability index.
 2. Show which Pet is needed and why.
@@ -46,6 +54,11 @@ When a request needs an app outside the current participant set:
 
 Connecting a Pet grants visibility to its allowed profile/capabilities for this thread. It does
 not approve a write, outbound action, Computer Use or provider change.
+
+In General Chat, an app the user explicitly names is a turn-scoped route request, not a participant
+connection. When Dora infers a private app that the user did not name, it previews the proposed app
+scope before reading it. Consequential actions always use their normal exact approval regardless of
+conversation kind.
 
 ## Grounding
 
@@ -63,6 +76,8 @@ not duplicated.
 ## Memory ownership
 
 - Full transcript and rolling summary belong to the conversation.
+- General Chat memory contains general preferences and conversation facts, not silent copies of
+  every Pet's long memory.
 - Verified app preferences/facts/routines belong to that App Pet.
 - Combined Chat writes back only verified, relevant outcomes to each Pet.
 - Mode selection belongs to Pet + conversation and is visible on messages after it changes.
@@ -72,7 +87,7 @@ not duplicated.
 
 The full window is the larger view of the same conversations:
 
-- sidebar rows use Pet/Combined Chat names and participant icons;
+- sidebar rows say General Chat, <App> Pet, or Combined Chat and use the matching identity icon;
 - `/` adds a Pet after scope consent;
 - switching rows does not cancel or move in-flight work;
 - each answer is filed into the `ConversationID` that requested it;
@@ -81,6 +96,8 @@ The full window is the larger view of the same conversations:
 ## Must not happen
 
 - No per-surface conversation store or prompt builder.
+- No hybrid label such as “Mail General Chat”; identity must be exactly General Chat, Mail Pet, or
+  Combined Chat.
 - No silent participant attachment or scope widening.
 - No action approval inferred from participant consent.
 - No provider switch inferred from a multi-step task.

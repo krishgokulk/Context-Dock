@@ -24,6 +24,8 @@ and GitHub #327 / PR #337.
 - Do not begin a stage until its predecessor is merged and owner-checked.
 - Reuse the existing Corner, stores, capability index and shared executor.
 - A Pet is a profile and scope, never a permanent model process.
+- General Chat identity is separate from temporary per-turn app scope; using an app ability does
+  not silently convert the thread into an App Pet conversation.
 - Connecting a Pet grants conversation scope, never action authority.
 - Headless means adapter/API/MCP/CLI/Shortcut execution. Computer Use is visible-UI fallback.
 - Run `graphify update .`, `./scripts/check.sh`, and the relevant focused tests after Swift edits.
@@ -67,6 +69,11 @@ Make the participant set first-class. A one-Pet thread previews the minimum new 
 connect it, and promotes the same conversation to Combined Chat without copying the transcript.
 Wire the existing scope resolver rather than duplicating #57. Connection consent remains separate
 from send/write/delete approval.
+
+Stage 2 must model `ConversationKind` separately from `TurnScope`: General Chat can use bounded app
+routes and stay General Chat; explicit anchoring creates App Pet Chat; persistent 2+ Pet scope creates
+Combined Chat. Add a regression test forbidding hybrid identity such as “Mail General Chat” and
+proving one Mail turn cannot restrict the next Mac-wide General Chat request.
 
 **Exit gate:** the Finder-read → summarize → Messages-send example produces one thread, one task
 graph, one receipt stream, and two distinct consent points: connect Messages, then approve Send.

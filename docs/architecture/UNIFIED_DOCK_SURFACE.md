@@ -12,7 +12,8 @@ Pet is another presentation of the same app scope.
 ```text
 DockShell
   placement: centre | corner(anchor)
-  focus: global | pet(appID) | combined(conversationID) | selection | media
+  focus: global | general(conversationID) | pet(appID, conversationID)
+       | combined(conversationID) | selection | media
   shared input, rows, material, keyboard state, animation and sizing
 ```
 
@@ -43,6 +44,9 @@ Focus content owns only the information and controls for its job.
 | App Pet with empty composer | Backspace | Global Context |
 | Global Context | click running/pinned app | that App Pet in the Dock |
 | Global Context | drag app icon out | detached persistent Pet |
+| Global Context | New chat / Ask Dora | General Chat |
+| General Chat | use an app ability for one turn | General Chat, with a temporary app step chip |
+| General Chat | choose Open in App Pet | same conversation anchored to that App Pet |
 | App Pet | accept another required Pet | same conversation promoted to Combined Chat |
 
 Typed text is never discarded by a focus shortcut. Escape/back behavior stays one level at a time.
@@ -59,6 +63,14 @@ Typed text is never discarded by a focus shortcut. Escape/back behavior stays on
 - App-scoped conversation and action/search phases.
 - Relevant capabilities, attachments, progress, receipts and optional context panel.
 - A clear affordance to return to Global Context and to detach/reattach the Pet.
+
+## General Chat content
+
+- Dora identity, never the frontmost app icon/name.
+- Mac-wide transcript with no permanent app anchor.
+- Per-turn app/source chips in the plan and receipts when abilities are used.
+- An explicit **Open in <App> Pet** action when the user wants persistent app scope and Pet memory.
+- No inherited Pet memory or app-only restriction after a temporary app route finishes.
 
 ## Combined Chat content
 
@@ -91,7 +103,7 @@ Labs focus for media state/actions only.
 
 ## Implementation rule
 
-Do not build a custom window for Global, Pet, Combined Chat, Selection or a detached Pet. Evolve
+Do not build a custom window for Global, General Chat, Pet, Combined Chat, Selection or a detached Pet. Evolve
 the Corner shell/presentation controllers and plug focus content into it. The only exception is the
 existing full chat window, which remains a larger view into the same conversation stores—not a
 different product or execution path.

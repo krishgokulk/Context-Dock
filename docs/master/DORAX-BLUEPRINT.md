@@ -17,8 +17,8 @@
 | **One sentence** | *One Dock. Every app becomes an intelligent Pet. Ask, combine and finish work across your Mac—with approval and proof.* `[owner/target]` |
 | **First users** | Mac developers who already use Claude Code or Codex. |
 | **Why it wins** | Raycast and Alfred need someone to write an extension per app. DoraX reads any app's live menus and verifies every action. `[code]` |
-| **What the user sees** | One **Dock** opening as the frontmost **App Pet**; **Global Context** is the launcher/home; two or more Pets form **Combined Chat**; **Selection Scope** remains an explicit native input/action mode. `[owner/target]` |
-| **Names** | **App Pet** replaces user-facing Context Dock/App Chat. **Combined Chat** is the persistent multi-app form of General Chat. Compatibility type names may remain while code migrates. `[owner/target]` |
+| **What the user sees** | One **Dock** with **Global Context** as launcher/home, **General Chat** for Dora across the Mac, a memory-aware **App Pet** for deliberate app-scoped work, and **Combined Chat** for explicitly connected multi-app work. `[owner/target]` |
+| **Names** | **General Chat** is never app-scoped; **App Pet** replaces user-facing Context Dock/App Chat; **Combined Chat** is explicit persistent multi-Pet work. A temporary app route does not rename or rescope General Chat. `[owner/target]` |
 | **One shell** | The **Corner is the only shell**. It may appear centred or at a chosen bottom corner; those are placements of one Dock, with one state/input/row/animation system. `[code/owner]` See [`00-DOCK-AND-CORNER.md`](00-DOCK-AND-CORNER.md). |
 | **Running apps** | Global Context's running-app icons are dormant Pets. Click to switch the Dock to that Pet; drag out to materialize a persistent desktop Pet. Detached Pets share scope, history, capability and safety state with the Dock. `[owner/target]` |
 | **Memory and modes** | Each Pet has active context, conversation memory and editable per-app long memory. `/mods` changes behavior/tool emphasis inside the same thread, never scope, authority or provider safety limits. `[owner/target]` |
@@ -35,15 +35,15 @@ Detail → [`00-COMPLETE-APP-PLAN.md`](00-COMPLETE-APP-PLAN.md) (every feature w
 ## Part 2 — The architecture
 
 > **Product-layer rule (2026-10-27, #327):** one user-facing Dock and one orchestration harness,
-> with job separation preserved by focus, scope, intent and lane. Global Context, an App Pet and
-> Combined Chat are states/views of the same shell—not one mixed result mode. Media and Selection
+> with job separation preserved by focus, conversation identity, turn scope, intent and lane.
+> Global Context, General Chat, an App Pet and Combined Chat are states/views of the same shell—not one mixed result mode. Media and Selection
 > retain their distinct jobs. See [`PRODUCT_LAYERS.md`](../architecture/PRODUCT_LAYERS.md).
 
 ### 2.1 Five layers, one direction
 
 ```
 ┌──────────────────────────── APP (what you see) ────────────────────────────┐
-│  Global Context    App Pet    Combined Chat    Selection    Settings          │
+│  Global Context    General Chat    App Pet    Combined Chat    Selection       │
 │  └──────── one Dock shell: centre/corner/detached Pet presentations ──────┘ │
 └────────────────────────────────────┬────────────────────────────────────────┘
                                      ▼ uses
@@ -76,7 +76,7 @@ everywhere without extra wiring. The existing `CapabilityRegistry` is the starti
 ### 2.3 One path for every AI request
 
 ```
-request → pick Pet/participant scope → ground only relevant context → choose route
+request → keep conversation identity → choose minimum turn scope → ground relevant context → choose route
         → build one typed task graph → run (headless first; UI only when required)
         → connect another Pet if needed → approval if risky/outbound
         → verify (read back) → answer with ✓ verified / ⚠ unconfirmed / ✗ contradicted
@@ -99,6 +99,11 @@ into an **App Pet Profile** rather than copied into a new registry. Native selec
 windows, files, sharing and notifications remain shared host services available through the same
 scope/approval/execution/verification layer. `[owner/target]`
 
+General Chat may borrow those typed abilities for one request without becoming the Pet or loading
+its long memory. The plan and receipt show the app route; the conversation remains Dora's Mac-wide
+chat. Explicit **Open in <App> Pet** is the boundary that activates persistent app grounding and
+memory. `[owner/target]`
+
 ### 2.5 Cross-app promotion
 
 A single-Pet conversation keeps one `ConversationID`. If a task needs another app, DoraX previews
@@ -106,6 +111,10 @@ the required Pet and asks once to connect it. Accepting promotes the same thread
 it does not copy messages. Scope consent never authorizes a write: a send/delete/publish step still
 asks with its exact target and payload. Only verified, relevant outcomes flow back into each Pet's
 long memory. `[owner/target]`
+
+One-off General Chat plans may use several app routes without promotion. Combined Chat is offered
+when the task needs persistent participants, shared cross-app context or ongoing Pet memory—not
+merely because two tools ran. `[owner/target]`
 
 Detail → [`00-AI-ENGINE-PLAN.md`](00-AI-ENGINE-PLAN.md) ·
 [`AI_TURN_LIFECYCLE.md`](../architecture/AI_TURN_LIFECYCLE.md) ·
@@ -281,7 +290,7 @@ users · crash-free % · first-result accuracy in Find · AI corpus pass-rate ·
 |---|---|---|
 | 1 | The one sentence in Part 1 | Accept or rewrite it — everything follows from it |
 | 2 | First users | Mac developers with coding agents |
-| 3 | Scope | One Dock; Global Context + App Pets + Combined Chat; Selection stays explicit; Media Dock stays separate/Labs |
+| 3 | Scope | One Dock; Global Context + General Chat + App Pets + Combined Chat; Selection stays explicit; Media Dock stays separate/Labs |
 | 4 | Strategy vs Raycast | Match the basics, invest in the edge; MCP instead of an own store |
 | 5 | Architecture | Swift packages enforce the layers; one `Command` model |
 | 6 | Documents | One `docs/` tree as in Part 4 |
@@ -295,10 +304,12 @@ users · crash-free % · first-result accuracy in Find · AI corpus pass-rate ·
 bought later (Phase 3). The ~15-week plan in Part 6 stands, with no fixed launch deadline
 (1.0 around early January 2027).
 
-**Owner direction (2026-10-27, #327):** the end-state product model is one Dock whose running-app
-icons become App Pets, with persistent per-Pet memory/modes and automatic, consented promotion to
-Combined Chat for cross-app work. This supersedes the older user-facing “two shells + separate
-General/App Chat products” description while preserving their internal scope boundaries.
+**Owner direction (2026-10-27, #327; clarified 2026-10-28):** the end-state product model is one
+Dock whose running-app icons become App Pets, with persistent per-Pet memory/modes. General Chat
+remains Dora's Mac-wide conversation and can use temporary per-turn app routes without becoming a
+Pet or Combined Chat. An anchored App Pet promotes to Combined Chat only when another persistent
+Pet is explicitly connected. This supersedes the older user-facing “two shells” description while
+preserving distinct conversation identities and scope lifetimes.
 
 ---
 

@@ -38,6 +38,8 @@ Mode content changes inside same shell. Window/material/control shell should not
 ## Conversation modes
 
 - Chat mode must look like conversation.
+- General Chat is labelled `Dora` or `General Chat`, never `<App> General Chat`; temporary app use
+  appears as a per-turn route chip or receipt and expires after that request.
 - Combined Chat shows participant Pet chips, explicit context, attachments and cross-app progress.
 - App Pet conversation shows the current app/tool scope and active `/mods` mode.
 - Do not make chat look like menu search.

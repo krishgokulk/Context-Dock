@@ -179,11 +179,12 @@ One root search. Everything is findable from here.
 Performance budget: open < 100 ms, keystroke → results < 16 ms, **no AX scan while typing**
 (existing rule, `PERFORMANCE_RULES.md`).
 
-### 2.2 ASK — App Pet / Combined Chat in the one Dock `[target]`
+### 2.2 ASK — General Chat / App Pet / Combined Chat in the one Dock `[target]`
 
-One conversation identity. A single participant is an App Pet thread; adding another Pet after
-scope consent promotes the same thread to Combined Chat. Participant chips replace an ambiguous
-`This app · These apps · Everywhere` switch.
+Three explicit conversation identities share one pipeline. General Chat is Mac-wide and may borrow
+an app ability for one turn without becoming app-scoped. An App Pet is anchored to one app and owns
+that Pet's memory. Adding another persistent Pet after scope consent promotes that App Pet thread to
+Combined Chat. Participant chips replace an ambiguous `This app · These apps · Everywhere` switch.
 
 | # | Feature | Behaviour | Done when |
 |---|---|---|---|

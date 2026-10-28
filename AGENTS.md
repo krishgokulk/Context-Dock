@@ -30,6 +30,9 @@ One Dock, focus-scoped; job separation via participants + intent + lane (owner 2
 - A single-Pet conversation promotes to Combined Chat only after another Pet is explicitly
   connected. Connection is scope, never permission to write. App Pet and Combined Chat remain
   distinct jobs even though they share the shell and orchestration harness.
+- General Chat is Dora's Mac-wide conversation, not the frontmost app's Pet. It may borrow an app
+  ability for one turn, but remains General Chat and does not load that Pet's memory. Only explicit
+  **Open in App Pet** creates an anchored, remembered app conversation.
 - Media Dock and Selection Scope keep their own jobs; Selection is explicit and is not a launcher
   or silent normal-launch takeover; Media Dock is not a chat surface.
 - Behaviour is decided per request by query intent + lane (`RequestLane`/`LanePlan`/`LaneCoordinator`:

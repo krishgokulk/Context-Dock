@@ -3,23 +3,25 @@
 Architecture truth for how a request becomes an action. Read with
 [Product Layers](PRODUCT_LAYERS.md) and [Chat Scopes](CHAT_SCOPES.md).
 
-## Pet scopes and one capability layer
+## Conversation scopes and one capability layer
 
 ```
                          macOS
                            │
-              ┌────────────┴────────────┐
-              │                         │
-       WHAT I'M DOING              WHAT I WANT DONE
-              ▼                         ▼
-          App Pet                Combined Chat
-     one app · window/page       explicitly connected Pets
-     page · selection · files    CLI · MCP · skills · APIs
-              │                         │
-              └────────────┬────────────┘
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+       ▼                   ▼                   ▼
+  General Chat          App Pet           Combined Chat
+  Mac-wide Dora       one anchored app   connected Pets
+  temporary routes    profile + memory   shared context
+       │                   │                   │
+       └───────────────────┼───────────────────┘
                            ▼
                  DoraX Capability Layer
 ```
+
+**General Chat** is Dora's Mac-wide conversation. It may route one request through an app ability,
+but that temporary turn scope does not rename the conversation, anchor it, or load Pet memory.
 
 **App Pet** answers about *this*: one app profile, its relevant window/document and explicitly
 attached input. Its scope is anchored to that Pet.
@@ -28,7 +30,7 @@ attached input. Its scope is anchored to that Pet.
 scope is the participant set; adding a Pet requires scope consent.
 
 They share one Dock and one implementation without merging their jobs. One capability layer serves
-both; scope resolution and participant count differ.
+all three; conversation identity, scope lifetime and participant set differ.
 
 ## The pipeline
 

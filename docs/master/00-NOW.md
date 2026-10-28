@@ -103,8 +103,9 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
   `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`. **Do not edit those files
   until #327 merges.** Direction the owner approved in that session: one Dock that opens as the
   frontmost app's Pet (⌘ or Backspace on an empty field goes to Global Context); every running-app
-  icon is a dormant Pet that can be dragged out; General Chat becomes Combined Chat, recruiting other
-  Pets after a connect approval; headless first; one shared native layer (selection, clipboard,
+  icon is a dormant Pet that can be dragged out; General Chat stays Dora's Mac-wide conversation and
+  borrows app abilities per turn without inheriting Pet memory; an App Pet becomes Combined Chat only
+  when another persistent Pet is connected after approval; headless first; one shared native layer (selection, clipboard,
   windows, sharing, notifications, files). Open owner question: does a selection made before launch
   auto-attach to the frontmost Pet, or open the Selection Scope first?
 - **#321** (draft Corner UI/UX plan) is superseded by #324 + #327; closed on the owner's request 2026-10-27.
@@ -325,6 +326,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-27 | Selection, clipboard, windows, files, native sharing and notifications are shared host capabilities available to all Pets through one scope/approval/execution/verification layer. |
 | 2026-10-27 | Command or empty Backspace returns an App Pet to Global Context without recreating the Dock or discarding typed text. |
 | 2026-10-27 | #327 architecture confirmed after clarification: headless means structured adapter/API/MCP/CLI/Shortcut work, not Computer Use; Computer Use is the visible-UI last resort. Clicking a running-app icon changes the active Pet inside the same Dock and does not foreground the underlying app or create a window; dragging detaches it. |
+| 2026-10-28 | **General Chat and App Pet Chat are separate identities.** General Chat is Dora's Mac-wide conversation and may use an app ability only for the current turn; this does not rename it, load Pet memory or restrict later turns. **Open in App Pet** explicitly creates the anchored, remembered app conversation. Combined Chat requires persistent connected Pets, not merely multiple tool routes. |
 
 ## Open decisions (owner)
 
