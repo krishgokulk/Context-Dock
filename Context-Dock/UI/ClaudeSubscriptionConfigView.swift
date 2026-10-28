@@ -17,16 +17,32 @@ struct ClaudeSubscriptionConfigView: View {
 
     enum State: Equatable {
         case checking
-        case ready(path: String)
+        /// Installed and signed in. `console` is true when the login is an API-key (Console)
+        /// one — present, but not the subscription this provider is for.
+        case ready(console: Bool)
+        /// Installed, but no Claude login — the recoverable case this screen exists to fix.
+        case signedOut
         case missing
         case verifying
         case failed(String)
+
+        /// Whether a "Sign in to Claude" button belongs under this state.
+        var needsSignIn: Bool {
+            switch self {
+            case .signedOut: return true
+            case .ready(let console): return console
+            case .failed(let message): return ClaudeCodeCLIService.isAuthFailure(message)
+            default: return false
+            }
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
             statusCard
+
+            if state.needsSignIn { signInRow }
 
             if case .missing = state {
                 installHelp
@@ -36,7 +52,7 @@ struct ClaudeSubscriptionConfigView: View {
                 verifyRow
             }
         }
-        .task { refresh() }
+        .task { await refresh() }
     }
 
     private var header: some View {
@@ -51,7 +67,7 @@ struct ClaudeSubscriptionConfigView: View {
             }
             Spacer()
             Button {
-                refresh()
+                Task { await refresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -65,13 +81,28 @@ struct ClaudeSubscriptionConfigView: View {
             switch state {
             case .checking:
                 ProgressView().scaleEffect(0.6)
-                Text("Looking for Claude Code…").font(.caption).foregroundStyle(.secondary)
-            case .ready(let path):
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Checking your Claude sign-in…").font(.caption).foregroundStyle(.secondary)
+            case .ready(let console):
+                Image(systemName: console ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(console ? .orange : .green)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Ready").font(.subheadline).fontWeight(.medium)
-                    Text(path).font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Text(console ? "Signed in with an API key" : "Signed in")
+                        .font(.subheadline).fontWeight(.medium)
+                    Text(console
+                        ? "That's Console (API billing), not a Claude subscription. Sign in again "
+                            + "to use your Pro or Max plan."
+                        : "Your Claude subscription is connected and ready.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            case .signedOut:
+                Image(systemName: "person.crop.circle.badge.exclamationmark").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Not signed in").font(.subheadline).fontWeight(.medium)
+                    Text("Claude Code is installed but has no Claude login. Sign in to use your "
+                        + "subscription.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             case .missing:
                 Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
@@ -87,6 +118,23 @@ struct ClaudeSubscriptionConfigView: View {
         }
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// One click to recover. Sign-in is interactive, so it opens in Terminal; "Check again"
+    /// re-reads the login once the user has finished there.
+    private var signInRow: some View {
+        HStack(spacing: 10) {
+            Button {
+                ClaudeCodeCLIService.launchSignIn()
+                probeMessage = "Finishing in Terminal — then tap Check again."
+            } label: {
+                Label("Sign in to Claude", systemImage: "arrow.right.circle")
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Check again") { Task { await refresh() } }
+                .buttonStyle(.bordered)
+        }
     }
 
     private var installHelp: some View {
@@ -178,13 +226,20 @@ struct ClaudeSubscriptionConfigView: View {
 
     // MARK: - Actions
 
-    private func refresh() {
+    /// Installed, signed in, and which login — three different facts. The binary is present or
+    /// not; the CLI's `auth status` tells signed-in from signed-out and subscription from an
+    /// API-key login, so a switched or expired account shows as "Not signed in" with a way out
+    /// rather than failing silently at the next turn.
+    private func refresh() async {
         probeMessage = nil
-        state = ClaudeCodeCLIService.binaryPath().map(State.ready) ?? .missing
+        guard ClaudeCodeCLIService.binaryPath() != nil else { state = .missing; return }
+        state = .checking
+        let status = await ClaudeCodeCLIService.authStatus()
+        state = status.loggedIn ? .ready(console: status.isConsole) : .signedOut
     }
 
-    /// A real round trip. "Installed" and "signed in" are different facts, and only asking
-    /// tells them apart — the binary is present either way.
+    /// A real round trip. "Signed in" and "answers" are different facts, and only asking tells
+    /// them apart. An auth failure lands in `.failed`, which offers sign-in.
     private func verify() async {
         state = .verifying
         probeMessage = nil
@@ -193,7 +248,7 @@ struct ClaudeSubscriptionConfigView: View {
                 prompt: "Reply with exactly: ready",
                 systemPrompt: nil,
                 model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
-            refresh()
+            await refresh()
             probeMessage = "Answered: \(reply.prefix(40))"
         } catch {
             state = .failed(error.localizedDescription)
