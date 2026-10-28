@@ -56,3 +56,29 @@ struct LivePreflightTraceTests {
         #expect(ProgressTraceRules.reasoning(["Matching 31 actions…", "Thinking…"]).isEmpty)
     }
 }
+
+// A subscription CLI acts through the MCP server, so its calls are in the recorded steps and
+// not in `executed`. An answer reporting that work must not be called unperformed — the
+// correction pass re-ran the click and opened two tabs.
+struct CLIActionsCountAsPerformedTests {
+    @Test func aRecordedMenuClickIsPerformedWork() {
+        let steps = [
+            ActivityStep(
+                kind: .mcp, title: "Ran dorax_run_menu_command via dorax", status: .ok),
+            ActivityStep(kind: .read, title: "Read page", status: .ok),
+        ]
+        let performed = AgentAnswerVerifier.performedActions(in: steps)
+        #expect(performed.count == 1)
+        #expect(
+            !AgentAnswerVerifier.claimsUnperformedWork(
+                answer: "I sent File → New Tab to Safari.", executed: performed))
+    }
+
+    @Test func aFailedOrRunningStepIsNotPerformedWork() {
+        let steps = [
+            ActivityStep(kind: .tool, title: "Ran x", status: .failed),
+            ActivityStep(kind: .mcp, title: "Ran y", status: .running),
+        ]
+        #expect(AgentAnswerVerifier.performedActions(in: steps).isEmpty)
+    }
+}

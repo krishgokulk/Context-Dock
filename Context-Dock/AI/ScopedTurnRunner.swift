@@ -244,7 +244,11 @@ enum ScopedTurnRunner {
         // on someone's Mac can produce. These passes deliberately do not stream: their text
         // replaces the answer rather than continuing it.
         if !pageAnswerOnly, !Task.isCancelled,
-            AgentAnswerVerifier.claimsUnperformedWork(answer: text, executed: executed)
+            AgentAnswerVerifier.claimsUnperformedWork(
+                answer: text,
+                executed: executed + (provider.isSubscriptionCLI
+                    ? AgentAnswerVerifier.performedActions(in: ActivityRecorder.active?.steps ?? [])
+                    : []))
         {
             onStatus?("Checking that actually happened…")
             recorder?.noteVerifier("answer_verifier.unperformed_work")
