@@ -77,4 +77,17 @@ struct MCPRouteFallbackTests {
             ChatRouteResolver.fallbackRoute(after: menuFirst[0], output: "failed", in: menuFirst)
                 == nil)
     }
+
+    // The ChatGPT turn's route list: both menu items share the words of "open new tab".
+    @Test func thePlainFormWinsOverItsLongerSibling() {
+        let routes = [
+            route(.menuCommand, "File ▸ New Tab at End"), route(.menuCommand, "File ▸ New Tab"),
+        ]
+        #expect(ChatRouteResolver.plainestRoute(routes)?.title == "File ▸ New Tab")
+    }
+
+    @Test func unrelatedRoutesAreNeverPickedBetween() {
+        let routes = [route(.menuCommand, "File ▸ New Tab"), route(.menuCommand, "File ▸ Open File")]
+        #expect(ChatRouteResolver.plainestRoute(routes) == nil)
+    }
 }

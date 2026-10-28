@@ -728,6 +728,28 @@ enum AppScopedChatService {
     /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
     /// for Updates…", not "running an operateApp invocation".
     @MainActor
+    /// "Route: File ▸ New Tab · menu command" — the same line the tool loops state, from the
+    /// directive the model wrote (#44).
+    static func routeLine(for invocation: AITypedInvocation) -> String? {
+        let args = invocation.arguments
+        switch invocation.kind {
+        case .menuAction:
+            return AgentToolNarration.route(
+                tool: "run_menu_command", arguments: ["path": args["path"] ?? ""])
+        case .operateApp:
+            return AgentToolNarration.route(
+                tool: "operate_app", arguments: ["target": args["target"] ?? ""])
+        case .adapterAction:
+            return AgentToolNarration.route(
+                tool: "run_adapter_action", arguments: ["action_id": args["actionId"] ?? ""])
+        case .mcp, .capability:
+            return AgentToolNarration.route(
+                tool: "run_capability", arguments: ["capability_id": invocation.capabilityID])
+        case .appScript, .terminal, .share:
+            return nil
+        }
+    }
+
     static func runningLabel(for invocation: AITypedInvocation) -> String {
         switch invocation.kind {
         case .menuAction:
@@ -872,6 +894,7 @@ enum AppScopedChatService {
             // row and a receipt.
             let announced = AITypedInvocationResolver.invocation(from: raw)
             if let announced {
+                if let route = Self.routeLine(for: announced) { onStatus?(route) }
                 onStatus?(Self.runningLabel(for: announced))
             }
             let call = await GeneralChatCapabilityHub.shared.execute(

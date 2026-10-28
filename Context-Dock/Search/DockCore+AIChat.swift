@@ -1999,6 +1999,9 @@ extension DockCore {
     /// and General Chat get. Shown beside the typing indicator now, kept on the finished
     /// answer as the "N steps" disclosure. Every line is work the app performed.
     func dockTraceStep(_ text: String) {
+        // Also into the turn log (off unless enabled), so a turn's steps can be read back
+        // without a screenshot of the panel.
+        DoraXTurnLog.record("trace \(text)")
         l2.loadingStatus = text
         l2.routerTrace.append(text)
     }
@@ -4268,6 +4271,48 @@ extension DockCore {
 
     /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.
 
+    /// A write MCP tool the safety gate refuses is not the end of the turn while a granted
+    /// route below it can do the job — "open a new tab" ranks the MCP `create_tab` first, and
+    /// `File ▸ New Tab` does it. The same fall-through #45 gave a route that ran and failed,
+    /// here for one the gate stopped before it ran, on a provider that answers in directives
+    /// (a subscription CLI). nil leaves the refusal as the answer.
+    func fallbackFromRefusedMCP(
+        bundleId: String, appName: String, userQuery: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        let routes = await ChatRouteResolver.routes(
+            for: userQuery, bundleId: bundleId, appName: appName)
+            .filter { ActionReadiness.isOfferable($0, query: userQuery) }
+        func say(_ line: String) async { await MainActor.run { dockTraceStep(line) } }
+        // The route that IS the request ("open new tab" and `File ▸ New Tab`) when exactly one
+        // is; else whatever sits below the MCP route that failed. The model reaches for the
+        // MCP tool from its own prompt even when route resolution found no MCP match, so a
+        // matching MCP route is not required.
+        let exact = ChatRouteResolver.soleExactRoute(routes, query: userQuery, appName: appName)
+            ?? ChatRouteResolver.plainestRoute(routes)
+        let next: ChatRoute
+        if let exact, exact.kind != .mcpTool, exact.kind != .skill, exact.kind != .model,
+            exact.kind != .computerUse
+        {
+            next = exact
+        } else if let refused = routes.first(where: { $0.kind == .mcpTool }),
+            let below = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
+        {
+            next = below
+        } else {
+            await say("Fallback: no single granted route for the request among "
+                + routes.map { "\($0.kind.rawValue):\($0.title)" }.joined(separator: ", "))
+            return nil
+        }
+        await say("Route: \(next.title) · \(next.kind.rawValue) — the MCP tool needs approval")
+        let result = await ChatRouteResolver.run(next, query: userQuery)
+        guard result.success else {
+            await say("Fallback failed: \(String(result.output.prefix(160)))")
+            return nil
+        }
+        let said = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (said.isEmpty ? "Done — \(next.title)." : said, [next.title])
+    }
+
     /// If the model's reply is an MCP tool-call directive, run the tool — then let the model
     /// chain further tool calls (keeping the MCP block in context) until it answers in plain
     /// language or the step cap is hit. Returns nil when the first reply isn't a tool call.
@@ -4288,6 +4333,11 @@ extension DockCore {
             return (answer: error.localizedDescription, toolsRan: [])
         }
         guard MCPToolSafety.isClearlyReadOnly(name: firstInvocation.capabilityID) else {
+            if let fallback = await fallbackFromRefusedMCP(
+                bundleId: bundleId, appName: appName ?? bundleId, userQuery: userQuery)
+            {
+                return fallback
+            }
             return (
                 answer: "MCP tool \(firstInvocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
                 toolsRan: [])
@@ -4319,6 +4369,11 @@ extension DockCore {
                 return (answer: error.localizedDescription, toolsRan: toolsRan)
             }
             guard MCPToolSafety.isClearlyReadOnly(name: invocation.capabilityID) else {
+                if toolsRan.isEmpty, let fallback = await fallbackFromRefusedMCP(
+                    bundleId: bundleId, appName: appName ?? bundleId, userQuery: userQuery)
+                {
+                    return fallback
+                }
                 return (
                     answer: "MCP tool \(invocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
                     toolsRan: toolsRan)

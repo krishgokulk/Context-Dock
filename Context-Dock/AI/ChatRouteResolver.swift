@@ -606,6 +606,25 @@ enum ChatRouteResolver {
         return tied ? nil : primary
     }
 
+    /// The one route that is the plain form of the request when several share its words:
+    /// `File ▸ New Tab` beside `File ▸ New Tab at End`. Chosen only when one runnable route's
+    /// command name is a strict prefix of every other's, so "the shorter name" can never pick
+    /// between two different things.
+    static func plainestRoute(_ routes: [ChatRoute]) -> ChatRoute? {
+        let runnable = routes.filter {
+            $0.kind == .menuCommand || $0.kind == .adapterAction
+        }
+        func leaf(_ route: ChatRoute) -> String {
+            (route.title.components(separatedBy: " ▸ ").last ?? route.title).lowercased()
+        }
+        guard runnable.count > 1,
+            let shortest = runnable.min(by: { leaf($0).count < leaf($1).count })
+        else { return runnable.first }
+        let base = leaf(shortest)
+        let others = runnable.filter { $0.id != shortest.id }
+        return others.allSatisfy({ leaf($0).hasPrefix(base + " ") }) ? shortest : nil
+    }
+
     /// The route to try when `failed` did not run: the next runnable one under the grants
     /// that already filtered `routes`.
     ///
