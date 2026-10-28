@@ -675,6 +675,58 @@ extension ClaudeCodeCLIService {
     }
 }
 
+// MARK: - Sign-in
+
+extension ClaudeCodeCLIService {
+    /// What `claude auth status --json` reports, so a stale vs. fresh login is a fact DoraX can
+    /// read rather than infer from a failed turn. DoraX never reads the token itself — only this
+    /// status line, which the CLI exposes for exactly this.
+    struct AuthStatus: Sendable, Equatable {
+        var loggedIn: Bool
+        /// The CLI's `authMethod`: "claudeai" for a subscription, "console" for API-key billing,
+        /// "none" when signed out. Subscription is the one this provider is for.
+        var method: String?
+
+        /// Signed in the way this provider needs — a Claude subscription, not Console/API billing.
+        var isConsole: Bool { method == "console" }
+
+        static let loggedOut = AuthStatus(loggedIn: false, method: nil)
+    }
+
+    /// Reads the CLI's current login without running a turn. Any failure reads as logged-out, so
+    /// the caller offers sign-in rather than surfacing a raw error — recovering is the whole point.
+    static func authStatus() async -> AuthStatus {
+        guard let binary = binaryPath() else { return .loggedOut }
+        let output = (try? await run(binary: binary, arguments: ["auth", "status", "--json"])) ?? ""
+        guard let object = decodeFirstObject(in: output) else { return .loggedOut }
+        return AuthStatus(loggedIn: object["loggedIn"] as? Bool ?? false,
+                          method: object["authMethod"] as? String)
+    }
+
+    /// Opens Terminal on `claude auth login` so the user completes the browser OAuth there. The
+    /// login is interactive (a browser round trip and a pasted code) and cannot run headless, so
+    /// DoraX hands it to the terminal the user already trusts — the same place the install help
+    /// points. DoraX never sees the credentials; the CLI writes them to its own store and the
+    /// next `authStatus()` picks them up.
+    @discardableResult
+    static func launchSignIn() -> Bool {
+        // A fixed command with nothing interpolated — no user input reaches the shell.
+        let script = """
+            tell application "Terminal"
+                activate
+                do script "claude auth login --claudeai"
+            end tell
+            """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        do { try process.run(); return true } catch {
+            log.error("sign-in launch failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+}
+
 /// Turns a byte stream into whole lines.
 ///
 /// A pipe delivers whatever it has, which splits JSON objects across reads. Handing a partial
