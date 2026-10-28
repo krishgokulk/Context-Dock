@@ -4268,6 +4268,29 @@ extension DockCore {
 
     /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.
 
+    /// A write MCP tool the safety gate refuses is not the end of the turn while a granted
+    /// route below it can do the job — "open a new tab" ranks the MCP `create_tab` first, and
+    /// `File ▸ New Tab` does it. The same fall-through #45 gave a route that ran and failed,
+    /// here for one the gate stopped before it ran, on a provider that answers in directives
+    /// (a subscription CLI). nil leaves the refusal as the answer.
+    func fallbackFromRefusedMCP(
+        bundleId: String, appName: String, userQuery: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        let routes = await ChatRouteResolver.routes(
+            for: userQuery, bundleId: bundleId, appName: appName)
+            .filter { ActionReadiness.isOfferable($0, query: userQuery) }
+        guard let refused = routes.first(where: { $0.kind == .mcpTool }),
+            let next = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
+        else { return nil }
+        await MainActor.run {
+            dockTraceStep("Route: \(next.title) · \(next.kind.rawValue) — the MCP tool needs approval")
+        }
+        let result = await ChatRouteResolver.run(next, query: userQuery)
+        guard result.success else { return nil }
+        let said = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (said.isEmpty ? "Done — \(next.title)." : said, [next.title])
+    }
+
     /// If the model's reply is an MCP tool-call directive, run the tool — then let the model
     /// chain further tool calls (keeping the MCP block in context) until it answers in plain
     /// language or the step cap is hit. Returns nil when the first reply isn't a tool call.
@@ -4288,6 +4311,11 @@ extension DockCore {
             return (answer: error.localizedDescription, toolsRan: [])
         }
         guard MCPToolSafety.isClearlyReadOnly(name: firstInvocation.capabilityID) else {
+            if let fallback = await fallbackFromRefusedMCP(
+                bundleId: bundleId, appName: appName ?? bundleId, userQuery: userQuery)
+            {
+                return fallback
+            }
             return (
                 answer: "MCP tool \(firstInvocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
                 toolsRan: [])
@@ -4319,6 +4347,11 @@ extension DockCore {
                 return (answer: error.localizedDescription, toolsRan: toolsRan)
             }
             guard MCPToolSafety.isClearlyReadOnly(name: invocation.capabilityID) else {
+                if toolsRan.isEmpty, let fallback = await fallbackFromRefusedMCP(
+                    bundleId: bundleId, appName: appName ?? bundleId, userQuery: userQuery)
+                {
+                    return fallback
+                }
                 return (
                     answer: "MCP tool \(invocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
                     toolsRan: toolsRan)
