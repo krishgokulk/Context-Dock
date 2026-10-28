@@ -1356,6 +1356,30 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Shown under an auth-failure error so the user recovers from the chat, not from Settings.
+    /// Sign-in is interactive, so it opens Terminal (`ClaudeCodeCLIService.launchSignIn`); the
+    /// user finishes there and re-sends. The `claude` CLI owns the login — DoraX never sees the
+    /// credential.
+    @ViewBuilder
+    private var claudeSignInButton: some View {
+        Button {
+            ClaudeCodeCLIService.launchSignIn()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.right.circle.fill")
+                Text("Sign in to Claude").fontWeight(.semibold)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(providerColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(providerColor.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .help("Opens Terminal to sign in with your Claude subscription, then re-send.")
+    }
+
     private var evidenceReceiptView: some View {
         VStack(alignment: .leading, spacing: 5) {
             Button {
@@ -1705,6 +1729,9 @@ struct AIChatMessageView: View {
 
                 if message.enableAppRequest != nil {
                     enableAppButton
+                }
+                if message.isError, ClaudeCodeCLIService.isAuthFailure(message.content) {
+                    claudeSignInButton
                 }
                 if let card = message.noRouteOptions {
                     noRouteOptionsCard(card)
