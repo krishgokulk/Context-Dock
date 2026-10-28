@@ -4288,6 +4288,7 @@ extension DockCore {
         // MCP tool from its own prompt even when route resolution found no MCP match, so a
         // matching MCP route is not required.
         let exact = ChatRouteResolver.soleExactRoute(routes, query: userQuery, appName: appName)
+            ?? ChatRouteResolver.plainestRoute(routes)
         let next: ChatRoute
         if let exact, exact.kind != .mcpTool, exact.kind != .skill, exact.kind != .model,
             exact.kind != .computerUse
