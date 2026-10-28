@@ -1333,7 +1333,7 @@ enum AppScopedChatService {
         // The chat and what its user typed are bound for the turn, so the Claude Code CLI knows
         // whether it may hold its own network and shell (E1c), and the outbound gate knows which
         // addresses the user typed rather than the follow-up prompts DoraX composes.
-        try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
+        let answer = try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
             try await ClaudeCodeChat.$scope.withValue(scope) {
                 try await TurnUserText.bind(history: history, query: query) {
                     try await sendUntraced(
@@ -1344,6 +1344,12 @@ enum AppScopedChatService {
                 }
             }
         }
+        // #205: a verified read the model just solved is kept, so the next one like it skips the
+        // model. Taken here, after the answer is assembled, so every provider pass is included.
+        SolvedSkillCapture.captureIfEligible(
+            query: query, scope: scope, answer: answer,
+            toolCalls: SolvedSkillToolCallCollector.shared.take(scope: scope))
+        return answer
     }
 
     private static func sendUntraced(
@@ -1369,6 +1375,7 @@ enum AppScopedChatService {
         // never appear under this turn's answer, which is worse than showing none — a stale
         // card looks current.
         ChatResultRowCollector.shared.begin(scope: scope)
+        SolvedSkillToolCallCollector.shared.begin(scope: scope)
 
         // The registry is refreshed per turn by the dock engine's preflight, but this
         // surface assembles its own prompt and never went through that path — so a
@@ -1472,6 +1479,18 @@ enum AppScopedChatService {
             return Answer(
                 text: outcome.text, toolChips: outcome.chips,
                 proposalJSON: outcome.proposalJSON)
+        }
+        // #205 (D1): a read DoraX already solved with the model runs again from its saved typed
+        // calls, through the same executor and gates, before the model is asked. Any mismatch or
+        // failure returns nil and the turn carries on to the model, which repairs the skill.
+        if case .app(let bundleId) = scope,
+            let (skill, filled) = SolvedSkillMatch.match(
+                query: query, bundleId: bundleId,
+                skills: SolvedSkillStore.shared.all(forBundle: bundleId)),
+            let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
+        {
+            log.notice("stage: saved skill")
+            return answer
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from

@@ -120,12 +120,12 @@ final class SolvedSkillStore: ObservableObject {
 /// The structured tool calls a turn made, kept for its scope so the capture hook can read
 /// them once the answer is assembled.
 ///
-/// The provider loops dispatch a tool by name and input JSON, but the executed-command record
-/// downstream carries only a free-text command string — a capability id and its args are gone
-/// by the time the answer is built. Rather than thread a third element out through
-/// `sendWithTools` and every verifier pass, each dispatch records the call here (the same
-/// per-scope pattern `ChatResultRowCollector` already uses), and `send` takes them when the
-/// turn ends. Keyed by scope so two surfaces answering at once never cross their calls.
+/// The three provider loops reach every tool through `AgentToolRegistry.dispatch`, but the
+/// executed-command record they hand back carries only a free-text command string — a capability
+/// id and its input are gone by the time the answer is built. Rather than thread a third element
+/// out through `sendWithTools` and every verifier pass, `dispatch` records the call here (the same
+/// per-scope pattern `ChatResultRowCollector` uses), and `send` takes them when the turn ends.
+/// Keyed by scope so two surfaces answering at once never cross their calls.
 @MainActor
 final class SolvedSkillToolCallCollector {
     static let shared = SolvedSkillToolCallCollector()
@@ -138,15 +138,18 @@ final class SolvedSkillToolCallCollector {
         callsByScope[key(scope)] = []
     }
 
-    /// Records one dispatched tool call. `arguments` is the tool's input as the loop saw it;
-    /// non-string JSON values are stringified, which is enough for the deterministic v1 fill.
-    func record(name: String, arguments: [String: Any], isReadOnly: Bool, scope: GeneralChatScope?) {
-        let argTemplate = arguments.mapValues { value -> String in
-            if let string = value as? String { return string }
-            return String(describing: value)
-        }
-        callsByScope[key(scope), default: []].append(
-            SolvedSkillToolCall(capability: name, argTemplate: argTemplate, isReadOnly: isReadOnly))
+    /// Records one successful tool dispatch. A `run_capability` call is replayable, so it is kept
+    /// as its capability id and input; any other tool (a menu click, a script, a screen read) has
+    /// no typed replay, so it is kept as not-read-only and rule 4 refuses the whole turn.
+    /// `find_capability`-style lookups and read-backs are plumbing and are not recorded.
+    func record(
+        capability: String, input: [String: String], isReadOnly: Bool, scope: GeneralChatScope?
+    ) {
+        let call = SolvedSkillToolCall(
+            capability: capability, argTemplate: input, isReadOnly: isReadOnly)
+        // The verifier's repair pass re-runs a call the turn already made; one entry is enough.
+        guard callsByScope[key(scope)]?.last != call else { return }
+        callsByScope[key(scope), default: []].append(call)
     }
 
     func take(scope: GeneralChatScope?) -> [SolvedSkillToolCall] {

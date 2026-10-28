@@ -59,6 +59,11 @@ enum SolvedSkillCapture {
                 capability: call.capability, argTemplate: template, isReadOnly: call.isReadOnly)
         }
 
+        // rule 2, second half: the slot must reach the calls. If no input carries a `{slot}`
+        // token the recorded values are literals and the skill would replay one answer forever.
+        guard parameterized.contains(where: { $0.argTemplate.values.contains { $0.contains("{") } })
+        else { return nil }
+
         return SolvedSkill(
             queryTemplate: derived.template,
             nonSlotWords: derived.nonSlotWords,

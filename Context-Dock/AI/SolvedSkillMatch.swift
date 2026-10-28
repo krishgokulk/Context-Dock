@@ -32,12 +32,10 @@ enum SolvedSkillMatch {
             // calls under a request they do not answer.
             guard skill.nonSlotWords == derived.nonSlotWords else { continue }
 
-            var filled: [String: String] = [:]
-            for slot in skill.slots {
-                guard let value = derived.values[slot.name] else { break }
-                filled[slot.name] = value
-            }
-            guard filled.count == skill.slots.count else { continue }
+            // The same slots too: a sentence that names a day the skill never took would have
+            // that day silently ignored.
+            guard Set(derived.values.keys) == Set(skill.slots.map(\.name)) else { continue }
+            let filled = derived.values
             return (skill, filled)
         }
         return nil

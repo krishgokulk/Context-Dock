@@ -544,6 +544,28 @@ final class AgentToolRegistry {
             || capability.riskLevel == .critical
     }
 
+    /// Hands a successful call to the solved-skill collector (#205). Lookups and read-backs are
+    /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
+    /// read-only so it keeps the turn from being saved.
+    private static func noteForSolvedSkill(
+        name: String, arguments: [String: Any], scope: GeneralChatScope?
+    ) {
+        let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
+        guard !plumbing.contains(name) else { return }
+        if name == "run_capability", let id = arguments["capability_id"] as? String {
+            var input: [String: String] = [:]
+            for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
+                scope: scope)
+        } else {
+            SolvedSkillToolCallCollector.shared.record(
+                capability: name, input: [:], isReadOnly: false, scope: scope)
+        }
+    }
+
     static func readsOnlyRefusal(capabilityID: String) -> String {
         "This surface can read but not change anything, so \(capabilityID) was not run. "
             + "Say what you would change and the user can do it from a chat that has the "
@@ -672,6 +694,9 @@ final class AgentToolRegistry {
         taint.record(
             toolName: name, arguments: arguments, output: result.output,
             succeeded: result.success, turn: context.turn)
+        if result.success {
+            Self.noteForSolvedSkill(name: name, arguments: arguments, scope: context.chatScope)
+        }
         if let stepID {
             ActivityRecorder.active?.finish(
                 stepID,
