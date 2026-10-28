@@ -102,6 +102,9 @@ Dragging a running-app icon out of the strip creates an app-icon Pet token that 
 Pet's conversation, memory, mode, task and approval state. It is another presentation, not another
 agent or safety route.
 
+Detailed lifecycle spec:
+[`2026-10-28-pet-presentation-and-expansion-lifecycle.md`](../specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md).
+
 **Exit gate:** click switches in-Dock, drag detaches, reattach/close keeps history, multiple detached
 Pets stay synchronized, and screenshots prove shared visual rules.
 
