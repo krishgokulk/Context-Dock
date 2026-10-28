@@ -44,12 +44,21 @@ enum SolvedSkillMatch {
     // MARK: - Run (wired)
 
     /// Replays the skill's calls with the slots filled, through `executeWithApproval` — the
-    /// same gate the model's own tool calls meet. Returns the answer, or nil on any failure so
-    /// the caller runs the model instead.
+    /// same gate the model's own tool calls meet — then reads each result back as
+    /// `run_capability` does. Returns the answer, or nil on any failure so the caller runs the
+    /// model instead.
+    ///
+    /// ponytail: this inlines the scope check and read-back rather than dispatching
+    /// `run_capability`; the dispatch output carries model-facing text (#316) and would
+    /// re-record into the collector. Reroute through the registry in a follow-up.
     @MainActor
     static func run(_ skill: SolvedSkill, filled: [String: String], scope: GeneralChatScope)
         async -> AppScopedChatService.Answer?
     {
+        // The thread's boundary, as `run_capability` enforces it: a skill never replays
+        // under another app's chat.
+        guard case .app(let bundleId) = scope, skill.bundleId == bundleId else { return nil }
+
         var receipts: [DoraXActionReceipt] = []
         var outputs: [String] = []
 
@@ -78,6 +87,16 @@ enum SolvedSkillMatch {
                 return nil
             }
             guard result.success else {
+                SolvedSkillStore.shared.markRun(id: skill.id, success: false)
+                return nil
+            }
+            // Read it back, as the model's path does. A contradicted or unconfirmed read means
+            // the saved calls no longer answer the sentence; let the model repair it.
+            switch await GeneralAIActionExecutor.shared.verifyCapability(
+                id: call.capability, inputValues: input)
+            {
+            case .verified, .notApplicable: break
+            case .contradicted, .unverified:
                 SolvedSkillStore.shared.markRun(id: skill.id, success: false)
                 return nil
             }

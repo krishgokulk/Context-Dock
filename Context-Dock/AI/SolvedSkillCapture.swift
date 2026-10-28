@@ -52,17 +52,19 @@ enum SolvedSkillCapture {
             var template = call.argTemplate
             for (slot, value) in derived.values {
                 template = template.mapValues {
-                    $0.replacingOccurrences(of: value, with: "{\(slot)}")
+                    $0.replacingOccurrences(of: value, with: "{\(slot)}", options: [.caseInsensitive])
                 }
             }
             return SolvedSkillToolCall(
                 capability: call.capability, argTemplate: template, isReadOnly: call.isReadOnly)
         }
 
-        // rule 2, second half: the slot must reach the calls. If no input carries a `{slot}`
-        // token the recorded values are literals and the skill would replay one answer forever.
-        guard parameterized.contains(where: { $0.argTemplate.values.contains { $0.contains("{") } })
-        else { return nil }
+        // rule 2, second half: EVERY slot must reach the calls. A slot whose token landed in no
+        // input (the model baked "today" into a concrete date) is a frozen value, and the skill
+        // would replay one answer forever.
+        guard derived.slots.allSatisfy({ slot in
+            parameterized.contains { $0.argTemplate.values.contains { $0.contains("{\(slot.name)}") } }
+        }) else { return nil }
 
         return SolvedSkill(
             queryTemplate: derived.template,
@@ -90,12 +92,9 @@ enum SolvedSkillCapture {
 
     // MARK: - Deterministic slot derivation (pure)
 
-    /// The days a request can name. A date written with separators is caught separately.
-    private static let dayWords: Set<String> = [
-        "today", "yesterday", "tomorrow",
-        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-        "mon", "tue", "wed", "thu", "fri", "sat", "sun",
-    ]
+    /// The days a request can name.
+    // Only today/yesterday reach a date filter in mail.search (MailAutomation.swift:534); widen when the read resolves more.
+    private static let dayWords: Set<String> = ["today", "yesterday"]
 
     /// Words that look capitalized but open sentences, so a leading one is not an entity on
     /// its own. Kept tiny; the leading-word rule does most of the work.
@@ -129,7 +128,7 @@ enum SolvedSkillCapture {
             values["sender"] = words[index]
         }
 
-        // day: today/yesterday/tomorrow, a weekday, or a date written with separators.
+        // day: today or yesterday.
         if let day = words.first(where: { isDayWord($0) }) {
             values["day"] = day
         }
@@ -156,12 +155,7 @@ enum SolvedSkillCapture {
     }
 
     private nonisolated static func isDayWord(_ word: String) -> Bool {
-        let lowered = word.lowercased()
-        if dayWords.contains(lowered) { return true }
-        // A date with separators — 2026-10-27, 10/27, 27.10 — read as a day value.
-        let hasSeparator = word.contains("-") || word.contains("/") || word.contains(".")
-        let hasDigit = word.contains(where: \.isNumber)
-        return hasSeparator && hasDigit
+        dayWords.contains(word.lowercased())
     }
 
     private nonisolated static func isProperNoun(_ word: String) -> Bool {

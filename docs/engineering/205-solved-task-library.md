@@ -48,3 +48,9 @@ sentence → "Used saved skill (no model)" step. Owner hand check: "unread mail 
 Deferred: Dock-surface twin hook, Settings surface (rule 6), on-device Apple-Intelligence param
 fill (deterministic fallback ships first), write/approval-gated skills (rule 4 second half),
 Claude-Code-authored script skills (P12 #206 territory).
+
+## Known limits (slice 1)
+
+- Rule-3 fence check does not yet cover persisted `argTemplate` inputs.
+- Replay returns the raw capability output as `Answer.text` with empty `rows` (parity with the model summary deferred), and inlines the scope check + read-back instead of dispatching `run_capability`.
+- `{day}` is limited to today/yesterday, the only values `mail.search` honors.

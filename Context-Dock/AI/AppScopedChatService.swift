@@ -1483,7 +1483,7 @@ enum AppScopedChatService {
         // #205 (D1): a read DoraX already solved with the model runs again from its saved typed
         // calls, through the same executor and gates, before the model is asked. Any mismatch or
         // failure returns nil and the turn carries on to the model, which repairs the skill.
-        if case .app(let bundleId) = scope,
+        if skillOverride == nil, case .app(let bundleId) = scope,
             let (skill, filled) = SolvedSkillMatch.match(
                 query: query, bundleId: bundleId,
                 skills: SolvedSkillStore.shared.all(forBundle: bundleId)),

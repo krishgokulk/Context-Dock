@@ -93,10 +93,25 @@ struct SolvedSkillCaptureTests {
         #expect(build(calls: [literal]) == nil)
     }
 
+    @Test func rule2_aSlotWhoseTokenNeverLandsIsNotSaved() {
+        // {sender} lands, but the model used a concrete date for "today": {day} is frozen.
+        let frozenDay = SolvedSkillToolCall(
+            capability: "mail.search",
+            argTemplate: ["sender": "SBI", "day": "2026-10-28", "unread": "true"],
+            isReadOnly: true)
+        #expect(build(calls: [frozenDay]) == nil)
+    }
+
+    @Test func aLowercaseQueryValueParameterizesAnUppercaseArg() throws {
+        let skill = try #require(build(query: "unread mail from sbi today"))
+        #expect(skill.toolCalls.first?.argTemplate["sender"] == "{sender}")
+    }
+
     @Test func slotDerivationIsDeterministic() throws {
         let derived = try #require(SolvedSkillCapture.derive(query: "mail from ICICI yesterday"))
         #expect(derived.values == ["sender": "ICICI", "day": "yesterday"])
         let properNoun = try #require(SolvedSkillCapture.derive(query: "Show mail Priya sent Friday"))
-        #expect(properNoun.values == ["sender": "Priya", "day": "Friday"])
+        // A weekday is not a day slot: mail.search honors only today/yesterday.
+        #expect(properNoun.values == ["sender": "Priya"])
     }
 }
