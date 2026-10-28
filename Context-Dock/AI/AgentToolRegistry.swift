@@ -2345,6 +2345,10 @@ final class AgentToolRegistry {
                         // back (a System connector setting): that reading is the proof.
                         if result.readBack?.isEmpty == false {
                             reading = output
+                        } else if !isWrite, !result.output.isEmpty {
+                            // Read-only capability: a non-empty result IS the read-back proof —
+                            // a search that found nothing leaves output empty and does not capture.
+                            reading = output
                         }
                     }
                 }
