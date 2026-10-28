@@ -550,6 +550,24 @@ final class AgentToolRegistry {
     private static func noteForSolvedSkill(
         name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
     ) {
+        // run_mcp_tool wraps dorax_run_capability which carries a DoraX capability_id.
+        // Handle it before the plumbing guard using the outer turn's scope: the inner
+        // run_capability dispatch in DoraXMCPServer uses scope=nil on the app's own Anthropic
+        // path (capabilityTurn is nil for in-app calls), so it records in the wrong bucket.
+        if name == "run_mcp_tool",
+           let innerArgs = arguments["arguments"] as? [String: Any],
+           let capabilityID = innerArgs["capability_id"] as? String, !capabilityID.isEmpty
+        {
+            var input: [String: String] = [:]
+            for (key, value) in (innerArgs["input"] as? [String: Any]) ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: capabilityID, input: input,
+                isReadOnly: !changesSomething(capabilityID: capabilityID),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
@@ -1990,9 +2008,13 @@ final class AgentToolRegistry {
             do {
                 let output = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleID, server: server, tool: tool, arguments: toolArguments)
-                return AgentToolResult(
+                var mcpResult = AgentToolResult(
                     success: true, output: output,
                     displayCommand: "\(tool) via \(server.isEmpty ? "MCP" : server)")
+                // A non-empty MCP read result IS the verified evidence — same logic the
+                // .notApplicable verifier path uses for run_capability reads.
+                if !output.isEmpty { mcpResult.verifiedByReadBack = output }
+                return mcpResult
             } catch {
                 return AgentToolResult(
                     success: false,
