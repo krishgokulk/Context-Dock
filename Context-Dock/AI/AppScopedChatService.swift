@@ -171,7 +171,8 @@ enum AppScopedChatService {
     private static func execute(
         route: ChatRoute, query: String, history: [ChatMessage],
         scope: GeneralChatScope, appName: String,
-        attachments: [URL] = [], extraAppNames: [String] = [], finderSelection: [URL] = []
+        attachments: [URL] = [], extraAppNames: [String] = [], finderSelection: [URL] = [],
+        alternatives: [ChatRoute] = []
     ) async -> Answer {
         // A skill is instructions, not a command: it is carried out by answering with the
         // user's own workflow foregrounded, in the scope it was written for.
@@ -243,6 +244,22 @@ enum AppScopedChatService {
                 ? (result.success ? "(no output)" : "(failed, no output)") : result.output,
             success: result.success,
             scope: scope)
+
+        // A top route that could not run is not the answer while a granted one below it can:
+        // "open a new tab" ranks the MCP `create_tab` first, and a server that is down or a
+        // tool the gate refuses must fall through to `File ▸ New Tab`, not end the turn.
+        if !result.success,
+            let next = ChatRouteResolver.fallbackRoute(
+                after: route, output: result.output, wasCancelled: result.wasCancelled,
+                in: alternatives)
+        {
+            log.notice("route fell through: \(route.kind.rawValue, privacy: .public) → \(next.kind.rawValue, privacy: .public)")
+            return await execute(
+                route: next, query: query, history: history, scope: scope,
+                appName: appName, attachments: attachments,
+                extraAppNames: extraAppNames, finderSelection: finderSelection,
+                alternatives: alternatives.filter { $0.id != route.id })
+        }
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -1676,7 +1693,8 @@ enum AppScopedChatService {
                 return await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
-                    extraAppNames: extraAppNames, finderSelection: finderSelection)
+                    extraAppNames: extraAppNames, finderSelection: finderSelection,
+                    alternatives: routes)
             }
             // Act by default: no exact match, no learned pick, and no read to run on its own —
             // but the ranking still names one clear primary. Run it rather than handing a
@@ -1690,7 +1708,8 @@ enum AppScopedChatService {
                 return await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
-                    extraAppNames: extraAppNames, finderSelection: finderSelection)
+                    extraAppNames: extraAppNames, finderSelection: finderSelection,
+                    alternatives: routes)
             }
         }
 

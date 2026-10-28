@@ -606,6 +606,39 @@ enum ChatRouteResolver {
         return tied ? nil : primary
     }
 
+    /// The route to try when `failed` did not run: the next runnable one under the grants
+    /// that already filtered `routes`.
+    ///
+    /// A gated or broken MCP tool is the one top-ranked route that can fail for reasons that
+    /// say nothing about the request — the server is not connected, the call errored — while a
+    /// granted lower-rank route (the app's own menu command) would just work. Stopping on its
+    /// error is a dead end, not caution. Three things still stop the chain:
+    /// - the user said no, at the tool's own card (`MCPRuntime.userDeclinedPrefix`) or the
+    ///   executor's (`wasCancelled`): that is a decision, not a fault;
+    /// - the next route would do more than the request asked (a read falling back to a write);
+    /// - the next route is not one `run` carries out (a skill, the model, Computer Use).
+    ///
+    /// The fallback keeps its own consent: `run` still applies `executionApproval`, so a menu
+    /// press asks at the point of acting exactly as it would have as the primary.
+    static func fallbackRoute(
+        after failed: ChatRoute, output: String, wasCancelled: Bool = false,
+        in routes: [ChatRoute]
+    ) -> ChatRoute? {
+        guard failed.kind == .mcpTool, !wasCancelled,
+            !output.contains(MCPRuntime.userDeclinedPrefix)
+        else { return nil }
+        return routes.first { candidate in
+            switch candidate.kind {
+            case .adapterAction, .menuCommand, .cli, .mcpTool: break
+            case .skill, .model, .computerUse: return false
+            }
+            return candidate.id != failed.id
+                && candidate.title.lowercased() != failed.title.lowercased()
+                && (candidate.isReadOnly || !failed.isReadOnly)
+                && candidate.kind.rank > failed.kind.rank
+        }
+    }
+
     /// True when the user should be asked which route to take.
     ///
     /// Act by default: several routes existing is not a question. We ask only when at least
@@ -624,7 +657,12 @@ enum ChatRouteResolver {
 
     /// Runs a route and returns what it produced, verbatim, for the Console and for the
     /// model to phrase.
-    static func run(_ route: ChatRoute, query: String) async -> (success: Bool, output: String) {
+    ///
+    /// `wasCancelled` is the user saying no to the executor's own approval card — a decision,
+    /// not a fault, so `fallbackRoute` must not route around it.
+    static func run(
+        _ route: ChatRoute, query: String
+    ) async -> (success: Bool, output: String, wasCancelled: Bool) {
         // Authority is checked when routes are resolved, and again here, when one is run.
         // Not belt-and-braces: resolution filters a list, execution acts, and the two are
         // separated by everything in between — a plan being drafted by the model, a recipe
@@ -638,7 +676,7 @@ enum ChatRouteResolver {
             let level = AppAccessPolicy.level(for: route.bundleId)
             guard AppAccessPolicy.allows(mechanism, at: level) else {
                 return (false, AppAccessPolicy.explanation(
-                    for: route.appName, level: level, wantedRead: route.isReadOnly))
+                    for: route.appName, level: level, wantedRead: route.isReadOnly), false)
             }
         }
 
@@ -660,12 +698,13 @@ enum ChatRouteResolver {
                     true,
                     "Started `\(route.payload)` in the \(command) thread's terminal — that "
                         + "tool draws its own screen, so it cannot report back here. Open "
-                        + "\(command) in the sidebar to watch it."
+                        + "\(command) in the sidebar to watch it.",
+                    false
                 )
             }
             let result = await TerminalCommandExecutor.shared.run(
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
-            return (result.success, result.output)
+            return (result.success, result.output, false)
 
         case .adapterAction, .mcpTool, .menuCommand:
             // Gate A's last row: these run through the one executor General AI uses, so
@@ -677,7 +716,7 @@ enum ChatRouteResolver {
             // executor reads that and leaves the adapter's own consent prompt in place,
             // which is the only thing asking on this surface.
             guard var candidate = route.asCandidate() else {
-                return (false, "That route can no longer be run.")
+                return (false, "That route can no longer be run.", false)
             }
             // The user's own words, for an adapter script that interpolates {query}.
             candidate.inputValues["query"] = query
@@ -685,12 +724,12 @@ enum ChatRouteResolver {
             // route; it is not the user's approval to launch an app and click it now.
             let outcome = await GeneralAIActionExecutor.shared.execute(
                 candidate, approval: executionApproval(for: route))
-            return (outcome.success, outcome.message)
+            return (outcome.success, outcome.message, outcome.wasCancelled)
 
         case .skill, .model:
             // Neither runs anything: the caller answers with the skill's instructions in
             // the prompt. Returning "nothing happened" here is the honest result.
-            return (true, "")
+            return (true, "", false)
 
         case .computerUse:
             // Not run from here, deliberately. `ComputerUseTool` owns the press: it reads
@@ -702,7 +741,8 @@ enum ChatRouteResolver {
                 false,
                 "This route is carried out by operate_app, which asks for permission to "
                     + "drive \(route.appName) and records what the screen did. It is not run "
-                    + "from the route executor.")
+                    + "from the route executor.",
+                false)
         }
     }
 }
