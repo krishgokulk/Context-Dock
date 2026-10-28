@@ -4279,14 +4279,23 @@ extension DockCore {
         let routes = await ChatRouteResolver.routes(
             for: userQuery, bundleId: bundleId, appName: appName)
             .filter { ActionReadiness.isOfferable($0, query: userQuery) }
-        guard let refused = routes.first(where: { $0.kind == .mcpTool }),
-            let next = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
-        else { return nil }
-        await MainActor.run {
-            dockTraceStep("Route: \(next.title) · \(next.kind.rawValue) — the MCP tool needs approval")
+        func say(_ line: String) async { await MainActor.run { dockTraceStep(line) } }
+        guard let refused = routes.first(where: { $0.kind == .mcpTool }) else {
+            await say("Fallback: no MCP route among \(routes.count) offerable route(s)")
+            return nil
         }
+        guard let next = ChatRouteResolver.fallbackRoute(after: refused, output: "", in: routes)
+        else {
+            await say("Fallback: no granted route below \(refused.title) in "
+                + routes.map { "\($0.kind.rawValue):\($0.title)" }.joined(separator: ", "))
+            return nil
+        }
+        await say("Route: \(next.title) · \(next.kind.rawValue) — the MCP tool needs approval")
         let result = await ChatRouteResolver.run(next, query: userQuery)
-        guard result.success else { return nil }
+        guard result.success else {
+            await say("Fallback failed: \(String(result.output.prefix(160)))")
+            return nil
+        }
         let said = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         return (said.isEmpty ? "Done — \(next.title)." : said, [next.title])
     }
