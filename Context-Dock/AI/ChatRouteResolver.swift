@@ -627,9 +627,26 @@ enum ChatRouteResolver {
         guard let primary = routes.first else { return nil }
         guard routes.count > 1 else { return primary }
         let runnerUp = routes[1]
-        let tied = primary.kind.rank == runnerUp.kind.rank
+        let sameConsequence = primary.kind.rank == runnerUp.kind.rank
             && primary.isReadOnly == runnerUp.isReadOnly
+        // A qualified variant of the same command is not a genuine tie. Safari offers both
+        // "File ▸ New Tab" and "File ▸ New Tab at End" for "new tab"; ordering already puts the
+        // plainer, shorter title first, so the runner-up merely extends it. The plain form is
+        // the obvious primary — asking there is the over-ask #42 set out to remove. A real tie
+        // is between distinct options ("New Tab" vs "New Private Tab"), where neither extends
+        // the other, and that still asks.
+        let tied = sameConsequence && !isQualifiedVariant(of: primary.title, runnerUp.title)
         return tied ? nil : primary
+    }
+
+    /// True when `candidate` is `base` plus a trailing qualifier — "File ▸ New Tab" vs
+    /// "File ▸ New Tab at End" — rather than a distinct command. A qualifier is extra words
+    /// after a word boundary, so "New Tab" does not count "New Private Tab" as its variant.
+    private nonisolated static func isQualifiedVariant(of base: String, _ candidate: String) -> Bool {
+        let b = base.lowercased()
+        let c = candidate.lowercased()
+        guard c.count > b.count, c.hasPrefix(b) else { return false }
+        return c[c.index(c.startIndex, offsetBy: b.count)] == " "
     }
 
     /// The one route that is the plain form of the request when several share its words:

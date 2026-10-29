@@ -50,6 +50,24 @@ struct AppChatOverAskDefaultRouteTests {
         #expect(primary?.kind == .adapterAction, "the app's own action outranks the menu click")
     }
 
+    @Test func aQualifiedMenuVariantIsNotATie() {
+        // Safari's real "new tab" set: the plain command and a qualified variant, both menu
+        // commands of equal rank and risk. The plainer one is the primary — not a tie. This is
+        // the live case the first #42 fix missed (its fixture had a higher-rank adapter route).
+        let routes = [
+            route(.menuCommand, "File ▸ New Tab"),
+            route(.menuCommand, "File ▸ New Tab at End"),
+        ]
+        ChatRoutePreferenceStore.forget(bundleId: Self.safari)
+        defer { ChatRoutePreferenceStore.forget(bundleId: Self.safari) }
+
+        #expect(ChatRouteResolver.clearPrimaryRoute(routes)?.title == "File ▸ New Tab")
+        #expect(
+            !ChatRouteResolver.shouldAsk(
+                routes: routes, bundleId: Self.safari, query: "open a new tab in Safari"),
+            "a qualified variant of the same command is not a genuine tie")
+    }
+
     @Test func genuinelyTiedRoutesStillAsk() {
         // Two menu commands, same rank and same risk: no route is obviously right, so the
         // user still makes the call.
