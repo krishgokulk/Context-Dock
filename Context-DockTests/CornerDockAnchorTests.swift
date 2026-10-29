@@ -71,6 +71,28 @@ struct CornerDockAnchorTests {
         #expect(slots.list?.minY == (slots.prompt?.maxY ?? 0) + CornerDockLayout.gap)
     }
 
+    @Test("Notch anchor centres the field on the panel")
+    func notchCentresTheField() {
+        let width: CGFloat = 1800
+        let slots = CornerDockLayout.slots(
+            clipboard: pill, prompt: card, anchor: .notch, panelWidth: width)
+
+        #expect(slots.clipboard?.minY == slots.prompt?.minY)
+        #expect(slots.clipboard?.maxX == width - CornerDockLayout.pad)
+        #expect(abs((slots.prompt?.midX ?? 0) - width / 2) < 0.5)
+    }
+
+    @Test("Notch anchor fits its screen-wide panel")
+    func notchRowFitsItsPanel() {
+        let slots = CornerDockLayout.slots(
+            shelf: card, clipboard: card, prompt: card, anchor: .notch)
+        let panel = CornerDockLayout.panelSize(for: .notch)
+
+        #expect(slots.shelf!.minX >= 0)
+        #expect(slots.clipboard!.maxX <= panel.width)
+        #expect(panel.width > CornerDockLayout.panelSize(for: .right).width)
+    }
+
     @Test("Anchored to an edge, the surfaces stack in one order")
     func anchorMovesNothingVertically() {
         // Centred is deliberately not a column — it is a row, covered above.

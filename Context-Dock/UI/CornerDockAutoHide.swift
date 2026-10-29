@@ -53,23 +53,34 @@ enum CornerDockAutoHide {
 
     static let settleBeat: Double = 0.25
 
-    /// The pointer is at the bottom edge of the dock's screen, under the dock.
+    /// The pointer is at the bottom edge (or top edge for notch) of the dock's screen, under or over the dock.
     /// `content` is what the shell draws, in screen coordinates at its shown position.
     static func pointerReveals(
-        mouse: CGPoint, screenFrame: CGRect, content: CGRect
+        mouse: CGPoint, screenFrame: CGRect, content: CGRect, anchor: CornerDockAnchor = .center
     ) -> Bool {
         guard !content.isEmpty else { return false }
+        if anchor == .notch {
+            return mouse.y >= screenFrame.maxY - edgeBand - 12
+                && mouse.x >= content.minX - edgeSlack
+                && mouse.x <= content.maxX + edgeSlack
+        }
         return mouse.y <= screenFrame.minY + edgeBand
             && mouse.x >= content.minX - edgeSlack
             && mouse.x <= content.maxX + edgeSlack
     }
 
     /// The pointer is on the dock, or between it and the edge it came up from — the gap
-    /// under the strip is part of the way in, not a reason to leave.
+    /// under or over the strip is part of the way in, not a reason to leave.
     static func pointerIsOver(
-        mouse: CGPoint, screenFrame: CGRect, content: CGRect, slack: CGFloat
+        mouse: CGPoint, screenFrame: CGRect, content: CGRect, slack: CGFloat, anchor: CornerDockAnchor = .center
     ) -> Bool {
         guard !content.isEmpty else { return false }
+        if anchor == .notch {
+            let reach = CGRect(
+                x: content.minX, y: content.minY,
+                width: content.width, height: screenFrame.maxY - content.minY)
+            return reach.insetBy(dx: -slack, dy: -slack).contains(mouse)
+        }
         let reach = CGRect(
             x: content.minX, y: screenFrame.minY,
             width: content.width, height: content.maxY - screenFrame.minY)

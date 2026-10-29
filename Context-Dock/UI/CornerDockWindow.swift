@@ -525,10 +525,14 @@ final class CornerDockController: NSObject {
     /// 2026-10-12: the empty centred bar looked heavy, the sheet looked right).
     var showsBoardUnderField: Bool { bottomSlots().list != nil }
 
-    /// Centred, the shell is the bottom layout turned over: the same stack, top-down, so
+    private var isTopDown: Bool {
+        chatPresentation.isCentred || anchor == .notch
+    }
+
+    /// Centred or anchored at the notch, the shell is the bottom layout turned over: the same stack, top-down, so
     /// every slot is the bottom-anchored one mirrored in the panel's height.
-    private func mirroredIfCentred(_ rect: CGRect?) -> CGRect? {
-        guard chatPresentation.isCentred, let rect, let height = panel?.frame.height
+    private func mirroredIfTopDown(_ rect: CGRect?) -> CGRect? {
+        guard isTopDown, let rect, let height = panel?.frame.height
         else { return rect }
         return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
     }
@@ -558,14 +562,20 @@ final class CornerDockController: NSObject {
         switch anchor {
         case .right: x = visible.maxX - margin + pad - size.width
         case .left: x = visible.minX + margin - pad
-        case .center: x = visible.minX + margin - pad
+        case .center, .notch: x = visible.minX + margin - pad
         }
         // Centred, the field's top edge sits about two thirds up the screen, where Spotlight's
         // does, and the panel hangs below it.
-        let y =
-            chatPresentation.isCentred
-            ? visible.minY + visible.height * 0.66 + pad - size.height
-            : visible.minY + margin - pad
+        // Anchored at the notch, the field sits flush under or hugging the MacBook camera notch.
+        let y: CGFloat
+        if chatPresentation.isCentred {
+            y = visible.minY + visible.height * 0.66 + pad - size.height
+        } else if anchor == .notch {
+            let screenTop = screen?.frame.maxY ?? (visible.maxY + pad)
+            y = screenTop - size.height + pad
+        } else {
+            y = visible.minY + margin - pad
+        }
         shownPanelOrigin = NSPoint(x: x, y: y)
         dockScreenFrame = screen?.frame ?? visible
         panel.setFrameOrigin(isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin)
@@ -582,6 +592,12 @@ final class CornerDockController: NSObject {
 
     private var hiddenPanelOrigin: NSPoint {
         let content = shownContentRect
+        if anchor == .notch {
+            let bottom = content.isEmpty ? shownPanelOrigin.y : content.minY
+            let screenMaxY = dockScreenFrame.maxY
+            let distance = max(0, screenMaxY - bottom + CornerDockLayout.pad)
+            return NSPoint(x: shownPanelOrigin.x, y: shownPanelOrigin.y + distance)
+        }
         let top = content.isEmpty ? shownPanelOrigin.y + (panel?.frame.height ?? 0) : content.maxY
         let distance = CornerDockAutoHide.hideDistance(
             contentTop: top, screenMinY: dockScreenFrame.minY, shadow: CornerDockLayout.pad)
@@ -606,7 +622,8 @@ final class CornerDockController: NSObject {
     private var pointerIsOverDock: Bool {
         CornerDockAutoHide.pointerIsOver(
             mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
-            content: shownContentRect, slack: ClipboardPillMetrics.hoverTolerance)
+            content: shownContentRect, slack: ClipboardPillMetrics.hoverTolerance,
+            anchor: anchor)
     }
 
     /// Bring what is on screen in line with the rule: reveal the moment the shell stops
@@ -839,9 +856,9 @@ final class CornerDockController: NSObject {
         if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
             return
         }
-        // Centred, the field and its sheet are one card: the gap between them and the card's
+        // Centred or in Notch mode, the field and its sheet are one card: the gap between them and the card's
         // margin answer the pointer too, or a click there fell through to the app beneath.
-        if chatPresentation.isCentred, let field = slots.prompt {
+        if (chatPresentation.isCentred || anchor == .notch), let field = slots.prompt {
             rects.append(
                 (slots.list.map { field.union($0) } ?? field)
                     .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
@@ -873,9 +890,9 @@ final class CornerDockController: NSObject {
     {
         let s = bottomSlots()
         return (
-            mirroredIfCentred(s.shelf), mirroredIfCentred(s.preview),
-            mirroredIfCentred(s.clipboard), mirroredIfCentred(s.selection),
-            mirroredIfCentred(s.list), mirroredIfCentred(s.prompt)
+            mirroredIfTopDown(s.shelf), mirroredIfTopDown(s.preview),
+            mirroredIfTopDown(s.clipboard), mirroredIfTopDown(s.selection),
+            mirroredIfTopDown(s.list), mirroredIfTopDown(s.prompt)
         )
     }
 
@@ -1050,7 +1067,7 @@ final class CornerDockController: NSObject {
         switch anchor {
         case .right: drawnMinX = prompt.maxX - list.width
         case .left: drawnMinX = prompt.minX
-        case .center: drawnMinX = prompt.midX - list.width / 2
+        case .center, .notch: drawnMinX = prompt.midX - list.width / 2
         }
         return list.minX - drawnMinX
     }
@@ -1063,9 +1080,9 @@ final class CornerDockController: NSObject {
         // (owner 2026-10-08), where the result sheet's own right half is.
         if showsScopeBoard {
             let shell = AppChatPromptMetrics.boardWidth(for: prompt)
-            // Centred, the card takes the sheet's left half, where the result list stands
+            // Centred or in Notch mode, the card takes the sheet's left half, where the result list stands
             // (owner 2026-10-12); at the bottom it keeps the right half (2026-10-08).
-            if chatPresentation.isCentred {
+            if chatPresentation.isCentred || anchor == .notch {
                 return AppScopeBoardMetrics.size(shell: shell).width / 2
             }
             return AppScopeBoardMetrics.anchorOffset(shell: shell)
@@ -2115,10 +2132,11 @@ struct CornerDockSurface: View {
         return CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
     }
 
-    /// Centred (⌥⌥), the row is drawn top-down: the field first, its boards under it.
+    /// Centred (⌥⌥) or in Notch mode, the row is drawn top-down: the field first, its boards under it.
+    private var isTopDown: Bool { chatPresentation.isCentred || anchor == .notch }
     private var centred: Bool { chatPresentation.isCentred }
-    private var rowEdge: Alignment { centred ? .top : .bottom }
-    private var rowVertical: VerticalAlignment { centred ? .top : .bottom }
+    private var rowEdge: Alignment { isTopDown ? .top : .bottom }
+    private var rowVertical: VerticalAlignment { isTopDown ? .top : .bottom }
 
     /// The composer and Global Context both carry their own "you just copied something"
     /// icon now — next to "+" in one, next to the running-app capsule in the other — the
@@ -2133,11 +2151,11 @@ struct CornerDockSurface: View {
     }
 
     var body: some View {
-        // Centred, the shell is a row: field, clipboard side by side, with what answers the
-        // field — and the open shelf — stacked over the field itself. Anchored to an edge it stays a
+        // Centred or anchored at the notch, the shell is a row: field, clipboard side by side, with what answers the
+        // field — and the open shelf — stacked over or under the field itself. Anchored to an edge it stays a
         // column, because a row against the screen's corner would run off it.
         Group {
-            if anchor == .center {
+            if anchor == .center || anchor == .notch {
                 centredRow
             } else {
                 column
@@ -2325,7 +2343,7 @@ struct CornerDockSurface: View {
                 // it belongs to the field and not to one icon.
                 // The open shelf stands over the field with the other boards — never beside
                 // it, where it read as a second container next to the shell.
-                if centred {
+                if isTopDown {
                     // The bottom stack turned over: what the slots mirror — and one card
                     // around the field and its sheet, as Spotlight is one panel.
                     VStack(alignment: .center, spacing: CornerDockLayout.gap) {

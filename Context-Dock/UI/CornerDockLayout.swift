@@ -20,13 +20,14 @@ import SwiftUI
 /// left is where it sits — and centred, with the input bar under it, it reads as a dock
 /// again without being a second surface.
 enum CornerDockAnchor: String, CaseIterable, Codable {
-    case left, center, right
+    case left, center, right, notch
 
     var label: String {
         switch self {
         case .left: return "Left"
         case .center: return "Centre"
         case .right: return "Right"
+        case .notch: return "Notch"
         }
     }
 
@@ -34,7 +35,7 @@ enum CornerDockAnchor: String, CaseIterable, Codable {
     var horizontalAlignment: HorizontalAlignment {
         switch self {
         case .left: return .leading
-        case .center: return .center
+        case .center, .notch: return .center
         case .right: return .trailing
         }
     }
@@ -44,6 +45,7 @@ enum CornerDockAnchor: String, CaseIterable, Codable {
         case .left: return .bottomLeading
         case .center: return .bottom
         case .right: return .bottomTrailing
+        case .notch: return .top
         }
     }
 }
@@ -96,7 +98,7 @@ enum CornerDockLayout {
             // its own edge, and the host view hit-tests only where a card actually is, so
             // the extra width costs the app underneath nothing.
             return CGSize(width: max(panelWidth ?? 0, cardWidth + pad * 2), height: height)
-        case .center:
+        case .center, .notch:
             // Three cards abreast at least; the controller widens this to the screen so the
             // clipboard can keep its corner.
             return CGSize(
@@ -137,7 +139,7 @@ enum CornerDockLayout {
             switch anchor {
             case .right: return panel.width - pad - width
             case .left: return pad
-            case .center: return (panel.width - width) / 2
+            case .center, .notch: return (panel.width - width) / 2
             }
         }
 
@@ -173,12 +175,9 @@ enum CornerDockLayout {
         // The selection sits above the chat that will act on it, and below the clipboard.
         let selectionRect = place(selection)
 
-        // Centred, the shell reads as a dock: the ambient pills stand beside the field on
-        // the same baseline rather than stacking over it, so the row grows sideways the way
-        // the Dock does instead of climbing the screen in front of the user's work. What a
-        // question is being answered with — the list, the selection — still sits above,
-        // because that belongs to the field and not to the row.
-        if anchor == .center, let prompt {
+        // Centred or anchored at the notch, the shell reads as a dock / dynamic island: the
+        // ambient pills stand beside the field on the same baseline rather than stacking over it.
+        if (anchor == .center || anchor == .notch), let prompt {
             // The field, centred. The clipboard is not in the row — it keeps the right-hand
             // corner whatever the anchor, so a copy lands where the hand already knows to
             // look. The shelf is not either: it is an icon in the field's own row, and open

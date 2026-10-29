@@ -33,7 +33,8 @@ struct AppearanceSettingsPage: View {
                         Text(
                             """
                             Where the chat, clipboard, selection and shelf sit along the \
-                            bottom of the screen. Centred, they read as a dock.
+                            screen. Centred, they read as a dock. Notch anchors the dock directly \
+                            into your MacBook camera notch as a Dynamic Island.
                             """)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
@@ -47,8 +48,41 @@ struct AppearanceSettingsPage: View {
                         .toggleStyle(.switch)
                         Text(
                             """
-                            At rest the dock slides below the screen. Move the pointer to the \
-                            bottom edge under it to bring it back — the way the macOS Dock does.
+                            At rest the dock slides below the screen or into the notch. Move the pointer to the \
+                            edge to bring it back.
+                            """)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 10)
+                }
+
+                CardSection(title: "Dynamic Island & Live Activity", systemImage: "sparkles") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle(isOn: $settings.notchLiveActivityEnabled) {
+                            Text("Show Live Activities in Notch")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text(
+                            """
+                            Display real-time AI reasoning steps, background CLI builds, and media \
+                            playback directly in the camera notch.
+                            """)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        Divider().padding(.vertical, 6)
+
+                        Toggle(isOn: $settings.notchCompactIslandAtRest) {
+                            Text("Compact Dynamic Island at rest")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text(
+                            """
+                            Keep a minimal pill framing the camera notch when idle, expanding \
+                            downwards smoothly on hover or keyboard shortcut.
                             """)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
