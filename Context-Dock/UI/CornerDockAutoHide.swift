@@ -53,14 +53,14 @@ enum CornerDockAutoHide {
 
     static let settleBeat: Double = 0.25
 
-    /// The pointer is at the bottom edge (or top edge for notch) of the dock's screen, under or over the dock.
+    /// The pointer is at the bottom edge (or top notch edge) of the dock's screen, under or over the dock.
     /// `content` is what the shell draws, in screen coordinates at its shown position.
     static func pointerReveals(
         mouse: CGPoint, screenFrame: CGRect, content: CGRect, anchor: CornerDockAnchor = .center
     ) -> Bool {
         guard !content.isEmpty else { return false }
         if anchor == .notch {
-            return mouse.y >= screenFrame.maxY - edgeBand - 12
+            return mouse.y >= screenFrame.maxY - 38
                 && mouse.x >= content.minX - edgeSlack
                 && mouse.x <= content.maxX + edgeSlack
         }

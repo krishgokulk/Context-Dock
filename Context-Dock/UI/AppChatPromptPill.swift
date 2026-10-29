@@ -692,6 +692,12 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
+        .onTapGesture {
+            if model.phase == .dock {
+                _ = model.expandFromDock(seeding: nil)
+                CornerDockController.shared.requestComposerFocus()
+            }
+        }
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
@@ -719,12 +725,18 @@ struct AppChatPromptPill: View {
         }
     }
 
+    private var isNotch: Bool {
+        CornerDockController.shared.anchor == .notch
+    }
+
     /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
     /// this feels fast or slow.
     private var shellMorph: Animation {
-        reduceMotion
-            ? .easeOut(duration: 0.15)
-            : .smooth(duration: AppChatPromptMetrics.dockMorphDuration)
+        if reduceMotion { return .easeOut(duration: 0.15) }
+        if isNotch {
+            return .spring(response: 0.36, dampingFraction: 0.82)
+        }
+        return .smooth(duration: AppChatPromptMetrics.dockMorphDuration)
     }
 
     /// The field arrives after the shell has started widening, so it is read as the shell
@@ -732,6 +744,11 @@ struct AppChatPromptPill: View {
     /// shell narrows enough to slice it.
     private var fieldFade: Animation {
         guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        if isNotch {
+            return model.phase.showsInput
+                ? .easeOut(duration: 0.22).delay(0.08)
+                : .easeIn(duration: 0.14)
+        }
         let full = AppChatPromptMetrics.dockMorphDuration
         return model.phase.showsInput
             ? .easeOut(duration: full * 0.5).delay(full * 0.34)
@@ -743,6 +760,11 @@ struct AppChatPromptPill: View {
     /// the middle of the morph, and it is what appears to grow back into the dock.
     private var stripFade: Animation {
         guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        if isNotch {
+            return model.phase == .dock
+                ? .easeOut(duration: 0.2).delay(0.12)
+                : .easeIn(duration: 0.12)
+        }
         let full = AppChatPromptMetrics.dockMorphDuration
         return model.phase == .dock
             ? .easeOut(duration: full * 0.42).delay(full * 0.42)

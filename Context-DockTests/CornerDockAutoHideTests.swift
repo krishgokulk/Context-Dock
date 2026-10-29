@@ -74,10 +74,14 @@ struct CornerDockAutoHideTests {
                 mouse: CGPoint(x: 700, y: screen.maxY - 1), screenFrame: screen, content: notchStrip, anchor: .notch))
         #expect(
             CornerDockAutoHide.pointerReveals(
-                mouse: CGPoint(x: 700, y: screen.maxY - 10), screenFrame: screen, content: notchStrip, anchor: .notch))
+                mouse: CGPoint(x: 700, y: screen.maxY - 20), screenFrame: screen, content: notchStrip, anchor: .notch))
         #expect(
             !CornerDockAutoHide.pointerReveals(
-                mouse: CGPoint(x: 700, y: screen.maxY - 30), screenFrame: screen, content: notchStrip, anchor: .notch))
+                mouse: CGPoint(x: 700, y: screen.maxY - 50), screenFrame: screen, content: notchStrip, anchor: .notch))
+        // Bottom edge does not reveal notch dock
+        #expect(
+            !CornerDockAutoHide.pointerReveals(
+                mouse: CGPoint(x: 700, y: 0), screenFrame: screen, content: notchStrip, anchor: .notch))
     }
 
     /// Only the edge: the pointer passing low across the screen is not a request.

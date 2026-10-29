@@ -711,7 +711,7 @@ final class CornerDockController: NSObject {
         if isAutoHidden {
             if CornerDockAutoHide.pointerReveals(
                 mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
-                content: shownContentRect)
+                content: shownContentRect, anchor: anchor)
             {
                 summonFromEdge()
             }
@@ -730,7 +730,7 @@ final class CornerDockController: NSObject {
             ? lastShownContentRect : screen.frame
         guard
             CornerDockAutoHide.pointerReveals(
-                mouse: mouse, screenFrame: screen.frame, content: span)
+                mouse: mouse, screenFrame: screen.frame, content: span, anchor: anchor)
         else { return }
         summonFromEdge()
     }
@@ -2028,7 +2028,7 @@ final class CornerDockController: NSObject {
         if isAutoHidden {
             if CornerDockAutoHide.pointerReveals(
                 mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
-                content: shownContentRect)
+                content: shownContentRect, anchor: anchor)
             {
                 summonFromEdge()
             }
