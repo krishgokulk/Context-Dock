@@ -67,6 +67,23 @@ struct CornerDockAutoHideTests {
                 mouse: CGPoint(x: 700, y: 1.5), screenFrame: screen, content: strip))
     }
 
+    @Test func theTopEdgeOverTheNotchRevealsIt() {
+        let notchStrip = CGRect(x: 556, y: 920, width: 400, height: 56)
+        #expect(
+            CornerDockAutoHide.pointerReveals(
+                mouse: CGPoint(x: 700, y: screen.maxY - 1), screenFrame: screen, content: notchStrip, anchor: .notch))
+        #expect(
+            CornerDockAutoHide.pointerReveals(
+                mouse: CGPoint(x: 700, y: screen.maxY - 20), screenFrame: screen, content: notchStrip, anchor: .notch))
+        #expect(
+            !CornerDockAutoHide.pointerReveals(
+                mouse: CGPoint(x: 700, y: screen.maxY - 50), screenFrame: screen, content: notchStrip, anchor: .notch))
+        // Bottom edge does not reveal notch dock
+        #expect(
+            !CornerDockAutoHide.pointerReveals(
+                mouse: CGPoint(x: 700, y: 0), screenFrame: screen, content: notchStrip, anchor: .notch))
+    }
+
     /// Only the edge: the pointer passing low across the screen is not a request.
     @Test func aboveTheEdgeDoesNotReveal() {
         #expect(

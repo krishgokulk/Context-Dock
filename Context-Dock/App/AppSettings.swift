@@ -897,12 +897,15 @@ class AppSettings: ObservableObject {
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     /// The corner's Global field folds into the dock strip after a second untouched.
     @AppStorage("autoShrinkInputField") var autoShrinkInputField: Bool = true
-    /// Where the corner shell sits along the bottom of the screen: left, centre or right.
-    /// Centred, with the input bar under it, it reads as a dock — which is what it has
-    /// become, rather than a corner annex to one.
+    /// Where the corner shell sits along the screen: left, centre, right or notch.
+    /// Centred, with the input bar under it, it reads as a dock; anchored at the notch, it frames
+    /// the camera notch as a Dynamic Island.
     @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.right.rawValue
+    /// Dynamic Island & Live Activities in the MacBook camera notch.
+    @AppStorage("notchLiveActivityEnabled") var notchLiveActivityEnabled: Bool = true
+    @AppStorage("notchCompactIslandAtRest") var notchCompactIslandAtRest: Bool = true
     /// The macOS Dock's "Automatically hide and show": the resting strip slides below the
-    /// bottom edge, and the pointer reaching that edge under it brings it back.
+    /// bottom edge (or into the notch), and the pointer reaching that edge brings it back.
     @AppStorage("cornerDockAutoHide") var cornerDockAutoHide: Bool = false
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =

@@ -10,6 +10,14 @@
 
 ## In progress
 
+**Dynamic Notch / MacBook Pro & Air Dynamic Island Anchor (2026-10-29):**
+- Completed and owner-approved ("its prefect. push and merge.").
+- Adds `.notch` anchor to `CornerDockAnchor` framing the hardware notch on notched MacBooks and top-center menu bar on external displays.
+- Safe area notch clearance: queries `NSScreen.safeAreaInsets.top` dynamically (`ScreenNotchMetrics.currentNotchHeight`), placing all cards (Clipboard, Drop Shelf, App Chat, suggestions) safely below the camera housing.
+- Full Liquid Glass fidelity: authentic `GlassBackground` translucency, live wallpaper blur, and specular rim highlights preserved on combined result sheets (`CornerCombinedCard`) and resting pills.
+- Clean notch tap and top edge auto-hide: tap gesture on notch triggers smooth downward expansion (`.spring(response: 0.36, dampingFraction: 0.82)`); bottom-edge pointer immunity prevents false reveals.
+- Live Activities & Shape: `DynamicIslandNotchShape` and `DynamicNotchLiveActivityView` (referencing NotchNook & Pinterest AI turn tracking).
+
 **Handoff (2026-10-28, cloud session → Mac): four cost/auth follow-ups.** Two PRs merged this
 session — **#347** (pin `"model": "sonnet"` in `.claude/settings.json`; cost-discipline section in
 `00-MODEL-ROUTING.md`) and **#348** (classify expired-OAuth `claude` CLI failures as
