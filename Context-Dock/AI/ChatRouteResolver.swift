@@ -200,6 +200,24 @@ struct ChatRoute: Identifiable, Equatable {
     var asActionChoice: ActionChoice {
         ActionChoice(id: id, title: title, routeLabel: kind.routeLabel, appName: appName)
     }
+
+    /// The menu path this route clicks, split the way `asCandidate` splits it. Empty for
+    /// any other kind; a menu route with no separators is its own single-element path.
+    var menuCommandPath: [String] {
+        guard kind == .menuCommand else { return [] }
+        let path = payload.split(separator: "\u{1}").map(String.init)
+        return path.isEmpty ? [title] : path
+    }
+
+    /// True when this menu command destroys local state (Close, Quit, Delete…) or reaches
+    /// another person (Send, Reply, Forward, Share) — the exact set `AppMenuConsentStore`
+    /// already gates unattended runs by, read through the one classifier verified menus and
+    /// Computer Use share. A benign, reversible click (New Tab, Zoom, a View toggle) is false.
+    @MainActor
+    var isDestructiveMenuCommand: Bool {
+        guard kind == .menuCommand else { return false }
+        return ActionReadiness.destroysSomething(path: menuCommandPath)
+    }
 }
 
 @MainActor
@@ -573,10 +591,18 @@ enum ChatRouteResolver {
     static func executionApproval(for route: ChatRoute) -> ExecutionApproval {
         // Reads have no consequence, and adapter writes retain their own per-action consent
         // prompt. Menu control and MCP writes have no later gate, so app-level access is not
-        // enough: ask for this exact action at the point of execution.
+        // enough: ask for this exact action at the point of execution — except a menu command
+        // that neither destroys local state nor reaches another person. Granting menu control
+        // to an app is what authorises a benign, reversible click (New Tab, Zoom, a View
+        // toggle); raising an execution card for one is the over-ask that surfaced a spurious
+        // "Cancelled — nothing was executed." on "open a new tab in Safari" (#43). The
+        // destructive/outbound set is the one AppMenuConsentStore already gates unattended runs
+        // by — no new classification — so deletes, sends and anything irreversible keep the card.
         if route.isReadOnly { return .granted(.accessPolicy) }
         switch route.kind {
-        case .menuCommand, .mcpTool:
+        case .menuCommand:
+            return route.isDestructiveMenuCommand ? .ask : .granted(.accessPolicy)
+        case .mcpTool:
             return .ask
         // Never granted from here. The press itself is consented per app, and offering it
         // as pre-approved would let an access level stand in for a decision about driving

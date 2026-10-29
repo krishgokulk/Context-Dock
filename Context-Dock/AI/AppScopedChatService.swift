@@ -128,7 +128,10 @@ enum AppScopedChatService {
     /// against a different app, with the older thread's question as its purpose.
     private static var pendingRoutesByScope: [String: [String: ChatRoute]] = [:]
 
-    private static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
+    // Internal, not private: tests drive the pending-route lifecycle directly (seed, read,
+    // clear), the way the chat surfaces do — `runChosenRoute` really executes, so it cannot
+    // stand in for them offline. Mirrors `pendingRouteIDs` below, already the read seam.
+    static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
         pendingRoutesByScope[scope.storageKey] = Dictionary(
             uniqueKeysWithValues: routes.map { ($0.id, $0) })
     }
@@ -137,6 +140,14 @@ enum AppScopedChatService {
     /// from a candidate another store holds before it tells the user something is gone.
     static func pendingRouteIDs(for scope: GeneralChatScope) -> [String] {
         Array(pendingRoutesByScope[scope.storageKey]?.keys ?? [:].keys)
+    }
+
+    /// Drops this thread's pending choices. A pick consumes them and a new turn supersedes
+    /// them; left in place, a card from an earlier turn stayed tappable and re-entered the
+    /// executor as `.ask` → cancel → "Cancelled — nothing was executed." for a route the
+    /// thread had already moved past (#43).
+    static func clearPendingRoutes(scope: GeneralChatScope) {
+        pendingRoutesByScope.removeValue(forKey: scope.storageKey)
     }
 
     /// Runs a route the user picked, then has the model phrase the result. The output is
@@ -148,6 +159,9 @@ enum AppScopedChatService {
         guard let route = pendingRoutesByScope[scope.storageKey]?[choiceID] else {
             return Answer(text: "That route is no longer available.", toolChips: [])
         }
+        // The pick answers the question these choices posed. Consume them now so a second
+        // tap — in this turn or a later one — cannot run a superseded route (#43).
+        clearPendingRoutes(scope: scope)
         ChatRoutePreferenceStore.remember(
             route.kind, bundleId: route.bundleId, query: query)
         // A picked route arrives from the surface without the turn that produced it, so
@@ -1409,6 +1423,12 @@ enum AppScopedChatService {
         // never appear under this turn's answer, which is worse than showing none — a stale
         // card looks current.
         ChatResultRowCollector.shared.begin(scope: scope)
+
+        // The same for the "which should I use?" choices: a new turn supersedes a prior
+        // unanswered question, so drop its pending routes now. Any choices this turn itself
+        // raises are stored again below (`rememberPendingRoutes`); a turn that resolves
+        // without asking leaves none behind to be tapped into a later turn (#43).
+        clearPendingRoutes(scope: scope)
 
         // The registry is refreshed per turn by the dock engine's preflight, but this
         // surface assembles its own prompt and never went through that path — so a
