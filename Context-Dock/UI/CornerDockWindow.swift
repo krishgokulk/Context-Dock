@@ -2334,17 +2334,27 @@ struct CornerDockSurface: View {
         let notchR = ScreenNotchMetrics.notchRect(on: ScreenNotchMetrics.activeScreen)
         let notchH = ScreenNotchMetrics.currentNotchHeight
         let width = max(notchR.width + 36, DockShellWidth.current)
-        Color.black
-            .frame(width: width, height: max(notchH, 32) + 16)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if prompt.phase == .dock {
+        let collarHeight = max(notchH, 32) + 16
+        ZStack(alignment: .bottom) {
+            DynamicIslandNotchShape(cornerRadius: 18, earRadius: 10)
+                .fill(Color.black)
+            if prompt.phase == .dock {
+                DynamicNotchLiveActivityView(prompt: prompt) {
                     _ = prompt.expandFromDock(seeding: nil)
                     CornerDockController.shared.requestComposerFocus()
                 }
+                .frame(width: min(width - 24, 380))
             }
+        }
+        .frame(width: width, height: collarHeight)
+        .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if prompt.phase == .dock {
+                _ = prompt.expandFromDock(seeding: nil)
+                CornerDockController.shared.requestComposerFocus()
+            }
+        }
     }
 
     private var clipboardStack: some View {
