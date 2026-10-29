@@ -802,12 +802,12 @@ struct AppChatPromptPill: View {
             // Inside the centred card the card is the glass.
             if !sharesOneCard {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
-                .fill(isNotch ? Color.black.opacity(0.92) : Color.clear)
+                .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
                 .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
-                        .strokeBorder(Color.white.opacity(isNotch ? 0.12 : 0.16), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
             }

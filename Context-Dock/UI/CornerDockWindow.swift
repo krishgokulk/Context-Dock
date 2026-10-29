@@ -2311,7 +2311,7 @@ struct CornerDockSurface: View {
         // right anchor gives it, so a copy lands where the hand already knows to look.
         ZStack(alignment: rowEdge) {
             if anchor == .notch {
-                notchCollar
+                notchTapArea
             }
             centredRowContent
             HStack(alignment: rowVertical, spacing: 0) {
@@ -2330,31 +2330,18 @@ struct CornerDockSurface: View {
     }
 
     @ViewBuilder
-    private var notchCollar: some View {
-        let notchR = ScreenNotchMetrics.notchRect(on: ScreenNotchMetrics.activeScreen)
+    private var notchTapArea: some View {
         let notchH = ScreenNotchMetrics.currentNotchHeight
-        let width = max(notchR.width + 36, DockShellWidth.current)
-        let collarHeight = max(notchH, 32) + 16
-        ZStack(alignment: .bottom) {
-            DynamicIslandNotchShape(cornerRadius: 18, earRadius: 10)
-                .fill(Color.black)
-            if prompt.phase == .dock {
-                DynamicNotchLiveActivityView(prompt: prompt) {
+        Color.clear
+            .frame(width: DockShellWidth.current, height: max(notchH, 32))
+            .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if prompt.phase == .dock {
                     _ = prompt.expandFromDock(seeding: nil)
                     CornerDockController.shared.requestComposerFocus()
                 }
-                .frame(width: min(width - 24, 380))
             }
-        }
-        .frame(width: width, height: collarHeight)
-        .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if prompt.phase == .dock {
-                _ = prompt.expandFromDock(seeding: nil)
-                CornerDockController.shared.requestComposerFocus()
-            }
-        }
     }
 
     private var clipboardStack: some View {
