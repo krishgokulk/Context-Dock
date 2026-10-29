@@ -534,7 +534,13 @@ final class CornerDockController: NSObject {
     private func mirroredIfTopDown(_ rect: CGRect?) -> CGRect? {
         guard isTopDown, let rect, let height = panel?.frame.height
         else { return rect }
-        return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
+        let notchOffset: CGFloat = (anchor == .notch) ? ScreenNotchMetrics.currentNotchHeight : 0
+        return CGRect(
+            x: rect.minX,
+            y: height - rect.maxY - notchOffset,
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     private func position() {
@@ -862,6 +868,17 @@ final class CornerDockController: NSObject {
             rects.append(
                 (slots.list.map { field.union($0) } ?? field)
                     .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
+            if anchor == .notch {
+                let notchH = ScreenNotchMetrics.currentNotchHeight
+                let notchR = ScreenNotchMetrics.notchRect(on: ScreenNotchMetrics.activeScreen)
+                let collar = CGRect(
+                    x: field.midX - max(notchR.width / 2, 110),
+                    y: field.maxY,
+                    width: max(notchR.width, 220),
+                    height: max(notchH, 34) + CornerDockLayout.pad
+                )
+                rects.append(collar)
+            }
         }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
@@ -2293,6 +2310,9 @@ struct CornerDockSurface: View {
         // centred row, the clipboard on its own at the right-hand corner — the same spot the
         // right anchor gives it, so a copy lands where the hand already knows to look.
         ZStack(alignment: rowEdge) {
+            if anchor == .notch {
+                notchCollar
+            }
             centredRowContent
             HStack(alignment: rowVertical, spacing: 0) {
                 Spacer(minLength: 0)
@@ -2301,11 +2321,30 @@ struct CornerDockSurface: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: rowEdge)
         .padding(CornerDockLayout.pad)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isCardShown)
+        .padding(.top, anchor == .notch ? ScreenNotchMetrics.currentNotchHeight : 0)
+        .animation(.spring(response: 0.36, dampingFraction: 0.82), value: shelf.phase.isCardShown)
         .animation(
-            .spring(response: 0.34, dampingFraction: 0.84), value: clipboardModel.phase.isVisible)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
+            .spring(response: 0.36, dampingFraction: 0.82), value: clipboardModel.phase.isVisible)
+        .animation(.spring(response: 0.36, dampingFraction: 0.82), value: prompt.phase)
+        .animation(.spring(response: 0.36, dampingFraction: 0.82), value: chatPresentation.mode)
+    }
+
+    @ViewBuilder
+    private var notchCollar: some View {
+        let notchR = ScreenNotchMetrics.notchRect(on: ScreenNotchMetrics.activeScreen)
+        let notchH = ScreenNotchMetrics.currentNotchHeight
+        let width = max(notchR.width + 36, DockShellWidth.current)
+        Color.black
+            .frame(width: width, height: max(notchH, 32) + 16)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if prompt.phase == .dock {
+                    _ = prompt.expandFromDock(seeding: nil)
+                    CornerDockController.shared.requestComposerFocus()
+                }
+            }
     }
 
     private var clipboardStack: some View {

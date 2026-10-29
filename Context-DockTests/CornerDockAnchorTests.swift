@@ -93,6 +93,13 @@ struct CornerDockAnchorTests {
         #expect(panel.width > CornerDockLayout.panelSize(for: .right).width)
     }
 
+    @Test("Screen notch metrics provides valid resting dimensions")
+    func screenNotchMetricsGeometry() {
+        #expect(ScreenNotchMetrics.islandRestingWidth > 0)
+        #expect(ScreenNotchMetrics.islandRestingHeight > 0)
+        #expect(ScreenNotchMetrics.cornerRadius > 0)
+    }
+
     @Test("Anchored to an edge, the surfaces stack in one order")
     func anchorMovesNothingVertically() {
         // Centred is deliberately not a column — it is a row, covered above.

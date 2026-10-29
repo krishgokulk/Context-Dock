@@ -60,9 +60,9 @@ enum CornerDockAutoHide {
     ) -> Bool {
         guard !content.isEmpty else { return false }
         if anchor == .notch {
-            return mouse.y >= screenFrame.maxY - 38
-                && mouse.x >= content.minX - edgeSlack
-                && mouse.x <= content.maxX + edgeSlack
+            let inContentX = mouse.x >= content.minX - edgeSlack && mouse.x <= content.maxX + edgeSlack
+            let inNotchX = abs(mouse.x - screenFrame.midX) <= 120
+            return mouse.y >= screenFrame.maxY - 44 && (inContentX || inNotchX)
         }
         return mouse.y <= screenFrame.minY + edgeBand
             && mouse.x >= content.minX - edgeSlack

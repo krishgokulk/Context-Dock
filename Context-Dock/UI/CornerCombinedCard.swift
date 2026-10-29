@@ -29,18 +29,19 @@ struct CornerCombinedCard: ViewModifier {
     // up, and a new field selects its text, so the next key replaced the first (owner
     // 2026-10-12).
     func body(content: Content) -> some View {
+        let isNotch = CornerDockController.shared.anchor == .notch
         content
             .environment(\.sharesOneCard, active)
             .padding(active ? Self.inset : 0)
             .background {
                 RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                    .fill(Color.clear)
+                    .fill(isNotch ? Color.black.opacity(0.92) : Color.clear)
                     .background(GlassBackground(cornerRadius: Self.radius, isDark: true))
                     .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
+                            .strokeBorder(Color.white.opacity(isNotch ? 0.12 : 0.16), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.38), radius: 24, y: 12)
                     // An app opening or quitting glows the one card, as it glows the dock.
                     .modifier(AppLaunchGlow(
                         shape: RoundedRectangle(cornerRadius: Self.radius, style: .continuous)))
