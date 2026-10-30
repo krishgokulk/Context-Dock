@@ -562,6 +562,60 @@ extension DockCore {
         runOfferedChoiceFromCorner(id: choiceID, title: title)
     }
 
+    /// User approved connecting another Pet to the active Corner conversation (#339).
+    /// Promotes the conversation to Combined Chat in-place and re-runs the original request.
+    func handleAppChatPromptEnableApp(_ note: Notification) {
+        guard !AppDelegate.isHostingTests else { return }
+        guard let request = note.object as? EnableAppRequest else { return }
+        AppChatConversation.shared.consumeParticipantRequest(request)
+
+        let currentBundle = AppChatConversation.shared.scopeBundleId.isEmpty
+            ? (l2.targetApp?.bundleId ?? frontmost.bundleID)
+            : AppChatConversation.shared.scopeBundleId
+        let sourceScope = GeneralChatScope.app(bundleId: currentBundle)
+        let promoted = GeneralChatSessionStore.promoteToCombinedChat(
+            from: sourceScope,
+            connecting: request.participants,
+            currentParticipants: AppChatConversation.shared.participantSet,
+            messages: l2.chatMessages)
+        AppChatConversation.shared.participantSet = promoted.participants
+        l2.chatMessages = promoted.messages
+
+        // Clear offer card so it doesn't remain interactive
+        for idx in l2.chatMessages.indices where l2.chatMessages[idx].enableAppRequest != nil {
+            l2.chatMessages[idx].enableAppRequest = nil
+        }
+
+        let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        let turnFiles = AppChatConversation.shared.pendingTurnFiles
+        for file in turnFiles where !aiMode.attachments.contains(file) {
+            aiMode.attachments.append(file)
+        }
+        AppChatConversation.shared.pendingTurnFiles = []
+
+        handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// User declined connecting another Pet to the active Corner conversation (#339).
+    func handleAppChatPromptDeclineEnableApp(_ note: Notification) {
+        guard !AppDelegate.isHostingTests else { return }
+        guard let request = note.object as? EnableAppRequest else { return }
+        AppChatConversation.shared.pendingParticipantRequest = nil
+        AppChatConversation.shared.pendingTurnFiles = []
+        for idx in l2.chatMessages.indices where l2.chatMessages[idx].enableAppRequest != nil {
+            l2.chatMessages[idx].enableAppRequest = nil
+        }
+        let appName = AppChatConversation.shared.scopeAppName.isEmpty
+            ? (l2.chatDraftAppName.isEmpty ? frontmost.name : l2.chatDraftAppName)
+            : AppChatConversation.shared.scopeAppName
+        l2.chatMessages.append(
+            AIChatMessage(
+                role: .assistant,
+                content: "Kept in \(appName). I won't connect \(request.name)."))
+    }
+
     /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
     func handleAppChatPromptCancel() {
         guard !AppDelegate.isHostingTests else { return }
@@ -614,6 +668,7 @@ extension DockCore {
         l2.chatArmed = true
         l2.chatDismissed = false
         syncL2DockSession()
+        AppChatConversation.shared.syncScope(bundleId: bundleId, appName: appName)
         // Opening the dock is what used to start context tracking for the target app, so a
         // corner-only session had no live Finder selection to hand its turn: `showContextInDock`
         // was false, and `handleSelectionChange` returns on that guard. Retargeting turns it

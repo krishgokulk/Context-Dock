@@ -3113,6 +3113,44 @@ extension DockCore {
         l2.chatMessages.append(userMessage)
         l2.isLoading = true
 
+        // App boundary / participant consent check (#339).
+        // Before running models or tool loops, verify whether the request names an app
+        // outside current connected Pets. If so, offer to connect it with preview chips (+ Messages).
+        let effectiveScope: GeneralChatScope = {
+            if dockScope.isGlobalScope || isGlobalContextActive {
+                return .general
+            }
+            let bundleId = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            return .app(bundleId: bundleId)
+        }()
+        let attachedNames = effectiveScope.isGeneralChat
+            ? chatFocusApps.map(\.name)
+            : AppChatConversation.shared.extraConnectedAppNames
+        if let participantRequest = AppScopedChatService.appNeedingAccess(
+            query: query,
+            scope: effectiveScope,
+            attachedAppNames: attachedNames)
+        {
+            let currentAppName = scopedAppName.isEmpty
+                ? (frontmostName ?? frontmost.name) : scopedAppName
+            AppChatConversation.shared.pendingParticipantRequest = participantRequest
+            AppChatConversation.shared.pendingTurnFiles = displayedTurnFiles
+            aiMode.pendingEnableApp = participantRequest
+            let promptText = effectiveScope.isGeneralChat
+                ? "**\(participantRequest.name)** isn't in this chat's scope yet. General Chat only reads the apps you choose, so you stay in control — enable it below to let me answer about \(participantRequest.name)."
+                : "That needs **\(participantRequest.name)**, and this chat is scoped to \(currentAppName). DoraX won't reach into another app without asking — connect \(participantRequest.name) below and I'll use its own tools rather than driving its menus."
+            let assistantMessage = AIChatMessage(
+                role: .assistant,
+                content: promptText,
+                enableAppRequest: participantRequest)
+            l2.chatMessages.append(assistantMessage)
+            l2.isLoading = false
+            finishL2AIRequest(l2RequestID)
+            return
+        }
+
+        let grantedApps = AppChatConversation.shared.grantedAppsMap
+
         // Use the user's selected AI provider in L2 context dock (respects Settings → AI Provider).
         let provider: AIProvider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? AppSettings.shared.getAPIKey(for: provider) : ""
@@ -3708,6 +3746,7 @@ extension DockCore {
                         provider: provider,
                         apiKey: apiKey,
                         history: chatHistory,
+                        grantedApps: grantedApps,
                         imageAttachments: scopedImageAttachments,
                         promptSections: activeContextAssembly.sections,
                         onStream: { event in

@@ -51,6 +51,14 @@ final class AppChatConversation: ObservableObject {
     /// The app the live conversation belongs to, for a surface that did not start it.
     @Published var scopeBundleId: String = ""
     @Published var scopeAppName: String = ""
+    /// Connected participants in this Corner conversation (#339). Starts as the single App Pet and
+    /// promotes in-place to Combined Chat when the user approves connecting another Pet.
+    @Published var participantSet: ParticipantSet = .empty
+    /// Pending participant connection offer (`+ Messages`) for the active Corner conversation (#339).
+    @Published var pendingParticipantRequest: EnableAppRequest? = nil
+    /// Files attached to the turn that triggered `pendingParticipantRequest`, preserved so clicking
+    /// `Connect <App> to this chat` re-runs the request with the same files attached (#339).
+    var pendingTurnFiles: [URL] = []
     /// Rows for the turn still running — one per tool call, recorded where it executed.
     @Published private(set) var liveActivity: [ActivityStep] = []
     /// The finished record, per answer. Keyed by message rather than stored on it: the
@@ -62,6 +70,105 @@ final class AppChatConversation: ObservableObject {
     private var messageCountAtStart = 0
 
     init() {}
+
+    func effectiveParticipants(fallbackAppName: String? = nil) -> ParticipantSet {
+        if !participantSet.isEmpty {
+            return participantSet
+        }
+        let name = (fallbackAppName ?? scopeAppName).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let petID = AppPetID(dockBundleID: scopeBundleId) {
+            return ParticipantSet([
+                ConversationParticipant(
+                    petID: petID,
+                    displayName: name.isEmpty ? petID.dockBundleID : name)
+            ])
+        }
+        return .empty
+    }
+
+    var conversationKind: ConversationKind {
+        let effective = effectiveParticipants()
+        if effective.count >= 2 {
+            return .combined
+        }
+        if let first = effective.first {
+            return .appPet(first.petID)
+        }
+        return .general
+    }
+
+    func headerIdentity(fallbackAppName: String? = nil) -> ConversationHeaderIdentity {
+        let effective = effectiveParticipants(fallbackAppName: fallbackAppName)
+        let preview =
+            pendingParticipantRequest
+            ?? messages.last(where: { $0.enableAppRequest != nil })?.enableAppRequest
+        return ConversationHeaderIdentity.make(
+            kind: conversationKind,
+            participants: effective,
+            fallbackAppName: fallbackAppName ?? scopeAppName,
+            previewChips: preview?.previewChips ?? [])
+    }
+
+    /// Extra connected app names beyond the primary `scopeAppName` (#339).
+    var extraConnectedAppNames: [String] {
+        let primary = scopeAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return effectiveParticipants().displayNames.filter {
+            $0.caseInsensitiveCompare(primary) != .orderedSame
+        }
+    }
+
+    /// Granted app dictionary (`lowercased name/bundleID -> bundleID`) for `ScopedTurnRunner` (#339).
+    var grantedAppsMap: [String: String] {
+        var map: [String: String] = [:]
+        for participant in effectiveParticipants() {
+            let bundleID = participant.petID.dockBundleID
+            if !bundleID.isEmpty {
+                map[participant.displayName.lowercased()] = bundleID
+                map[bundleID.lowercased()] = bundleID
+            }
+        }
+        return map
+    }
+
+    /// Synchronizes the Corner conversation's participant set when targeting `bundleId`.
+    /// Preserves a promoted Combined Chat when `bundleId` is already one of its connected Pets.
+    func syncScope(bundleId: String, appName: String) {
+        let trimmedBundle = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBundle.isEmpty else { return }
+
+        if let petID = AppPetID(dockBundleID: trimmedBundle),
+            participantSet.count >= 2,
+            participantSet.contains(petID)
+        {
+            scopeBundleId = trimmedBundle
+            if !trimmedName.isEmpty { scopeAppName = trimmedName }
+            return
+        }
+
+        let scopeChanged = scopeBundleId.caseInsensitiveCompare(trimmedBundle) != .orderedSame
+        scopeBundleId = trimmedBundle
+        if !trimmedName.isEmpty { scopeAppName = trimmedName }
+        if scopeChanged || participantSet.isEmpty {
+            let scope = GeneralChatScope(dockBundleId: trimmedBundle)
+            let loaded = GeneralChatSessionStore.loadParticipants(
+                scope: scope, fallbackTitle: trimmedName.isEmpty ? nil : trimmedName)
+            participantSet = loaded
+            if scopeChanged {
+                pendingParticipantRequest = nil
+                pendingTurnFiles = []
+            }
+        }
+    }
+
+    func consumeParticipantRequest(_ request: EnableAppRequest) {
+        if pendingParticipantRequest == request {
+            pendingParticipantRequest = nil
+        }
+        for index in messages.indices where messages[index].enableAppRequest == request {
+            messages[index].enableAppRequest = nil
+        }
+    }
 
     /// Starts recording a dock turn. The dock's many entry points run in tasks nothing
     /// binds, so its recorder is the fallback every unbound tool call reports to.
@@ -242,6 +349,33 @@ struct EnableAppRequest: Equatable {
         let names = allApps.map(\.name)
         guard names.count > 1 else { return names.first ?? "" }
         return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
+
+    /// Ordered, deduplicated `ConversationParticipant`s represented by this request (#339).
+    var participants: [ConversationParticipant] {
+        let items = allApps.compactMap {
+            ConversationParticipant(bundleID: $0.bundleId, displayName: $0.name)
+        }
+        return ParticipantSet(items).participants
+    }
+
+    /// Preview chip labels (`+ Messages`, `+ Notes`) shown before another Pet's context or
+    /// capabilities enter the thread (#339).
+    var previewChips: [String] {
+        participants.map { "+ \($0.displayName)" }
+    }
+
+    var previewBadgeText: String {
+        previewChips.joined(separator: " ")
+    }
+
+    func actionButtonTitle(for kind: ConversationKind) -> String {
+        switch kind {
+        case .general:
+            return "Use \(appsSentence) for this turn"
+        case .appPet, .combined:
+            return "Connect \(appsSentence) to this chat"
+        }
     }
 }
 

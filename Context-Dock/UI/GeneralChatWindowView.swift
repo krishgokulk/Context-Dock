@@ -802,8 +802,10 @@ struct GeneralChatWindowView: View {
                             }
                             AIChatMessageView(
                                 message: message,
+                                conversationKind: model.conversationKind,
                                 onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
+                                onDeclineEnableApp: { model.declineEnableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: liveSteps(for: message),
                                 liveActivity: liveSteps(for: message).isEmpty

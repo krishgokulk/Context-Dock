@@ -1436,4 +1436,8 @@ extension Notification.Name {
     static let appChatPromptCancel = Notification.Name("appChatPromptCancel")
     /// The corner picked one of the answer's offered routes; the dock runs it.
     static let appChatPromptPickAction = Notification.Name("appChatPromptPickAction")
+    /// The corner approved connecting another Pet to the active conversation (#339).
+    static let appChatPromptEnableApp = Notification.Name("appChatPromptEnableApp")
+    /// The corner declined connecting another Pet to the active conversation (#339).
+    static let appChatPromptDeclineEnableApp = Notification.Name("appChatPromptDeclineEnableApp")
 }
