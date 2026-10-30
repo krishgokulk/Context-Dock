@@ -260,7 +260,9 @@ struct CornerGeneralChatView: View {
     /// twice — as a chip down in the composer and nowhere the eye starts.
     private var header: some View {
         HStack(spacing: 8) {
-            let members = membershipAppNames
+            let identity = model.headerIdentity(
+                providerShortName: AppSettings.shared.selectedAIProvider.shortName)
+            let members = identity.participantNames
             if !members.isEmpty {
                 // Every member gets its icon: a combined chat is one conversation with two
                 // apps in it, and which two is the first thing worth knowing about it.
@@ -282,21 +284,31 @@ struct CornerGeneralChatView: View {
                         ? "This chat is scoped to \(members[0])"
                         : "This chat is with \(members.joined(separator: " + "))")
 
-                Text(headerTitle(for: members))
+                Text(identity.primaryTitle)
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
                 AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 18)
-                Text(AppSettings.shared.selectedAIProvider.shortName)
+                Text(identity.primaryTitle)
                     .font(.system(size: 14, weight: .semibold))
+                if let subtitle = identity.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
 
-            Text("General Chat")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
+            ForEach(identity.previewChips, id: \.self) { chip in
+                Text(chip)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.14), in: Capsule())
+            }
 
             Spacer(minLength: 6)
 
@@ -443,6 +455,7 @@ struct CornerGeneralChatView: View {
                                 message: message,
                                 onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
+                                onDeclineEnableApp: { model.declineEnableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: message.id == model.messages.last?.id
                                     ? model.activeProgress : [],

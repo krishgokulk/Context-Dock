@@ -160,6 +160,17 @@ enum GeneralChatSessionStore {
     static func remove(scope: GeneralChatScope) {
         writeIndex(index().filter { $0.scope != scope })
         UserDefaults.standard.removeObject(forKey: attachedAppsKey(scope))
+        UserDefaults.standard.removeObject(forKey: participantsKey(scope))
+    }
+
+    /// Removes the session entry and deletes its stored transcript from both `AppPanelChatStore`
+    /// and `UserDefaults` (#339).
+    static func purge(scope: GeneralChatScope) {
+        if let panelKey = dockPanelKey(scope) {
+            AppPanelChatStore.shared.clear(for: panelKey)
+        }
+        UserDefaults.standard.removeObject(forKey: conversationKey(scope))
+        remove(scope: scope)
     }
 
     // MARK: - Conversations
@@ -306,6 +317,156 @@ enum GeneralChatSessionStore {
         } else {
             UserDefaults.standard.set(names, forKey: attachedAppsKey(scope))
         }
+    }
+
+    // MARK: - Participants & Conversation Promotion (#339)
+
+    private static func participantsKey(_ scope: GeneralChatScope) -> String {
+        "dorax.generalAI.session.\(scope.storageKey).participants.v1"
+    }
+
+    static func saveParticipants(_ participants: ParticipantSet, scope: GeneralChatScope) {
+        if participants.isEmpty {
+            UserDefaults.standard.removeObject(forKey: participantsKey(scope))
+        } else if let data = try? JSONEncoder().encode(participants) {
+            UserDefaults.standard.set(data, forKey: participantsKey(scope))
+        }
+    }
+
+    /// Loads the first-class `ParticipantSet` for `scope`.
+    ///
+    /// - General Chat (`.general` and non-workspace `.thread`) always has an empty `ParticipantSet`
+    ///   (temporary per-turn apps live in `TurnScope`, never in `ParticipantSet`).
+    /// - Single-Pet scopes (`.app`, `.cli`, `.folder`) default to their own Pet when no promoted
+    ///   set is stored.
+    /// - Combined Chat scopes (`isWorkspace`) decode their persisted `ParticipantSet` or migrate
+    ///   from `loadAttachedApps`.
+    @MainActor
+    static func loadParticipants(
+        scope: GeneralChatScope, fallbackTitle: String? = nil
+    ) -> ParticipantSet {
+        if scope.isGeneralChat, !scope.isWorkspace {
+            return .empty
+        }
+        if let data = UserDefaults.standard.data(forKey: participantsKey(scope)),
+            let decoded = try? JSONDecoder().decode(ParticipantSet.self, from: data),
+            !decoded.isEmpty
+        {
+            return decoded
+        }
+
+        let attachedNames = loadAttachedApps(scope: scope)
+        var items: [ConversationParticipant] = []
+
+        if let petID = scope.petID {
+            let name =
+                fallbackTitle
+                ?? index().first(where: { $0.scope == scope })?.title
+                ?? displayName(for: petID)
+            items.append(ConversationParticipant(petID: petID, displayName: name))
+        } else if scope.folderURL != nil {
+            items.append(
+                ConversationParticipant(
+                    petID: .app(bundleID: ChatAppDirectory.finderBundleID),
+                    displayName: "Finder"))
+        }
+
+        for name in attachedNames {
+            let bundleId =
+                GeneralChatWindowModel.bundleId(forAppNamed: name)
+                ?? name.lowercased()
+            items.append(
+                ConversationParticipant(petID: .app(bundleID: bundleId), displayName: name))
+        }
+        return ParticipantSet(items)
+    }
+
+    @MainActor
+    private static func displayName(for petID: AppPetID) -> String {
+        switch petID.normalized {
+        case .cli(let command):
+            return command
+        case .app(let bundleID):
+            if let running = NSRunningApplication.runningApplications(
+                withBundleIdentifier: bundleID
+            ).first?.localizedName {
+                return running
+            }
+            if let adapter = AppAdapterManager.shared.adapter(for: bundleID) {
+                return adapter.appName
+            }
+            if let cached = InstalledApplicationsCatalog.cachedInstalledApps().first(where: {
+                $0.bundleId.caseInsensitiveCompare(bundleID) == .orderedSame
+            }) {
+                return cached.name
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                return url.deletingPathExtension().lastPathComponent
+            }
+            return bundleID
+        }
+    }
+
+    /// Persistent `ConversationKind` for `scope`.
+    @MainActor
+    static func conversationKind(
+        for scope: GeneralChatScope, participants: ParticipantSet? = nil
+    ) -> ConversationKind {
+        if scope.isGeneralChat, !scope.isWorkspace {
+            return .general
+        }
+        let resolved = participants ?? loadParticipants(scope: scope)
+        if resolved.count >= 2 || scope.isWorkspace {
+            return .combined
+        }
+        if let petID = scope.petID {
+            return .appPet(petID)
+        }
+        if scope.folderURL != nil {
+            return .appPet(.app(bundleID: ChatAppDirectory.finderBundleID))
+        }
+        return resolved.conversationKind
+    }
+
+    /// Atomically promotes a conversation from `sourceScope` to Combined Chat by connecting
+    /// `newParticipants` to `currentParticipants` and moving the existing transcript in-place
+    /// without leaving a duplicate copy behind (#339).
+    @MainActor
+    static func promoteToCombinedChat(
+        from sourceScope: GeneralChatScope,
+        connecting newParticipants: [ConversationParticipant],
+        currentParticipants: ParticipantSet,
+        messages: [AIChatMessage]
+    ) -> (scope: GeneralChatScope, participants: ParticipantSet, title: String, messages: [AIChatMessage]) {
+        let baseParticipants =
+            currentParticipants.isEmpty
+            ? loadParticipants(scope: sourceScope)
+            : currentParticipants
+        let promoted = baseParticipants.adding(newParticipants)
+        let targetScope = promoted.combinedScope
+        let title = promoted.headerTitle
+
+        let existingTarget = targetScope == sourceScope ? [] : load(scope: targetScope)
+        var seen = Set(existingTarget.map(fingerprint))
+        var merged = existingTarget
+        for message in messages where seen.insert(fingerprint(message)).inserted {
+            merged.append(message)
+        }
+        merged.sort { $0.timestamp < $1.timestamp }
+
+        save(merged, scope: targetScope, title: title)
+        saveParticipants(promoted, scope: targetScope)
+        saveAttachedApps(promoted.displayNames, scope: targetScope)
+
+        if sourceScope != targetScope {
+            if let panelKey = dockPanelKey(sourceScope) {
+                AppPanelChatStore.shared.clear(for: panelKey)
+            }
+            UserDefaults.standard.removeObject(forKey: conversationKey(sourceScope))
+            remove(scope: sourceScope)
+        }
+
+        return (scope: targetScope, participants: promoted, title: title, messages: merged)
     }
 
     // MARK: - Presentation

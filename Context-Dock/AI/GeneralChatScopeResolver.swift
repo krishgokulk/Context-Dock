@@ -164,4 +164,66 @@ enum GeneralChatScopeResolver {
         }
         return words
     }
+
+    // MARK: - Stage 2: TurnScope & Minimum Additional Pets (#339, #57)
+
+    /// Resolves temporary per-turn execution scope (`TurnScope`) for a General Chat request without
+    /// mutating `ConversationKind` or `ParticipantSet`.
+    static func resolveTurnScope(
+        request: String,
+        conversationKind: ConversationKind,
+        explicitTurnParticipants: [ConversationParticipant] = [],
+        inventory: [Candidate]
+    ) -> TurnScope {
+        guard conversationKind == .general else {
+            return TurnScope(borrowedParticipants: explicitTurnParticipants)
+        }
+        if !explicitTurnParticipants.isEmpty {
+            return TurnScope(borrowedParticipants: explicitTurnParticipants)
+        }
+        switch resolve(request: request, inventory: inventory) {
+        case .resolved(let bundleIds):
+            let byBundle = Dictionary(
+                inventory.map { ($0.bundleId.lowercased(), $0.name) },
+                uniquingKeysWith: { first, _ in first })
+            let borrowed = bundleIds.compactMap { bundleId -> ConversationParticipant? in
+                let name = byBundle[bundleId.lowercased()] ?? bundleId
+                return ConversationParticipant(bundleID: bundleId, displayName: name)
+            }
+            return TurnScope(borrowedParticipants: borrowed)
+        case .ambiguous(let candidates):
+            return TurnScope(borrowedParticipants: [], ambiguousAppNames: candidates)
+        case .unresolved:
+            return .empty
+        }
+    }
+
+    /// Computes the ordered, deduplicated minimum additional Pet(s) required by a request that are
+    /// not already part of `currentParticipants`.
+    static func minimumAdditionalPets(
+        request: String,
+        currentParticipants: ParticipantSet,
+        candidateApps: [(name: String, bundleId: String)] = [],
+        inventory: [Candidate] = []
+    ) -> [ConversationParticipant] {
+        var proposed: [ConversationParticipant] = candidateApps.compactMap {
+            ConversationParticipant(bundleID: $0.bundleId, displayName: $0.name)
+        }
+        if proposed.isEmpty, !inventory.isEmpty,
+            case .resolved(let bundleIds) = resolve(request: request, inventory: inventory)
+        {
+            let byBundle = Dictionary(
+                inventory.map { ($0.bundleId.lowercased(), $0.name) },
+                uniquingKeysWith: { first, _ in first })
+            proposed = bundleIds.compactMap { bundleId in
+                let name = byBundle[bundleId.lowercased()] ?? bundleId
+                return ConversationParticipant(bundleID: bundleId, displayName: name)
+            }
+        }
+        let filtered = proposed.filter { candidate in
+            !currentParticipants.contains(candidate.petID)
+                && !currentParticipants.contains(appNamed: candidate.displayName)
+        }
+        return ParticipantSet(filtered).participants
+    }
 }

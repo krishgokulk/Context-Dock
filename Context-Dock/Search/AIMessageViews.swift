@@ -680,6 +680,8 @@ struct AIChatMessageView: View {
     var onReplaceText: (() -> Void)? = nil
     /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
     var onEnableApp: ((EnableAppRequest) -> Void)? = nil
+    /// Declines connecting the proposed Pet(s), keeping the thread in its current scope (#339).
+    var onDeclineEnableApp: ((EnableAppRequest) -> Void)? = nil
     /// Show a file in the chat window's Preview panel. Nil on surfaces that already have
     /// one — the window does not need a button that opens the window.
     var onPreviewFile: ((URL) -> Void)? = nil
@@ -1324,35 +1326,60 @@ struct AIChatMessageView: View {
     @ViewBuilder
     private var enableAppButton: some View {
         if let req = message.enableAppRequest {
-            Button {
-                onEnableApp?(req)
-            } label: {
-                HStack(spacing: 6) {
-                    if let icon = NSWorkspace.shared.urlForApplication(
-                        withBundleIdentifier: req.bundleId).map({
-                            NSWorkspace.shared.icon(forFile: $0.path)
-                        })
-                    {
-                        Image(nsImage: icon)
-                            .resizable().aspectRatio(contentMode: .fit)
-                            .frame(width: 15, height: 15)
-                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    } else {
-                        Image(systemName: "plus.app")
-                    }
-                    // Names every app the tap will enable. A button that says "Notes"
-                    // and quietly also enables Safari is a scope change the user did not
-                    // agree to; one that says "Notes and Safari" is the offer they answered.
-                    Text("Enable \(req.appsSentence) for this chat").fontWeight(.semibold)
+            HStack(spacing: 8) {
+                ForEach(req.previewChips, id: \.self) { chip in
+                    Text(chip)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(providerColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(providerColor.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+
+                Button {
+                    onEnableApp?(req)
+                } label: {
+                    HStack(spacing: 6) {
+                        if let icon = NSWorkspace.shared.urlForApplication(
+                            withBundleIdentifier: req.bundleId).map({
+                                NSWorkspace.shared.icon(forFile: $0.path)
+                            })
+                        {
+                            Image(nsImage: icon)
+                                .resizable().aspectRatio(contentMode: .fit)
+                                .frame(width: 15, height: 15)
+                                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        } else {
+                            Image(systemName: "plus.app")
+                        }
+                        // Names every app the tap will enable. A button that says "Notes"
+                        // and quietly also enables Safari is a scope change the user did not
+                        // agree to; one that says "Notes and Safari" is the offer they answered.
+                        Text("Enable \(req.appsSentence) for this chat").fontWeight(.semibold)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(providerColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(providerColor.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+                }
+                .buttonStyle(.plain)
+
+                if let onDeclineEnableApp {
+                    Button {
+                        onDeclineEnableApp(req)
+                    } label: {
+                        Text("Not now")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.secondary.opacity(0.10), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .buttonStyle(.plain)
         }
     }
 

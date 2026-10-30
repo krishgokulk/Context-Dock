@@ -53,6 +53,12 @@ struct ChatPlanStep: Identifiable, Equatable {
         case .menuCommand, .adapterAction, .skill, .computerUse: return false
         }
     }
+
+    /// True when executing this step requires consequential write/send/delete approval at execution
+    /// time, separate from participant connection consent (#339).
+    var requiresActionApproval: Bool {
+        ChatRouteResolver.requiresActionApproval(for: route)
+    }
 }
 
 struct ChatPlan: Equatable {
@@ -72,6 +78,10 @@ struct ChatPlanStepResult: Identifiable, Equatable {
     let output: String
     /// What changed on the machine afterwards, for steps that change things.
     let verification: String?
+
+    var requiresActionApproval: Bool {
+        step.requiresActionApproval
+    }
 }
 
 @MainActor
@@ -194,6 +204,8 @@ enum ChatPlanRunner {
     ///   step while it is thinking". The steps were always there; nothing published them.
     static func run(
         _ plan: ChatPlan, query: String, authorizedBundleIds: Set<String>? = nil,
+        conversationScope: GeneralChatScope? = nil,
+        routeRunner: ((ChatRoute, String) async -> (success: Bool, output: String, wasCancelled: Bool))? = nil,
         onStep: ((String) -> Void)? = nil
     ) async -> [ChatPlanStepResult] {
         var completed: [Int: ChatPlanStepResult] = [:]
@@ -230,7 +242,9 @@ enum ChatPlanRunner {
                     (index,
                      await runStep(
                         at: index, in: plan, query: query, completed: completed,
-                        authorizedBundleIds: authorizedBundleIds)))
+                        authorizedBundleIds: authorizedBundleIds,
+                        conversationScope: conversationScope,
+                        routeRunner: routeRunner)))
             } else {
                 waveResults = await withTaskGroup(
                     of: (Int, ChatPlanStepResult).self
@@ -242,7 +256,9 @@ enum ChatPlanRunner {
                             (index,
                              await runStep(
                                 at: index, in: plan, query: query, completed: snapshot,
-                                authorizedBundleIds: authorizedBundleIds))
+                                authorizedBundleIds: authorizedBundleIds,
+                                conversationScope: conversationScope,
+                                routeRunner: routeRunner))
                         }
                     }
                     var collected: [(index: Int, result: ChatPlanStepResult)] = []
@@ -304,7 +320,9 @@ enum ChatPlanRunner {
     /// may be called done.
     private static func runStep(
         at index: Int, in plan: ChatPlan, query: String,
-        completed: [Int: ChatPlanStepResult], authorizedBundleIds: Set<String>?
+        completed: [Int: ChatPlanStepResult], authorizedBundleIds: Set<String>?,
+        conversationScope: GeneralChatScope? = nil,
+        routeRunner: ((ChatRoute, String) async -> (success: Bool, output: String, wasCancelled: Bool))? = nil
     ) async -> ChatPlanStepResult {
         let step = plan.steps[index]
 
@@ -324,15 +342,16 @@ enum ChatPlanRunner {
                 verification: nil)
         }
 
-        let scope = GeneralChatScope.app(bundleId: step.route.bundleId)
+        let stepScope = GeneralChatScope.app(bundleId: step.route.bundleId)
+        let logScope = conversationScope ?? stepScope
         log.notice(
             "step \(index + 1, privacy: .public)/\(plan.steps.count, privacy: .public): \(step.route.title, privacy: .public)")
 
-        let before = ContextResolver.resolve(scope: scope, appName: step.route.appName)
+        let before = ContextResolver.resolve(scope: stepScope, appName: step.route.appName)
         let rowID = ChatConsoleLog.shared.begin(
             .route,
             title: "step \(index + 1)/\(plan.steps.count) · \(step.route.title)",
-            scope: scope)
+            scope: logScope)
 
         // What this step was told, rather than everything that happened. "Email it" needs
         // the search that found "it"; handing it the unrelated branch of the plan as well
@@ -344,13 +363,20 @@ enum ChatPlanRunner {
             .joined(separator: "\n")
         let stepQuery = carried.isEmpty ? query : "\(query)\n\nAlready done:\n\(carried)"
 
-        let outcome = await ChatRouteResolver.run(step.route, query: stepQuery)
+        let outcome: (success: Bool, output: String, wasCancelled: Bool)
+        if let routeRunner {
+            outcome = await routeRunner(step.route, stepQuery)
+        } else {
+            outcome = await ChatRouteResolver.run(step.route, query: stepQuery)
+        }
 
         var verification: String?
         var succeeded = outcome.success
         if outcome.success, !step.route.isReadOnly {
-            try? await Task.sleep(nanoseconds: 400_000_000)
-            let after = ContextResolver.resolve(scope: scope, appName: step.route.appName)
+            if routeRunner == nil {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+            let after = ContextResolver.resolve(scope: stepScope, appName: step.route.appName)
             let changes = after.changes(since: before)
             verification = changes.isEmpty
                 ? "No observable change." : changes.joined(separator: "\n")
@@ -373,7 +399,7 @@ enum ChatPlanRunner {
                 .joined(separator: "\n")
                 .ifEmpty("(no output)"),
             success: succeeded,
-            scope: scope)
+            scope: logScope)
 
         if !succeeded {
             log.notice("plan stopped at step \(index + 1, privacy: .public)")
@@ -441,6 +467,29 @@ enum ChatPlanRunner {
             lines.append("Stopped there. Not attempted: " + remaining.joined(separator: ", "))
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// One ordered machine-work receipt stream across all steps of a plan (#339).
+    static func actionReceipts(from results: [ChatPlanStepResult]) -> [DoraXActionReceipt] {
+        var receipts: [DoraXActionReceipt] = []
+        for result in results {
+            let route = result.step.route
+            receipts.append(
+                DoraXActionReceipt(
+                    command: "route(\(route.kind.rawValue), \(route.appName): \(route.title))",
+                    output: result.output,
+                    success: result.success,
+                    isVerification: false))
+            if let verification = result.verification, !verification.isEmpty {
+                receipts.append(
+                    DoraXActionReceipt(
+                        command: "verify_app_state(\(route.appName))",
+                        output: verification,
+                        success: result.success && verification != "No observable change.",
+                        isVerification: true))
+            }
+        }
+        return receipts
     }
 }
 

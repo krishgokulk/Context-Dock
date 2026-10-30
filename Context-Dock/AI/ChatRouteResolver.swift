@@ -614,6 +614,27 @@ enum ChatRouteResolver {
         }
     }
 
+    /// Whether running `route` requires consequential write/send/delete approval at execution time,
+    /// even when its app is already a connected participant in the conversation (#339).
+    ///
+    /// Connecting a Pet is scope (`ParticipantSet` / `authorizedBundleIds`), never permission to
+    /// write, send, or delete. Read-only routes run unattended once connected; consequential routes
+    /// still require their own per-action approval (either via `executionApproval == .ask` or via
+    /// the adapter/CLI executor's per-action consent prompt).
+    static func requiresActionApproval(for route: ChatRoute) -> Bool {
+        if route.isReadOnly { return false }
+        switch route.kind {
+        case .menuCommand:
+            return route.isDestructiveMenuCommand
+        case .mcpTool, .computerUse:
+            return true
+        case .adapterAction, .cli:
+            return !GeneralAIActionExecutor.suppressesAdapterPrompt(executionApproval(for: route))
+        case .skill, .model:
+            return false
+        }
+    }
+
     /// The one route that plainly wins, when the ranking names a clear primary.
     ///
     /// Routes arrive deterministically ordered (`kind.rank`, then read-over-write, then

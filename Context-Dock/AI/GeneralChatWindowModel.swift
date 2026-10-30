@@ -64,8 +64,39 @@ final class GeneralChatWindowModel: ObservableObject {
     /// shares. Combined chat is unchanged — it is what attachedAppNames does *within* a
     /// session, so a thread can still span Reminders and Safari.
     @Published private(set) var activeScope: GeneralChatScope = .general
+    /// Persistent participant set for the active conversation (#339).
+    /// Empty for General Chat, 1 Pet for an App Pet thread, 2+ Pets for Combined Chat.
+    @Published private(set) var participantSet: ParticipantSet = .empty
+    /// Temporary per-turn execution scope for General Chat (#339). Expires when the turn finishes
+    /// and never converts General Chat into an App Pet thread or loads Pet memory.
+    @Published private(set) var activeTurnScope: TurnScope = .empty
+    /// Pending participant connection request previewed before another Pet enters the thread (#339).
+    @Published private(set) var pendingParticipantRequest: EnableAppRequest?
     /// Sidebar contents, most recently used first.
     @Published private(set) var sessions: [GeneralChatSession] = GeneralChatSessionStore.index()
+
+    /// Persistent identity of the active conversation, separate from per-turn `activeTurnScope`.
+    var conversationKind: ConversationKind {
+        GeneralChatSessionStore.conversationKind(for: activeScope, participants: participantSet)
+    }
+
+    /// Canonical header title for the active conversation (never a hybrid `"Mail General Chat"`).
+    var conversationHeaderTitle: String {
+        conversationKind.headerTitle(
+            participants: participantSet, fallbackAppName: activeScopeAppName)
+    }
+
+    func headerIdentity(providerShortName: String? = nil) -> ConversationHeaderIdentity {
+        let preview =
+            pendingParticipantRequest
+            ?? messages.last(where: { $0.enableAppRequest != nil })?.enableAppRequest
+        return ConversationHeaderIdentity.make(
+            kind: conversationKind,
+            participants: participantSet,
+            fallbackAppName: activeScopeAppName,
+            providerShortName: providerShortName,
+            previewChips: preview?.previewChips ?? [])
+    }
 
     /// In-flight answer per thread, so one thread's send is never cancelled by moving to
     /// another.
@@ -103,6 +134,10 @@ final class GeneralChatWindowModel: ObservableObject {
         // Reloading is only unsafe for a thread mid-answer; every other thread is on disk.
         messages = GeneralChatSessionStore.load(scope: activeScope)
         attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: activeScope)
+        participantSet = GeneralChatSessionStore.loadParticipants(
+            scope: activeScope, fallbackTitle: activeScopeAppName)
+        pendingParticipantRequest =
+            messages.last(where: { $0.enableAppRequest != nil })?.enableAppRequest
         sessions = GeneralChatSessionStore.index()
     }
 
@@ -127,6 +162,8 @@ final class GeneralChatWindowModel: ObservableObject {
     func openSession(_ scope: GeneralChatScope, title: String, seed: [AIChatMessage] = []) {
         guard scope != activeScope else {
             adoptSeedIfEmpty(seed, scope: scope, title: title)
+            participantSet = GeneralChatSessionStore.loadParticipants(
+                scope: scope, fallbackTitle: title)
             sessions = GeneralChatSessionStore.index()
             return
         }
@@ -135,6 +172,7 @@ final class GeneralChatWindowModel: ObservableObject {
         // that thread is still the visible one.
         if !isSending { persist() }
         activeScope = scope
+        activeTurnScope = .empty
         messages = GeneralChatSessionStore.load(scope: scope)
         input = ""
         attachments = []
@@ -144,7 +182,24 @@ final class GeneralChatWindowModel: ObservableObject {
         adoptSeedIfEmpty(seed, scope: scope, title: title)
         GeneralChatSessionStore.upsert(
             scope: scope, title: title, messageCount: messages.count)
+        participantSet = GeneralChatSessionStore.loadParticipants(
+            scope: scope, fallbackTitle: title)
+        pendingParticipantRequest =
+            messages.last(where: { $0.enableAppRequest != nil })?.enableAppRequest
         sessions = GeneralChatSessionStore.index()
+    }
+
+    /// Explicitly anchors or opens a single-Pet conversation (**Open in <App> Pet**, #339).
+    func openInAppPet(bundleID: String, name: String, seed: [AIChatMessage] = []) {
+        let trimmedBundle = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBundle.isEmpty else { return }
+        let scope = GeneralChatScope.app(bundleId: trimmedBundle)
+        let participant = ConversationParticipant(
+            petID: .app(bundleID: trimmedBundle), displayName: name)
+        openSession(scope, title: name, seed: seed)
+        participantSet = ParticipantSet([participant])
+        GeneralChatSessionStore.saveParticipants(participantSet, scope: scope)
+        GeneralChatWindowChromeState.shared.mode = .chat
     }
 
     private func adoptSeedIfEmpty(
@@ -163,8 +218,12 @@ final class GeneralChatWindowModel: ObservableObject {
 
     func openGeneralSession() {
         activeScope = .general
+        activeTurnScope = .empty
+        participantSet = .empty
         messages = GeneralChatSessionStore.load(scope: .general)
-        attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: .general)
+        attachedAppNames = []
+        pendingParticipantRequest =
+            messages.last(where: { $0.enableAppRequest != nil })?.enableAppRequest
         sessions = GeneralChatSessionStore.index()
     }
 
@@ -373,6 +432,9 @@ final class GeneralChatWindowModel: ObservableObject {
                 actionChoices: answer.routeChoices,
                 noRouteOptions: AgentToolRegistry.consumeLastNoRouteOptions())
         message.activity = activity
+        if scope == activeScope {
+            pendingParticipantRequest = answer.enableApp
+        }
         deliver(message, to: scope, title: title)
     }
 
@@ -498,43 +560,81 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
-    /// "Enable <app> for this chat": attach the app, then ask the question again so the
-    /// user gets an answer rather than a granted permission and a dead end.
-    func enableApp(_ request: EnableAppRequest) {
-        // Approving an app at the gate is how a workspace gets built: "launch Safari and
-        // Notes" asks for both, and saying yes should land the user in the Safari + Notes
-        // conversation with the question re-asked there. Appending the name in place left
-        // the answer in General, where the two apps were in scope but the conversation
-        // belonged to nothing.
-        //
-        // Matched case-insensitively against the name the gate reported, so the two sides
-        // agree even when the app is not running and the installed-apps cache is cold.
-        // Every app the request named, in one step. "Create a note of all the open tabs in
-        // Safari" needs both apps in the conversation before the cross-app planner will even
-        // look at it; enabling one and re-asking produced a list of Notes commands that could
-        // not know what Safari had open.
-        var membership = currentMembership
-        for app in request.allApps
-        where !membership.contains(where: {
-            $0.caseInsensitiveCompare(app.name) == .orderedSame
-        }) {
-            membership.append(app.name)
+    /// Clears a consumed or declined `EnableAppRequest` from the transcript and pending state.
+    private func consumeParticipantRequest(_ request: EnableAppRequest) {
+        if pendingParticipantRequest == request {
+            pendingParticipantRequest = nil
         }
-        if membership.count != currentMembership.count {
-            openCombination(membership)
+        for index in messages.indices where messages[index].enableAppRequest == request {
+            messages[index].enableAppRequest = nil
         }
-        // Say what just changed, before the answer arrives.
-        //
-        // Enabling an app silently re-ran the question, so the next thing on screen was an
-        // answer with no account of why it could suddenly see the user's messages. The
-        // permission the user just granted, and the tools it brought with it, are the most
-        // important thing in the conversation at that moment — and the one thing they were
-        // never shown.
-        deliver(
-            AIChatMessage(role: .tool, content: Self.scopeSummary(for: request)),
-            to: activeScope, title: activeTitle)
-        input = request.query
-        send()
+    }
+
+    private func appendToolNote(_ text: String) {
+        messages.append(AIChatMessage(role: .tool, content: text))
+        persist()
+    }
+
+    /// Connects or borrows the requested Pet(s) depending on `conversationKind` (#339):
+    /// - In `.general`: borrows the app(s) in `activeTurnScope` for this turn only, keeping the
+    ///   thread as General Chat (`ConversationKind.general`, `participantSet == .empty`) and never
+    ///   loading Pet memory.
+    /// - In `.appPet` or `.combined`: promotes the **same conversation** in-place to Combined Chat
+    ///   (`ConversationKind.combined`), preserving existing transcript and attachments without
+    ///   creating a duplicate transcript copy.
+    func enableApp(_ request: EnableAppRequest, sendImmediately: Bool = true) {
+        consumeParticipantRequest(request)
+
+        switch conversationKind {
+        case .general:
+            activeTurnScope = TurnScope(borrowedParticipants: request.participants)
+            appendToolNote(Self.turnBorrowSummary(for: request))
+            input = request.query
+            if sendImmediately {
+                send()
+            }
+
+        case .appPet, .combined:
+            let preservedAttachments = attachments
+            let promoted = GeneralChatSessionStore.promoteToCombinedChat(
+                from: activeScope,
+                connecting: request.participants,
+                currentParticipants: participantSet,
+                messages: messages)
+            activeScope = promoted.scope
+            participantSet = promoted.participants
+            attachedAppNames = promoted.participants.displayNames
+            messages = promoted.messages
+            attachments = preservedAttachments
+            GeneralChatWindowChromeState.shared.mode = .work
+            sessions = GeneralChatSessionStore.index()
+
+            appendToolNote(Self.scopeSummary(for: request))
+            input = request.query
+            if sendImmediately {
+                send()
+            }
+        }
+    }
+
+    /// Declines connecting the proposed Pet(s), leaving the original thread, its `ConversationKind`,
+    /// its `ParticipantSet`, its transcript, its attachments, and its permissions unchanged (#339).
+    func declineEnableApp(_ request: EnableAppRequest) {
+        consumeParticipantRequest(request)
+        let currentTitle = conversationHeaderTitle
+        appendToolNote(
+            "Kept this chat scoped to \(currentTitle) — \(request.appsSentence) was not connected.")
+    }
+
+    /// Alias for Stage 2 participant consent decline (#339).
+    func declineParticipantConnection(_ request: EnableAppRequest) {
+        declineEnableApp(request)
+    }
+
+    /// Summary recorded when General Chat borrows an app capability for one turn (#339).
+    static func turnBorrowSummary(for request: EnableAppRequest) -> String {
+        "Using \(request.appsSentence) for this turn in General Chat — this thread stays "
+            + "General Chat and later turns remain Mac-wide."
     }
 
     /// What this conversation can now reach, in the user's terms: the app, and what came
@@ -696,13 +796,25 @@ final class GeneralChatWindowModel: ObservableObject {
             guard let bundleId = Self.bundleId(forAppNamed: members[0]) else { return }
             openSession(.app(bundleId: bundleId), title: members[0])
             attachedAppNames = []
+            participantSet = ParticipantSet([
+                ConversationParticipant(petID: .app(bundleID: bundleId), displayName: members[0])
+            ])
             GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
+            GeneralChatSessionStore.saveParticipants(participantSet, scope: activeScope)
             GeneralChatWindowChromeState.shared.mode = .chat
         default:
             let combined = GeneralChatScope.thread(id: Self.combinedThreadID(for: members))
             openSession(combined, title: members.joined(separator: " + "))
             attachedAppNames = members
+            let participants = ParticipantSet(
+                members.map { name in
+                    let bundleId = Self.bundleId(forAppNamed: name) ?? name.lowercased()
+                    return ConversationParticipant(
+                        petID: .app(bundleID: bundleId), displayName: name)
+                })
+            participantSet = participants
             GeneralChatSessionStore.saveAttachedApps(members, scope: combined)
+            GeneralChatSessionStore.saveParticipants(participants, scope: combined)
             // A workspace lives in Work. Building one and leaving the user in Chat would
             // put the conversation somewhere its own list does not show it.
             GeneralChatWindowChromeState.shared.mode = .work
@@ -878,6 +990,40 @@ final class GeneralChatWindowModel: ObservableObject {
         return [scopeApp] + attachedAppNames.filter { $0 != scopeApp }
     }
 
+    /// Resolves the temporary per-turn execution scope (`TurnScope`) for `query` when in General Chat.
+    /// Never mutates `conversationKind` or `participantSet`.
+    func resolveTurnScope(
+        for query: String,
+        inventory: [GeneralChatScopeResolver.Candidate]? = nil
+    ) -> TurnScope {
+        guard conversationKind == .general else { return .empty }
+        if !activeTurnScope.isEmpty {
+            return activeTurnScope
+        }
+        let deliberates =
+            GeneralAIActionResolver.shared.namedInstalledApps(in: query)
+            .filter { AppScopedChatService.namesAppDeliberately(query: query, appName: $0.name) }
+        let subjects = AppScopedChatService.subjectApps(in: query).map {
+            (name: $0.name, bundleId: $0.bundleId)
+        }
+        let candidates = (deliberates + subjects).compactMap {
+            ConversationParticipant(bundleID: $0.bundleId, displayName: $0.name)
+        }
+        if !candidates.isEmpty {
+            return TurnScope(borrowedParticipants: candidates)
+        }
+        let resolvedInventory =
+            inventory
+            ?? GeneralChatScopeResolver.inventory(
+                from: CapabilityCatalog.allRecords(),
+                bundleId: { Self.bundleId(forAppNamed: $0) })
+        return GeneralChatScopeResolver.resolveTurnScope(
+            request: query,
+            conversationKind: .general,
+            explicitTurnParticipants: [],
+            inventory: resolvedInventory)
+    }
+
     func send() {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
@@ -889,6 +1035,8 @@ final class GeneralChatWindowModel: ObservableObject {
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
+        let turnScope = resolveTurnScope(for: query)
+        activeTurnScope = turnScope
 
         let history: [ChatMessage] = messages.compactMap { message in
             switch message.role {
@@ -901,8 +1049,12 @@ final class GeneralChatWindowModel: ObservableObject {
         let sentAttachments = attachments
         let userMessage = AIChatMessage(
             role: .user, content: query, attachments: sentAttachments)
-        if !attachedAppNames.isEmpty {
-            messageApps[userMessage.id] = attachedAppNames
+        let messageAppBadges =
+            conversationKind == .general
+            ? turnScope.displayNames
+            : attachedAppNames
+        if !messageAppBadges.isEmpty {
+            messageApps[userMessage.id] = messageAppBadges
         }
         messages.append(userMessage)
         input = ""
@@ -910,6 +1062,7 @@ final class GeneralChatWindowModel: ObservableObject {
         persist()
 
         if provider.requiresAPIKey && !settings.isProviderConfigured(provider) {
+            activeTurnScope = .empty
             messages.append(
                 AIChatMessage(
                     role: .assistant,
@@ -945,7 +1098,10 @@ final class GeneralChatWindowModel: ObservableObject {
         let sendKey = sendScope.storageKey
 
         let scopeAppName = activeScopeAppName ?? sendTitle
-        let extraApps = attachedAppNames
+        let extraApps =
+            conversationKind == .general
+            ? turnScope.displayNames
+            : attachedAppNames
         // What was highlighted when the question was asked. Captured here rather than read
         // inside the request: the user may click elsewhere while the answer is in flight,
         // and "these" has to mean what it meant when they typed it.
@@ -1049,6 +1205,9 @@ final class GeneralChatWindowModel: ObservableObject {
         progressByScopeKey[key] = nil
         activityByScopeKey[key] = nil
         sendTasks[key] = nil
+        if key == activeScope.storageKey {
+            activeTurnScope = .empty
+        }
     }
 
     private func recordProgress(_ status: String, for key: String) {
@@ -1093,6 +1252,7 @@ final class GeneralChatWindowModel: ObservableObject {
         sendTasks[scope.storageKey] = nil
 
         if scope == activeScope {
+            activeTurnScope = .empty
             messages.append(message)
             persist()
             return

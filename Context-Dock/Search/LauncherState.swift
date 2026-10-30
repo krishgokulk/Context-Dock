@@ -243,6 +243,33 @@ struct EnableAppRequest: Equatable {
         guard names.count > 1 else { return names.first ?? "" }
         return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
     }
+
+    /// Ordered, deduplicated `ConversationParticipant`s represented by this request (#339).
+    var participants: [ConversationParticipant] {
+        let items = allApps.compactMap {
+            ConversationParticipant(bundleID: $0.bundleId, displayName: $0.name)
+        }
+        return ParticipantSet(items).participants
+    }
+
+    /// Preview chip labels (`+ Messages`, `+ Notes`) shown before another Pet's context or
+    /// capabilities enter the thread (#339).
+    var previewChips: [String] {
+        participants.map { "+ \($0.displayName)" }
+    }
+
+    var previewBadgeText: String {
+        previewChips.joined(separator: " ")
+    }
+
+    func actionButtonTitle(for kind: ConversationKind) -> String {
+        switch kind {
+        case .general:
+            return "Use \(appsSentence) for this turn"
+        case .appPet, .combined:
+            return "Connect \(appsSentence) to this chat"
+        }
+    }
 }
 
 /// One route the user can pick when several fit the request equally well.

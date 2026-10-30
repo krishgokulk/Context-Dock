@@ -478,6 +478,10 @@ enum AppScopedChatService {
         var candidates = named
         if scopeBundleID == nil {
             candidates += subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
+        } else if namesMessagesApp(query),
+            !candidates.contains(where: { Self.isMessagesApp(bundleId: $0.bundleId) })
+        {
+            candidates.append((name: "Messages", bundleId: "com.apple.MobileSMS"))
         }
 
         // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
@@ -1639,8 +1643,10 @@ enum AppScopedChatService {
                     let results = await ChatPlanRunner.run(
                         plan, query: query,
                         authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }),
+                        conversationScope: scope,
                         onStep: { line in onStatus?(line) })
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
+                    let actionReceipts = ChatPlanRunner.actionReceipts(from: results)
                     let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
                     // Only a plan that ran end to end is offerable as a recipe. Keeping a
                     // partial one would let "save that as X" preserve a sequence that has
@@ -1660,7 +1666,8 @@ enum AppScopedChatService {
                             + (stoppedEarly
                                 ? "\n\nNothing after that step was attempted."
                                 : ""),
-                        toolChips: results.map { "\($0.step.route.kind.rawValue) · \($0.step.route.title)" })
+                        toolChips: results.map { "\($0.step.route.kind.rawValue) · \($0.step.route.title)" },
+                        evidenceReceipts: actionReceipts)
                 }
             }
         }
@@ -2152,11 +2159,7 @@ enum AppScopedChatService {
 
         var memoryChips: [String] = []
         if sourceDecision.allowsMemoryEvidence {
-            let memoryBundleID: String? = {
-                if case .app(let bundleId) = scope { return bundleId }
-                if scope.folderURL != nil { return ChatAppDirectory.finderBundleID }
-                return nil
-            }()
+            let memoryBundleID = Self.memoryBundleID(for: scope)
             let memory = MarkdownMemoryStore.shared.contextBlock(
                 query: query, appBundleID: memoryBundleID)
             prompt.set(.memory, memory)
@@ -2508,6 +2511,21 @@ enum AppScopedChatService {
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,
             trace: sourceTrace)
+    }
+
+    /// Bundle ID whose durable App Pet memory may be loaded for `scope` (#339).
+    ///
+    /// General Chat (`ConversationKind.general`) never loads an App Pet's memory, even when
+    /// `turnScope` borrows an app capability for one turn.
+    static func memoryBundleID(
+        for scope: GeneralChatScope,
+        participants: ParticipantSet = .empty,
+        turnScope: TurnScope = .empty
+    ) -> String? {
+        _ = turnScope
+        let kind = GeneralChatSessionStore.conversationKind(
+            for: scope, participants: participants)
+        return kind.memoryBundleID(scope: scope)
     }
 }
 
