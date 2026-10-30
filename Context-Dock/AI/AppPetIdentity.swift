@@ -344,7 +344,7 @@ struct ConversationHeaderIdentity: Equatable, Sendable {
             return ConversationHeaderIdentity(
                 kind: kind,
                 primaryTitle: appTitle,
-                subtitle: nil,
+                subtitle: "App Pet",
                 participantNames: [appTitle],
                 previewChips: previewChips)
 
@@ -355,7 +355,7 @@ struct ConversationHeaderIdentity: Equatable, Sendable {
             return ConversationHeaderIdentity(
                 kind: .combined,
                 primaryTitle: title,
-                subtitle: nil,
+                subtitle: "Combined Chat",
                 participantNames: names,
                 previewChips: previewChips)
         }
