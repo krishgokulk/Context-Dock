@@ -183,10 +183,8 @@ this order: naming/scope model → conversation promotion/participant consent �
 `/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
 Corner, stores, capability index and shared executor; no second engine or registry.
 Plan written: [`2026-10-27-app-pets-rollout.md`](../superpowers/plans/2026-10-27-app-pets-rollout.md).
-Implementation issues: **#338** identity/scope → **#339** promotion/consent → **#340** memory →
-**#341** `/mods` → **#342** detached presentation → **#343** proactive behavior. #338 has the
-detailed first-stage task plan; implementation waits for #327 / PR #337 to merge and for the owner
-to move this lane ahead of the current `ready` queue.
+Implementation issues: ~~#338 identity/scope~~ (#356, merged 2026-10-30) → **#339** promotion/consent → **#340** memory →
+**#341** `/mods` → **#342** detached presentation → **#343** proactive behavior. #339 is the next stage in the App Pets rollout lane.
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
@@ -206,6 +204,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-30 | #338 App Pets Stage 1: Pet identity (`AppPetID`) and single-Dock scope switching — clicking a running-app icon selects that Pet inside the Dock without activating the app, explicit Open App stays in the icon menu, ⌘ tap / empty-Backspace returns to Global Context, existing `dock_app_<bundleID>` history preserved; owner hand-checked ("working prefect") | #356 |
 | 2026-10-26 | #208 P13: scripting-dictionary rung — read any scriptable app via its sdef; tool-less providers get a deterministic live property read (`sound volume`, `current track`) before the model, adapter/lanes untouched; owner hand-checked "312 passed" | #312 |
 | 2026-10-26 | #318: unify Global Context + frontmost Context Dock into one surface (`SurfaceFocus` + pure decide fn; frontmost = default focus, ⌘ zooms to Global; lanes untouched; "never merge layers" reworded); owner hand-checked "320 passed" | #320 |
 | 2026-10-19 | P5: Progress panel shows the whole reasoning trace — Understood→Lane→Tools→Chose→Gate→Result; folds #185 | #299 |
