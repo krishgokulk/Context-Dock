@@ -134,6 +134,11 @@ struct FrontmostAppTaskPlanTests {
             query: "How many tabs are open in Safari?",
             bundleId: "com.apple.Safari", appName: "Safari")
         #expect(!plan.permitsUIAutomation)
+        // The model still gets a tool-call opportunity: the MCP read tool stays offered, so
+        // the tab count comes from safari-mcp rather than from a menu click.
+        #expect(plan.intent == .read)
+        #expect(plan.allowedToolNames.contains("run_mcp_tool"))
+        #expect(plan.allowedToolNames.contains("read_page") == false)
         for tool in ["run_menu_command", "find_menu_command", "send_keys", "window_control", "operate_app"] {
             #expect(!plan.allowedToolNames.contains(tool), "\(tool) leaked into a read-only turn")
         }

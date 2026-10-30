@@ -35,6 +35,16 @@ enum MCPToolSafety {
     nonisolated static func isClearlyReadOnly(name: String) -> Bool {
         classify(name: name) == .read
     }
+
+    /// What to tell a model that named a tool the server does not have, or one that is not
+    /// read-only. The prompt lists a linked server by name only, so the model guesses the tool
+    /// ("browser_tabs" for Safari, whose tab reader is `list_tabs`); the refusal used to leave
+    /// it with nothing to correct the guess from, and the turn ended without an answer (#357).
+    nonisolated static func readToolHint(available: [String]) -> String {
+        let reads = available.filter(isClearlyReadOnly).sorted()
+        guard !reads.isEmpty else { return "" }
+        return " Read tools available: \(reads.joined(separator: ", "))."
+    }
 }
 
 actor MCPRuntime {

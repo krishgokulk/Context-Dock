@@ -91,3 +91,17 @@ struct MCPRouteFallbackTests {
         #expect(ChatRouteResolver.plainestRoute(routes) == nil)
     }
 }
+
+@Suite("MCP read-tool hint")
+struct MCPReadToolHintTests {
+    @Test("A wrong tool name is answered with the server's real read tools (#357)")
+    func hintNamesRealReadTools() {
+        let hint = MCPToolSafety.readToolHint(
+            available: ["close_tab", "list_tabs", "navigate_to_url", "get_page_content"])
+        #expect(hint.contains("list_tabs"))
+        #expect(hint.contains("get_page_content"))
+        #expect(!hint.contains("close_tab"))
+        #expect(!hint.contains("navigate_to_url"))
+        #expect(MCPToolSafety.readToolHint(available: ["close_tab"]).isEmpty)
+    }
+}
