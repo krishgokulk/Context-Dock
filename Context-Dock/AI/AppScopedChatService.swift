@@ -533,8 +533,12 @@ enum AppScopedChatService {
     /// words say so. A bare "message" or "text" inside a Mail chat means the email.
     nonisolated static func namesMessagesApp(_ query: String) -> Bool {
         let q = query.lowercased()
-        return ["imessage", "sms", "text message", "messages app", "in messages",
-                "to messages", "from messages", "open messages"].contains(where: q.contains)
+        let variants = [
+            "imessage", "i message", "sms", "text message", "messages app", "message app",
+            "in messages", "to messages", "from messages", "via messages", "open messages",
+            "via imessage", "via i message", "via message", "message to ", "send a message"
+        ]
+        return variants.contains(where: q.contains)
     }
 
     /// Whether the sentence points at this app, rather than merely containing its name.
