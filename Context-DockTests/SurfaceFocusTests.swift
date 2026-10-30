@@ -62,4 +62,38 @@ struct SurfaceFocusTests {
         #expect(CornerSwipe.classify(dx: 0, dy: 80) == .layerUp)
         #expect(CornerSwipe.classify(dx: 0, dy: -80) == .layerDown)
     }
+
+    @Test("Running app icon menu exposes both Pet selection and explicit Open app activation")
+    @MainActor
+    func runningAppIconMenuKeepsExplicitOpenAction() {
+        let model = AppChatPromptModel(
+            conversation: AppChatConversation(), globalResultSource: GlobalContextResultSource())
+        model.summonGlobalContext()
+        model.standDown()
+        let slot = DockAppSlot(
+            bundleID: "com.apple.Safari",
+            title: "Safari",
+            pin: nil,
+            running: nil,
+            isRunning: true)
+
+        var openedApps: [(String, String)] = []
+        let items = CornerDockStrip.appMenuItems(
+            for: slot,
+            model: model,
+            openApp: { bundleID, name in openedApps.append((bundleID, name)) })
+        let titles = items.compactMap(\.title)
+        #expect(titles.contains("Ask about Safari"))
+        #expect(titles.contains("Open Safari"))
+
+        items.first(where: { $0.title == "Ask about Safari" })?.action()
+        #expect(model.appBundleID == "com.apple.Safari")
+        #expect(model.returnsToGlobalScope)
+        #expect(openedApps.isEmpty)
+
+        items.first(where: { $0.title == "Open Safari" })?.action()
+        #expect(openedApps.count == 1)
+        #expect(openedApps.first?.0 == "com.apple.Safari")
+        #expect(openedApps.first?.1 == "Safari")
+    }
 }

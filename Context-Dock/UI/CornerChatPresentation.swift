@@ -249,6 +249,35 @@ final class CornerChatPresentation: ObservableObject {
         appChat.returnsToGlobalScope = true
     }
 
+    /// Carry out a bare ⌘ tap (#318, #338): zoom out from `.frontmost` or `.pet(...)` to
+    /// `.global`, or zoom in from `.global` to the app that owns the menu bar right now.
+    @discardableResult
+    func applyCommandTap(
+        frontmostTarget: () -> CornerChatTarget? = { AppDelegate.shared?.frontmostChatTarget() }
+    ) -> Bool {
+        guard mode != .general else { return false }
+        let focus = surfaceFocus
+        guard case .focus(let next) = SurfaceFocusRules.decide(.commandTap, from: focus)
+        else { return false }
+        switch next {
+        case .global:
+            if case .pet = focus {
+                _ = appChat.leaveScopeForGlobal()
+            } else {
+                show(.globalContext)
+            }
+        case .pet:
+            break
+        case .frontmost:
+            if let target = frontmostTarget(), !target.bundleID.isEmpty {
+                appChat.scopeIntoApp(name: target.name, bundleID: target.bundleID)
+            } else {
+                show(.frontmostApp)
+            }
+        }
+        return true
+    }
+
     /// Open the app chat so an answer asked from another corner surface has somewhere to
     /// appear, and tell it one is coming.
     ///

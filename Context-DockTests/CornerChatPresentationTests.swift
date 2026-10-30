@@ -347,4 +347,42 @@ struct CornerChatPresentationTests {
         #expect(app.appBundleID == code.bundleID)
         #expect(!app.returnsToGlobalScope)
     }
+
+    @Test func commandAndBackspaceNavigateBetweenSelectedPetGlobalAndMenuBarOwner() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(appChat: app, generalChat: GeneralChatWindowModel())
+        let finder = CornerChatTarget(
+            name: "Finder", bundleID: "com.apple.finder", suggestions: [], summary: "")
+        let safari = CornerChatTarget(
+            name: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+        let notes = CornerChatTarget(
+            name: "Notes", bundleID: "com.apple.Notes", suggestions: [], summary: "")
+
+        subject.showFrontmostApp(target: finder)
+        subject.showPet(target: safari)
+        #expect(subject.surfaceFocus == .pet(.app(bundleID: "com.apple.Safari")))
+
+        // Non-empty draft: Backspace does not leave the Pet scope; it stays for text editing.
+        app.query = "open tabs"
+        #expect(!app.applyEmptyBackspace())
+        #expect(subject.surfaceFocus == .pet(.app(bundleID: "com.apple.Safari")))
+
+        // Selected Pet -> Command -> Global Context (while keeping the Pet's draft).
+        #expect(subject.applyCommandTap(frontmostTarget: { notes }))
+        #expect(subject.mode == .globalContext)
+        #expect(subject.surfaceFocus == .global)
+        #expect(app.isGlobalScope)
+
+        // Global -> Command -> resolves the app that owns the menu bar now (Notes), not Safari.
+        #expect(subject.applyCommandTap(frontmostTarget: { notes }))
+        #expect(subject.surfaceFocus == .pet(.app(bundleID: "com.apple.Notes")))
+        #expect(app.appBundleID == "com.apple.Notes")
+
+        // Selected Pet with empty query -> Backspace -> Global Context.
+        #expect(app.query.isEmpty)
+        #expect(app.applyEmptyBackspace())
+        #expect(subject.mode == .globalContext)
+        #expect(subject.surfaceFocus == .global)
+        #expect(app.isGlobalScope)
+    }
 }
