@@ -2310,6 +2310,37 @@ extension DockCore {
             && !scopedBundleId.isEmpty
             && !scopedAppName.isEmpty
 
+        // Intercept /mods command without hitting the AI provider (#341).
+        if AppPetModCommand.isModCommand(query) {
+            let activeBundle = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            let activeName = scopedAppName.isEmpty ? frontmost.name : scopedAppName
+            let scope = GeneralChatScope.app(bundleId: activeBundle)
+            let participants = AppChatConversation.shared.effectiveParticipants(fallbackAppName: activeName)
+            let activeModes = GeneralChatSessionStore.loadActiveModes(scope: scope)
+            let result = AppPetModCommand.resolve(
+                query: query,
+                participants: participants,
+                focusedParticipant: participants.first,
+                activeModes: activeModes
+            )
+            if let result {
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                if let newMode = result.newActiveMode {
+                    GeneralChatSessionStore.setActiveMode(
+                        newMode.modeID, for: newMode.participant.petID, scope: scope)
+                    AppChatConversation.shared.activeModeID = newMode.modeID
+                }
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: result.userFacingMessage
+                    )
+                )
+                l2.isLoading = false
+                return
+            }
+        }
+
         if let memoryAnswer = MarkdownMemoryStore.shared.cacheFromCommand(query) {
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
             l2.chatMessages.append(

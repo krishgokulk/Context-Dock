@@ -54,6 +54,8 @@ final class AppChatConversation: ObservableObject {
     /// Connected participants in this Corner conversation (#339). Starts as the single App Pet and
     /// promotes in-place to Combined Chat when the user approves connecting another Pet.
     @Published var participantSet: ParticipantSet = .empty
+    /// Active /mods mode for the primary Pet in this Corner conversation (#341).
+    @Published var activeModeID: String? = nil
     /// Pending participant connection offer (`+ Messages`) for the active Corner conversation (#339).
     @Published var pendingParticipantRequest: EnableAppRequest? = nil
     /// Files attached to the turn that triggered `pendingParticipantRequest`, preserved so clicking

@@ -159,7 +159,9 @@ enum CornerGeneralChatMetrics {
     }
 
     static func size(for model: GeneralChatWindowModel) -> CGSize {
-        let slashMatches = ChatSlashAppPicker.matches(for: model.input)
+        let modMatches = ChatSlashModPicker.matches(for: model.input, participant: model.participantSet.first)
+        let slashMatches = modMatches.isEmpty ? ChatSlashAppPicker.matches(for: model.input) : []
+        let matchCount = !modMatches.isEmpty ? modMatches.count : slashMatches.count
         return CGSize(
             // The shell's one width (#189): General stands exactly as wide as Global and
             // every app's Context Dock, so switching mode changes only what is inside.
@@ -168,7 +170,7 @@ enum CornerGeneralChatMetrics {
                 messageCount: model.messages.count,
                 isSending: model.isSending,
                 hasAttachments: !model.attachments.isEmpty,
-                slashMatchCount: slashMatches.count,
+                slashMatchCount: matchCount,
                 hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
                 liveStepCount: model.activeProgress.count,
                 clarificationOptionCount: clarificationOptionCount(for: model),
@@ -300,6 +302,42 @@ struct CornerGeneralChatView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
+            }
+
+            if let activeMode = model.activePetMode {
+                Menu {
+                    ForEach(model.supportedPetModes) { mode in
+                        Button {
+                            model.switchPetMode(to: mode.id)
+                        } label: {
+                            if mode.id == activeMode.id {
+                                Label(mode.name, systemImage: "checkmark")
+                            } else {
+                                Label(mode.name, systemImage: mode.icon ?? "sparkles")
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if let icon = activeMode.icon {
+                            Image(systemName: icon)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(activeMode.name)
+                            .font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("App Pet mode (/mods): \(activeMode.summary)")
             }
 
             ForEach(identity.previewChips, id: \.self) { chip in
@@ -503,8 +541,13 @@ struct CornerGeneralChatView: View {
     /// It used to be the shared capsule inside a 12-point inset inside the pill — a border
     /// within a border, and 16 points taller than the App composer for a row holding the
     /// same things. The bar is the row now; the pill is the only chrome.
+    private var slashModMatches: [AppPetModeManifest] {
+        ChatSlashModPicker.matches(for: model.input, participant: model.participantSet.first)
+    }
+
     private var slashMatches: [ChatAppEntry] {
-        ChatSlashAppPicker.matches(for: model.input)
+        guard slashModMatches.isEmpty else { return [] }
+        return ChatSlashAppPicker.matches(for: model.input)
     }
 
     private func pick(_ app: ChatAppEntry) {
@@ -513,9 +556,24 @@ struct CornerGeneralChatView: View {
         slashSelection = 0
     }
 
+    private func pickMod(_ mode: AppPetModeManifest) {
+        model.switchPetMode(to: mode.id)
+        model.input = ""
+        slashSelection = 0
+    }
+
     /// ↑/↓ move the highlight, and only while there is a list to move it through — the key
     /// has to go back to the field otherwise, or the cursor stops working in a text box.
     private func moveSlashSelection(_ delta: Int) -> Bool {
+        if !slashModMatches.isEmpty {
+            if let next = ChatSlashModPicker.movedSelection(
+                from: slashSelection, by: delta, count: slashModMatches.count)
+            {
+                slashSelection = next
+                return true
+            }
+            return false
+        }
         if let next = ChatSlashAppPicker.movedSelection(
             from: slashSelection, by: delta, count: slashMatches.count)
         {
@@ -536,6 +594,11 @@ struct CornerGeneralChatView: View {
     /// once there is nothing left to undo. Before this there was no key handling here at
     /// all: an open General chat could not be escaped, only clicked or hotkeyed away.
     private func handleEscape() -> Bool {
+        if !slashModMatches.isEmpty {
+            model.input = ""
+            slashSelection = 0
+            return true
+        }
         if !slashMatches.isEmpty {
             model.input = ""
             slashSelection = 0
@@ -554,6 +617,11 @@ struct CornerGeneralChatView: View {
     }
 
     private func commitSlashSelection() -> Bool {
+        if !slashModMatches.isEmpty {
+            let index = min(max(slashSelection, 0), slashModMatches.count - 1)
+            pickMod(slashModMatches[index])
+            return true
+        }
         let matches = slashMatches
         if !matches.isEmpty {
             pick(matches[min(max(slashSelection, 0), matches.count - 1)])
@@ -581,7 +649,16 @@ struct CornerGeneralChatView: View {
             // A sheet over the field, not a control inside it: list above, input below,
             // the same shape the clipboard panel uses. It stays here rather than in the
             // board so an open conversation is never pushed around by a picker.
-            if !slashMatches.isEmpty {
+            if !slashModMatches.isEmpty {
+                ChatSlashModList(
+                    matches: slashModMatches,
+                    selection: slashSelection,
+                    activeModeID: model.activePetMode?.id
+                ) { mode in
+                    pickMod(mode)
+                }
+                Divider().opacity(0.18)
+            } else if !slashMatches.isEmpty {
                 ChatSlashAppList(matches: slashMatches, selection: slashSelection) { app in
                     pick(app)
                 }

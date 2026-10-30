@@ -440,6 +440,10 @@ struct AIChatMessage: Identifiable, Equatable {
     var subjectiveEvaluation: SubjectiveEvaluation?  // Independent read-only review
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
+    /// Active mode for an App Pet turn (e.g. "Research", "Browse", "Inspect") (#341).
+    var activeMode: String? = nil
+    /// Provenance string for the mode active on this turn (e.g. "Safari: Research") (#341).
+    var modeProvenance: String? = nil
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
     var runOutput: String?  // terminal/script output, collapsed behind a disclosure
     /// The no-route card (§6.2): an app-scoped turn that found nothing to run, with the
@@ -507,7 +511,10 @@ struct AIChatMessage: Identifiable, Equatable {
         mcpToolsRan: [String] = [],
         evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
-        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        enableAppRequest: EnableAppRequest? = nil,
+        activeMode: String? = nil,
+        modeProvenance: String? = nil,
+        trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         noRouteOptions: NoRouteOptionsCard? = nil,
         // Defaults to now, which is right for a message being said. A message being
@@ -535,6 +542,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.evidenceReceipts = evidenceReceipts
         self.subjectiveEvaluation = subjectiveEvaluation
         self.enableAppRequest = enableAppRequest
+        self.activeMode = activeMode
+        self.modeProvenance = modeProvenance
         self.trace = trace
         self.runOutput = runOutput
         self.actionChoices = actionChoices
@@ -554,7 +563,10 @@ struct AIChatMessage: Identifiable, Equatable {
         mcpToolsRan: [String] = [],
         evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
-        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        enableAppRequest: EnableAppRequest? = nil,
+        activeMode: String? = nil,
+        modeProvenance: String? = nil,
+        trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         noRouteOptions: NoRouteOptionsCard? = nil,
         // Defaults to now, which is right for a message being said. A message being
@@ -584,6 +596,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.evidenceReceipts = evidenceReceipts
         self.subjectiveEvaluation = subjectiveEvaluation
         self.enableAppRequest = enableAppRequest
+        self.activeMode = activeMode
+        self.modeProvenance = modeProvenance
         self.trace = trace
         self.runOutput = runOutput
         self.actionChoices = actionChoices
@@ -1769,6 +1783,20 @@ struct AIChatMessageView: View {
                 }
                 if !message.actionChoices.isEmpty {
                     actionChoiceButtons
+                }
+
+                if let mode = message.activeMode {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(message.modeProvenance ?? mode)
+                            .font(.system(size: 9.5, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.secondary.opacity(0.1), in: Capsule())
+                    .help("Turn executed in \(message.modeProvenance ?? mode) mode")
                 }
 
                 if message.role == .assistant, let onReplaceText, !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -68,6 +68,10 @@ enum AppScopedChatService {
         /// puts it on the message as `structuredData` and the ordinary proposal card draws
         /// it, so both chats offer the same decision.
         var proposalJSON: String? = nil
+        /// Active App Pet behavior mode for this turn (e.g. "Research", "Browse", "Inspect") (#341).
+        var activeMode: String? = nil
+        /// Mode provenance string for this turn (e.g. "Safari: Research") (#341).
+        var modeProvenance: String? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -2178,6 +2182,41 @@ enum AppScopedChatService {
             }
         }
 
+        // Resolve active App Pet and /mods preset (#341).
+        let activePetID: AppPetID? = {
+            if let id = scope.petID { return id }
+            if let routingBundleId, !routingBundleId.isEmpty { return AppPetID(dockBundleID: routingBundleId) }
+            if scope.folderURL != nil { return .app(bundleID: ChatAppDirectory.finderBundleID) }
+            return nil
+        }()
+
+        var activeTurnMode: AppPetModeManifest? = nil
+        var activeTurnManifest: AppPetManifest? = nil
+        if let petID = activePetID {
+            let manifest = AppPetManifestRegistry.shared.manifest(for: petID)
+            activeTurnManifest = manifest
+            if let customPrompt = manifest.customPrompt, !customPrompt.isEmpty {
+                prompt.append(.identity, "\n" + customPrompt)
+            }
+            let activeModeID = GeneralChatSessionStore.activeMode(for: petID, scope: scope) ?? manifest.defaultMode
+            let mode = manifest.mode(named: activeModeID ?? "") ?? manifest.defaultOrFirstMode()
+            if let mode {
+                activeTurnMode = mode
+                var modeLines = [
+                    "Active App Pet Mode [\(mode.name)]: \(mode.systemPromptOverlay)",
+                    mode.planDetail.promptInstruction,
+                ]
+                if let style = mode.responseStyle, !style.isEmpty {
+                    modeLines.append("Response style: \(style)")
+                }
+                modeLines.append(mode.verificationEmphasis.promptInstruction)
+                if mode.effectiveFilter.readOnlyOnly {
+                    modeLines.append("Capability filter: This mode is strictly read-only. Do not run or propose modifying commands, file writes, sends, or deletes.")
+                }
+                prompt.set(.petMode, modeLines.joined(separator: "\n"))
+            }
+        }
+
         let preservedSources: Set<ScopedPromptSection> = {
             switch sourceDecision.primary {
             case .liveState:
@@ -2199,7 +2238,7 @@ enum AppScopedChatService {
         // solved this for the same providers with a prose "ask, run, re-ask" loop; this
         // gives a scoped chat the same one rather than inventing a second protocol.
         guard provider.supportsNativeTools else {
-            return try await runToolLessScopedTurn(
+            var answer = try await runToolLessScopedTurn(
                 query: query,
                 systemPrompt: systemPrompt,
                 provider: provider,
@@ -2212,6 +2251,11 @@ enum AppScopedChatService {
                 taskPlan: taskPlan,
                 liveAppleData: liveAppleData,
                 onStatus: onStatus)
+            if let mode = activeTurnMode, let manifest = activeTurnManifest {
+                answer.activeMode = mode.name
+                answer.modeProvenance = "\(manifest.appName): \(mode.name)"
+            }
+            return answer
         }
 
         // Which apps this turn may reach, by name and by bundle id, so a tool asked about
@@ -2515,13 +2559,18 @@ enum AppScopedChatService {
         }
 
         let producedRows = ChatResultRowCollector.shared.take(scope: scope)
-        return Answer(
+        var finalAnswer = Answer(
             text: text, toolChips: chips + computerUseChips,
             routeChoices: sendChoices,
             rows: producedRows,
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,
             trace: sourceTrace)
+        if let mode = activeTurnMode, let manifest = activeTurnManifest {
+            finalAnswer.activeMode = mode.name
+            finalAnswer.modeProvenance = "\(manifest.appName): \(mode.name)"
+        }
+        return finalAnswer
     }
 
     /// Bundle ID whose durable App Pet memory may be loaded for `scope` (#339).

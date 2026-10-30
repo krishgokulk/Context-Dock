@@ -31,6 +31,8 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     case userProfile
     /// Which app this conversation is, and what may be driven in it.
     case identity
+    /// Active App Pet behavior mode (/mods) and prompt overlay instructions (#341).
+    case petMode
     /// What the user is pointing at right now.
     case selection
     /// The project the app has open: branch, changes, running agents.
@@ -64,7 +66,7 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     /// answering about, and an answer about the wrong app is worse than a short one.
     var isEssential: Bool {
         switch self {
-        case .sourceRule, .resolvedContext, .userProfile, .identity, .selection: return true
+        case .sourceRule, .resolvedContext, .userProfile, .identity, .petMode, .selection: return true
         default: return false
         }
     }
