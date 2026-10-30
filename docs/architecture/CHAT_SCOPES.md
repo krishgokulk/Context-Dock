@@ -1,83 +1,105 @@
-# Chat Scopes and the General Chat Window
+# Chat Scopes, App Pets and Combined Chat
 
-This file is architecture truth for how conversations are stored, grounded and shown.
-It does not change the [Product Layers](PRODUCT_LAYERS.md) rule: the dock, the result
-sheet and the chat window remain separate surfaces with separate jobs.
+> **Architecture truth, updated 2026-10-27 for #327.** This defines storage and scope; visual
+> behavior lives in [Unified Dock Surface](UNIFIED_DOCK_SURFACE.md).
 
 ## The one rule
 
-**A conversation belongs to a scope, not to a surface.**
+**A conversation belongs to its scope and participant set, not to the surface showing it.**
 
+```text
+ConversationID
+  kind: general | pet(PetID) | combined
+  participants: [] | [PetID] | [PetID, PetID, …]
+  turnScopes: app/tool profiles authorized for the current request only
+  transcript: full local history
+  summary: rolling factual conversation memory
+  provider: user-selected default + provider projection state
+  presentation: Dock | detached Pet | full chat window (views only)
 ```
-scope = .general | .app(bundleId) | .cli(command)
-   │
-   ├── storage   ONE per scope
-   ├── grounding ONE builder per scope kind
-   └── surfaces  dock sheet · result sheet · chat window
-```
 
-Two surfaces showing the same scope show the same messages. A surface never owns a
-conversation, so handing one over is opening it somewhere else — never copying it.
+Two views of one conversation show the same messages, task state, approvals and receipts. Nothing
+is copied when a Pet is detached or the full window opens.
 
-## Scopes
+## Scope meanings
 
-| Scope | Created by | Storage |
+| Participants | Product meaning | Compatibility storage |
 |---|---|---|
-| `.general` | Result sheet, chat window "New chat" | `GeneralAIChatConversationStore` (UserDefaults, key `dorax.generalAI.currentConversation.v1`) |
-| `.app(bundleId)` | Frontmost/scoped dock chat, window glyph handoff, `/appname` in the window | `AppPanelChatStore` file, key `dock_app_<bundleId>` |
-| `.cli(command)` | CLI Tool Scope, its window glyph | `AppPanelChatStore` file, key `dock_app_cli://<command>` |
+| none | **General Chat**; Dora's Mac-wide conversation, with app routes selected per turn | current `.general` path |
+| one anchored app/tool Pet | **App Pet Chat**; profile and verified Pet memory are active by default | current `.app(bundleId)` / `.cli(command)` stores |
+| two or more Pets | Combined Chat | current combined-thread app set, promoted into first-class participants |
 
-`GeneralChatSessionStore` is the index and the router: it maps a scope to its store,
-holds the sidebar list, and per-thread extra apps (`…apps.v1`) for combined chats.
-App and CLI scopes deliberately write the file the dock already used, so the window is
-a second view of that conversation rather than a copy that drifts.
+Adding a Pet promotes the same `ConversationID`; removing a participant changes future scope but
+does not erase prior messages or that Pet's memory.
 
-Threads created before storage was shared are merged into the dock file on first open
-(union, deduped on role + text + second-resolution timestamp, since the two surfaces
-mint different UUIDs for the same message), then the legacy key is deleted.
+Participant identity and turn execution scope are different. General Chat may invoke Mail for one
+explicit request without becoming Mail Chat, adopting Mail's long memory, or blocking the next turn
+from using another app. A temporary route appears in the plan/receipt and expires with the turn.
+Only **Open in Mail Pet** (or equivalent explicit anchoring) changes a general conversation into a
+one-Pet conversation. Only explicit persistent connection of multiple Pets creates Combined Chat.
+
+Opening an App Pet resumes its latest active non-archived conversation. New chat is explicit.
+The v1 detached Pet binds to that active conversation; one detached presentation per app prevents
+ambiguous synchronization. The full chat window remains the place to browse/switch older threads.
+
+## Scope connection
+
+When an App Pet or Combined Chat request needs an app outside the current participant set:
+
+1. Resolve the minimum Pet set from the capability index.
+2. Show which Pet is needed and why.
+3. Ask once to connect it to the thread.
+4. On acceptance, update the participant set and continue the same request.
+5. On refusal, preserve the thread and offer the best result possible within current scope.
+
+Connecting a Pet grants visibility to its allowed profile/capabilities for this thread. It does
+not approve a write, outbound action, Computer Use or provider change.
+
+In General Chat, an app the user explicitly names is a turn-scoped route request, not a participant
+connection. When Dora infers a private app that the user did not name, it previews the proposed app
+scope before reading it. Consequential actions always use their normal exact approval regardless of
+conversation kind.
 
 ## Grounding
 
-One builder per scope kind, called by every surface:
+Every surface calls the same grounding builders. For each turn:
 
-- `ScopedAppPromptBuilder.appIdentityBlock` — what the scope is, plus adapter actions,
-  verified menu commands, MCP servers, API connections, Shortcuts, skills, linked CLIs
-  and the tool-choice order. Handles `cli://` scopes too.
-- `AppScopedChatService.dateTimeBlock` — current date/time, so "today" resolves.
-- `AppScopedChatService.liveWindowFacts` — the scoped app's own front window title,
-  open document and window list, read from **its** AX element, not from whichever app
-  the global AX snapshot happens to belong to.
+- include only participating Pet profiles and step-relevant context;
+- keep frontmost-window/page/selection facts distinct from durable memory;
+- retrieve relevant conversation turns and per-Pet verified memory instead of sending full history;
+- preserve provider privacy and context budgets;
+- never expose one participant's unrelated private data to another participant's tool step.
 
-`AppScopedChatService.send` assembles those, adds the capability hub block, and runs
-`sendWithTools` with `TerminalCommandExecutor` as the executor. Approval gates are
-identical on every surface — a different window is never a reason to lower one.
+Existing `ScopedAppPromptBuilder`, `AppScopedChatService` and `GeneralChatSessionStore` are evolved,
+not duplicated.
 
-DockCore keeps thin delegates (`scopedAppIdentityBlock`, `currentDateTimeContextBlock`,
-`liveAppWindowFacts`) that supply the dock-only inputs: the live browser page, the AX
-window title, the typed query.
+## Memory ownership
 
-## How the chat window behaves
+- Full transcript and rolling summary belong to the conversation.
+- General Chat memory contains general preferences and conversation facts, not silent copies of
+  every Pet's long memory.
+- Verified app preferences/facts/routines belong to that App Pet.
+- Combined Chat writes back only verified, relevant outcomes to each Pet.
+- Mode selection belongs to Pet + conversation and is visible on messages after it changes.
+- A provider context window is a projection, never the source of truth for history.
 
-The window is the full-size view of the same scopes. It is not a new chat surface.
+## Full chat window
 
-- **Sidebar** — "New chat" (the `.general` scope; from a scoped thread it returns there
-  rather than wiping the thread being read), then **Apps & tools**: one row per app or
-  CLI thread, ordered by when they were opened and never reordered by clicking.
-- **A single attached app** appears as a row in Apps & tools. **Two or more** become a
-  **Combined chat** entry carrying both icons — one conversation across both apps.
-- **`/` in the composer** filters apps and picks one with Return. On an empty General
-  chat, picking an app opens that app's own thread; otherwise it attaches as an extra
-  scope on the current thread.
-- **Sends are per thread.** Each thread tracks its own in-flight request; switching away
-  neither cancels it nor moves its answer. An answer is filed into the scope it was
-  asked in, on screen or not.
-- **Transcript** shows day separators (Today / Yesterday / date) and the app icons that
-  were attached when each question was sent.
+The full window is the larger view of the same conversations:
 
-## What must not happen
+- sidebar rows say General Chat, <App> Pet, or Combined Chat and use the matching identity icon;
+- `/` adds a Pet after scope consent;
+- switching rows does not cancel or move in-flight work;
+- each answer is filed into the `ConversationID` that requested it;
+- closing a sidebar row removes presentation only, not transcript or Pet memory.
 
-- No second store for a scope that already has one.
-- No per-surface prompt builder — a question about an app must ground identically in the
-  dock and in the window.
-- No surface-specific approval path for command execution.
-- Closing a window row removes the row, not the conversation: the dock still shows it.
+## Must not happen
+
+- No per-surface conversation store or prompt builder.
+- No hybrid label such as “Mail General Chat”; identity must be exactly General Chat, Mail Pet, or
+  Combined Chat.
+- No silent participant attachment or scope widening.
+- No action approval inferred from participant consent.
+- No provider switch inferred from a multi-step task.
+- No detached-Pet-only executor or safety path.
+- No free-form Pet-to-Pet agent loop; one host-owned typed task graph coordinates all steps.

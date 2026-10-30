@@ -62,6 +62,26 @@ struct ClaudeCodeStreamTests {
                 == .failure("Claude requested permissions to use WebFetch"))
     }
 
+    /// An expired subscription is told apart from an ordinary turn failure, so the user is sent
+    /// to sign in again instead of being shown the CLI's raw OAuth words (diagnostic 2026-10-28:
+    /// "Failed to authenticate: OAuth session expired and could not be refreshed" surfaced raw on
+    /// a `claudeCode` turn). `parse` still carries the CLI's words; the classification that routes
+    /// them to `.notAuthenticated` happens at the throw site, via `isAuthFailure`.
+    @Test func anExpiredSessionIsClassifiedAsAnAuthFailure() {
+        let expired = "Failed to authenticate: OAuth session expired and could not be refreshed"
+        let line = """
+            {"type": "result", "subtype": "error", "is_error": true, \
+            "result": "\(expired)", "session_id": "02908af6"}
+            """
+        #expect(ClaudeCodeCLIService.parse(streamLine: line) == .failure(expired))
+        #expect(ClaudeCodeCLIService.isAuthFailure(expired))
+        #expect(ClaudeCodeCLIService.isAuthFailure("Not logged in · Please run /login"))
+        #expect(ClaudeCodeCLIService.isAuthFailure("Invalid API key · Please run /login"))
+        // An ordinary failure stays ordinary and is still shown verbatim.
+        #expect(!ClaudeCodeCLIService.isAuthFailure("Claude requested permissions to use WebFetch"))
+        #expect(!ClaudeCodeCLIService.isAuthFailure("Claude Code returned no answer."))
+    }
+
     /// The finished screenshot step reads in plain past tense, not "Ran dorax_screenshot via
     /// dorax" (#185 item 5).
     @Test func theFinishedScreenshotStepReadsTookAScreenshot() {

@@ -1,5 +1,10 @@
 # 00 — Dock → Corner parity inventory
 
+> **Historical migration inventory.** The Dock window was retired in #257. Current shell and App
+> Pets truth is [`00-DOCK-AND-CORNER.md`](00-DOCK-AND-CORNER.md) and the
+> [#327 design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md); do not derive a
+> second-shell implementation from the comparison tables below.
+
 > **Status (2026-10-14): historical.** The Dock is retired (#257) — its window and screen are
 > deleted, so there is no second shell to match. Rows still 🟡 or ❌ are Corner work items now,
 > not parity gaps; the Dock column describes behaviour that no longer exists in the app.

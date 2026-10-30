@@ -81,7 +81,8 @@ struct CornerLivePanel: View {
     /// "No steps recorded" (#199).
     private var progressRows: [PanelProgressRow] {
         if isAnswering {
-            return L.progressRows(reasoning: liveSteps, steps: liveActivity)
+            return L.progressRows(
+                reasoning: liveSteps, steps: ActivityStep.collapsingMCPWrappers(liveActivity))
         }
         guard let answer = lastTurnAnswer else { return [] }
         return L.progressRows(reasoning: answer.trace, steps: finishedSteps)

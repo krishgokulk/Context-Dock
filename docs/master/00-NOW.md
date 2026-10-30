@@ -10,8 +10,43 @@
 
 ## In progress
 
+**Dynamic Notch / MacBook Pro & Air Dynamic Island Anchor (2026-10-29):**
+- Completed and owner-approved ("its prefect. push and merge.").
+- Adds `.notch` anchor to `CornerDockAnchor` framing the hardware notch on notched MacBooks and top-center menu bar on external displays.
+- Safe area notch clearance: queries `NSScreen.safeAreaInsets.top` dynamically (`ScreenNotchMetrics.currentNotchHeight`), placing all cards (Clipboard, Drop Shelf, App Chat, suggestions) safely below the camera housing.
+- Full Liquid Glass fidelity: authentic `GlassBackground` translucency, live wallpaper blur, and specular rim highlights preserved on combined result sheets (`CornerCombinedCard`) and resting pills.
+- Clean notch tap and top edge auto-hide: tap gesture on notch triggers smooth downward expansion (`.spring(response: 0.36, dampingFraction: 0.82)`); bottom-edge pointer immunity prevents false reveals.
+- Live Activities & Shape: `DynamicIslandNotchShape` and `DynamicNotchLiveActivityView` (referencing NotchNook & Pinterest AI turn tracking).
+
+**Handoff (2026-10-28, cloud session → Mac): four cost/auth follow-ups.** Two PRs merged this
+session — **#347** (pin `"model": "sonnet"` in `.claude/settings.json`; cost-discipline section in
+`00-MODEL-ROUTING.md`) and **#348** (classify expired-OAuth `claude` CLI failures as
+`.notAuthenticated` instead of surfacing the raw "Failed to authenticate: OAuth session expired and
+could not be refreshed" text — new `ClaudeCodeCLIService.isAuthFailure`; Mac-verified green, 2904
+tests, new test `anExpiredSessionIsClassifiedAsAnAuthFailure` passed). Open follow-ups for a Mac
+session, in order:
+1. **Close the usage leak (biggest).** #347 defaults sessions to Sonnet, but the ~60% "Subagent"
+   burn is the account-level `/builder` / `/loop /builder` skill likely spawning the **Opus
+   `reviewer`** every iteration. That skill is NOT in this repo. Audit it: reviewer runs once per PR
+   (pre-ready), not per cycle; builder sessions must start on Sonnet. Fix the skill, not the repo —
+   see `00-MODEL-ROUTING.md` → Cost discipline rule 2.
+2. **Re-auth the real subscription login.** The owner's original "OAuth session expired" was likely
+   the Mac being out of disk (token cache can't write to a full disk; ~33 GB freed this session).
+   Run `claude login` / `codex login` and confirm the provider answers — #348 only made the *message*
+   actionable, it does not refresh a dead token.
+3. **Don't recharge a third account.** Verify one full day of Sonnet-default usage first.
+4. **Worktree cleanup.** Remove `.claude/worktrees/oauth-348` (merged as #348) and the ~2.3 GB
+   `issue-42-overask/.build` if that PR is done (AGENTS.md cleanup rule; never a dirty/unmerged tree
+   or one a running app was built from).
+
 **Start here (2026-10-27):** read *State (2026-10-27)* below first — #324 and #328 merged, Codex's
 #327 (App Pets docs) is in progress, and the next `ready` task is **#205** (#204 P10 is still held).
+
+**#327 App Pets product architecture (docs only, 2026-10-27):** update the blueprint and impacted
+architecture truth for one Dock, Global Context, App Pets, Combined Chat, memory and `/mods`.
+No product code starts from this document until the owner verifies the final decision card and an
+implementation plan is approved. Canonical spec:
+`docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`.
 
 Coordinator: Planner `Context-Dock planner — land #312` (Opus) — since 2026-10-26 (fresh session took over to save tokens). On takeover rewrite this line.
 
@@ -65,11 +100,14 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - **In progress — #327 (Codex, owner's session): App Pets + Combined Chat blueprint, docs only**, in
   worktree `issue-327-app-pets-blueprint`. It edits `docs/master/DORAX-BLUEPRINT.md`,
   `docs/architecture/PRODUCT_LAYERS.md`, `UNIFIED_DOCK_SURFACE.md`, `CHAT_SCOPES.md` and adds
-  `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`. **Do not edit those files
-  until #327 merges.** Direction the owner approved in that session: one Dock that opens as the
+  `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` and
+  `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md` (3-tier lifecycle:
+  floating desktop pet mascot with pinned bubbles and inline input, compact launcher, and expanded window).
+  **Do not edit those files until #327 merges.** Direction the owner approved in that session: one Dock that opens as the
   frontmost app's Pet (⌘ or Backspace on an empty field goes to Global Context); every running-app
-  icon is a dormant Pet that can be dragged out; General Chat becomes Combined Chat, recruiting other
-  Pets after a connect approval; headless first; one shared native layer (selection, clipboard,
+  icon is a dormant Pet that can be dragged out; General Chat stays Dora's Mac-wide conversation and
+  borrows app abilities per turn without inheriting Pet memory; an App Pet becomes Combined Chat only
+  when another persistent Pet is connected after approval; headless first; one shared native layer (selection, clipboard,
   windows, sharing, notifications, files). Open owner question: does a selection made before launch
   auto-attach to the frontmost Pet, or open the Selection Scope first?
 - **#321** (draft Corner UI/UX plan) is superseded by #324 + #327; closed on the owner's request 2026-10-27.
@@ -139,6 +177,16 @@ The planner labels the next issue `ready` when the one before it is in review.
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
 Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5).
+
+**#327 owner-verified (2026-10-27, “okay. perfect”):** write a staged implementation plan and split it into issues in
+this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
+`/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
+Corner, stores, capability index and shared executor; no second engine or registry.
+Plan written: [`2026-10-27-app-pets-rollout.md`](../superpowers/plans/2026-10-27-app-pets-rollout.md).
+Implementation issues: **#338** identity/scope → **#339** promotion/consent → **#340** memory →
+**#341** `/mods` → **#342** detached presentation → **#343** proactive behavior. #338 has the
+detailed first-stage task plan; implementation waits for #327 / PR #337 to merge and for the owner
+to move this lane ahead of the current `ready` queue.
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
@@ -272,9 +320,18 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-05 | Merges (A): only the cloud planner merges, on the owner's words "merge <n>" in the planner chat. The Mac builder never merges, even after a passed hand check. |
 | 2026-10-05 | Owner "yes": the owner's "N passed" (hand check) is also permission to merge that PR once CI is green; docs-only PRs (no hand check) the planner merges itself once CI is green. |
 | 2026-10-06 | Adopted the app agent + plugin manager plan: two lanes (data never takes the window; UI lane's last rung is Computer Use), menus out of the default prompt, plugin manager fronting existing registries, CLI learner, curated catalog, solved-task library. P1–P12 = #195–#206; P1–P3 go before #180/#185 (`00-APP-AGENT-PLUGIN-PLAN.md`). |
+| 2026-10-27 | Product end state: **one Dock**. A normal launch opens the frontmost **App Pet**; Global Context is the launcher/home. Centre and corner are placements of the same shell. |
+| 2026-10-27 | Running/pinned app icons are dormant Pets: click switches the Dock to that Pet; drag out creates a persistent detached Pet backed by the same profile, conversation stores and agent harness. |
+| 2026-10-27 | Every Pet composes app identity, knowledge, skills, connectors, capability routes, conversation, short/long memory and `/mods`; it is not a permanent model process and not a new registry. |
+| 2026-10-27 | Cross-app requests connect the minimum required Pets and promote the same thread to **Combined Chat**. Connecting scope is separate from write/outbound approval. |
+| 2026-10-27 | Headless first: do not launch when a route can finish headlessly; start hidden if only the process is needed; explicit open/show launches directly; visible UI used only as fallback asks before taking focus. |
+| 2026-10-27 | Selection, clipboard, windows, files, native sharing and notifications are shared host capabilities available to all Pets through one scope/approval/execution/verification layer. |
+| 2026-10-27 | Command or empty Backspace returns an App Pet to Global Context without recreating the Dock or discarding typed text. |
+| 2026-10-27 | #327 architecture confirmed after clarification: headless means structured adapter/API/MCP/CLI/Shortcut work, not Computer Use; Computer Use is the visible-UI last resort. Clicking a running-app icon changes the active Pet inside the same Dock and does not foreground the underlying app or create a window; dragging detaches it. |
+| 2026-10-28 | **General Chat and App Pet Chat are separate identities.** General Chat is Dora's Mac-wide conversation and may use an app ability only for the current turn; this does not rename it, load Pet memory or restrict later turns. **Open in App Pet** explicitly creates the anchored, remembered app conversation. Combined Chat requires persistent connected Pets, not merely multiple tool routes. |
+| 2026-10-28 | **Pet presentation & expansion lifecycle:** clicking/double-clicking the floating desktop mascot jumps directly to Tier 3 (Expanded Window); action receipt bubbles stay pinned until explicitly closed with ✕; micro-bar ✏️ expands into inline input `[+] [Start new chat] [↑]` without opening a window (spec: `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md`). |
 
 ## Open decisions (owner)
 
 - E5: in on-device-only mode, may DoraX *offer* a cloud model when a task is too big, or never mention it? Needed before #152.
-- What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?

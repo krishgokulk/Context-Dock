@@ -262,8 +262,8 @@ enum ScopedGroundingBlocks {
     /// times — the chat, `read_page`, `browser.findInPage` — and each read is an AppleScript
     /// round trip into the browser, so without this a single question enumerates every tab
     /// three or four times.
-    static func openTabs(bundleId: String) -> [BrowserTab] {
-        if let cached = tabCache[bundleId], Date().timeIntervalSince(cached.readAt) < 15 {
+    static func openTabs(bundleId: String, fresh: Bool = false) -> [BrowserTab] {
+        if !fresh, let cached = tabCache[bundleId], Date().timeIntervalSince(cached.readAt) < 15 {
             return cached.tabs
         }
         // Only ask a browser that is actually running: AppleScript to a stopped app launches

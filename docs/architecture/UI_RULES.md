@@ -26,22 +26,25 @@ Mode content changes inside same shell. Window/material/control shell should not
 - Down Arrow reveals prepared results; typing updates background rows/icons without resizing or replacing the sheet.
 - Enter with a focused row executes that row. Enter with only the render-default first row may execute only when the query is not chat/question-style and the row matches typed text.
 
-## Context Dock
+## App Pet
 
-- Looks app-scoped.
+- Looks app-scoped and has a clear Pet identity.
 - Frontmost app identity must stay visible.
 - Results are current app commands/actions.
 - Query changes update rows inline, not window/sheet identity.
 - Do not show unrelated global actions ahead of app actions.
 - App-switch/default rows may execute from Enter only when they are the visible row source; do not rebuild a different pill list during execution.
 
-## Chat Modes
+## Conversation modes
 
 - Chat mode must look like conversation.
-- General Chat shows explicit context, attachments, and system-wide workflow status.
-- Context Dock Chat shows current app/tool scope.
+- General Chat is labelled `Dora` or `General Chat`, never `<App> General Chat`; temporary app use
+  appears as a per-turn route chip or receipt and expires after that request.
+- Combined Chat shows participant Pet chips, explicit context, attachments and cross-app progress.
+- App Pet conversation shows the current app/tool scope and active `/mods` mode.
 - Do not make chat look like menu search.
 - Do not make launcher behave like chat.
+- Detached Pets reuse these components and the same stores; they are not custom mini-app shells.
 
 ## Media Dock
 
@@ -52,7 +55,7 @@ Mode content changes inside same shell. Window/material/control shell should not
 
 ## Selection Shortcut Sheet
 
-- Appears from long-press Command.
+- Appears from the Selection Scope hotkey or explicit attach action.
 - Shows selected content/action matches.
 - Not a launcher list.
 - Supports text, file, URL, image, clipboard, app menus, extensions, shortcuts, and AI actions.
@@ -70,9 +73,8 @@ Mode content changes inside same shell. Window/material/control shell should not
 
 - Use product-level language:
   - Global Context
-  - Context Dock
-  - General Chat
-  - Context Dock Chat
+  - App Pet
+  - Combined Chat
   - Media Dock
   - Selection Shortcut Sheet
 - Avoid implementation labels in user UI unless user opens advanced/debug settings.

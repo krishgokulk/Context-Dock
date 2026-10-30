@@ -200,6 +200,24 @@ struct ChatRoute: Identifiable, Equatable {
     var asActionChoice: ActionChoice {
         ActionChoice(id: id, title: title, routeLabel: kind.routeLabel, appName: appName)
     }
+
+    /// The menu path this route clicks, split the way `asCandidate` splits it. Empty for
+    /// any other kind; a menu route with no separators is its own single-element path.
+    var menuCommandPath: [String] {
+        guard kind == .menuCommand else { return [] }
+        let path = payload.split(separator: "\u{1}").map(String.init)
+        return path.isEmpty ? [title] : path
+    }
+
+    /// True when this menu command destroys local state (Close, Quit, Delete…) or reaches
+    /// another person (Send, Reply, Forward, Share) — the exact set `AppMenuConsentStore`
+    /// already gates unattended runs by, read through the one classifier verified menus and
+    /// Computer Use share. A benign, reversible click (New Tab, Zoom, a View toggle) is false.
+    @MainActor
+    var isDestructiveMenuCommand: Bool {
+        guard kind == .menuCommand else { return false }
+        return ActionReadiness.destroysSomething(path: menuCommandPath)
+    }
 }
 
 @MainActor
@@ -573,10 +591,18 @@ enum ChatRouteResolver {
     static func executionApproval(for route: ChatRoute) -> ExecutionApproval {
         // Reads have no consequence, and adapter writes retain their own per-action consent
         // prompt. Menu control and MCP writes have no later gate, so app-level access is not
-        // enough: ask for this exact action at the point of execution.
+        // enough: ask for this exact action at the point of execution — except a menu command
+        // that neither destroys local state nor reaches another person. Granting menu control
+        // to an app is what authorises a benign, reversible click (New Tab, Zoom, a View
+        // toggle); raising an execution card for one is the over-ask that surfaced a spurious
+        // "Cancelled — nothing was executed." on "open a new tab in Safari" (#43). The
+        // destructive/outbound set is the one AppMenuConsentStore already gates unattended runs
+        // by — no new classification — so deletes, sends and anything irreversible keep the card.
         if route.isReadOnly { return .granted(.accessPolicy) }
         switch route.kind {
-        case .menuCommand, .mcpTool:
+        case .menuCommand:
+            return route.isDestructiveMenuCommand ? .ask : .granted(.accessPolicy)
+        case .mcpTool:
             return .ask
         // Never granted from here. The press itself is consented per app, and offering it
         // as pre-approved would let an access level stand in for a decision about driving
@@ -588,22 +614,117 @@ enum ChatRouteResolver {
         }
     }
 
+    /// The one route that plainly wins, when the ranking names a clear primary.
+    ///
+    /// Routes arrive deterministically ordered (`kind.rank`, then read-over-write, then
+    /// shorter title — see `routes(for:)`), so the first is the highest-confidence way to
+    /// carry out the request. It is a *clear* primary unless the runner-up is tied with it
+    /// on both axes that decide consequence — same rank and same risk — in which case
+    /// neither is obviously right and the user should make the call. This is the app-scoped
+    /// twin of the General AI path's `confidence < 0.7` gate
+    /// (`DockCore+GeneralAIActions.swift`): deterministic ranking stands in for confidence.
+    static func clearPrimaryRoute(_ routes: [ChatRoute]) -> ChatRoute? {
+        guard let primary = routes.first else { return nil }
+        guard routes.count > 1 else { return primary }
+        let runnerUp = routes[1]
+        let sameConsequence = primary.kind.rank == runnerUp.kind.rank
+            && primary.isReadOnly == runnerUp.isReadOnly
+        // A qualified variant of the same command is not a genuine tie. Safari offers both
+        // "File ▸ New Tab" and "File ▸ New Tab at End" for "new tab"; ordering already puts the
+        // plainer, shorter title first, so the runner-up merely extends it. The plain form is
+        // the obvious primary — asking there is the over-ask #42 set out to remove. A real tie
+        // is between distinct options ("New Tab" vs "New Private Tab"), where neither extends
+        // the other, and that still asks.
+        let tied = sameConsequence && !isQualifiedVariant(of: primary.title, runnerUp.title)
+        return tied ? nil : primary
+    }
+
+    /// True when `candidate` is `base` plus a trailing qualifier — "File ▸ New Tab" vs
+    /// "File ▸ New Tab at End" — rather than a distinct command. A qualifier is extra words
+    /// after a word boundary, so "New Tab" does not count "New Private Tab" as its variant.
+    private nonisolated static func isQualifiedVariant(of base: String, _ candidate: String) -> Bool {
+        let b = base.lowercased()
+        let c = candidate.lowercased()
+        guard c.count > b.count, c.hasPrefix(b) else { return false }
+        return c[c.index(c.startIndex, offsetBy: b.count)] == " "
+    }
+
+    /// The one route that is the plain form of the request when several share its words:
+    /// `File ▸ New Tab` beside `File ▸ New Tab at End`. Chosen only when one runnable route's
+    /// command name is a strict prefix of every other's, so "the shorter name" can never pick
+    /// between two different things.
+    static func plainestRoute(_ routes: [ChatRoute]) -> ChatRoute? {
+        let runnable = routes.filter {
+            $0.kind == .menuCommand || $0.kind == .adapterAction
+        }
+        func leaf(_ route: ChatRoute) -> String {
+            (route.title.components(separatedBy: " ▸ ").last ?? route.title).lowercased()
+        }
+        guard runnable.count > 1,
+            let shortest = runnable.min(by: { leaf($0).count < leaf($1).count })
+        else { return runnable.first }
+        let base = leaf(shortest)
+        let others = runnable.filter { $0.id != shortest.id }
+        return others.allSatisfy({ leaf($0).hasPrefix(base + " ") }) ? shortest : nil
+    }
+
+    /// The route to try when `failed` did not run: the next runnable one under the grants
+    /// that already filtered `routes`.
+    ///
+    /// A gated or broken MCP tool is the one top-ranked route that can fail for reasons that
+    /// say nothing about the request — the server is not connected, the call errored — while a
+    /// granted lower-rank route (the app's own menu command) would just work. Stopping on its
+    /// error is a dead end, not caution. Three things still stop the chain:
+    /// - the user said no, at the tool's own card (`MCPRuntime.userDeclinedPrefix`) or the
+    ///   executor's (`wasCancelled`): that is a decision, not a fault;
+    /// - the next route would do more than the request asked (a read falling back to a write);
+    /// - the next route is not one `run` carries out (a skill, the model, Computer Use).
+    ///
+    /// The fallback keeps its own consent: `run` still applies `executionApproval`, so a menu
+    /// press asks at the point of acting exactly as it would have as the primary.
+    static func fallbackRoute(
+        after failed: ChatRoute, output: String, wasCancelled: Bool = false,
+        in routes: [ChatRoute]
+    ) -> ChatRoute? {
+        guard failed.kind == .mcpTool, !wasCancelled,
+            !output.contains(MCPRuntime.userDeclinedPrefix)
+        else { return nil }
+        return routes.first { candidate in
+            switch candidate.kind {
+            case .adapterAction, .menuCommand, .cli, .mcpTool: break
+            case .skill, .model, .computerUse: return false
+            }
+            return candidate.id != failed.id
+                && candidate.title.lowercased() != failed.title.lowercased()
+                && (candidate.isReadOnly || !failed.isReadOnly)
+                && candidate.kind.rank > failed.kind.rank
+        }
+    }
+
     /// True when the user should be asked which route to take.
     ///
-    /// Only when the routes differ in consequence — several exist, at least one changes
-    /// something or takes the screen, and the user has not already answered this question
-    /// for this app.
+    /// Act by default: several routes existing is not a question. We ask only when at least
+    /// one route changes something or takes the screen, the user has not already answered
+    /// this for the app, AND the ranking names no clear primary — the top two routes are
+    /// genuinely tied (same rank, same risk). A request with an obvious default route
+    /// ("open a new tab") runs rather than over-asking "which should I use?".
     static func shouldAsk(routes: [ChatRoute], bundleId: String, query: String) -> Bool {
         guard isActionRequest(query) else { return false }
         guard routes.count > 1 else { return false }
         guard ChatRoutePreferenceStore.preferredKind(bundleId: bundleId, query: query) == nil
         else { return false }
-        return routes.contains { !$0.isReadOnly }
+        guard routes.contains(where: { !$0.isReadOnly }) else { return false }
+        return clearPrimaryRoute(routes) == nil
     }
 
     /// Runs a route and returns what it produced, verbatim, for the Console and for the
     /// model to phrase.
-    static func run(_ route: ChatRoute, query: String) async -> (success: Bool, output: String) {
+    ///
+    /// `wasCancelled` is the user saying no to the executor's own approval card — a decision,
+    /// not a fault, so `fallbackRoute` must not route around it.
+    static func run(
+        _ route: ChatRoute, query: String
+    ) async -> (success: Bool, output: String, wasCancelled: Bool) {
         // Authority is checked when routes are resolved, and again here, when one is run.
         // Not belt-and-braces: resolution filters a list, execution acts, and the two are
         // separated by everything in between — a plan being drafted by the model, a recipe
@@ -617,7 +738,7 @@ enum ChatRouteResolver {
             let level = AppAccessPolicy.level(for: route.bundleId)
             guard AppAccessPolicy.allows(mechanism, at: level) else {
                 return (false, AppAccessPolicy.explanation(
-                    for: route.appName, level: level, wantedRead: route.isReadOnly))
+                    for: route.appName, level: level, wantedRead: route.isReadOnly), false)
             }
         }
 
@@ -639,12 +760,13 @@ enum ChatRouteResolver {
                     true,
                     "Started `\(route.payload)` in the \(command) thread's terminal — that "
                         + "tool draws its own screen, so it cannot report back here. Open "
-                        + "\(command) in the sidebar to watch it."
+                        + "\(command) in the sidebar to watch it.",
+                    false
                 )
             }
             let result = await TerminalCommandExecutor.shared.run(
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
-            return (result.success, result.output)
+            return (result.success, result.output, false)
 
         case .adapterAction, .mcpTool, .menuCommand:
             // Gate A's last row: these run through the one executor General AI uses, so
@@ -656,7 +778,7 @@ enum ChatRouteResolver {
             // executor reads that and leaves the adapter's own consent prompt in place,
             // which is the only thing asking on this surface.
             guard var candidate = route.asCandidate() else {
-                return (false, "That route can no longer be run.")
+                return (false, "That route can no longer be run.", false)
             }
             // The user's own words, for an adapter script that interpolates {query}.
             candidate.inputValues["query"] = query
@@ -664,12 +786,12 @@ enum ChatRouteResolver {
             // route; it is not the user's approval to launch an app and click it now.
             let outcome = await GeneralAIActionExecutor.shared.execute(
                 candidate, approval: executionApproval(for: route))
-            return (outcome.success, outcome.message)
+            return (outcome.success, outcome.message, outcome.wasCancelled)
 
         case .skill, .model:
             // Neither runs anything: the caller answers with the skill's instructions in
             // the prompt. Returning "nothing happened" here is the honest result.
-            return (true, "")
+            return (true, "", false)
 
         case .computerUse:
             // Not run from here, deliberately. `ComputerUseTool` owns the press: it reads
@@ -681,7 +803,8 @@ enum ChatRouteResolver {
                 false,
                 "This route is carried out by operate_app, which asks for permission to "
                     + "drive \(route.appName) and records what the screen did. It is not run "
-                    + "from the route executor.")
+                    + "from the route executor.",
+                false)
         }
     }
 }

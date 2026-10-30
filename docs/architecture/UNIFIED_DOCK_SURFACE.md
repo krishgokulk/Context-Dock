@@ -1,180 +1,109 @@
 # Unified Dock Surface Architecture
 
-Core idea:
+> **Architecture truth, updated 2026-10-27 for #327.** Read with
+> [Product Layers](PRODUCT_LAYERS.md) and the
+> [App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
-One shell.
-Multiple modes.
-Stable state.
-Mode-specific content.
+## Core idea
 
-## Problem
-
-DoraX can be fast internally but still feel glitchy if floating UI surfaces use different shells.
-
-Bad behavior:
-- Close old panel.
-- Open new panel.
-- Resize immediately.
-- Reload blur/material.
-- Rerender everything.
-- Lose input focus.
-
-Good behavior:
-- Keep same panel.
-- Change mode state.
-- Crossfade content.
-- Preserve input focus.
-- Keep material, buttons, spacing, row style, and size rules stable.
-
-## UnifiedDockShell
-
-All floating DoraX surfaces should share one base shell:
+One Dock shell. Stable state. Focus-specific content. Centre and corner are placements; a detached
+Pet is another presentation of the same app scope.
 
 ```text
-UnifiedDockShell
-  Header
-  Input Bar
-  Context Chips
-  Content Area
-  Footer / Hints
+DockShell
+  placement: centre | corner(anchor)
+  focus: global | general(conversationID) | pet(appID, conversationID)
+       | combined(conversationID) | selection | media
+  shared input, rows, material, keyboard state, animation and sizing
 ```
 
-Shared shell owns:
-- Rounded floating window.
-- Native macOS material.
-- Same input field position.
-- Same close/minimize controls.
-- Same row style.
-- Same spacing.
-- Same animation rules.
-- Same light/dark behavior.
-- Same focus preservation behavior.
-- Same stable size rules.
+The retired Dock window is not revived. `Search/DockCore*` remains a windowless engine through
+`DockEngine` until its logic moves; no new floating shell may copy it.
 
-Modes own only content.
+## Shell ownership
 
-## Mode Content
+The shared shell owns:
 
-```text
-UnifiedDockShell
-  GlobalContextContent
-  ContextDockContent
-  GeneralChatContent
-  ContextDockChatContent
-  MediaDockContent
-  SelectionShortcutContent
-```
+- one rounded Liquid Glass window/material;
+- input/composer family and keyboard ownership;
+- row/card/icon families;
+- running/pinned Pet strip;
+- focus and back navigation;
+- stable width/height rules and smooth transitions;
+- light/dark, accessibility and screen-placement behavior.
 
-## Global Context
+Focus content owns only the information and controls for its job.
 
-Uses Unified Dock Shell.
+## Focus transitions
 
-Content:
-- Universal search results.
-- Apps.
-- Extensions.
-- Running app menus.
-- Commands.
+| Start | Action | Destination |
+|---|---|---|
+| Closed over an eligible app | normal launch | that frontmost App Pet |
+| Closed with no eligible app | normal launch | Global Context |
+| App Pet | tap Command | Global Context |
+| App Pet with empty composer | Backspace | Global Context |
+| Global Context | click running/pinned app | that App Pet in the Dock |
+| Global Context | drag app icon out | detached persistent Pet |
+| Global Context | New chat / Ask Dora | General Chat |
+| General Chat | use an app ability for one turn | General Chat, with a temporary app step chip |
+| General Chat | choose Open in App Pet | same conversation anchored to that App Pet |
+| App Pet | accept another required Pet | same conversation promoted to Combined Chat |
 
-Rules:
-- Same shell as other modes.
-- Search content only.
-- No chat layout.
+Typed text is never discarded by a focus shortcut. Escape/back behavior stays one level at a time.
 
-## Context Dock
+## Global Context content
 
-Uses Unified Dock Shell.
+- Universal search results, apps, files, extensions, commands and tools.
+- Pet strip at rest and during search when layout allows.
+- Launcher rows only; no transcript pretending to be search.
 
-Content:
-- Frontmost app actions.
-- App menu commands.
-- App extensions.
+## App Pet content
 
-Rules:
-- Same shell as Global Context.
-- App-scoped content only.
-- No universal search takeover.
+- App identity, mode and running/headless state.
+- App-scoped conversation and action/search phases.
+- Relevant capabilities, attachments, progress, receipts and optional context panel.
+- A clear affordance to return to Global Context and to detach/reattach the Pet.
 
-## General Chat
+## General Chat content
 
-Uses Unified Dock Shell.
+- Dora identity, never the frontmost app icon/name.
+- Mac-wide transcript with no permanent app anchor.
+- Per-turn app/source chips in the plan and receipts when abilities are used.
+- An explicit **Open in <App> Pet** action when the user wants persistent app scope and Pet memory.
+- No inherited Pet memory or app-only restriction after a temporary app route finishes.
 
-Content:
-- AI messages.
-- Visible attachment chips.
-- Provider/capability state.
-- System-wide capability discovery and execution status.
+## Combined Chat content
 
-Rules:
-- Chat content only.
-- Not Global Context.
-- Not Context Dock Chat.
+- Conversation plus visible participant Pet chips.
+- One plan/progress trace across participants.
+- Scope-connection cards separate from action-approval cards.
+- Provider/context state and one final combined receipt.
 
-## Context Dock Chat Mode
+## Detached Pet
 
-Uses Unified Dock Shell.
+A detached Pet may have compact/resting and expanded/conversation states, but it does not own a
+second transcript, provider session, capability registry or approval path. Reattaching it returns
+the same Pet/conversation to the Dock.
 
-Content:
-- Chat with current app.
-- Tool/app scope chips.
-- Command/action result cards.
+## Selection and media
 
-Rules:
-- App-scoped chat only.
-- Show current app/tool scope.
+Selection uses the shell as an explicit selection-aware card and may attach content to a Pet/chat.
+It is not the normal launch destination and does not silently upload content. Media is a compact
+Labs focus for media state/actions only.
 
-## Media Dock
+## Premium-feel rules
 
-Uses Unified Dock Shell compact size.
+1. No window recreation for focus changes.
+2. Preserve input focus and typed text.
+3. Keep the field and primary controls spatially stable.
+4. Crossfade/animate content; never snap between unrelated containers.
+5. One component family for rows, icons, pills, approvals, receipts and toasts.
+6. Centre and every corner placement receive the same behavior and by-eye comparison.
+7. Nothing clips when the Pet strip, participant chips or progress panel appears.
 
-Content:
-- Now playing.
-- Media actions.
-- Timeline/metadata.
+## Implementation rule
 
-Rules:
-- Media only.
-- No chat surface.
-- No universal search.
-
-## Selection Shortcut Sheet
-
-Uses Unified Dock Shell variant.
-
-Content:
-- Selected item.
-- Recommended actions.
-- Matched workflows.
-- App actions.
-- AI actions.
-
-Rules:
-- Selection-aware actions only.
-- Not launcher.
-- Same shell behavior: stable, focused, consistent.
-
-## Premium Feel Rules
-
-Do before more features:
-
-1. One shell component.
-2. One input component.
-3. One row component.
-4. One animation system.
-5. No window recreation for mode changes.
-6. Stable size rules.
-7. Visible context chips.
-
-## Context Chips
-
-Always show what DoraX is using:
-- Frontmost app: Safari, Finder, Xcode, Messages.
-- Selection: Selected Image, Selected Text, Finder File.
-- Tool scope: Weather, Terminal, Browser, AI profile.
-- Media scope: Now Playing, device/source.
-
-## Implementation Rule
-
-Do not build new floating panels with custom visual containers.
-
-Use or evolve `UnifiedDockShell`, then plug mode content inside.
+Do not build a custom window for Global, General Chat, Pet, Combined Chat, Selection or a detached Pet. Evolve
+the Corner shell/presentation controllers and plug focus content into it. The only exception is the
+existing full chat window, which remains a larger view into the same conversation stores—not a
+different product or execution path.

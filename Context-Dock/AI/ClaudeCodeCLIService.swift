@@ -43,12 +43,25 @@ enum ClaudeCodeCLIService {
                 return "Claude Code isn't installed. Install it, then run `claude` once to "
                     + "sign in with your Claude subscription."
             case .notAuthenticated:
-                return "Claude Code is installed but not signed in. Run `claude` in a "
-                    + "terminal and log in with your subscription."
+                return "Claude Code is installed but not signed in — your subscription "
+                    + "session may have expired. Run `claude` in a terminal and sign in again."
             case .failed(let detail):
                 return detail.isEmpty ? "Claude Code returned no answer." : detail
             }
         }
+    }
+
+    /// An auth or expired-session failure, told apart from an ordinary turn failure (a
+    /// permission prompt, a tool error) so the user gets the one action that fixes it —
+    /// signing in again — rather than the CLI's raw words. The `claude` CLI reports an expired
+    /// subscription as a structured `is_error` result ("Failed to authenticate: OAuth session
+    /// expired and could not be refreshed"), which the streaming and one-shot JSON paths would
+    /// otherwise surface verbatim (diagnostic 2026-10-28, claudeCode turn, scope codex).
+    nonisolated static func isAuthFailure(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return ["not logged in", "log in", "login", "authenticate", "authentication",
+                "oauth", "unauthorized", "session expired", "session has expired",
+                "could not be refreshed"].contains { text.contains($0) }
     }
 
     /// Where the CLI is, if it is anywhere.
@@ -504,7 +517,9 @@ enum ClaudeCodeCLIService {
                     }
                 })
             if stopped() { return .restartWithoutOutboundTools }
-            if let failure { throw Failure.failed(failure) }
+            if let failure {
+                throw isAuthFailure(failure) ? Failure.notAuthenticated : Failure.failed(failure)
+            }
             guard let answer, !answer.isEmpty else {
                 throw Failure.failed("Claude Code returned no answer.")
             }
@@ -517,7 +532,7 @@ enum ClaudeCodeCLIService {
         if stopped() { return .restartWithoutOutboundTools }
         guard let payload = decodeFirstObject(in: output) else {
             // The CLI prints its auth complaint as prose, not JSON.
-            if output.lowercased().contains("login") || output.lowercased().contains("auth") {
+            if isAuthFailure(output) {
                 throw Failure.notAuthenticated
             }
             throw Failure.failed(String(output.prefix(300)))
@@ -540,8 +555,8 @@ enum ClaudeCodeCLIService {
         }
 
         if payload["is_error"] as? Bool == true {
-            throw Failure.failed(
-                (payload["result"] as? String) ?? "Claude Code reported an error.")
+            let detail = (payload["result"] as? String) ?? "Claude Code reported an error."
+            throw isAuthFailure(detail) ? Failure.notAuthenticated : Failure.failed(detail)
         }
         guard let result = payload["result"] as? String, !result.isEmpty else {
             throw Failure.failed("Claude Code returned no answer.")
@@ -657,6 +672,58 @@ extension ClaudeCodeCLIService {
             Now answer this, using the conversation above for context:
             \(message)
             """
+    }
+}
+
+// MARK: - Sign-in
+
+extension ClaudeCodeCLIService {
+    /// What `claude auth status --json` reports, so a stale vs. fresh login is a fact DoraX can
+    /// read rather than infer from a failed turn. DoraX never reads the token itself — only this
+    /// status line, which the CLI exposes for exactly this.
+    struct AuthStatus: Sendable, Equatable {
+        var loggedIn: Bool
+        /// The CLI's `authMethod`: "claudeai" for a subscription, "console" for API-key billing,
+        /// "none" when signed out. Subscription is the one this provider is for.
+        var method: String?
+
+        /// Signed in the way this provider needs — a Claude subscription, not Console/API billing.
+        var isConsole: Bool { method == "console" }
+
+        static let loggedOut = AuthStatus(loggedIn: false, method: nil)
+    }
+
+    /// Reads the CLI's current login without running a turn. Any failure reads as logged-out, so
+    /// the caller offers sign-in rather than surfacing a raw error — recovering is the whole point.
+    static func authStatus() async -> AuthStatus {
+        guard let binary = binaryPath() else { return .loggedOut }
+        let output = (try? await run(binary: binary, arguments: ["auth", "status", "--json"])) ?? ""
+        guard let object = decodeFirstObject(in: output) else { return .loggedOut }
+        return AuthStatus(loggedIn: object["loggedIn"] as? Bool ?? false,
+                          method: object["authMethod"] as? String)
+    }
+
+    /// Opens Terminal on `claude auth login` so the user completes the browser OAuth there. The
+    /// login is interactive (a browser round trip and a pasted code) and cannot run headless, so
+    /// DoraX hands it to the terminal the user already trusts — the same place the install help
+    /// points. DoraX never sees the credentials; the CLI writes them to its own store and the
+    /// next `authStatus()` picks them up.
+    @discardableResult
+    static func launchSignIn() -> Bool {
+        // A fixed command with nothing interpolated — no user input reaches the shell.
+        let script = """
+            tell application "Terminal"
+                activate
+                do script "claude auth login --claudeai"
+            end tell
+            """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        do { try process.run(); return true } catch {
+            log.error("sign-in launch failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
     }
 }
 

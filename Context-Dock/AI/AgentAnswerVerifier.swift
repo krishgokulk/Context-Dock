@@ -47,6 +47,17 @@ enum AgentAnswerVerifier {
         return completionAssertions.contains(where: lowered.contains)
     }
 
+    /// What a subscription CLI turn did, from the steps the turn recorded. The CLI acts through
+    /// DoraX's MCP server, so its calls never reach `executed`; the recorder is where they
+    /// land. Without this, "I sent File → New Tab" read as work nobody performed, the correction
+    /// pass sent the model back, and it clicked a second time (#44 hand-check: two new tabs).
+    static func performedActions(in steps: [ActivityStep]) -> [AIProviderService.ExecutedCommand] {
+        steps.filter {
+            $0.status == .ok && ($0.kind == .tool || $0.kind == .mcp || $0.kind == .command
+                || $0.kind == .providerShell)
+        }.map { .init(command: $0.title, output: $0.output, success: true) }
+    }
+
     /// True when this turn's answer claims work that provably did not happen.
     static func claimsUnperformedWork(
         answer: String,

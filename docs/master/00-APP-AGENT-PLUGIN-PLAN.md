@@ -1,4 +1,10 @@
-# App agent and plugin manager: one flow for every frontmost app
+# App Pet profiles and capability manager: one flow for every app
+
+> **Product model update 2026-10-27 (#327):** the existing app agent becomes the capability and
+> execution core of an **App Pet**. An App Pet Profile composes app identity, knowledge, skills,
+> connectors, routes, `/mods`, conversation and memory over this one flow. It does not create a
+> new registry or permanent model process. Cross-app work is one Combined Chat task graph. See the
+> [canonical design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
 **Status: adopted by the owner 2026-10-06 ("confirm plan"). Tasks P1–P12 are GitHub issues.** Builds on
 `docs/architecture/FRONTMOST_AGENT.md` (the agent) and `docs/architecture/AI_TURN_LIFECYCLE.md`
@@ -7,6 +13,9 @@ the finish of E12 (retire the old routers onto `CapabilityIndex`).
 
 Mail is the pilot. Nothing below is Mail-specific except the plugin list: fix the flow once for
 Mail and every app scope in the Dock and the Corner gets it.
+
+“Dock and Corner” below is historical implementation language. The target has one Corner shell in
+centre/corner placements plus optional detached Pet presentations, all sharing this executor.
 
 ---
 
@@ -170,6 +179,11 @@ Data → UI fallback:  ✓ Lane: data · ✗ No data route for "archive" in Mail
                      ⏸ Plan: bring Mail forward, Message › Archive, then return — Allow / Deny
 ```
 
+**Launch decision rule (#327):** if a data route can finish headlessly, do not launch. If it needs
+the process, start hidden. If the user explicitly asks to open/show the app, launch it. If visible
+UI is only DoraX's fallback, show the plan and ask before taking focus. Writes/outbound work still
+uses its exact approval card in every state.
+
 ### Prompt changes
 
 - **No menu dump by default.** The scoped prompt lists the top headless candidates for *this
@@ -328,6 +342,11 @@ argv template / MCP tool / script), health { last run, success rate }`.
 
 Rules: a CLI runs as **argv, never a shell string**. Writes and outbound always go through the
 gate. A plugin cannot raise its own trust level.
+
+This capability manifest is a component of an App Pet Profile, not the whole profile. The profile
+also references learned app knowledge, skills, connectors, supported `/mods`, conversation/memory
+policy and presentation state. These references normalize existing stores; they do not create a
+seventh capability registry.
 
 ### 4.3 Lifecycle
 

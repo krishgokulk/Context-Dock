@@ -231,6 +231,7 @@ extension AIProviderService {
                     var exitCode: Int32?
                     // Say what is about to run, before it runs. Everything needed for this
                     // was already here and none of it was published — see AgentToolNarration.
+                    if let route = AgentToolNarration.route(tool: tc.function.name, arguments: args) { onStatus?(route) }
                     onStatus?(AgentToolNarration.start(tool: tc.function.name, arguments: args))
                     if simulateAllTools {
                         success = true
@@ -492,7 +493,8 @@ extension AIProviderService {
                 var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
 
-                onStatus?(AgentToolNarration.start(tool: toolName, arguments: args))
+                if let route = AgentToolNarration.route(tool: toolName, arguments: args) { onStatus?(route) }
+                    onStatus?(AgentToolNarration.start(tool: toolName, arguments: args))
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(toolName) tool call"
@@ -701,7 +703,8 @@ extension AIProviderService {
 
                 var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
-                onStatus?(AgentToolNarration.start(tool: fc.name, arguments: args))
+                if let route = AgentToolNarration.route(tool: fc.name, arguments: args) { onStatus?(route) }
+                    onStatus?(AgentToolNarration.start(tool: fc.name, arguments: args))
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(fc.name) tool call"

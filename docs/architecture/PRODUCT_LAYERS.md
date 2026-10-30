@@ -1,142 +1,132 @@
 # DoraX Product Layers
 
-This file is architecture truth for DoraX surfaces. Do not merge product layers.
+> **Architecture truth, updated 2026-10-27 for #327.** Detailed product behavior:
+> [App Pets, Global Context and Combined Chat](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 
-Floating surfaces must follow [Unified Dock Surface Architecture](UNIFIED_DOCK_SURFACE.md): one shell, multiple modes, stable state, mode-specific content.
+## Layer rule
 
-## Layer Rule
+**One Dock shell, one orchestration harness, several jobs that must remain explicit.**
 
-One surface, focus-scoped; job separation via intent + lane (owner 2026-10-25, #318).
+- Global Context and the active App Pet share shell/state and differ by `SurfaceFocus`.
+- General Chat is Dora's Mac-wide conversation and is not anchored to the frontmost app.
+- App Pet conversation is anchored to one app profile.
+- Combined Chat coordinates two or more explicitly connected Pet profiles.
+- Selection is an explicit input/action mode, not a launcher and not silently uploaded.
+- Media remains media-only.
+- Centre, corner and detached Pet are presentations, not separate products or engines.
+- Query intent + `RequestLane` choose headless data work versus visible UI work. A visible surface
+  never decides authority.
 
-- Global Context and the frontmost-app Context Dock are ONE surface: the frontmost app is the
-  default focus, ⌘ zooms out to Global (cross-app) and back. One state, one running-apps row, one
-  input; focus (`SurfaceFocus`, `UI/SurfaceFocus.swift`) is the only difference.
-- What still must not merge: General Chat, Media Dock and the Selection Shortcut Sheet keep their own
-  jobs (general chat, media, selection-aware actions); Selection Shortcut Sheet is not a launcher;
-  Media Dock is not a chat surface.
-- Behaviour is decided per request by query intent + lane (`RequestLane`/`LanePlan`/`LaneCoordinator`:
-  data lane = headless read, UI lane = menu click) — never by which scope you are in.
-
-Each remaining surface keeps one job: frontmost/global search and actions, general chat, media, or selection-aware actions.
+“One product” therefore does not mean one mixed list. Each focus renders only its own content and
+passes work through the same capability, approval, execution and verification contracts.
 
 ## Global Context
 
-Global Context = Universal Search Layer.
+**Job:** Mac-wide launcher/home.
 
-Job:
-- Search apps.
-- Search extensions.
-- Search running app menu cache.
-- Search universal commands.
-- Launch apps and commands fast.
+- Search apps, files, extensions, commands and tools.
+- Show running and pinned apps as dormant Pet icons.
+- Click an icon to switch the Dock to that Pet; drag it out to detach a persistent Pet.
+- Cache-first while typing; no live AX/menu scan on the keystroke path.
+- Never become a conversational transcript or silently execute a cross-app plan.
 
-Rules:
-- No live AX refresh while typing.
-- No menu scan while typing.
-- Use cache-first index.
-- Verify live state only when needed for execution.
-- Rank installed and recent apps high.
+## App Pet
 
-Plugins are Global Context's extension unit — see [Plugins](PLUGINS.md). A plugin is found
-and launched here; its `panel` filters as the user types; it never converses in this layer.
+**Job:** understand and work with one app.
 
-## Context Dock
+- Show the app identity, conversation, actions and current task state.
+- Assemble its App Pet Profile: knowledge, skills, connectors, routes, modes and per-app memory.
+- Prefer data/headless routes. Start hidden if a route only needs the process. Ask before taking
+  the screen when visible UI is only DoraX's fallback.
+- Stay anchored to that app until the user switches Pet or consents to add another participant.
+- Use `/mods` only as bounded behavior overlays; modes never change scope, authority or approvals.
 
-Context Dock = Frontmost App Command Layer.
-
-Job:
-- Show current app menus.
-- Show current app actions.
-- Show app adapters.
-- Show app extensions.
-- Execute frontmost-app commands.
-
-Rules:
-- Scope stays frontmost app.
-- Result sheet stays stable while query changes.
-- Live menu state may update, but UI must not recreate sheet per keypress.
-- App command execution must feel native and instant.
+An App Pet replaces the user-facing split between “Context Dock” and “Context Dock Chat.” Search
+rows and conversation are still different content phases inside the Pet focus.
 
 ## General Chat
 
-General Chat = System-wide AI Workflow Layer.
+**Job:** talk to Dora across the Mac without pinning the conversation to one app.
 
-Job:
-- System-wide questions, app discovery, and cross-app workflows.
-- Conversational fallback when no local capability is relevant.
-- Visible attachments.
-- Visible context.
-- User-controlled provider/profile.
+- Keep Dora identity and a Mac-wide conversation even when one turn uses an app ability.
+- Resolve the minimum app routes required by the request; show those routes as step/source chips,
+  not as a silent conversation rename.
+- Do not load an App Pet's long memory merely because a turn calls one of its abilities.
+- Use an explicitly named app immediately within existing grants (for example, “summarize my five
+  newest Mail messages”); preview/ask when Dora must infer a private app or broaden scope.
+- Ask separately for consequential writes, sends, deletes, quits or UI control.
+- Offer **Open in <App> Pet** when the user wants the conversation to become persistently
+  app-anchored and memory-aware.
 
-Rules:
-- Not launcher.
-- Not frontmost-app command sheet.
-- Installed apps and adapters inform capability discovery; they do not silently grant access.
-- Execution requires a typed route, appropriate approval, and an honest result.
-- Context must be explicit and visible.
+General Chat therefore may read Mail and then quit unrelated apps in the next turn. The Mail route
+was turn scope, not the identity or permanent authority boundary of the conversation.
 
-## Context Dock Chat Mode
+## Combined Chat
 
-Context Dock Chat Mode = Frontmost App Conversation Layer.
+**Job:** one conversation and typed task graph across two or more Pets.
 
-Job:
-- Chat with current app/tool scope.
-- Use frontmost app context.
-- Use app-scoped tools/actions when approved.
+- Discover the minimum required participants from the request.
+- Preview and request scope consent before connecting another Pet.
+- Promote the existing `ConversationID`; never copy or fork the transcript just because scope grew.
+- Give each Pet only the data required for its step.
+- Keep participant consent separate from action approval.
+- Present one plan, live step status and combined receipt.
 
-Rules:
-- Not General Chat.
-- Not Global Context.
-- Must show current app/tool scope.
+General Chat does not automatically become Combined Chat just because a plan invokes more than one
+app route. Promote only when the task needs persistent multi-app participants, shared cross-app
+context or ongoing per-Pet memory. The promotion is explicit and preserves the same conversation.
+
+## Shared native capability layer
+
+Selection, clipboard, windows, files, native sharing and notifications are host capabilities used
+by every Pet through the same typed registry and gates. They are not copied into each profile.
+
+The shared request path is:
+
+```text
+scope → intent → context → capability discovery → plan
+      → approval → execution → verification → receipt
+```
+
+## Selection Scope
+
+**Job:** act on or attach the user's explicit selection.
+
+- Opens from its dedicated hotkey or an explicit attach action.
+- Supports selected text, file, folder, URL, image and clipboard items.
+- May attach the selection to an App Pet or Combined Chat after the user chooses.
+- Must not replace a normal Dock launch or silently send selected content to a provider.
+- Remains fast, stable and action-oriented—not a launcher or independent chat product.
 
 ## Media Dock
 
-Media Dock = Media Layer.
+**Job:** media state and controls only.
 
-Job:
-- Show media state.
-- Show media actions.
-- Control current media.
+- No launcher results.
+- No App Pet or Combined Chat transcript.
+- Uses the shared visual shell only when enabled as a Labs mode.
 
-Rules:
-- Not chat surface.
-- Not universal search.
-- Only media state and media actions.
+## Persistence rule
 
-## Selection Shortcut Sheet
+A conversation belongs to its scope/participants, not to the window that displays it. The Dock,
+detached Pet and full chat window are views into the same stores. A detached Pet is never a second
+agent process or a second safety path.
 
-Selection Shortcut Sheet = Selection-Aware Action Engine.
-
-Job:
-- Long-press Command.
-- Use selected text, file, URL, image, or clipboard.
-- Match triggers.
-- Show app menu actions.
-- Show extensions.
-- Show shortcuts.
-- Show AI actions.
-
-Rules:
-- Not launcher.
-- Must be selection-aware.
-- Must be fast and stable.
-- Must use built-in extension/action system.
-
-## Future Code Organization
-
-Current code has many related files under `Search/`. Long-term target:
+## Code organization target
 
 ```text
 Context-Dock/
-  GlobalContext/
-  ContextDock/
-  ChatMode/
-  MediaDock/
-  SelectionShortcutSheet/
-  SharedUI/
-  Services/
-  AI/
-  Accessibility/
+  Shell/              one Dock, centre/corner placement, shared input/rows/animation
+  Surfaces/
+    GlobalContext/
+    AppPets/
+    CombinedChat/
+    Selection/
+    Media/             Labs
+  Services/            native context/capability hosts
+  AI/                  shared orchestration and provider adapters
+  Memory/              transcript, summaries and per-Pet memory
 ```
 
-Do not move everything now unless builds are stable. Save docs and rules first.
+Move code only through scoped implementation plans. Reuse `DockEngine`/current stores and move
+logic out of `DockCore*`; never copy an engine to fit the new names.

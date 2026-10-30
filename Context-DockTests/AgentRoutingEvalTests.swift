@@ -396,8 +396,12 @@ struct ScreenDrivingPlanEvalTests {
         appName: "Tutorini Player", bundleId: "app.tutorini.Tutorini",
         isReadOnly: false)
 
-    @Test func historyPlaybackRequiresExecutionApproval() {
-        #expect(ChatRouteResolver.executionApproval(for: historyRoute) == .ask)
+    @Test func historyPlaybackRunsUnderMenuAccessAndStillVerifies() {
+        // Playing a video from History drives the screen, but it destroys nothing and reaches
+        // no one, so menu-control access runs it without an execution card (ACT-BY-DEFAULT,
+        // #43) — the same reason "open a new tab" no longer stops to ask. The plan's caveat
+        // still makes the press launch, click and read the result back.
+        #expect(ChatRouteResolver.executionApproval(for: historyRoute) == .granted(.accessPolicy))
         #expect(historyRoute.asCandidate()?.caveat?.contains("launch or activate") == true)
         #expect(historyRoute.asCandidate()?.caveat?.contains("verify") == true)
     }

@@ -128,7 +128,10 @@ enum AppScopedChatService {
     /// against a different app, with the older thread's question as its purpose.
     private static var pendingRoutesByScope: [String: [String: ChatRoute]] = [:]
 
-    private static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
+    // Internal, not private: tests drive the pending-route lifecycle directly (seed, read,
+    // clear), the way the chat surfaces do — `runChosenRoute` really executes, so it cannot
+    // stand in for them offline. Mirrors `pendingRouteIDs` below, already the read seam.
+    static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
         pendingRoutesByScope[scope.storageKey] = Dictionary(
             uniqueKeysWithValues: routes.map { ($0.id, $0) })
     }
@@ -137,6 +140,14 @@ enum AppScopedChatService {
     /// from a candidate another store holds before it tells the user something is gone.
     static func pendingRouteIDs(for scope: GeneralChatScope) -> [String] {
         Array(pendingRoutesByScope[scope.storageKey]?.keys ?? [:].keys)
+    }
+
+    /// Drops this thread's pending choices. A pick consumes them and a new turn supersedes
+    /// them; left in place, a card from an earlier turn stayed tappable and re-entered the
+    /// executor as `.ask` → cancel → "Cancelled — nothing was executed." for a route the
+    /// thread had already moved past (#43).
+    static func clearPendingRoutes(scope: GeneralChatScope) {
+        pendingRoutesByScope.removeValue(forKey: scope.storageKey)
     }
 
     /// Runs a route the user picked, then has the model phrase the result. The output is
@@ -148,6 +159,9 @@ enum AppScopedChatService {
         guard let route = pendingRoutesByScope[scope.storageKey]?[choiceID] else {
             return Answer(text: "That route is no longer available.", toolChips: [])
         }
+        // The pick answers the question these choices posed. Consume them now so a second
+        // tap — in this turn or a later one — cannot run a superseded route (#43).
+        clearPendingRoutes(scope: scope)
         ChatRoutePreferenceStore.remember(
             route.kind, bundleId: route.bundleId, query: query)
         // A picked route arrives from the surface without the turn that produced it, so
@@ -171,7 +185,8 @@ enum AppScopedChatService {
     private static func execute(
         route: ChatRoute, query: String, history: [ChatMessage],
         scope: GeneralChatScope, appName: String,
-        attachments: [URL] = [], extraAppNames: [String] = [], finderSelection: [URL] = []
+        attachments: [URL] = [], extraAppNames: [String] = [], finderSelection: [URL] = [],
+        alternatives: [ChatRoute] = []
     ) async -> Answer {
         // A skill is instructions, not a command: it is carried out by answering with the
         // user's own workflow foregrounded, in the scope it was written for.
@@ -243,6 +258,22 @@ enum AppScopedChatService {
                 ? (result.success ? "(no output)" : "(failed, no output)") : result.output,
             success: result.success,
             scope: scope)
+
+        // A top route that could not run is not the answer while a granted one below it can:
+        // "open a new tab" ranks the MCP `create_tab` first, and a server that is down or a
+        // tool the gate refuses must fall through to `File ▸ New Tab`, not end the turn.
+        if !result.success,
+            let next = ChatRouteResolver.fallbackRoute(
+                after: route, output: result.output, wasCancelled: result.wasCancelled,
+                in: alternatives)
+        {
+            log.notice("route fell through: \(route.kind.rawValue, privacy: .public) → \(next.kind.rawValue, privacy: .public)")
+            return await execute(
+                route: next, query: query, history: history, scope: scope,
+                appName: appName, attachments: attachments,
+                extraAppNames: extraAppNames, finderSelection: finderSelection,
+                alternatives: alternatives.filter { $0.id != route.id })
+        }
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -711,6 +742,28 @@ enum AppScopedChatService {
     /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
     /// for Updates…", not "running an operateApp invocation".
     @MainActor
+    /// "Route: File ▸ New Tab · menu command" — the same line the tool loops state, from the
+    /// directive the model wrote (#44).
+    static func routeLine(for invocation: AITypedInvocation) -> String? {
+        let args = invocation.arguments
+        switch invocation.kind {
+        case .menuAction:
+            return AgentToolNarration.route(
+                tool: "run_menu_command", arguments: ["path": args["path"] ?? ""])
+        case .operateApp:
+            return AgentToolNarration.route(
+                tool: "operate_app", arguments: ["target": args["target"] ?? ""])
+        case .adapterAction:
+            return AgentToolNarration.route(
+                tool: "run_adapter_action", arguments: ["action_id": args["actionId"] ?? ""])
+        case .mcp, .capability:
+            return AgentToolNarration.route(
+                tool: "run_capability", arguments: ["capability_id": invocation.capabilityID])
+        case .appScript, .terminal, .share:
+            return nil
+        }
+    }
+
     static func runningLabel(for invocation: AITypedInvocation) -> String {
         switch invocation.kind {
         case .menuAction:
@@ -855,6 +908,7 @@ enum AppScopedChatService {
             // row and a receipt.
             let announced = AITypedInvocationResolver.invocation(from: raw)
             if let announced {
+                if let route = Self.routeLine(for: announced) { onStatus?(route) }
                 onStatus?(Self.runningLabel(for: announced))
             }
             let call = await GeneralChatCapabilityHub.shared.execute(
@@ -1377,6 +1431,12 @@ enum AppScopedChatService {
         ChatResultRowCollector.shared.begin(scope: scope)
         SolvedSkillToolCallCollector.shared.begin(scope: scope)
 
+        // The same for the "which should I use?" choices: a new turn supersedes a prior
+        // unanswered question, so drop its pending routes now. Any choices this turn itself
+        // raises are stored again below (`rememberPendingRoutes`); a turn that resolves
+        // without asking leaves none behind to be tapped into a later turn (#43).
+        clearPendingRoutes(scope: scope)
+
         // The registry is refreshed per turn by the dock engine's preflight, but this
         // surface assembles its own prompt and never went through that path — so a
         // dictionary the store had learned for this app (P13 #208) stayed unregistered
@@ -1672,7 +1732,23 @@ enum AppScopedChatService {
                 return await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
-                    extraAppNames: extraAppNames, finderSelection: finderSelection)
+                    extraAppNames: extraAppNames, finderSelection: finderSelection,
+                    alternatives: routes)
+            }
+            // Act by default: no exact match, no learned pick, and no read to run on its own —
+            // but the ranking still names one clear primary. Run it rather than handing a
+            // settled request to the model (deterministic before probabilistic). Only on an
+            // action request, so a question never drives a write; the route's own execution
+            // consent still gates a menu press or MCP write at the point of acting.
+            if ChatRouteResolver.isActionRequest(query),
+                let route = ChatRouteResolver.clearPrimaryRoute(routes)
+            {
+                log.notice("stage: clear primary route \(route.kind.rawValue, privacy: .public)")
+                return await execute(
+                    route: route, query: query, history: history, scope: scope,
+                    appName: appName, attachments: attachments,
+                    extraAppNames: extraAppNames, finderSelection: finderSelection,
+                    alternatives: routes)
             }
         }
 

@@ -22,14 +22,19 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 
 ## DoraX architecture rule
 
-One surface, focus-scoped; job separation via intent + lane (owner 2026-10-25, #318).
+One Dock, focus-scoped; job separation via participants + intent + lane (owner 2026-10-27, #327).
 
-- Global Context and the frontmost-app Context Dock are ONE surface: the frontmost app is the
+- Global Context and the frontmost App Pet are ONE surface: the frontmost app is the
   default focus, ⌘ zooms out to Global (cross-app) and back. One state, one running-apps row, one
   input; focus (`SurfaceFocus`, `UI/SurfaceFocus.swift`) is the only difference.
-- What still must not merge: General Chat, Media Dock and the Selection Shortcut Sheet keep their own
-  jobs (general chat, media, selection-aware actions); Selection Shortcut Sheet is not a launcher;
-  Media Dock is not a chat surface.
+- A single-Pet conversation promotes to Combined Chat only after another Pet is explicitly
+  connected. Connection is scope, never permission to write. App Pet and Combined Chat remain
+  distinct jobs even though they share the shell and orchestration harness.
+- General Chat is Dora's Mac-wide conversation, not the frontmost app's Pet. It may borrow an app
+  ability for one turn, but remains General Chat and does not load that Pet's memory. Only explicit
+  **Open in App Pet** creates an anchored, remembered app conversation.
+- Media Dock and Selection Scope keep their own jobs; Selection is explicit and is not a launcher
+  or silent normal-launch takeover; Media Dock is not a chat surface.
 - Behaviour is decided per request by query intent + lane (`RequestLane`/`LanePlan`/`LaneCoordinator`:
   data lane = headless read, UI lane = menu click) — never by which scope you are in.
 
@@ -43,6 +48,9 @@ and Global results, run windowless by `DockEngine`. Read `docs/master/00-DOCK-AN
 touching either.
 - Reuse the engine's code; never write a second copy. Move code out of `DockCore*` rather than
   copying it.
+- App Pets are profiles/presentations over that one engine. Do not create one model loop, registry,
+  conversation store, native service layer or approval path per Pet. Canonical design:
+  `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`.
 
 ## Build, run, test
 

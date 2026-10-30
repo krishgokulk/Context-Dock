@@ -272,6 +272,8 @@ final class GeneralAIActionExecutor {
     /// that took it — so a snapshot left behind by an abandoned run can never be compared
     /// against a different action's result.
     private var menuStateBeforeClick: (candidateID: String, snapshot: MenuOutcomeVerifier.Snapshot)?
+    /// The browser's tab count before a tab menu item, with the change that item promises.
+    private var tabCountBeforeClick: (candidateID: String, count: Int, delta: Int)?
 
     /// Outcome of a single lightweight read-back after a successful write action.
     ///
@@ -325,6 +327,20 @@ final class GeneralAIActionExecutor {
                 let path = candidate.menuPath
             else { return .notApplicable }
             menuStateBeforeClick = nil
+            // A tab menu item promises a change in the tab list, not a window: say so and
+            // read the list.
+            if let (tabID, count, delta) = tabCountBeforeClick, tabID == candidate.id,
+                let bundleID = candidate.bundleID
+            {
+                tabCountBeforeClick = nil
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                let after = ScopedGroundingBlocks.openTabs(bundleId: bundleID, fresh: true).count
+                let outcome = TabCountExpectation.outcome(
+                    before: count, after: after, delta: delta,
+                    appName: candidate.appName ?? "The browser")
+                return outcome.verified
+                    ? .verified(outcome.message) : .unverified(fallback: outcome.message)
+            }
             // The window list settles a beat after the click; reading it in the same run
             // loop turn reports the state before the app drew anything.
             try? await Task.sleep(nanoseconds: 350_000_000)
@@ -658,6 +674,11 @@ final class GeneralAIActionExecutor {
         // as the window the menu item opened.
         menuStateBeforeClick = MenuOutcomeVerifier.snapshot(bundleID: bundleID)
             .map { (candidate.id, $0) }
+        tabCountBeforeClick = nil
+        if let delta = path.last.flatMap(TabCountExpectation.delta(forMenuItem:)) {
+            let tabs = ScopedGroundingBlocks.openTabs(bundleId: bundleID, fresh: true)
+            if !tabs.isEmpty { tabCountBeforeClick = (candidate.id, tabs.count, delta) }
+        }
         let (success, message) = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
             bundleIdentifier: bundleID,
             path: path,

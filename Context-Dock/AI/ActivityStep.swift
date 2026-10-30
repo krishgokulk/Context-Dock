@@ -99,11 +99,28 @@ nonisolated struct ActivityStep: Identifiable, Equatable, Sendable {
         return subject.isEmpty ? command : subject
     }
 
+    /// One row per action. A CLI turn calling DoraX's MCP server records the call
+    /// ("Ran dorax_run_menu_command via dorax") and DoraX records the tool it dispatched
+    /// ("Ran run_menu_command") — one click, two rows, which read as two clicks. The wrapper
+    /// goes when its inner step, same tool and same input, is there; a wrapper whose inner
+    /// step never ran (refused, still starting) stays so the call is not hidden.
+    static func collapsingMCPWrappers(_ steps: [ActivityStep]) -> [ActivityStep] {
+        steps.enumerated().filter { index, step in
+            guard step.kind == .mcp, step.title.hasPrefix("Ran dorax_") else { return true }
+            let tool = step.title.dropFirst("Ran dorax_".count)
+                .components(separatedBy: " via ").first ?? ""
+            return !steps[(index + 1)...].contains {
+                $0.kind != .mcp && $0.title == "Ran \(tool)" && $0.detail == step.detail
+            }
+        }.map(\.element)
+    }
+
     /// The steps a finished message shows: what the turn recorded, or — for a path that only
     /// wrote receipts — one step per receipt.
     @MainActor
     static func steps(recorded: [ActivityStep], receipts: [DoraXActionReceipt]) -> [ActivityStep] {
-        recorded.isEmpty ? receipts.map(ActivityStep.init(receipt:)) : recorded
+        collapsingMCPWrappers(
+            recorded.isEmpty ? receipts.map(ActivityStep.init(receipt:)) : recorded)
     }
 }
 
@@ -318,7 +335,7 @@ nonisolated enum ActivityNarration {
 // MARK: - Progress trace
 
 /// Which trace lines are *reasoning* — the decisions §3 of the app-agent plan shows beside
-/// the steps that ran: Understood → Lane → Chose → Shortcut → Gate. The rest of a turn's
+/// the steps that ran: Understood → Target → App → Plan → Route → Lane → Chose → Shortcut → Gate. The rest of a turn's
 /// trace is present-tense plumbing ("Checking linked actions…", "Looking through adapters…",
 /// "Matching 31 actions…", "Reading Mail menus…") that only says the app is busy. The tool
 /// steps already carry the work itself; these carry *why* it was done, so the Progress panel
@@ -329,7 +346,19 @@ nonisolated enum ProgressTraceRules {
     static let reasoningPrefixes = [
         "Understood", "Lane:", "Scope:", "Chose", "Best path:", "Shortcut:", "Gate",
         "Untrusted", "Tools:",
+        // The pre-flight facts (#44): which app, whether it is running, which route is
+        // about to run. Each is recorded by the code that knows it, once per action.
+        "Target:", "App:", "Route:",
     ]
+
+    /// The plan, as `AppScopedChatService` states it before anything runs: "Planned 3 steps ·
+    /// …" and its numbered lines. "Planned the minimum evidence route" says nothing and stays
+    /// out.
+    static func isPlanLine(_ text: String) -> Bool {
+        if text.hasPrefix("Planned "), text.dropFirst(8).first?.isNumber == true { return true }
+        let digits = text.prefix { $0.isNumber }
+        return !digits.isEmpty && text.dropFirst(digits.count).hasPrefix(". ")
+    }
 
     /// The reasoning lines in a trace, in order, each once. Built from the trace, never
     /// generated prose — a line DoraX did not record never appears.
@@ -337,7 +366,9 @@ nonisolated enum ProgressTraceRules {
         var seen: Set<String> = []
         return lines.filter { line in
             let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard reasoningPrefixes.contains(where: text.hasPrefix) else { return false }
+            guard reasoningPrefixes.contains(where: text.hasPrefix) || isPlanLine(text) else {
+                return false
+            }
             return seen.insert(text.lowercased()).inserted
         }
     }

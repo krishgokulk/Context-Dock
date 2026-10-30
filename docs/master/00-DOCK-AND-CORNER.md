@@ -1,9 +1,14 @@
-# 00 — Dock and Corner: one product, two shells, one migration
+# 00 — Dock and Corner: migration history to one App Pets Dock
 
 > **Status (2026-10-14): the Dock is retired (#257).** Its window and screen are deleted; the
 > Corner is the only shell. `Search/DockCore*` survives only as the windowless engine
 > (`DockEngine`) behind the Corner's App Chat and Global results. The sections below are the
 > history of the migration; §5 records how it ended.
+>
+> **Target update (2026-10-27, #327):** centre and bottom corner are placements of this one shell.
+> A normal launch opens the frontmost App Pet; Command or empty Backspace returns to Global
+> Context. Running-app icons switch Pets or detach as persistent desktop Pets. See the
+> [canonical App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 >
 > **Earlier status: CURRENT — owner-confirmed direction (2026-09-24).** Read with
 > [`DORAX-BLUEPRINT.md`](DORAX-BLUEPRINT.md) Part 1–2 and
@@ -14,16 +19,16 @@
 
 ## 1. The one-paragraph version
 
-DoraX draws its surfaces in **two shells**. The **Dock** is the original, larger UI that opens in
+DoraX historically drew its surfaces in **two shells**. The **Dock** was the original, larger UI that opened in
 the **centre** of the screen. The **Corner** is the newer, **compact** UI that sits along the
 **bottom** of the screen. Both run the **same engine** and are meant to have the **same behaviour
 and navigation** `[owner]`. The owner is moving features **from the Dock into the Corner, one at a
-time** `[owner]`. The Corner is the future everyday UI; the Dock stays until everything it does has
-a Corner home.
+time** `[owner]`. That migration is complete: the Corner implementation is the one Dock shell;
+centre/corner are its placements, not separate products.
 
 ---
 
-## 2. The two shells
+## 2. The two historical shells
 
 | | **Dock** (original) | **Corner** (compact, the direction) |
 |---|---|---|
@@ -161,7 +166,7 @@ Decide keys and swipes together.
 3. ←/→ keys and swipes give the same result from every scope (test).
 4. Checked by hand on a trackpad: slow swipe, fast flick, flick with momentum, swipe with text typed.
 
-## 5. The end state (owner decisions still open)
+## 5. The end state
 
 When every Dock job has a Corner home:
 
@@ -179,8 +184,14 @@ When every Dock job has a Corner home:
    (~35k lines), E4 the window leftovers. What remains of `DockCore` is engine only: the L2
    chat pipeline and the Global result builders the Corner calls. Moving those into `Services/`
    and renaming the type is follow-up work.
-3. **Rename "Corner"?** With Centre as an option it is really "the bottom dock". Users see neither
-   word today; decide before writing onboarding. `[owner decision]`
+3. **Product name decided (2026-10-27):** user-facing name is **Dock**. “Corner” remains an
+   implementation/history label. Its active app focus is an **App Pet**; cross-app work is
+   **Combined Chat**.
+4. **One launch model:** normal launch → frontmost App Pet; explicit Global hotkey or Command/empty
+   Backspace → Global Context. Selection uses its own hotkey/attach action and does not silently
+   replace the normal launch.
+5. **Detached Pets:** dragging a running-app icon out creates another presentation of the same app
+   scope/store. It must not create a second engine, provider conversation or approval path.
 
 ---
 
@@ -188,5 +199,5 @@ When every Dock job has a Corner home:
 
 - `docs/superpowers/plans/2026-09-08-corner-frontmost-app-surface.md` — its table says the Dock
   (⌥⌥) owns Global Context; today ⌘⌘ opens Global Context **in the corner**. Add an "as built" note.
-- `docs/architecture/UNIFIED_DOCK_SURFACE.md` / `PRODUCT_LAYERS.md` — describe one shell; add that
-  the rule covers **both** shells and that the Corner is the migration target.
+- Older plans describing two live shells or selection auto-takeover are historical. The current
+  truth is `UNIFIED_DOCK_SURFACE.md`, `PRODUCT_LAYERS.md` and #327's canonical design.

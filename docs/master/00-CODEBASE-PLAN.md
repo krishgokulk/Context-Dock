@@ -3,6 +3,9 @@
 > **Status: PROPOSAL — written as if I owned this codebase.** Companion to
 > [`00-PRODUCT-PLAN.md`](00-PRODUCT-PLAN.md). Measured on `main` @ `341494a`, 2026-09-24.
 > Tags: `[code]` measured in the repo · `[judgment]` my recommendation · `[guess]` estimate.
+> **2026-10-27:** where this plan says `Find/Ask/ActOnThis`, use the durable product folders from
+> [`PRODUCT_LAYERS.md`](../architecture/PRODUCT_LAYERS.md): `GlobalContext`, `AppPets`,
+> `CombinedChat`, explicit `Selection`, and Labs `Media`. Dependency direction is unchanged.
 
 ---
 

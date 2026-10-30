@@ -12,9 +12,20 @@ telemetry, no account. Your notes, files, tabs and messages are read locally; on
 relevant to your question goes to the model, and if you pick Apple Intelligence, nothing leaves at
 all.
 
-**A chat can only reach what it is about.** A Safari chat cannot read your Notes. If a question
-needs another app, DoraX stops and offers to add it — one tap, and it says which apps it will add.
-A conversation cannot widen its own scope.
+**A Pet conversation can only reach its connected participants.** Safari Pet cannot read your
+Notes. If a question needs another app, DoraX previews the required Pet and offers to connect it—
+one tap promotes the same thread to Combined Chat. A conversation cannot widen its own scope, and
+connecting a Pet does not approve a write.
+
+**General Chat uses the minimum scope for each turn.** Naming Mail can route that request through
+the Mail ability, but it does not turn the transcript into Mail Pet, load Mail Pet memory, or trap
+later Mac-wide requests inside Mail. General Chat shows the temporary route and still applies the
+normal access and exact-action approvals.
+
+**Headless work does not steal your screen.** If a safe route can finish without launching the app,
+DoraX uses it. If only the process is required, it starts hidden. If visible UI is merely DoraX's
+fallback, DoraX asks before taking focus; an explicit “open/show” request is itself the launch
+instruction. Risky actions still use the normal exact approval card.
 
 **Anything that changes something asks first.** Creating a note, sending a message, running a
 command, pressing a menu item, running a script: a card appears naming the app, the action and
@@ -58,6 +69,10 @@ work**, so a question about an app outside the scope can never stall on a tool i
 allowed to use. `AgentToolRegistry.capabilitiesInScope` drops other apps' capabilities from the
 catalogue entirely — not ranked lower, *absent*, because a model shown a capability treats it as
 available and "available but please do not use it" is an instruction, not a boundary.
+
+In App Pets terms, `GeneralChatScope` plus the conversation participant set is the scope grant.
+The Dock, detached Pet and full chat window are presentations of that same grant. None may add a
+participant, expose its private context or infer action approval from an icon being visible.
 
 ### Consent: one approval centre
 
@@ -160,6 +175,8 @@ can believe what they are told.
 - **A profile narrows; it cannot widen.** An `AGENT.md` cannot grant an app a capability
   `AppAccessPolicy` denies. It can, however, tell the model to prefer a route — so a badly written
   profile is a quality problem, not a permission one.
+- **A mode narrows; it cannot widen.** `/mods` may change instructions and ranking emphasis but
+  never scope, risk, approval, provider privacy or execution budgets.
 - **The provider sees what the prompt carries.** Scoping decides what goes in; once it is in, it
   is in that provider's hands.
 - **A page is untrusted input.** Text read from a web page is data, never instructions. This holds

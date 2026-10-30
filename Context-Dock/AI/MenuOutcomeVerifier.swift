@@ -157,3 +157,30 @@ enum MenuOutcomeVerifier {
         }
     }
 }
+
+/// The effect a browser's tab menu item promises, checked against the browser's own tab list.
+///
+/// New Tab opens no window, so the window diff reads "nothing observable changed" and the
+/// answer said it could not confirm a tab opened — about a tab that had. The expectation is
+/// stated before the click (+1 for New Tab) and the reading after it settles whether it held.
+enum TabCountExpectation {
+    /// The tab-count change a menu item promises; nil when it promises none.
+    static func delta(forMenuItem item: String) -> Int? {
+        let name = item.lowercased().replacingOccurrences(of: "…", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        if name.contains("group") || name.contains("window") { return nil }
+        if name == "new tab" || name == "new empty tab" || name == "new tab at end" { return 1 }
+        if name == "close tab" { return -1 }
+        return nil
+    }
+
+    static func outcome(
+        before: Int, after: Int, delta: Int, appName: String
+    ) -> (verified: Bool, message: String) {
+        let noun = after == 1 ? "tab" : "tabs"
+        if after - before == delta {
+            return (true, "\(appName) now has \(after) \(noun) (was \(before)).")
+        }
+        return (false, "\(appName) shows \(after) \(noun), expected \(before + delta) (was \(before)).")
+    }
+}

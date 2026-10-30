@@ -200,6 +200,19 @@ struct CornerDockStrip: View {
 
     var body: some View {
         stripRow
+            .contentShape(Rectangle())
+            .onTapGesture {
+                expandField()
+            }
+            .onHover { inside in
+                if CornerDockController.shared.anchor == .notch {
+                    if inside {
+                        beginHoverExpand()
+                    } else {
+                        cancelHoverExpand()
+                    }
+                }
+            }
             // An icon's menu is a popover of its own window, off the strip: auto-hide has to
             // be told it is open, or the pointer on "Unpin" reads as having left the dock.
             .onChange(of: menuID) { _, id in
