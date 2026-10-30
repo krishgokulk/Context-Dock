@@ -423,6 +423,8 @@ final class AppChatPromptModel: ObservableObject {
     /// moment later — args are (name, bundleID). The corner reads this as "follow me there",
     /// not as an incidental background switch to ignore.
     var onAppLaunchedFromGlobalContext: ((String, String) -> Void)?
+    /// Leaving a selected Pet or step-in scope back to Global Context.
+    var onLeaveScopeForGlobal: (() -> Void)?
 
     init(conversation: AppChatConversation? = nil, globalResultSource: GlobalContextResultSource? = nil) {
         let source = conversation ?? AppChatConversation.shared
@@ -552,20 +554,30 @@ final class AppChatPromptModel: ObservableObject {
     ) {
         let outgoing = scopeKey
         let incoming = Self.scopeKey(name: name, bundleID: bundleID)
+        let leavingChat = outgoing != incoming && phase == .chat
         if outgoing != incoming {
+            if !appBundleID.isEmpty, conversation.scopeBundleId.isEmpty, !conversation.messages.isEmpty {
+                conversation.scopeBundleId = appBundleID
+                conversation.scopeAppName = appName
+            }
             drafts[outgoing] = query
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
-            // So did a conversation put away by its ⌄.
+            // So did a conversation on screen or put away by its ⌄.
+            hasPresentedConversation = false
             isConversationHidden = false
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
+            savedChatCache = nil
         }
         appName = name
         appBundleID = bundleID
         self.suggestions = suggestions
         capabilitySummary = summary
+        if leavingChat {
+            set(restingInputPhase)
+        }
     }
 
     /// What a scope is called when it holds a draft. The bundle id where there is one, the
@@ -832,6 +844,8 @@ final class AppChatPromptModel: ObservableObject {
             let key = GeneralChatSessionStore.dockPanelKey(.app(bundleId: appBundleID))
         else { return false }
         AppPanelChatStore.shared.beginSession(for: key, at: .distantPast)
+        conversation.scopeBundleId = appBundleID
+        conversation.scopeAppName = appName
         conversation.messages = AppPanelChatStore.shared.load(for: key)
         return showConversation()
     }
@@ -1352,7 +1366,7 @@ final class AppChatPromptModel: ObservableObject {
             ])
     }
 
-    private static func changeScope(app: String, bundleID: String) {
+    static func changeScope(app: String, bundleID: String) {
         NotificationCenter.default.post(
             name: .appChatPromptScopeChanged,
             object: nil,

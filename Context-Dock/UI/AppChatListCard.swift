@@ -459,10 +459,9 @@ struct AppChatListCard: View {
     /// What the field says before anything is typed, per scope.
     static func placeholder(for model: AppChatPromptModel) -> String {
         if model.isGlobalScope { return "Search apps, tools and menus…" }
-        // Scoped into an app from Global, the field is a filter over that app — so it says
-        // what the dock says there, rather than offering to chat.
-        // Finder is asked, however it was reached — the same field as Finder in front.
-        if model.returnsToGlobalScope, !model.isFinderScope {
+        // Scoped into a tool or command from Global, the field is a filter over that scope;
+        // an App Pet selected in the Dock is a composer ("Ask <App>", #338).
+        if model.returnsToGlobalScope, !model.isAppStepIn {
             return AppScopeHint.placeholder(
                 bundleId: model.appBundleID, appName: model.appName,
                 hasActions: !model.adapterActions.isEmpty)

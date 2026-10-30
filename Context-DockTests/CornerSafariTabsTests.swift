@@ -172,5 +172,36 @@ struct CornerSafariTabsTests {
         #expect(AppChatPromptMetrics.appFieldTrailingReserve(typed: true)
             > AppChatPromptMetrics.appFieldTrailingReserve(typed: false))
     }
+
+    @Test("Safari tabs remain tabs on strip click, and pinned non-running apps remain explicit launches")
+    func safariTabsRemainTabsAndOfflinePinsRemainExplicitLaunches() {
+        var switched: [String] = []
+        let model = scope(switched: { switched.append($0.title) })
+        let tabIcon = model.stripIcons[0]
+        let tabSlot = DockAppSlot(
+            bundleID: tabIcon.id,
+            title: tabIcon.title,
+            pin: nil,
+            running: tabIcon,
+            isRunning: false)
+
+        #expect(model.stripClickIntent(for: tabSlot) == .openTab(tabIcon))
+        model.handleStripClick(tabSlot)
+        #expect(switched == ["Inbox"])
+        #expect(model.appBundleID == "com.apple.Safari")
+
+        let offlinePin = DockPin(
+            id: UUID(), kind: .app(bundleID: "com.example.offline-app"), title: "OfflineApp",
+            order: 0, documentID: nil)
+        let offlineSlot = DockAppSlot(
+            bundleID: "com.example.offline-app",
+            title: "OfflineApp",
+            pin: offlinePin,
+            running: nil,
+            isRunning: false)
+        #expect(
+            model.stripClickIntent(for: offlineSlot)
+                == .openApplication(bundleID: "com.example.offline-app", name: "OfflineApp"))
+    }
 }
 

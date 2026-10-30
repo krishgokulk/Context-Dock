@@ -161,6 +161,9 @@ final class CornerChatPresentation: ObservableObject {
         self.appChat.onAppLaunchedFromGlobalContext = { [weak self] name, bundleID in
             self?.showFrontmostApp(target: CornerChatTarget(name: name, bundleID: bundleID))
         }
+        self.appChat.onLeaveScopeForGlobal = { [weak self] in
+            self?.mode = .globalContext
+        }
     }
 
     /// The corner hotkey, pressed again.
@@ -198,6 +201,25 @@ final class CornerChatPresentation: ObservableObject {
         }
     }
 
+    /// What the unified Dock surface is focused on (#318, #338): the frontmost Pet, Global
+    /// Context, or a specifically selected App Pet.
+    var surfaceFocus: SurfaceFocus {
+        switch mode {
+        case .globalContext:
+            if appChat.returnsToGlobalScope, let petID = AppPetID(dockBundleID: appChat.appBundleID) {
+                return .pet(petID)
+            }
+            return .global
+        case .frontmostApp:
+            if appChat.returnsToGlobalScope, let petID = AppPetID(dockBundleID: appChat.appBundleID) {
+                return .pet(petID)
+            }
+            return .frontmost
+        case .general:
+            return .frontmost
+        }
+    }
+
     func showFrontmostApp(target: CornerChatTarget) {
         latestTarget = target
         cancelGeneralStandDown()
@@ -216,6 +238,44 @@ final class CornerChatPresentation: ObservableObject {
             name: .appChatPromptScopeChanged,
             object: nil,
             userInfo: ["appName": target.name, "bundleId": target.bundleID])
+    }
+
+    /// Select a specific App Pet in the Dock without activating the underlying application.
+    /// Reuses the frontmost-app summon and scope-change notification path while recording
+    /// that the Pet was explicitly selected (`returnsToGlobalScope = true`) so ⌘ and empty
+    /// Backspace return to Global Context.
+    func showPet(target: CornerChatTarget) {
+        showFrontmostApp(target: target)
+        appChat.returnsToGlobalScope = true
+    }
+
+    /// Carry out a bare ⌘ tap (#318, #338): zoom out from `.frontmost` or `.pet(...)` to
+    /// `.global`, or zoom in from `.global` to the app that owns the menu bar right now.
+    @discardableResult
+    func applyCommandTap(
+        frontmostTarget: () -> CornerChatTarget? = { AppDelegate.shared?.frontmostChatTarget() }
+    ) -> Bool {
+        guard mode != .general else { return false }
+        let focus = surfaceFocus
+        guard case .focus(let next) = SurfaceFocusRules.decide(.commandTap, from: focus)
+        else { return false }
+        switch next {
+        case .global:
+            if case .pet = focus {
+                _ = appChat.leaveScopeForGlobal()
+            } else {
+                show(.globalContext)
+            }
+        case .pet:
+            break
+        case .frontmost:
+            if let target = frontmostTarget(), !target.bundleID.isEmpty {
+                appChat.scopeIntoApp(name: target.name, bundleID: target.bundleID)
+            } else {
+                show(.frontmostApp)
+            }
+        }
+        return true
     }
 
     /// Open the app chat so an answer asked from another corner surface has somewhere to

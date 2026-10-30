@@ -68,19 +68,38 @@ enum GeneralChatScope: Codable, Hashable {
         }
     }
 
+    /// The Pet this scope represents, when the scope is an app or CLI Pet.
+    var petID: AppPetID? {
+        switch self {
+        case .app(let bundleId):
+            let trimmed = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : .app(bundleID: trimmed)
+        case .cli(let command):
+            let normalized = AppPetID.normalizeCLICommand(command)
+            return normalized.isEmpty ? nil : .cli(command: normalized)
+        case .general, .thread, .folder:
+            return nil
+        }
+    }
+
+    init(petID: AppPetID) {
+        switch petID.normalized {
+        case .app(let bundleID):
+            self = .app(bundleId: bundleID)
+        case .cli(let command):
+            self = .cli(command: command)
+        }
+    }
+
     /// The dock identifies a scope by bundle id, using a `cli://` prefix for tools. Given the
     /// same string, both surfaces name the same thread — which is what lets a command run in
     /// the dock show up on the console of the window thread for that app or tool.
     init(dockBundleId: String?) {
-        guard let dockBundleId, !dockBundleId.isEmpty else {
+        guard let petID = AppPetID(dockBundleID: dockBundleId) else {
             self = .general
             return
         }
-        if dockBundleId.hasPrefix("cli://") {
-            self = .cli(command: String(dockBundleId.dropFirst("cli://".count)))
-        } else {
-            self = .app(bundleId: dockBundleId)
-        }
+        self.init(petID: petID)
     }
 }
 

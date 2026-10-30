@@ -487,18 +487,7 @@ struct CornerDockStrip: View {
             model.hoveredStripTarget = shows ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
-            // One of the app's pins, big or in the pill: it runs, as its row would.
-            if let pin = model.appPin(forIconID: slot.bundleID) {
-                model.openAppPin(pin)
-            // A tab, big or in the pill: Safari shows it.
-            } else if model.isTabIcon(slot.bundleID), let icon = slot.running {
-                model.openTabIcon(icon)
-            // As the pill, a click scopes the field into the app, as the pill always has.
-            } else if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
-                model.openGlobalMatchIcon(icon)
-            } else {
-                openApp(slot)
-            }
+            model.handleStripClick(slot)
         }
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
         // and a running app nobody pinned has no place to be moved to.
@@ -692,9 +681,18 @@ struct CornerDockStrip: View {
     }
 
     /// One menu for one icon. What it offers follows from the two facts the slot carries:
-    /// a running app can be asked about and quit, a pinned one can be unpinned, and an app
-    /// that is neither is not on the strip at all.
+    /// a running app can be asked about, explicitly opened, and quit; a pinned one can be
+    /// unpinned; and an app that is neither is not on the strip at all.
     private func appMenuItems(_ slot: DockAppSlot) -> [DockIconMenu.Item] {
+        Self.appMenuItems(for: slot, model: model, pins: pins)
+    }
+
+    static func appMenuItems(
+        for slot: DockAppSlot,
+        model: AppChatPromptModel,
+        pins: DockPinStore = .shared,
+        openApp: ((String, String) -> Void)? = nil
+    ) -> [DockIconMenu.Item] {
         let bundleID = slot.bundleID
         if let pin = model.appPin(forIconID: bundleID) {
             return [.init(title: "Unpin") {
@@ -714,11 +712,14 @@ struct CornerDockStrip: View {
                 model.expandFromDock(seeding: nil)
                 model.scopeIntoApp(name: slot.title, bundleID: bundleID)
             })
-        } else {
-            items.append(.init(title: "Open \(slot.title)") {
-                AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
-            })
         }
+        items.append(.init(title: "Open \(slot.title)") {
+            if let openApp {
+                openApp(slot.bundleID, slot.title)
+            } else {
+                AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+            }
+        })
         items.append(.separator)
         if let pin = slot.pin {
             items.append(.init(title: "Unpin") { pins.unpin(pin.id) })

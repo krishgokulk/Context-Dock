@@ -19,8 +19,41 @@ enum DockAppClickAction: Equatable {
     case bringForward
 }
 
+enum DockStripClickIntent: Equatable {
+    case selectPet(AppPetID, name: String)
+    case openPin(DockPin)
+    case openTab(MatchDockIcon)
+    case openApplication(bundleID: String, name: String)
+}
+
 enum DockAppClick {
-    /// Pure: what a click on the icon does.
+    /// Pure: what clicking an icon in the Dock strip or running-apps row does (#338).
+    /// Clicking a running app selects that Pet inside the Dock without activating the
+    /// application; app pins, browser tabs, non-running pinned apps, and explicit Open
+    /// menu items keep their own explicit outcomes.
+    static func stripClickIntent(
+        slot: DockAppSlot,
+        appPin: DockPin? = nil,
+        isTab: Bool = false
+    ) -> DockStripClickIntent {
+        if let appPin {
+            return .openPin(appPin)
+        }
+        if isTab, let icon = slot.running {
+            return .openTab(icon)
+        }
+        if slot.isRunning, let petID = AppPetID(dockBundleID: slot.bundleID) {
+            return .selectPet(petID, name: slot.title)
+        }
+        return .openApplication(bundleID: slot.bundleID, name: slot.title)
+    }
+
+    /// Pure: the explicit Open menu item on a strip icon always foregrounds/launches the app.
+    static func openMenuIntent(bundleID: String, name: String) -> DockStripClickIntent {
+        .openApplication(bundleID: bundleID, name: name)
+    }
+
+    /// Pure: what an explicit Open / window-management click on the app does.
     static func action(isRunning: Bool, isFrontmost: Bool, visibleWindows: Int) -> DockAppClickAction {
         isRunning && isFrontmost && visibleWindows > 0 ? .minimizeFrontWindow : .bringForward
     }

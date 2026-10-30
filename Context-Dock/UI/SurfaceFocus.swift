@@ -14,8 +14,8 @@ enum SurfaceFocus: Equatable {
     case frontmost
     /// Every running app, cross-app (today's "Global Context").
     case global
-    /// An app chosen from Global with → or a pill, not necessarily the one in front.
-    case app
+    /// A specific App Pet chosen from Global or the strip, not necessarily the one in front.
+    case pet(AppPetID)
 }
 
 /// A key or gesture that can move focus. Only the moves that change focus are here; ← / swipes
@@ -27,8 +27,8 @@ enum SurfaceFocusEvent: Equatable {
     case zoomOut
     /// ↓ or a swipe up — zoom back in toward the frontmost app.
     case zoomIn
-    /// → on an empty field with nothing highlighted — step into an app.
-    case stepIn
+    /// → on an empty field with nothing highlighted, or clicking a Pet icon — step into a Pet.
+    case stepIn(AppPetID)
     /// ← off the first app, or Backspace on an empty field — home to Global. (Esc is not a
     /// focus move: it unwinds query → selection → turn, then closes, from every focus.)
     case leaveApp
@@ -45,22 +45,22 @@ enum SurfaceFocusRules {
     /// that mirrors it (00-DOCK-AND-CORNER §4b), from either shell position.
     static func decide(_ event: SurfaceFocusEvent, from focus: SurfaceFocus) -> SurfaceFocusOutcome {
         switch (event, focus) {
-        // ⌘ is a zoom: out from an app, back in from Global. From a chosen app it comes home to
+        // ⌘ is a zoom: out from an app, back in from Global. From a chosen Pet it comes home to
         // Global first, as Backspace does.
         case (.commandTap, .frontmost): return .focus(.global)
         case (.commandTap, .global): return .focus(.frontmost)
-        case (.commandTap, .app): return .focus(.global)
+        case (.commandTap, .pet): return .focus(.global)
 
         case (.zoomOut, .frontmost): return .focus(.global)
-        case (.zoomOut, .global), (.zoomOut, .app): return .none
+        case (.zoomOut, .global), (.zoomOut, .pet): return .none
 
-        case (.zoomIn, .global), (.zoomIn, .app): return .focus(.frontmost)
+        case (.zoomIn, .global), (.zoomIn, .pet): return .focus(.frontmost)
         case (.zoomIn, .frontmost): return .none
 
-        // → walks into an app from any focus; from a chosen app it walks on to the next.
-        case (.stepIn, _): return .focus(.app)
+        // → walks into a Pet from any focus; from a chosen Pet it walks on to the next.
+        case (.stepIn(let petID), _): return .focus(.pet(petID))
 
-        case (.leaveApp, .app): return .focus(.global)
+        case (.leaveApp, .pet): return .focus(.global)
         case (.leaveApp, .global), (.leaveApp, .frontmost): return .none
         }
     }
