@@ -126,6 +126,27 @@ struct FrontmostAppTaskPlanTests {
         }
     }
 
+    @Test("A read-only question in Safari gets no menu or UI-execution tools (#357)")
+    func askOnlyQuestionGetsNoMenuExecution() {
+        // "open " is in the action words, so "tabs are open" planned as an action and
+        // handed the model run_menu_command.
+        let plan = FrontmostAppTaskPlan.make(
+            query: "How many tabs are open in Safari?",
+            bundleId: "com.apple.Safari", appName: "Safari")
+        #expect(!plan.permitsUIAutomation)
+        for tool in ["run_menu_command", "find_menu_command", "send_keys", "window_control", "operate_app"] {
+            #expect(!plan.allowedToolNames.contains(tool), "\(tool) leaked into a read-only turn")
+        }
+    }
+
+    @Test("An instruction that uses the same word still gets menu tools")
+    func openInstructionKeepsMenuTools() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "open a new tab", bundleId: "com.apple.Safari", appName: "Safari")
+        #expect(plan.permitsUIAutomation)
+        #expect(plan.allowedToolNames.contains("run_menu_command"))
+    }
+
     @Test("Finder find is unchanged: Finder owns no record set")
     func finderFindIsUnchanged() {
         let plan = FrontmostAppTaskPlan.make(
