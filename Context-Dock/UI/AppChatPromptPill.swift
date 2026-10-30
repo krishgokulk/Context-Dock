@@ -1020,11 +1020,13 @@ struct AppChatPromptPill: View {
             Text(identity.primaryTitle)
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
-            Text(identity.kind == .combined ? "Combined Chat" : "App Chat")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
+            if let subtitle = identity.subtitle {
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             ForEach(identity.previewChips, id: \.self) { chip in
                 Text(chip)
                     .font(.system(size: 10.5, weight: .semibold))

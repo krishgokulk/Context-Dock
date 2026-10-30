@@ -55,6 +55,7 @@ struct AppPetStage2PromotionTests {
             providerShortName: "Claude",
             previewChips: ["+ Messages"])
         #expect(mailPetHeader.primaryTitle == "Mail")
+        #expect(mailPetHeader.subtitle == "App Pet")
         #expect(!mailPetHeader.combinedHeaderText.contains("General Chat"))
         #expect(mailPetHeader.participantNames == ["Mail"])
         #expect(mailPetHeader.previewChips == ["+ Messages"])
@@ -65,6 +66,7 @@ struct AppPetStage2PromotionTests {
             fallbackAppName: "Finder",
             providerShortName: "Claude")
         #expect(combinedHeader.primaryTitle == "Finder + Messages")
+        #expect(combinedHeader.subtitle == "Combined Chat")
         #expect(!combinedHeader.combinedHeaderText.contains("General Chat"))
         #expect(combinedHeader.participantNames == ["Finder", "Messages"])
     }

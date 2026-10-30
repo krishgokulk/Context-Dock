@@ -292,13 +292,14 @@ struct CornerGeneralChatView: View {
                 AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 18)
                 Text(identity.primaryTitle)
                     .font(.system(size: 14, weight: .semibold))
-                if let subtitle = identity.subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
+            }
+
+            if let subtitle = identity.subtitle {
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             ForEach(identity.previewChips, id: \.self) { chip in
@@ -574,7 +575,6 @@ struct CornerGeneralChatView: View {
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
                     .frame(height: ApprovalCard.height(for: request))
-                    .padding(.horizontal, 12)
                 Divider().opacity(0.18)
             }
 

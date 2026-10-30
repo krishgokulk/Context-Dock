@@ -10,6 +10,14 @@
 
 ## In progress
 
+**Task #340: App Pets Stage 3 — Three-tier memory (2026-10-30):**
+- In progress on branch `claude/issue-340-app-pets-memory` following `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` §6.
+- Three-tier memory separation:
+  1. Per-Pet identity memory (loaded only for that anchored App Pet; inspect, edit, pin, delete).
+  2. Combined Chat shared working memory across connected participants (rolling decisions, unresolved work, writeback of verified facts only).
+  3. Mac-wide Global Context memory (General Chat single-turn borrowing never writes into Pet identity memory).
+- Active provider context projection bounded to provider token budgets with near-limit choices (Keep active, Archive and new chat, New chat without saving) and provider re-projection preserving conversation identity.
+
 **Dynamic Notch / MacBook Pro & Air Dynamic Island Anchor (2026-10-29):**
 - Completed and owner-approved ("its prefect. push and merge.").
 - Adds `.notch` anchor to `CornerDockAnchor` framing the hardware notch on notched MacBooks and top-center menu bar on external displays.

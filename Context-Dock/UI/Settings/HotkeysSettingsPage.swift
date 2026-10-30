@@ -100,7 +100,7 @@ struct HotkeysSettingsPage: View {
                         Divider()
                         captureHotkeyRow(
                             icon: "bubble.left.and.bubble.right.fill", color: .pink,
-                            title: "App Chat",
+                            title: "App Pet",
                             subtitle: "Ask the frontmost app something from the corner,"
                                 + " without leaving it",
                             display: settings.appChatHotkeyDisplayString,

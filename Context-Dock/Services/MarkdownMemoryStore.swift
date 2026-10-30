@@ -211,15 +211,20 @@ final class MarkdownMemoryStore {
         _ rawText: String,
         appBundleID: String? = nil,
         appName: String? = nil,
+        conversationKind: ConversationKind? = nil,
         capturedAt: Date = Date()
     ) -> String? {
         guard let fact = explicitMemoryFact(from: rawText) else { return nil }
 
+        // Invariant: General Chat single-turn borrowing NEVER writes into Pet identity memory (#340).
+        let effectiveBundleID: String? = {
+            if conversationKind == .general { return nil }
+            return appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+
         let destination: (url: URL, label: String)
-        if let bundleID = appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !bundleID.isEmpty
-        {
-            let safeBundleID = safeFilename(bundleID)
+        if let bundleID = effectiveBundleID, !bundleID.isEmpty {
+            let safeBundleID = Self.safeFilename(bundleID)
             destination = (
                 root.appendingPathComponent("apps/\(safeBundleID).md"),
                 "\(appName?.isEmpty == false ? appName! : bundleID) memory"
@@ -730,11 +735,14 @@ final class MarkdownMemoryStore {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         let prefixes = ["please remember that ", "remember that ", "please remember ", "remember "]
-        guard let prefix = prefixes.first(where: { lower.hasPrefix($0) }) else { return nil }
-        let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
-        let fact = trimmed[start...].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard fact.count >= 2 else { return nil }
-        return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if let prefix = prefixes.first(where: { lower.hasPrefix($0) }) {
+            let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
+            let fact = trimmed[start...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard fact.count >= 2 else { return nil }
+            return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        }
+        guard trimmed.count >= 2 else { return nil }
+        return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
     /// Human-readable provenance kept beside the fact without becoming another searchable
@@ -978,7 +986,11 @@ final class MarkdownMemoryStore {
             .map { $0 }
     }
 
-    private func safeFilename(_ value: String) -> String {
+    func safeFilename(_ value: String) -> String {
+        Self.safeFilename(value)
+    }
+
+    static func safeFilename(_ value: String) -> String {
         value.components(separatedBy: CharacterSet.alphanumerics.union(
             CharacterSet(charactersIn: ".-_")
         ).inverted).joined(separator: "_")

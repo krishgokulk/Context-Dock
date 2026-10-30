@@ -484,6 +484,29 @@ final class DoraXMCPServer: ObservableObject {
 
     private static let baseToolDefinitions: [[String: Any]] = [
         [
+            "name": "dorax_remember",
+            "description":
+                "Save a durable user preference, habit, fact, or standing instruction into DoraX's long-term memory "
+                + "(preferences.md, tasks.md, projects.md, or app-specific memory). Call this IMMEDIATELY "
+                + "whenever the user asks you to remember something, says 'remember that...', 'my preference is...', "
+                + "or sets a standing instruction. NEVER use a shell command or write markdown files to ~/.claude "
+                + "to store memory.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "text": [
+                        "type": "string",
+                        "description": "The exact fact, preference, or instruction to remember, in the user's terms.",
+                    ],
+                    "app": [
+                        "type": "string",
+                        "description": "Optional app name or bundle id if this memory applies only to a specific app.",
+                    ],
+                ] as [String: Any],
+                "required": ["text"],
+            ],
+        ],
+        [
             "name": "dorax_list_capabilities",
             "description":
                 "List the DoraX capabilities registered for an app (id, input fields, risk), "
@@ -909,6 +932,28 @@ final class DoraXMCPServer: ObservableObject {
                     await TerminalCommandExecutor.shared.run(
                         command, purpose: purpose, modelRequiresApproval: approval)
                 })
+
+        case "dorax_remember":
+            let text = (arguments["text"] as? String ?? arguments["fact"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return "text is required." }
+            let app = arguments["app"] as? String
+            let capabilityTurn = self.capabilityTurn
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: app, capabilityTurn: capabilityTurn)
+            let kind: ConversationKind = {
+                if let scope = capabilityTurn?.scope {
+                    return GeneralChatSessionStore.conversationKind(for: scope)
+                }
+                return .general
+            }()
+            if let confirmation = MarkdownMemoryStore.shared.remember(
+                text, appBundleID: bundleID, appName: appName, conversationKind: kind)
+            {
+                return confirmation
+            } else {
+                return "I couldn't work out where that belongs in DoraX memory."
+            }
 
         case "dorax_list_capabilities":
             let capabilityTurn = self.capabilityTurn

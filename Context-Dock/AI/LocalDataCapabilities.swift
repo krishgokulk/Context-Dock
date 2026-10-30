@@ -138,14 +138,20 @@ enum LocalDataCapabilities {
                 ]),
                 // Writes a durable file the user will be answered from later. Cheap to undo
                 // — the files are plain Markdown they can open — but never silent.
-                riskLevel: .medium
+                riskLevel: .low
             ) { request in
                 let text = (request.input["text"] ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { throw AICapabilityError.missingInput("text") }
                 let bundleID = request.input["bundleId"] ?? request.input["bundleID"]
+                let kind: ConversationKind = {
+                    if let scope = request.chatScope {
+                        return GeneralChatSessionStore.conversationKind(for: scope)
+                    }
+                    return .general
+                }()
                 guard let confirmation = MarkdownMemoryStore.shared.remember(
-                    text, appBundleID: bundleID)
+                    text, appBundleID: bundleID, conversationKind: kind)
                 else {
                     return .init(
                         success: false,

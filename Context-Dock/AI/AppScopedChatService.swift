@@ -2163,12 +2163,19 @@ enum AppScopedChatService {
 
         var memoryChips: [String] = []
         if sourceDecision.allowsMemoryEvidence {
-            let memoryBundleID = Self.memoryBundleID(for: scope)
-            let memory = MarkdownMemoryStore.shared.contextBlock(
-                query: query, appBundleID: memoryBundleID)
-            prompt.set(.memory, memory)
-            memoryChips = MarkdownMemoryStore.shared.relevantSourceChips(
-                query: query, appBundleID: memoryBundleID)
+            let (threeTierBlock, sourceChips) = AppPetMemoryController.shared.promptContextBlock(
+                query: query, scope: scope)
+            if !threeTierBlock.isEmpty {
+                prompt.set(.memory, threeTierBlock)
+                memoryChips = sourceChips
+            } else {
+                let memoryBundleID = Self.memoryBundleID(for: scope)
+                let memory = MarkdownMemoryStore.shared.contextBlock(
+                    query: query, appBundleID: memoryBundleID)
+                prompt.set(.memory, memory)
+                memoryChips = MarkdownMemoryStore.shared.relevantSourceChips(
+                    query: query, appBundleID: memoryBundleID)
+            }
         }
 
         let preservedSources: Set<ScopedPromptSection> = {
