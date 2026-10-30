@@ -1944,14 +1944,16 @@ enum AppScopedChatService {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
             prompt.set(.mcp, mcpBlock)
-            // When the turn is read-only and MCP tools are linked, steer the model away from
-            // writing menu_call JSON and toward calling those tools directly (#357).
-            if !mcpBlock.isEmpty, GeneralAIActionResolver.shared.asksOnly(query) {
+            // Read-only turns must not produce menu_call JSON. The identity block (read before
+            // .mcp in prompt order) teaches the prose protocol; appending the counter-instruction
+            // here, AFTER identity, is what makes the model see it last and respect it (#357).
+            if GeneralAIActionResolver.shared.asksOnly(query) {
+                let mcpNote = mcpBlock.isEmpty
+                    ? "No MCP tools are linked for this app."
+                    : "Answer using the MCP tools listed above. Call run_mcp_tool with the exact tool name shown."
                 prompt.append(
-                    .sourceRule,
-                    "\nRead-only question — answer using the MCP tools listed above. "
-                        + "Do NOT write {\"menu_call\":...} JSON. "
-                        + "Call run_mcp_tool with the exact tool name shown.")
+                    .mcp,
+                    "Read-only question — do NOT write {\"menu_call\":...} JSON. \(mcpNote)")
             }
 
         case .folder(let path):
