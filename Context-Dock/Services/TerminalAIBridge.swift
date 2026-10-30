@@ -882,6 +882,7 @@ class TerminalAIBridge: ObservableObject {
                 finish(("Stopped before it started.", 15))
                 return
             }
+            process.standardInput = FileHandle.nullDevice
             do {
                 try process.run()
             } catch {
@@ -1026,6 +1027,7 @@ class TerminalAIBridge: ObservableObject {
                     continuation.resume(returning: ("Stopped before it started.", 15))
                     return
                 }
+                process.standardInput = FileHandle.nullDevice
                 try process.run()
                 if let probeDeadline {
                     DispatchQueue.global().asyncAfter(deadline: .now() + probeDeadline) {
@@ -1038,6 +1040,9 @@ class TerminalAIBridge: ObservableObject {
                         let reaper = Process()
                         reaper.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
                         reaper.arguments = ["-TERM", "-P", "\(process.processIdentifier)"]
+                        reaper.standardInput = FileHandle.nullDevice
+                        reaper.standardOutput = FileHandle.nullDevice
+                        reaper.standardError = FileHandle.nullDevice
                         try? reaper.run()
                         reaper.waitUntilExit()
                         process.terminate()

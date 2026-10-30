@@ -467,12 +467,13 @@ struct AITerminalPrompts {
 
             let pipe = Pipe()
             process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            process.standardInput = FileHandle.nullDevice
 
             do {
                 try process.run()
-                process.waitUntilExit()
-
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
                 let output = String(data: data, encoding: .utf8) ?? ""
                 let lines = output.components(separatedBy: "\n")
 

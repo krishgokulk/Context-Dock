@@ -455,15 +455,19 @@ enum LocalDataCapabilities {
             process.arguments = ["--list-extensions", "--show-versions"]
             process.standardOutput = stdout
             process.standardError = stderr
+            process.standardInput = FileHandle.nullDevice
             do {
                 try process.run()
-                process.waitUntilExit()
-                let out = String(
-                    data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
-                )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let error = String(
-                    data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
-                )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let grp = DispatchGroup()
+                let outBox = NSMutableData(); let errBox = NSMutableData()
+                grp.enter(); Thread.detachNewThread { outBox.setData(stdout.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+                grp.enter(); Thread.detachNewThread { errBox.setData(stderr.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+                grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+                grp.wait()
+                let out = String(data: outBox as Data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let error = String(data: errBox as Data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard process.terminationStatus == 0 else {
                     return AICapabilityExecutionResult(
                         success: false,

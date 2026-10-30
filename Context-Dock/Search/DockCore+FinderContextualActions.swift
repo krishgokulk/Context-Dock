@@ -1032,12 +1032,13 @@ extension DockCore {
             task.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
             task.arguments = arguments
             task.standardOutput = pipe
-            task.standardError = Pipe()
+            task.standardError = FileHandle.nullDevice
+            task.standardInput = FileHandle.nullDevice
 
             do {
                 try task.run()
-                task.waitUntilExit()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                task.waitUntilExit()
                 guard let output = String(data: data, encoding: .utf8), !output.isEmpty else {
                     return []
                 }
@@ -1370,6 +1371,9 @@ extension DockCore {
                 process.currentDirectoryURL = parentURL
                 process.arguments = ["-r", archiveURL.path] + existingURLs.map(\.lastPathComponent)
             }
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             try? process.run()
             process.waitUntilExit()
             await MainActor.run {

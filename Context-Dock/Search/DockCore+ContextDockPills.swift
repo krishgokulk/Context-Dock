@@ -458,6 +458,9 @@ extension DockCore {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             proc.arguments = ["-a", appName, fileURL.path]
+            proc.standardInput = FileHandle.nullDevice
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
             try? proc.run()
         }
 
@@ -482,6 +485,9 @@ extension DockCore {
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
                 proc.arguments = ["-o", first, "-d", dir]
+                proc.standardInput = FileHandle.nullDevice
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError = FileHandle.nullDevice
                 try? proc.run()
             }
         }
@@ -2036,6 +2042,9 @@ extension DockCore {
                 }
                 args += [url.path, "--out", output.path]
                 process.arguments = args
+                process.standardInput = FileHandle.nullDevice
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
                 do {
                     try process.run()
                     process.waitUntilExit()
@@ -2090,6 +2099,9 @@ extension DockCore {
                 urls.count == 1
                 ? ["-c", "-k", "--sequesterRsrc", "--keepParent", urls[0].lastPathComponent, output.path]
                 : ["-r", output.path] + urls.map(\.lastPathComponent)
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             do {
                 try process.run()
                 process.waitUntilExit()

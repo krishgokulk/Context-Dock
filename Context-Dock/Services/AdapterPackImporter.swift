@@ -270,8 +270,9 @@ final class AdapterPackImporter {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         proc.arguments = ["-o", "-q", zipURL.path, "-d", temp.path]
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
+        proc.standardInput = FileHandle.nullDevice
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
         try proc.run()
         proc.waitUntilExit()
         guard proc.terminationStatus == 0 else { throw AdapterPackImportError.unreadable }

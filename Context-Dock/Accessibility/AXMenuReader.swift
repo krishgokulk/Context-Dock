@@ -882,17 +882,19 @@ final class AXMenuReader {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        process.standardInput = FileHandle.nullDevice
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return (nil, error.localizedDescription)
-        }
+        do { try process.run() } catch { return (nil, error.localizedDescription) }
+        let grp = DispatchGroup()
+        let outBox = NSMutableData(); let errBox = NSMutableData()
+        grp.enter(); Thread.detachNewThread { outBox.setData(stdout.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { errBox.setData(stderr.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+        grp.wait()
 
-        let out = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        let out = String(data: outBox as Data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let err = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        let err = String(data: errBox as Data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         if process.terminationStatus == 0 {

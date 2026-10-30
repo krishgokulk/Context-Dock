@@ -237,6 +237,7 @@ final class AppDictionaryStore {
         process.standardOutput = outPipe
         process.standardError = errPipe
 
+        process.standardInput = FileHandle.nullDevice
         try process.run()
         let timeout: TimeInterval = 20
         var timedOut = false

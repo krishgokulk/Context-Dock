@@ -184,13 +184,19 @@ struct ScriptExtension: Identifiable {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
-        // Run the process
+        // Run the process — drain both pipes concurrently with wait to avoid 64KB buffer deadlock
+        process.standardInput = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
+        let grp = DispatchGroup()
+        let outBox = NSMutableData(); let errBox = NSMutableData()
+        grp.enter(); Thread.detachNewThread { outBox.setData(outputPipe.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { errBox.setData(errorPipe.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+        grp.wait()
 
         // Read output
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let outputData = outBox as Data
+        let errorData = errBox as Data
 
         let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let error = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

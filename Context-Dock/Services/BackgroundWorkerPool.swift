@@ -207,6 +207,10 @@ class BackgroundWorkerPool: ObservableObject {
 
         let outPipe = Pipe()
         let errPipe = Pipe()
+        // Real inPipe, not FileHandle.nullDevice: background workers are interactive —
+        // callers send lines through `send(to:text:)` which writes into this pipe. This
+        // is the streaming exception the issue-#43 fix explicitly keeps; all other
+        // Process() sites in the app set standardInput = FileHandle.nullDevice.
         let inPipe  = Pipe()
         process.standardOutput = outPipe
         process.standardError  = errPipe

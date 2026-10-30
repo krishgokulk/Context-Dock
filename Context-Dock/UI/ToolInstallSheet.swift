@@ -370,9 +370,19 @@ struct ToolInstallSheet: View {
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError  = pipe
+            p.standardInput = FileHandle.nullDevice
             guard (try? p.run()) != nil else { return ["Failed to start process"] }
+            // Drain on a detached thread before waiting — prevents pipe-buffer deadlock on large output.
+            var capturedData = Data()
+            let drainGroup = DispatchGroup()
+            drainGroup.enter()
+            Thread.detachNewThread {
+                capturedData = pipe.fileHandleForReading.readDataToEndOfFile()
+                drainGroup.leave()
+            }
             p.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            drainGroup.wait()
+            let data = capturedData
             return (String(data: data, encoding: .utf8) ?? "").components(separatedBy: .newlines)
         }.value
     }

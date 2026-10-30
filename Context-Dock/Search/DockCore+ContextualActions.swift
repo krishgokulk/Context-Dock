@@ -553,15 +553,16 @@ extension DockCore {
             let pipe = Pipe()
             proc.standardOutput = pipe
             proc.standardError = pipe
+            proc.standardInput = FileHandle.nullDevice
 
             do {
                 try proc.run()
-                proc.waitUntilExit()
                 let output = String(
                     data: pipe.fileHandleForReading.readDataToEndOfFile(),
                     encoding: .utf8
                 )?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                proc.waitUntilExit()
                 let success = proc.terminationStatus == 0
                 await MainActor.run {
                     completion(success, output?.isEmpty == false ? output : nil)

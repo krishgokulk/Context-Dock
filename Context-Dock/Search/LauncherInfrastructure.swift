@@ -118,11 +118,12 @@ class ShortcutsLinkQuery {
         task.standardOutput = pipe
         task.standardError = pipe
 
+        task.standardInput = FileHandle.nullDevice
+
         do {
             try task.run()
-            task.waitUntilExit()
-
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
             if let output = String(data: data, encoding: .utf8) {
                 // Parse the output - each line is a shortcut name
                 let lines = output.components(separatedBy: .newlines)

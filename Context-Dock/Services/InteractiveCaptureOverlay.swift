@@ -120,6 +120,9 @@ final class InteractiveCaptureOverlay {
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             process.arguments = args
             var producedURL: URL? = nil
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             do {
                 try process.run()
                 process.waitUntilExit()

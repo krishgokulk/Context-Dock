@@ -1005,7 +1005,9 @@ struct FileToolsSettingsView: View {
                     let p = Process()
                     p.executableURL = URL(fileURLWithPath: brewPath)
                     p.arguments = ["install", formula]
-                    p.standardOutput = Pipe(); p.standardError = Pipe()
+                    p.standardInput = FileHandle.nullDevice
+                    p.standardOutput = FileHandle.nullDevice
+                    p.standardError = FileHandle.nullDevice
                     guard (try? p.run()) != nil else { return false }
                     p.waitUntilExit()
                     return p.terminationStatus == 0

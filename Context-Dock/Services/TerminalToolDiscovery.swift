@@ -63,8 +63,9 @@ struct TerminalToolDiscovery {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         process.arguments = [tool]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()

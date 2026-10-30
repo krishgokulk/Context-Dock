@@ -171,9 +171,9 @@ class L2AITaskExecutor: ObservableObject {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
             process.arguments = [toolName]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.standardInput = FileHandle.nullDevice
             do {
                 try process.run()
                 process.waitUntilExit()
@@ -192,12 +192,15 @@ class L2AITaskExecutor: ObservableObject {
             pathProcess.arguments = [toolName]
             let pathPipe = Pipe()
             pathProcess.standardOutput = pathPipe
-            
+            pathProcess.standardError = FileHandle.nullDevice
+            pathProcess.standardInput = FileHandle.nullDevice
+
             var path = "/usr/bin/\(toolName)"
             do {
                 try pathProcess.run()
+                let pathData = pathPipe.fileHandleForReading.readDataToEndOfFile()
                 pathProcess.waitUntilExit()
-                if let output = String(data: pathPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) {
+                if let output = String(data: pathData, encoding: .utf8) {
                     path = output.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             } catch {}
@@ -209,12 +212,13 @@ class L2AITaskExecutor: ObservableObject {
             versionProcess.arguments = ["--version"]
             let versionPipe = Pipe()
             versionProcess.standardOutput = versionPipe
-            versionProcess.standardError = versionPipe
-            
+            versionProcess.standardError = FileHandle.nullDevice
+            versionProcess.standardInput = FileHandle.nullDevice
             do {
                 try versionProcess.run()
+                let versionData = versionPipe.fileHandleForReading.readDataToEndOfFile()
                 versionProcess.waitUntilExit()
-                if let output = String(data: versionPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) {
+                if let output = String(data: versionData, encoding: .utf8) {
                     version = output.components(separatedBy: "\n").first?.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             } catch {}

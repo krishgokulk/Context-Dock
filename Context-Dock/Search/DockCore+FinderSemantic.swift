@@ -954,11 +954,12 @@ extension DockCore {
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = pipe
+                process.standardInput = FileHandle.nullDevice
                 try? process.run()
-                process.waitUntilExit()
                 let output =
                     String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
                     ?? ""
+                process.waitUntilExit()
                 let createdURL =
                     process.terminationStatus == 0
                     ? await MainActor.run { self.detectCreatedFile(command: cmd, output: output) }

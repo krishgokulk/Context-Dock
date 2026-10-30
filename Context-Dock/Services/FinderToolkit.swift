@@ -46,6 +46,9 @@ struct FinderTool: Identifiable {
         proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
         proc.arguments     = [scriptPath] + args
         proc.environment   = ProcessInfo.processInfo.environment
+        proc.standardInput = FileHandle.nullDevice
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
         Task.detached(priority: .userInitiated) { try? proc.run() }
     }
 }
@@ -200,6 +203,9 @@ final class FinderToolkit {
             proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
             proc.arguments = [path, dir]
             proc.environment = ProcessInfo.processInfo.environment
+            proc.standardInput = FileHandle.nullDevice
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
             try? proc.run()
             proc.waitUntilExit()
         }
@@ -211,6 +217,9 @@ final class FinderToolkit {
             proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
             proc.arguments = [path, dir]
             proc.environment = ProcessInfo.processInfo.environment
+            proc.standardInput = FileHandle.nullDevice
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
             try? proc.run()
             proc.waitUntilExit()
         }

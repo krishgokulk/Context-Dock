@@ -54,6 +54,7 @@ final class AppleNotesExecutionService {
                     let errPipe = Pipe()
                     process.standardOutput = outPipe
                     process.standardError = errPipe
+                    process.standardInput = FileHandle.nullDevice
                     try process.run()
                     // Hard timeout — a hung osascript (e.g. pending automation-permission
                     // dialog) must never leave the chat spinner running forever.

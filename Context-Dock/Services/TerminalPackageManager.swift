@@ -147,6 +147,7 @@ class TerminalPackageManager: ObservableObject {
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
             }
+            process.standardInput = FileHandle.nullDevice
             do { try process.run() } catch { continuation.resume(returning: "") }
         }
 
@@ -402,14 +403,15 @@ class TerminalPackageManager: ObservableObject {
 
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
 
         do {
             try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
 
             if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
                     return path
                 }
@@ -1219,11 +1221,12 @@ class TerminalPackageManager: ObservableObject {
                 }
                 DispatchQueue.global(qos: .utility).asyncAfter(
                     deadline: .now() + .seconds(Self.scanTimeoutSeconds), execute: watchdog)
+                process.standardInput = FileHandle.nullDevice
                 do {
                     try process.run()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
                     watchdog.cancel()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
                     continuation.resume(returning: (String(data: data, encoding: .utf8) ?? "", timedOut))
                 } catch {
                     watchdog.cancel()

@@ -179,7 +179,8 @@ final class ProcessMonitorService {
         process.arguments = ["-axo", "pid=,%cpu=,rss=,comm="]
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
         do {
             try process.run()
         } catch {
