@@ -423,6 +423,8 @@ final class AppChatPromptModel: ObservableObject {
     /// moment later — args are (name, bundleID). The corner reads this as "follow me there",
     /// not as an incidental background switch to ignore.
     var onAppLaunchedFromGlobalContext: ((String, String) -> Void)?
+    /// Leaving a selected Pet or step-in scope back to Global Context.
+    var onLeaveScopeForGlobal: (() -> Void)?
 
     init(conversation: AppChatConversation? = nil, globalResultSource: GlobalContextResultSource? = nil) {
         let source = conversation ?? AppChatConversation.shared

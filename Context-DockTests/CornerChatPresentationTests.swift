@@ -291,4 +291,60 @@ struct CornerChatPresentationTests {
         subject.standDown()
         #expect(subject.generalPhase == .expanded)
     }
+
+    @Test func showPetCarriesSelectedPetFocusWithoutCreatingNewPresentationOrGeneralWindow() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let general = GeneralChatWindowModel()
+        let subject = CornerChatPresentation(appChat: app, generalChat: general)
+        subject.frontmostTargetProvider = { code }
+
+        subject.showGlobalContext()
+        #expect(subject.surfaceFocus == .global)
+
+        subject.showPet(target: safari)
+        #expect(subject.isVisible)
+        #expect(subject.mode == .frontmostApp)
+        #expect(subject.surfaceFocus == .pet(.app(bundleID: "com.apple.Safari")))
+        #expect(app.appBundleID == "com.apple.Safari")
+        #expect(app.returnsToGlobalScope)
+        #expect(subject.appChat === app)
+        #expect(subject.generalChat === general)
+
+        // Switching to another Pet in place keeps the same presentation and models.
+        let mail = CornerChatTarget(name: "Mail", bundleID: "com.apple.mail")
+        subject.showPet(target: mail)
+        #expect(subject.surfaceFocus == .pet(.app(bundleID: "com.apple.mail")))
+        #expect(app.appBundleID == "com.apple.mail")
+        #expect(app.returnsToGlobalScope)
+        #expect(subject.appChat === app)
+        #expect(subject.generalChat === general)
+        #expect(subject.mode != .general)
+    }
+
+    @Test func selectedPetDraftsRemainIndependentAndZoomInReturnsToRealFrontmostPet() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(appChat: app, generalChat: GeneralChatWindowModel())
+        let finder = CornerChatTarget(name: "Finder", bundleID: "com.apple.finder")
+        subject.frontmostTargetProvider = { code }
+
+        subject.showPet(target: finder)
+        app.query = "finder draft"
+
+        subject.showPet(target: safari)
+        #expect(app.query.isEmpty)
+        app.query = "safari draft"
+
+        subject.showPet(target: finder)
+        #expect(app.query == "finder draft")
+
+        // Leaving the selected Pet to Global and zooming back in returns to the real
+        // frontmost Pet (Code), not the previously selected Pet (Finder).
+        subject.showGlobalContext()
+        #expect(subject.surfaceFocus == .global)
+        #expect(subject.handleLayerKey(up: false) == true)
+        #expect(subject.mode == .frontmostApp)
+        #expect(subject.surfaceFocus == .frontmost)
+        #expect(app.appBundleID == code.bundleID)
+        #expect(!app.returnsToGlobalScope)
+    }
 }

@@ -1402,6 +1402,7 @@ extension AppChatPromptModel {
         scopedCommand = nil
         panelConversation = []
         summonGlobalContext()
+        onLeaveScopeForGlobal?()
         return true
     }
 
