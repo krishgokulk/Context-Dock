@@ -735,11 +735,14 @@ final class MarkdownMemoryStore {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         let prefixes = ["please remember that ", "remember that ", "please remember ", "remember "]
-        guard let prefix = prefixes.first(where: { lower.hasPrefix($0) }) else { return nil }
-        let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
-        let fact = trimmed[start...].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard fact.count >= 2 else { return nil }
-        return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if let prefix = prefixes.first(where: { lower.hasPrefix($0) }) {
+            let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
+            let fact = trimmed[start...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard fact.count >= 2 else { return nil }
+            return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        }
+        guard trimmed.count >= 2 else { return nil }
+        return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
     /// Human-readable provenance kept beside the fact without becoming another searchable

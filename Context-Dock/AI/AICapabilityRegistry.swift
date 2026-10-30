@@ -284,10 +284,13 @@ final class CapabilityRegistry {
     func cliPromptBlock(for bundleID: String?, appName: String?) -> String {
         let lines = cliCapabilityLines(for: bundleID)
         guard !lines.isEmpty else { return "" }
+        let memoryDirective = "DoraX Memory: When the user asks you to remember something or set a preference (\"remember that...\", \"my preference is...\"), always use the dorax_remember tool (or dorax_run_capability with capability_id \"memory.save\"). This saves directly into DoraX's durable preferences.md. NEVER use shell commands or write markdown files to ~/.claude to store memory."
         return "DoraX capabilities for \(appName ?? "this app") — call these through the "
             + "dorax_run_capability tool (id + input) BEFORE any shell command or script. "
             + "Reads run at once; changes ask the user first. Use a shell or osascript only "
-            + "when no capability below fits.\n" + lines.joined(separator: "\n")
+            + "when no capability below fits.\n"
+            + memoryDirective + "\n\n"
+            + lines.joined(separator: "\n")
     }
 
     /// Re-register the user's Global Commands as capabilities. Call after the

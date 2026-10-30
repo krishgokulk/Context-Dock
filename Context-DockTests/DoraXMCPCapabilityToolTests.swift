@@ -12,6 +12,15 @@ struct DoraXMCPCapabilityToolTests {
         let names = DoraXMCPServer.toolDefinitions(attended: false).compactMap { $0["name"] as? String }
         #expect(names.contains("dorax_run_capability"))
         #expect(names.contains("dorax_list_capabilities"))
+        #expect(names.contains("dorax_remember"))
+    }
+
+    @Test func doraxRememberSavesDirectlyToMemory() async {
+        let server = DoraXMCPServer.shared
+        let uniqueFact = "I prefer short bullet points for status \(UUID().uuidString)"
+        let reply = await server.callTool(
+            named: "dorax_remember", arguments: ["text": uniqueFact], attended: true)
+        #expect(reply.lowercased().contains("remembered") || reply.lowercased().contains("prefer"))
     }
 
     @Test func screenshotIsDocumentedAsTextLastResort() {

@@ -574,7 +574,6 @@ struct CornerGeneralChatView: View {
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
                     .frame(height: ApprovalCard.height(for: request))
-                    .padding(.horizontal, 12)
                 Divider().opacity(0.18)
             }
 

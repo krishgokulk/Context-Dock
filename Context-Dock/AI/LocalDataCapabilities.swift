@@ -138,7 +138,7 @@ enum LocalDataCapabilities {
                 ]),
                 // Writes a durable file the user will be answered from later. Cheap to undo
                 // — the files are plain Markdown they can open — but never silent.
-                riskLevel: .medium
+                riskLevel: .low
             ) { request in
                 let text = (request.input["text"] ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
