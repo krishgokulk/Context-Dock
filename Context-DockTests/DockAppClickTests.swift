@@ -1,4 +1,6 @@
+import AppKit
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import Context_Dock
@@ -58,5 +60,85 @@ struct DockAppClickTests {
         // A transparent helper window (Electron keeps them) is not a window to choose.
         #expect(!WindowServerWindows.isDocumentWindow(
             ownerPID: 42, layer: 0, bounds: big, alpha: 0, pid: 42))
+    }
+
+    @Test func stripClickSelectsRunningPetsAndKeepsExplicitActions() {
+        func matchIcon(_ id: String, title: String, bundleID: String?, running: Bool = true) -> MatchDockIcon {
+            MatchDockIcon(
+                id: id,
+                bundleID: bundleID,
+                title: title,
+                icon: NSImage(),
+                isRunning: running,
+                isExpandable: false,
+                score: 1,
+                isExactAppPrefix: false)
+        }
+
+        let runningSafariIcon = matchIcon(
+            "com.apple.Safari", title: "Safari", bundleID: "com.apple.Safari")
+        let runningSafariSlot = DockAppSlot(
+            bundleID: "com.apple.Safari",
+            title: "Safari",
+            pin: nil,
+            running: runningSafariIcon,
+            isRunning: true)
+        #expect(
+            DockAppClick.stripClickIntent(slot: runningSafariSlot)
+                == .selectPet(.app(bundleID: "com.apple.Safari"), name: "Safari"))
+
+        let runningMailIcon = matchIcon(
+            "com.apple.mail", title: "Mail", bundleID: "com.apple.mail")
+        let runningMailSlot = DockAppSlot(
+            bundleID: "com.apple.mail",
+            title: "Mail",
+            pin: DockPin(
+                id: UUID(), kind: .app(bundleID: "com.apple.mail"), title: "Mail", order: 0,
+                documentID: nil),
+            running: runningMailIcon,
+            isRunning: true)
+        #expect(
+            DockAppClick.stripClickIntent(slot: runningMailSlot)
+                == .selectPet(.app(bundleID: "com.apple.mail"), name: "Mail"))
+
+        let tabIcon = matchIcon(
+            "safari-tab:1:1", title: "Docs", bundleID: "safari-tab:1:1", running: false)
+        let tabSlot = DockAppSlot(
+            bundleID: tabIcon.id, title: tabIcon.title, pin: nil, running: tabIcon, isRunning: false)
+        #expect(
+            DockAppClick.stripClickIntent(slot: tabSlot, isTab: true)
+                == .openTab(tabIcon))
+
+        let actionPin = DockPin(
+            id: UUID(),
+            kind: .menuCommand(path: ["File", "New Tab"]),
+            title: "New Tab",
+            order: 0,
+            documentID: nil,
+            appBundleID: "com.apple.Safari")
+        let actionSlot = DockAppSlot(
+            bundleID: "app-pin:\(actionPin.id.uuidString)",
+            title: "New Tab",
+            pin: nil,
+            running: matchIcon(
+                "app-pin:\(actionPin.id.uuidString)", title: "New Tab",
+                bundleID: "app-pin:\(actionPin.id.uuidString)", running: false),
+            isRunning: false)
+        #expect(
+            DockAppClick.stripClickIntent(slot: actionSlot, appPin: actionPin)
+                == .openPin(actionPin))
+
+        let offlinePin = DockPin(
+            id: UUID(), kind: .app(bundleID: "com.apple.Notes"), title: "Notes", order: 0,
+            documentID: nil)
+        let offlineSlot = DockAppSlot(
+            bundleID: "com.apple.Notes", title: "Notes", pin: offlinePin, running: nil,
+            isRunning: false)
+        #expect(
+            DockAppClick.stripClickIntent(slot: offlineSlot)
+                == .openApplication(bundleID: "com.apple.Notes", name: "Notes"))
+        #expect(
+            DockAppClick.openMenuIntent(bundleID: "com.apple.Safari", name: "Safari")
+                == .openApplication(bundleID: "com.apple.Safari", name: "Safari"))
     }
 }

@@ -413,14 +413,34 @@ extension AppChatPromptModel {
         return pins + tabs.map(BrowserTabList.icon(for:))
     }
 
+    func stripClickIntent(for slot: DockAppSlot) -> DockStripClickIntent {
+        DockAppClick.stripClickIntent(
+            slot: slot,
+            appPin: appPin(forIconID: slot.bundleID),
+            isTab: isTabIcon(slot.bundleID))
+    }
+
+    func handleStripClick(_ slot: DockAppSlot) {
+        switch stripClickIntent(for: slot) {
+        case .openPin(let pin):
+            openAppPin(pin)
+        case .openTab(let icon):
+            openTabIcon(icon)
+        case .selectPet(let petID, let name):
+            if expandFromDock(seeding: nil) {
+                CornerDockController.shared.requestComposerFocus()
+            }
+            scopeIntoApp(name: name, bundleID: petID.dockBundleID)
+        case .openApplication(let bundleID, let name):
+            DockAppClick.click(bundleID: bundleID, name: name)
+        }
+    }
+
     /// A click on an icon in the app bar's pill: a pin runs, a tab shows, and a running app
-    /// — what the bar holds for an app with no pins — is the window manager's, as in
-    /// Global's dock (`DockAppClick`).
+    /// — what the bar holds for an app with no pins — selects that Pet inside the Dock (#338).
     func openBarIcon(_ icon: MatchDockIcon) {
         if let pin = appPin(forIconID: icon.id) {
             openAppPin(pin)
-        } else if !isTabIcon(icon.id), let bundleID = icon.bundleID {
-            DockAppClick.click(bundleID: bundleID, name: icon.title)
         } else {
             openGlobalMatchIcon(icon)
         }
@@ -798,6 +818,9 @@ extension AppChatPromptModel {
             name: name, bundleID: bundleID,
             suggestions: AppChatSuggestionProvider.suggestions(for: app),
             summary: AppChatSuggestionProvider.summary(for: app))
+        _ = leaveSelectionScope()
+        refreshSelectionForCurrentScope()
+        Self.changeScope(app: name, bundleID: bundleID)
         loadMenuItems()
         // `loadMenuItems` returns early when the scope is not a running app — a CLI tool
         // never is — so the rows have to be rebuilt here or the scope opens still showing
@@ -1483,21 +1506,16 @@ extension AppChatPromptModel {
                 String(icon.id.dropFirst(Self.minimizedPillPrefix.count)))
             return
         }
-        // An app pill scopes the field into that app rather than launching it: the pills
-        // are how you get *into* something from here, and the row list is how you run it.
+        // An app pill scopes the field into that app rather than launching or activating it:
+        // clicking a running-app icon selects its Pet inside the Dock (#338).
         guard let bundleID = icon.bundleID, !bundleID.isEmpty else { return }
-        if isGlobalScope {
-            scopeIntoApp(name: icon.title, bundleID: bundleID)
-            return
-        }
-        if let running = NSWorkspace.shared.runningApplications.first(where: {
+        if isGlobalScope || icon.isRunning || NSWorkspace.shared.runningApplications.contains(where: {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }) {
-            running.activate()
-            // Clicking a pill is the same explicit "take me there" as running a Global
-            // Context row — the corner follows rather than sitting on whichever app it
-            // was showing before this click.
-            onAppLaunchedFromGlobalContext?(icon.title, bundleID)
+            if expandFromDock(seeding: nil) {
+                CornerDockController.shared.requestComposerFocus()
+            }
+            scopeIntoApp(name: icon.title, bundleID: bundleID)
             return
         }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)

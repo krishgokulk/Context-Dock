@@ -277,4 +277,46 @@ struct CornerDockPhaseTests {
         other.query = "save"
         #expect(!other.showsAskAIRow)
     }
+
+    @Test func clickingARunningAppInTheStripSelectsItsPetAndExpandsTheDock() {
+        let (model, _) = globalModel()
+        model.standDown()
+        #expect(model.phase == .dock)
+
+        let safariSlot = DockAppSlot(
+            bundleID: "com.apple.Safari",
+            title: "Safari",
+            pin: nil,
+            running: MatchDockIcon(
+                id: "com.apple.Safari",
+                bundleID: "com.apple.Safari",
+                title: "Safari",
+                icon: NSImage(),
+                isRunning: true,
+                isExpandable: false,
+                score: 1,
+                isExactAppPrefix: false),
+            isRunning: true)
+        model.handleStripClick(safariSlot)
+        #expect(model.phase == .prompt)
+        #expect(model.appBundleID == "com.apple.Safari")
+        #expect(model.appName == "Safari")
+        #expect(model.returnsToGlobalScope)
+        #expect(AppChatListCard.placeholder(for: model) == "Ask Safari")
+
+        let mailIcon = MatchDockIcon(
+            id: "com.example.not-running-mail",
+            bundleID: "com.example.not-running-mail",
+            title: "Mail",
+            icon: NSImage(),
+            isRunning: true,
+            isExpandable: false,
+            score: 1,
+            isExactAppPrefix: false)
+        model.openBarIcon(mailIcon)
+        #expect(model.appBundleID == "com.example.not-running-mail")
+        #expect(model.appName == "Mail")
+        #expect(model.returnsToGlobalScope)
+        #expect(AppChatListCard.placeholder(for: model) == "Ask Mail")
+    }
 }

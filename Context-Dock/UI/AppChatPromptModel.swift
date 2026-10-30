@@ -563,6 +563,7 @@ final class AppChatPromptModel: ObservableObject {
             isConversationHidden = false
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
+            savedChatCache = nil
         }
         appName = name
         appBundleID = bundleID
@@ -1354,7 +1355,7 @@ final class AppChatPromptModel: ObservableObject {
             ])
     }
 
-    private static func changeScope(app: String, bundleID: String) {
+    static func changeScope(app: String, bundleID: String) {
         NotificationCenter.default.post(
             name: .appChatPromptScopeChanged,
             object: nil,
