@@ -3689,6 +3689,9 @@ extension DockCore {
                     await MainActor.run {
                         ChatResultRowCollector.shared.begin(
                             scope: GeneralChatScope(dockBundleId: scopedBundleId))
+                        // #205: reset solved-skill collector for this turn
+                        SolvedSkillToolCallCollector.shared.begin(
+                            scope: GeneralChatScope(dockBundleId: scopedBundleId))
                     }
                     let outcome = try await ScopedTurnRunner.run(
                         query: query,
@@ -3765,6 +3768,15 @@ extension DockCore {
                         toolsRan += applied.toolsRan
                     }
                     await MainActor.run {
+                        // #205: save this turn as a solved skill when it qualifies
+                        let captureScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                        var captureAnswer = AppScopedChatService.Answer(
+                            text: finalResponse, toolChips: [])
+                        captureAnswer.evidenceReceipts =
+                            browserPageReceipts + executed.map(DoraXActionReceipt.init)
+                        SolvedSkillCapture.captureIfEligible(
+                            query: query, scope: captureScope, answer: captureAnswer,
+                            toolCalls: SolvedSkillToolCallCollector.shared.take(scope: captureScope))
                         // The records this turn's capabilities actually read, drawn as cards
                         // through the same mapper the chat window uses. The dock used to be
                         // the only surface with note rows, and only inside its own Notes

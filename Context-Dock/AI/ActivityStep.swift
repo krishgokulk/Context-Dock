@@ -228,6 +228,9 @@ nonisolated enum ActivityStepNaming {
     /// things done when one was.
     static let plumbingTools: Set<String> = [
         "find_capability", "find_route", "find_menu_command", "read_tool_result",
+        // run_mcp_tool is a pass-through router: the inner run_capability step creates its own
+        // activity row. The skill collector handles it in noteForSolvedSkill before this guard.
+        "run_mcp_tool",
     ]
 
     /// Kind, title and one-line input for a DoraX tool call. `capabilityTitle` and

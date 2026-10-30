@@ -682,6 +682,17 @@ final class GeneralChatCapabilityHub {
                         toolName: "run_capability", arguments: ["capability_id": tool],
                         output: result.output, succeeded: result.success, turn: turn)
                 }
+                // #205: same recording as the .capability path — the MCP form of a registered
+                // capability is still a DoraX capability and deserves a replay slot.
+                if result.success {
+                    let isReadOnly = !AgentToolRegistry.changesSomething(capabilityID: tool)
+                    SolvedSkillToolCallCollector.shared.record(
+                        capability: tool,
+                        input: input,
+                        isReadOnly: isReadOnly,
+                        verifiedReadBack: isReadOnly,
+                        scope: chatScope)
+                }
                 return ToolCallResult(
                     handled: true,
                     success: result.success,
@@ -778,6 +789,21 @@ final class GeneralChatCapabilityHub {
                     label: "\(invocation.capabilityID) blocked")
             }
             let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(plan, context: .none)
+            // #205: a successful read-only capability result is verified evidence, so record it
+            // for the solved-skill collector. The collector's begin/take wraps the whole turn
+            // in AppScopedChatService; this path (capability_call from the Anthropic provider)
+            // goes through execute() rather than AgentToolRegistry.dispatch, so dispatch's own
+            // noteForSolvedSkill never fires here.
+            if result.success {
+                let isReadOnly = !AgentToolRegistry.changesSomething(
+                    capabilityID: invocation.capabilityID)
+                SolvedSkillToolCallCollector.shared.record(
+                    capability: invocation.capabilityID,
+                    input: invocation.arguments,
+                    isReadOnly: isReadOnly,
+                    verifiedReadBack: isReadOnly,
+                    scope: chatScope)
+            }
             return ToolCallResult(
                 handled: true,
                 success: result.success,

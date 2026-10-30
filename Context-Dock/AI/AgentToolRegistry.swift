@@ -544,6 +544,47 @@ final class AgentToolRegistry {
             || capability.riskLevel == .critical
     }
 
+    /// Hands a successful call to the solved-skill collector (#205). Lookups and read-backs are
+    /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
+    /// read-only so it keeps the turn from being saved.
+    private static func noteForSolvedSkill(
+        name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
+    ) {
+        // run_mcp_tool wraps dorax_run_capability which carries a DoraX capability_id.
+        // Handle it before the plumbing guard using the outer turn's scope: the inner
+        // run_capability dispatch in DoraXMCPServer uses scope=nil on the app's own Anthropic
+        // path (capabilityTurn is nil for in-app calls), so it records in the wrong bucket.
+        if name == "run_mcp_tool",
+           let innerArgs = arguments["arguments"] as? [String: Any],
+           let capabilityID = innerArgs["capability_id"] as? String, !capabilityID.isEmpty
+        {
+            var input: [String: String] = [:]
+            for (key, value) in (innerArgs["input"] as? [String: Any]) ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: capabilityID, input: input,
+                isReadOnly: !changesSomething(capabilityID: capabilityID),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+            return
+        }
+        let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
+        guard !plumbing.contains(name) else { return }
+        if name == "run_capability", let id = arguments["capability_id"] as? String {
+            var input: [String: String] = [:]
+            for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+        } else {
+            SolvedSkillToolCallCollector.shared.record(
+                capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,
+                scope: scope)
+        }
+    }
+
     static func readsOnlyRefusal(capabilityID: String) -> String {
         "This surface can read but not change anything, so \(capabilityID) was not run. "
             + "Say what you would change and the user can do it from a chat that has the "
@@ -591,6 +632,58 @@ final class AgentToolRegistry {
         arguments: [String: Any],
         context: AgentToolContext
     ) async -> AgentToolResult? {
+        // #205: dorax_run_capability is the Anthropic native-tools form of run_capability.
+        // Bridge it so the outer turn's chatScope is used — DoraXMCPServer.capabilityTurn is
+        // nil for in-app Anthropic calls, so the inner dispatch would record in the wrong
+        // scope bucket ("general" instead of "app:<bundleId>"), and solved-skills.json is
+        // never written.
+        if name == "dorax_run_capability",
+           let capabilityID = arguments["capability_id"] as? String, !capabilityID.isEmpty,
+           CapabilityRegistry.shared.capability(id: capabilityID) != nil
+        {
+            return await dispatch(
+                name: "run_capability",
+                arguments: [
+                    "capability_id": capabilityID,
+                    "input": (arguments["input"] as? [String: Any]) ?? [:],
+                ],
+                context: context)
+        }
+        // #205: run_mcp_tool(server: "dorax", tool: "dorax_run_capability", ...) is the
+        // Anthropic native-tools model wrapping a DoraX capability via MCP. "run" in
+        // "dorax_run_capability" makes MCPToolSafety classify it as a write tool
+        // → success: false, which lands in evidenceReceipts and blocks build() rule 1
+        // (no failed receipts). Bridge it to run_capability before the safety check fires.
+        //
+        // The Anthropic streaming path decodes tool arguments as [String: AIProviderAnyCodable],
+        // so nested values like "arguments.capability_id" are AIProviderAnyCodable, NOT String.
+        // A JSON round-trip via JSONEncoder (which knows AIProviderAnyCodable.encode) unwraps
+        // them to plain Swift types that the capability_id cast can reach.
+        if name == "run_mcp_tool",
+           let server = arguments["server"] as? String,
+           server.caseInsensitiveCompare("dorax") == .orderedSame,
+           let toolArg = arguments["tool"] as? String, toolArg == "dorax_run_capability"
+        {
+            let innerJSON: [String: Any]?
+            if let codable = arguments["arguments"] as? [String: AIProviderAnyCodable],
+               let data = try? JSONEncoder().encode(codable) {
+                innerJSON = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            } else {
+                innerJSON = arguments["arguments"] as? [String: Any]
+            }
+            if let inner = innerJSON,
+               let capabilityID = inner["capability_id"] as? String, !capabilityID.isEmpty,
+               CapabilityRegistry.shared.capability(id: capabilityID) != nil
+            {
+                return await dispatch(
+                    name: "run_capability",
+                    arguments: [
+                        "capability_id": capabilityID,
+                        "input": (inner["input"] as? [String: Any]) ?? [:],
+                    ],
+                    context: context)
+            }
+        }
         if let capabilityID = Self.bridgedBuiltInCapabilityID(
             toolName: name,
             arguments: arguments,
@@ -672,6 +765,11 @@ final class AgentToolRegistry {
         taint.record(
             toolName: name, arguments: arguments, output: result.output,
             succeeded: result.success, turn: context.turn)
+        if result.success {
+            Self.noteForSolvedSkill(
+                name: name, arguments: arguments,
+                verifiedReadBack: result.verifiedByReadBack != nil, scope: context.chatScope)
+        }
         if let stepID {
             ActivityRecorder.active?.finish(
                 stepID,
@@ -1962,9 +2060,13 @@ final class AgentToolRegistry {
             do {
                 let output = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleID, server: server, tool: tool, arguments: toolArguments)
-                return AgentToolResult(
+                var mcpResult = AgentToolResult(
                     success: true, output: output,
                     displayCommand: "\(tool) via \(server.isEmpty ? "MCP" : server)")
+                // A non-empty MCP read result IS the verified evidence — same logic the
+                // .notApplicable verifier path uses for run_capability reads.
+                if !output.isEmpty { mcpResult.verifiedByReadBack = output }
+                return mcpResult
             } catch {
                 return AgentToolResult(
                     success: false,
@@ -2316,6 +2418,10 @@ final class AgentToolRegistry {
                         // No registered verifier, but the executor read its own value
                         // back (a System connector setting): that reading is the proof.
                         if result.readBack?.isEmpty == false {
+                            reading = output
+                        } else if !isWrite, !result.output.isEmpty {
+                            // Read-only capability: a non-empty result IS the read-back proof —
+                            // a search that found nothing leaves output empty and does not capture.
                             reading = output
                         }
                     }
