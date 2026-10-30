@@ -174,11 +174,12 @@ enum GitHubMCPCapabilities {
                 proc.arguments = args
                 let pipe = Pipe()
                 proc.standardOutput = pipe
-                proc.standardError = Pipe()
+                proc.standardError = FileHandle.nullDevice
+                proc.standardInput = FileHandle.nullDevice
                 do {
                     try proc.run()
-                    proc.waitUntilExit()
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    proc.waitUntilExit()
                     continuation.resume(returning: String(data: data, encoding: .utf8))
                 } catch {
                     continuation.resume(returning: nil)

@@ -93,15 +93,16 @@ enum MessagesInsights {
         let errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
-        do {
-            try process.run()
-        } catch {
-            throw Failure.unreadable(error.localizedDescription)
-        }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let errorText = String(
-            data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
+        process.standardInput = FileHandle.nullDevice
+        do { try process.run() } catch { throw Failure.unreadable(error.localizedDescription) }
+        let grp = DispatchGroup()
+        let outBox = NSMutableData(); let errBox = NSMutableData()
+        grp.enter(); Thread.detachNewThread { outBox.setData(output.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { errBox.setData(errors.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+        grp.wait()
+        let data = outBox as Data
+        let errorText = String(data: errBox as Data, encoding: .utf8) ?? ""
 
         if process.terminationStatus != 0 {
             // "authorization denied" is what macOS says when the app lacks Full Disk Access,

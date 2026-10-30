@@ -488,10 +488,10 @@ class LayeredExtensionManager: ObservableObject {
         process.standardOutput = pipe
         process.standardError = pipe
 
+        process.standardInput = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
-
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
 
         try? FileManager.default.removeItem(at: tempScript)

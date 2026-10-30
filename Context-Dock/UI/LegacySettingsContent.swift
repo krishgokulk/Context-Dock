@@ -5017,14 +5017,15 @@ struct AddPackageSheet: View {
         
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
-        
+        process.standardError = FileHandle.nullDevice
+
         do {
+            process.standardInput = FileHandle.nullDevice
             try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            
+
             if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
                     return path
                 }
@@ -6926,12 +6927,22 @@ struct AddAppExtensionSheet: View {
             p.environment = env
             let pipe = Pipe()
             p.standardOutput = pipe; p.standardError = pipe
+            p.standardInput = FileHandle.nullDevice
             guard (try? p.run()) != nil else {
                 await MainActor.run { installLog = "Failed to start process"; isInstalling = false }
                 return
             }
+            // Drain on a detached thread — install output can exceed the 64 KB pipe buffer.
+            var capturedOut = ""
+            let drainGroup = DispatchGroup()
+            drainGroup.enter()
+            Thread.detachNewThread {
+                capturedOut = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                drainGroup.leave()
+            }
             p.waitUntilExit()
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            drainGroup.wait()
+            let out = capturedOut
             let ok  = p.terminationStatus == 0
             await MainActor.run {
                 installLog   = out
@@ -7936,6 +7947,7 @@ struct PermissionsSettingsView: View {
             process.standardError = errPipe
 
             do {
+                process.standardInput = FileHandle.nullDevice
                 try process.run()
             } catch {
                 DispatchQueue.main.async {
@@ -7945,10 +7957,16 @@ struct PermissionsSettingsView: View {
                 return
             }
 
+            // Drain both pipes in parallel before waiting — prevents 64KB pipe-buffer deadlock.
+            var outData = Data()
+            var errData = Data()
+            let drainGroup = DispatchGroup()
+            drainGroup.enter()
+            Thread.detachNewThread { outData = pipe.fileHandleForReading.readDataToEndOfFile(); drainGroup.leave() }
+            drainGroup.enter()
+            Thread.detachNewThread { errData = errPipe.fileHandleForReading.readDataToEndOfFile(); drainGroup.leave() }
             process.waitUntilExit()
-
-            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            drainGroup.wait()
             let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
             let stderrStr = String(data: errData, encoding: .utf8) ?? ""
             let status = process.terminationStatus

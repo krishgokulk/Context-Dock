@@ -286,6 +286,7 @@ final class ClaudeCodeBridge {
             // stderr is separated and dropped: the user's own Claude Code hooks write
             // there, and a broken hook's noise is not part of the answer.
             process.standardError = Pipe()
+            process.standardInput = FileHandle.nullDevice
 
             var text = ""
             var tools: [String] = []

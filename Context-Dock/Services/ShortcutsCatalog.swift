@@ -155,7 +155,8 @@ final class ShortcutsCatalog: ObservableObject {
         process.arguments = ["list"]
         let outPipe = Pipe()
         process.standardOutput = outPipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
 
         do { try process.run() } catch { return [] }
 

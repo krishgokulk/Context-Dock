@@ -824,9 +824,10 @@ final class AXTriggerRuleEngine {
                 let pipe = Pipe()
                 proc.standardOutput = pipe
                 proc.standardError  = pipe
+                proc.standardInput  = FileHandle.nullDevice
                 try? proc.run()
-                proc.waitUntilExit()
                 let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                proc.waitUntilExit()
                 let success = proc.terminationStatus == 0
                 await MainActor.run {
                     ILauncherNotificationManager.shared.post(
@@ -852,6 +853,9 @@ final class AXTriggerRuleEngine {
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
                 proc.arguments = ["-l", "JavaScript", tmp.path]
+                proc.standardInput  = FileHandle.nullDevice
+                proc.standardOutput = FileHandle.nullDevice
+                proc.standardError  = FileHandle.nullDevice
                 try? proc.run()
                 proc.waitUntilExit()
             }
@@ -891,9 +895,10 @@ final class AXTriggerRuleEngine {
                 let pipe = Pipe()
                 proc.standardOutput = pipe
                 proc.standardError  = pipe
+                proc.standardInput  = FileHandle.nullDevice
                 try? proc.run()
-                proc.waitUntilExit()
                 let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                proc.waitUntilExit()
                 let success = proc.terminationStatus == 0
                 await MainActor.run {
                     ILauncherNotificationManager.shared.post(
@@ -948,9 +953,10 @@ final class AXTriggerRuleEngine {
                 let pipe = Pipe()
                 proc.standardOutput = pipe
                 proc.standardError  = pipe
+                proc.standardInput  = FileHandle.nullDevice
                 try? proc.run()
-                proc.waitUntilExit()
                 let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                proc.waitUntilExit()
                 let success = proc.terminationStatus == 0
                 await MainActor.run {
                     ILauncherNotificationManager.shared.post(

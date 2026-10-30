@@ -257,6 +257,7 @@ class L2ExtensionManager: ObservableObject {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError  = stderr
+        process.standardInput  = FileHandle.nullDevice
         process.environment    = env
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
@@ -267,10 +268,16 @@ class L2ExtensionManager: ObservableObject {
 
         do {
             try process.run()
-            process.waitUntilExit()
-
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+            // Drain both pipes on separate threads before waiting: if the script writes
+            // more than the 64 KB pipe buffer the child blocks on write while we block on
+            // wait, and neither side ever moves.
+            let grp = DispatchGroup()
+            let outBox = NSMutableData(); let errBox = NSMutableData()
+            grp.enter(); Thread.detachNewThread { outBox.setData(stdout.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+            grp.enter(); Thread.detachNewThread { errBox.setData(stderr.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+            grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+            grp.wait()
+            let outData = outBox as Data; let errData = errBox as Data
             let outStr  = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let errStr  = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 

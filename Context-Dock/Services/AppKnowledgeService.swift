@@ -204,7 +204,8 @@ enum AppKnowledgeService {
                 process.arguments = args
                 let pipe = Pipe()
                 process.standardOutput = pipe
-                process.standardError = Pipe()
+                process.standardError = FileHandle.nullDevice
+                process.standardInput = FileHandle.nullDevice
                 do { try process.run() } catch {
                     continuation.resume(returning: ""); return
                 }

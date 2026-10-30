@@ -1555,11 +1555,12 @@ final class AppAdapterManager: ObservableObject {
                 let pipe = Pipe()
                 task.standardOutput = pipe
                 task.standardError  = pipe
+                task.standardInput = FileHandle.nullDevice
                 do {
                     try task.run()
-                    task.waitUntilExit()
                     let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    task.waitUntilExit()
                     return (task.terminationStatus == 0, out.isEmpty ? "Done" : out)
                 } catch {
                     return (false, error.localizedDescription)
@@ -1596,11 +1597,12 @@ final class AppAdapterManager: ObservableObject {
             let pipe = Pipe()
             task.standardOutput = pipe
             task.standardError  = pipe
+            task.standardInput = FileHandle.nullDevice
             do {
                 try task.run()
-                task.waitUntilExit()
                 let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                task.waitUntilExit()
                 return (task.terminationStatus == 0, out)
             } catch {
                 return (false, error.localizedDescription)
@@ -1664,6 +1666,7 @@ final class AppAdapterManager: ObservableObject {
                     }
                 }
                 do {
+                    task.standardInput = FileHandle.nullDevice
                     try task.run()
                 } catch {
                     pipe.fileHandleForReading.readabilityHandler = nil
@@ -1689,11 +1692,12 @@ final class AppAdapterManager: ObservableObject {
                 return (ok, out.isEmpty ? "Done" : out)
             }
 
+            task.standardInput = FileHandle.nullDevice
             do {
                 try task.run()
-                task.waitUntilExit()
                 let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                task.waitUntilExit()
                 return (task.terminationStatus == 0, out.isEmpty ? "Done" : out)
             } catch {
                 return (false, error.localizedDescription)
@@ -1777,11 +1781,12 @@ final class AppAdapterManager: ObservableObject {
             task.standardOutput = pipe
             task.standardError = pipe
 
+            task.standardInput = FileHandle.nullDevice
             do {
                 try task.run()
-                task.waitUntilExit()
                 let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                task.waitUntilExit()
                 return (task.terminationStatus == 0, out.isEmpty ? "Done" : out)
             } catch {
                 return (false, error.localizedDescription)

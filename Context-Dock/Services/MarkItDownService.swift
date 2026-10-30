@@ -80,9 +80,9 @@ enum MarkItDownService {
         process.environment = environment
 
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
 
         do {
             try process.run()

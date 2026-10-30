@@ -257,19 +257,21 @@ enum UserExtensionScriptRunner {
                 process.standardOutput = stdout
                 process.standardError = stderr
 
-                do {
-                    try process.run()
-                } catch {
+                process.standardInput = FileHandle.nullDevice
+                do { try process.run() } catch {
                     continuation.resume(returning: .failure(UserExtensionScriptError(message: error.localizedDescription)))
                     return
                 }
 
-                let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
+                let grp = DispatchGroup()
+                let outBox = NSMutableData(); let errBox = NSMutableData()
+                grp.enter(); Thread.detachNewThread { outBox.setData(stdout.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+                grp.enter(); Thread.detachNewThread { errBox.setData(stderr.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+                grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+                grp.wait()
 
-                let out = String(data: outData, encoding: .utf8) ?? ""
-                let err = String(data: errData, encoding: .utf8) ?? ""
+                let out = String(data: outBox as Data, encoding: .utf8) ?? ""
+                let err = String(data: errBox as Data, encoding: .utf8) ?? ""
 
                 if process.terminationStatus != 0 {
                     let message = err.isEmpty ? "Exited with code \(process.terminationStatus)" : err

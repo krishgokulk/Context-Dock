@@ -94,9 +94,19 @@ struct BrewInstallButton: View {
                 let pipe = Pipe()
                 p.standardOutput = pipe
                 p.standardError  = pipe
+                p.standardInput = FileHandle.nullDevice
                 guard (try? p.run()) != nil else { return (false, "failed to start brew") }
+                // Drain on a detached thread so a large brew output never fills the 64 KB pipe
+                // buffer and deadlocks while we wait for the process to exit.
+                var out = ""
+                let drainGroup = DispatchGroup()
+                drainGroup.enter()
+                Thread.detachNewThread {
+                    out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                    drainGroup.leave()
+                }
                 p.waitUntilExit()
-                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                drainGroup.wait()
                 return (p.terminationStatus == 0, out)
             }.value
 

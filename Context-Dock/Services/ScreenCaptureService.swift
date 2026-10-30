@@ -65,6 +65,9 @@ final class ScreenCaptureService: @unchecked Sendable {
                 // below is the confirmation that matters.
                 process.arguments = ["-i", "-x", url.path]
             }
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             do {
                 try process.run()
                 process.waitUntilExit()

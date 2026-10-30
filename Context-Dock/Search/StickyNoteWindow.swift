@@ -627,6 +627,9 @@ private struct StickyNoteContent: View {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             process.arguments = args
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             do {
                 try process.run()
                 process.waitUntilExit()

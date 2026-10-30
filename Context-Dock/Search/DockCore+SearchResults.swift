@@ -680,11 +680,12 @@ extension DockCore {
                 let pipe = Pipe()
                 proc.standardOutput = pipe
                 proc.standardError = pipe
+                proc.standardInput = FileHandle.nullDevice
                 try? proc.run()
-                proc.waitUntilExit()
                 let out =
                     String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
                     ?? ""
+                proc.waitUntilExit()
                 // Show JXA output in the panel terminal drawer
                 await MainActor.run {
                     self.panelShowConsoleMap[ck] = true
