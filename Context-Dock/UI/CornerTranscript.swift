@@ -29,11 +29,20 @@ struct CornerTranscript: View {
                         AIChatMessageView(
                             message: message,
                             isStreaming: isAnswering && index == messages.count - 1,
+                            conversationKind: conversation.conversationKind,
                             // The dock passed this and the corner did not, so a proposed app
                             // action reached this transcript with its Install card drawn
                             // nowhere. Same message, same flag, same installer — the corner
                             // only supplies its own scope.
                             onInstallProposal: { json in install(json) },
+                            onEnableApp: { request in
+                                NotificationCenter.default.post(
+                                    name: .appChatPromptEnableApp, object: request)
+                            },
+                            onDeclineEnableApp: { request in
+                                NotificationCenter.default.post(
+                                    name: .appChatPromptDeclineEnableApp, object: request)
+                            },
                             assistantAvatarImage: appIcon,
                             liveSteps: isAnswering && index == messages.count - 1 ? liveSteps : [],
                             liveActivity: isAnswering && index == messages.count - 1

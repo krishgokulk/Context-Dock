@@ -57,6 +57,8 @@ final class DockEngine {
             (.appChatPromptNewChat, { _ in core.handleAppChatPromptNewChat() }),
             (.appChatPromptCancel, { _ in core.handleAppChatPromptCancel() }),
             (.appChatPromptPickAction, { core.handleAppChatPromptPickAction($0) }),
+            (.appChatPromptEnableApp, { core.handleAppChatPromptEnableApp($0) }),
+            (.appChatPromptDeclineEnableApp, { core.handleAppChatPromptDeclineEnableApp($0) }),
         ]
         for (name, handle) in inputs {
             center.publisher(for: name).sink { handle($0) }.store(in: &sinks)

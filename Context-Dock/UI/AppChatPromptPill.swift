@@ -1008,21 +1008,36 @@ struct AppChatPromptPill: View {
     /// Who the chat is with, and what to do with the chat itself — the same shape General
     /// mode uses, so switching scope changes the subject rather than the furniture.
     private var header: some View {
-        HStack(spacing: 8) {
+        let fallbackName = model.appName.isEmpty ? "This app" : model.appName
+        let identity = conversation.headerIdentity(fallbackAppName: fallbackName)
+        return HStack(spacing: 8) {
             if let icon = appIcon {
                 Image(nsImage: icon)
                     .resizable()
                     .frame(width: 18, height: 18)
                     .clipShape(RoundedRectangle(cornerRadius: 5))
             }
-            Text(model.appName.isEmpty ? "This app" : model.appName)
+            Text(identity.primaryTitle)
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
-            Text("App Chat")
+            Text(identity.kind == .combined ? "Combined Chat" : "App Chat")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize()
+            ForEach(identity.previewChips, id: \.self) { chip in
+                Text(chip)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(Color.accentColor.opacity(0.14))
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(Color.accentColor.opacity(0.32), lineWidth: 0.5)
+                    )
+            }
 
             Spacer(minLength: 6)
 
@@ -1048,9 +1063,13 @@ struct AppChatPromptPill: View {
                 isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
             if expand != .hidden {
                 Button {
+                    let targetScope =
+                        identity.kind == .combined
+                        ? conversation.effectiveParticipants(fallbackAppName: fallbackName).combinedScope
+                        : CornerRailRules.windowScope(appBundleID: model.appBundleID)
                     GeneralChatWindowController.shared.show(
-                        opening: CornerRailRules.windowScope(appBundleID: model.appBundleID),
-                        title: model.appName,
+                        opening: targetScope,
+                        title: identity.primaryTitle,
                         seed: AppChatConversation.shared.messages)
                 } label: {
                     headerGlyph("arrow.up.left.and.arrow.down.right")

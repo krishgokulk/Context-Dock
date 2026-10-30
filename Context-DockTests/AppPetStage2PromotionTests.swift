@@ -365,4 +365,69 @@ struct AppPetStage2PromotionTests {
         let consoleEntries = ChatConsoleLog.shared.entries(for: combinedScope)
         #expect(consoleEntries.count == 2)
     }
+
+    @Test("Corner App Chat intercepts cross-app action, previews '+ Messages', and promotes in-place to Combined Chat with granted apps")
+    @MainActor
+    func cornerAppChatCrossAppAccessGatingAndPromotion() {
+        let finderBundle = "com.apple.finder"
+        let messagesBundle = "com.apple.MobileSMS"
+        let finderScope = GeneralChatScope.app(bundleId: finderBundle)
+
+        // Set up clean AppChatConversation state
+        let conversation = AppChatConversation.shared
+        conversation.messages = []
+        conversation.participantSet = .empty
+        conversation.syncScope(bundleId: finderBundle, appName: "Finder")
+        #expect(conversation.conversationKind == .appPet(.app(bundleID: finderBundle)))
+        #expect(conversation.extraConnectedAppNames.isEmpty)
+
+        // User asks in Finder App Chat to send a PDF via iMessage
+        let crossAppQuery = "send this via i message to gokulakannan J"
+        let request = AppScopedChatService.appNeedingAccess(
+            query: crossAppQuery,
+            scope: finderScope,
+            attachedAppNames: conversation.extraConnectedAppNames)
+
+        #expect(request != nil)
+        #expect(request?.name == "Messages")
+        #expect(request?.bundleId == messagesBundle)
+        #expect(request?.previewChips == ["+ Messages"])
+        #expect(request?.actionButtonTitle(for: conversation.conversationKind) == "Connect Messages to this chat")
+
+        // In Corner App Chat, header identity reflects the pending preview chip:
+        conversation.pendingParticipantRequest = request
+        let previewHeader = conversation.headerIdentity(fallbackAppName: "Finder")
+        #expect(previewHeader.primaryTitle == "Finder")
+        #expect(previewHeader.previewChips == ["+ Messages"])
+
+        // When user accepts and connects Messages, promotion occurs in-place:
+        let promoted = GeneralChatSessionStore.promoteToCombinedChat(
+            from: finderScope,
+            connecting: request!.participants,
+            currentParticipants: conversation.participantSet,
+            messages: conversation.messages)
+        conversation.participantSet = promoted.participants
+        conversation.pendingParticipantRequest = nil
+
+        #expect(conversation.conversationKind == .combined)
+        #expect(conversation.extraConnectedAppNames == ["Messages"])
+        #expect(conversation.grantedAppsMap["messages"] == messagesBundle)
+        #expect(conversation.grantedAppsMap["finder"] == finderBundle)
+
+        let combinedHeader = conversation.headerIdentity(fallbackAppName: "Finder")
+        #expect(combinedHeader.kind == .combined)
+        #expect(combinedHeader.primaryTitle == "Finder + Messages")
+        #expect(combinedHeader.previewChips.isEmpty)
+
+        // Follow-up query in Combined Chat does not trigger another access gate:
+        let followUpRequest = AppScopedChatService.appNeedingAccess(
+            query: crossAppQuery,
+            scope: finderScope,
+            attachedAppNames: conversation.extraConnectedAppNames)
+        #expect(followUpRequest == nil)
+
+        // Cleanup
+        GeneralChatSessionStore.purge(scope: finderScope)
+        GeneralChatSessionStore.purge(scope: promoted.scope)
+    }
 }

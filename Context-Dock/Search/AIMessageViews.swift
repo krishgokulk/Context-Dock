@@ -674,6 +674,8 @@ struct ExtensionProposalData: Codable {
 struct AIChatMessageView: View {
     let message: AIChatMessage
     var isStreaming: Bool = false
+    /// Conversation kind for contextual card phrasing ("Enable X for this chat" vs "Connect X to this chat") (#339).
+    var conversationKind: ConversationKind? = nil
     var onInstallExtension: (() -> Void)? = nil
     var onInstallProposal: ((String) -> Void)? = nil
     var onRunOnceProposal: ((String) -> Void)? = nil
@@ -1355,7 +1357,9 @@ struct AIChatMessageView: View {
                         // Names every app the tap will enable. A button that says "Notes"
                         // and quietly also enables Safari is a scope change the user did not
                         // agree to; one that says "Notes and Safari" is the offer they answered.
-                        Text("Enable \(req.appsSentence) for this chat").fontWeight(.semibold)
+                        let labelPrefix = (conversationKind == .general) ? "Enable" : "Connect"
+                        let labelSuffix = (conversationKind == .general) ? "for this chat" : "to this chat"
+                        Text("\(labelPrefix) \(req.appsSentence) \(labelSuffix)").fontWeight(.semibold)
                     }
                     .font(.system(size: 12))
                     .foregroundStyle(providerColor)
