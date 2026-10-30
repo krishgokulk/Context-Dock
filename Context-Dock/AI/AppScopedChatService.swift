@@ -1944,6 +1944,15 @@ enum AppScopedChatService {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
             prompt.set(.mcp, mcpBlock)
+            // When the turn is read-only and MCP tools are linked, steer the model away from
+            // writing menu_call JSON and toward calling those tools directly (#357).
+            if !mcpBlock.isEmpty, GeneralAIActionResolver.shared.asksOnly(query) {
+                prompt.append(
+                    .sourceRule,
+                    "\nRead-only question — answer using the MCP tools listed above. "
+                        + "Do NOT write {\"menu_call\":...} JSON. "
+                        + "Call run_mcp_tool with the exact tool name shown.")
+            }
 
         case .folder(let path):
             let url = URL(fileURLWithPath: path)
@@ -2440,7 +2449,10 @@ enum AppScopedChatService {
         //
         // Routes are the deterministic path in this surface. If one exists for what was
         // asked, run it; the request is carried out rather than reported undeliverable.
-        if ChatAnswerSanitizer.isProtocolOnly(text) {
+        // A question that produced protocol JSON (the model wrote the wrong format) must
+        // not be answered by running a menu command — only action requests get that recovery (#357).
+        if ChatAnswerSanitizer.isProtocolOnly(text),
+            !GeneralAIActionResolver.shared.asksOnly(query) {
             // "Yes" agrees to a request made a turn ago. Resolved from the word itself it
             // matches no route, and the surface then reports it could not carry out the
             // thing the user had just approved.
