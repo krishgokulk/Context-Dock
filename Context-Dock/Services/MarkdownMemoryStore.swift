@@ -211,15 +211,20 @@ final class MarkdownMemoryStore {
         _ rawText: String,
         appBundleID: String? = nil,
         appName: String? = nil,
+        conversationKind: ConversationKind? = nil,
         capturedAt: Date = Date()
     ) -> String? {
         guard let fact = explicitMemoryFact(from: rawText) else { return nil }
 
+        // Invariant: General Chat single-turn borrowing NEVER writes into Pet identity memory (#340).
+        let effectiveBundleID: String? = {
+            if conversationKind == .general { return nil }
+            return appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+
         let destination: (url: URL, label: String)
-        if let bundleID = appBundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !bundleID.isEmpty
-        {
-            let safeBundleID = safeFilename(bundleID)
+        if let bundleID = effectiveBundleID, !bundleID.isEmpty {
+            let safeBundleID = Self.safeFilename(bundleID)
             destination = (
                 root.appendingPathComponent("apps/\(safeBundleID).md"),
                 "\(appName?.isEmpty == false ? appName! : bundleID) memory"
@@ -978,7 +983,11 @@ final class MarkdownMemoryStore {
             .map { $0 }
     }
 
-    private func safeFilename(_ value: String) -> String {
+    func safeFilename(_ value: String) -> String {
+        Self.safeFilename(value)
+    }
+
+    static func safeFilename(_ value: String) -> String {
         value.components(separatedBy: CharacterSet.alphanumerics.union(
             CharacterSet(charactersIn: ".-_")
         ).inverted).joined(separator: "_")

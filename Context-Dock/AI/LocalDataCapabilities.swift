@@ -144,8 +144,14 @@ enum LocalDataCapabilities {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { throw AICapabilityError.missingInput("text") }
                 let bundleID = request.input["bundleId"] ?? request.input["bundleID"]
+                let kind: ConversationKind = {
+                    if let scope = request.chatScope {
+                        return GeneralChatSessionStore.conversationKind(for: scope)
+                    }
+                    return .general
+                }()
                 guard let confirmation = MarkdownMemoryStore.shared.remember(
-                    text, appBundleID: bundleID)
+                    text, appBundleID: bundleID, conversationKind: kind)
                 else {
                     return .init(
                         success: false,
