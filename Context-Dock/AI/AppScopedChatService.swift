@@ -1937,23 +1937,25 @@ enum AppScopedChatService {
             // and stacking the others behind it would dilute the instruction they picked.
             let skills = skillOverride ?? SkillStore.shared.instructionsBlock(for: bundleId)
             prompt.set(.skills, skills)
-            // The app's live MCP tools, in the prose protocol the loop understands, so a
-            // Reminders thread can read reminders instead of describing how to.
+            // The app's live MCP tools. For asksOnly turns, use toolListBlock instead of
+            // toolPromptBlock: toolPromptBlock teaches the prose {"mcp_call":…} format which
+            // the model uses INSTEAD of the native run_mcp_tool function — they conflict (#357).
+            // toolListBlock lists the same tools but says "call run_mcp_tool natively", so a
+            // read-only question like "how many tabs?" calls the MCP tool and gets a real answer.
             log.notice("stage: mcp block")
+            let isReadOnlyTurn = GeneralAIActionResolver.shared.asksOnly(query)
             let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
-                await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
+                if isReadOnlyTurn {
+                    return await MCPRuntime.shared.toolListBlock(forBundleId: bundleId)
+                }
+                return await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
             prompt.set(.mcp, mcpBlock)
-            // Read-only turns must not produce menu_call JSON. The identity block (read before
-            // .mcp in prompt order) teaches the prose protocol; appending the counter-instruction
-            // here, AFTER identity, is what makes the model see it last and respect it (#357).
-            if GeneralAIActionResolver.shared.asksOnly(query) {
-                let mcpNote = mcpBlock.isEmpty
-                    ? "No MCP tools are linked for this app."
-                    : "Answer using the MCP tools listed above. Call run_mcp_tool with the exact tool name shown."
+            if isReadOnlyTurn {
                 prompt.append(
                     .mcp,
-                    "Read-only question — do NOT write {\"menu_call\":...} JSON. \(mcpNote)")
+                    "Do NOT write {\"menu_call\":...} JSON."
+                        + (mcpBlock.isEmpty ? " No MCP tools are linked for this app." : ""))
             }
 
         case .folder(let path):
