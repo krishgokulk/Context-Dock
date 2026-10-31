@@ -21,6 +21,9 @@ struct APIConnection: Identifiable, Codable, Equatable {
     enum Status: String, Codable { case connected, disconnected }
     var status: Status
 
+    var specText: String? = nil
+    var toolCount: Int = 0
+
     var keychainAccount: String { "apiconn:\(id)" }
 }
 
@@ -42,10 +45,22 @@ final class APIConnectionStore: ObservableObject {
     }
 
     /// Create a connection and store its secret in the Keychain. The secret is
-    /// never persisted to disk.
+    /// never persisted to disk. Optionally attaches a UTCP manual or OpenAPI specification.
     @discardableResult
-    func connect(name: String, baseURL: String, apiKey: String, bundleId: String) -> APIConnection {
-        let conn = APIConnection(
+    func connect(
+        name: String,
+        baseURL: String,
+        apiKey: String,
+        bundleId: String,
+        specText: String? = nil
+    ) -> APIConnection {
+        let trimmedSpec = specText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let manual: UTCPManual? = {
+            guard let text = trimmedSpec, !text.isEmpty else { return nil }
+            return try? UTCPManualParser.parse(text: text)
+        }()
+
+        var conn = APIConnection(
             id: UUID().uuidString,
             adapterBundleId: bundleId,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -53,9 +68,22 @@ final class APIConnectionStore: ObservableObject {
             permissions: "",
             createdAt: Date(),
             lastSync: nil,
-            status: .connected)
+            status: .connected,
+            specText: trimmedSpec?.isEmpty == false ? trimmedSpec : nil,
+            toolCount: manual?.tools.count ?? 0)
+
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !key.isEmpty { KeychainStore.shared.set(key, for: conn.keychainAccount) }
+
+        if let manual {
+            UTCPToolBridge.shared.register(
+                manual: manual,
+                groupKey: conn.id,
+                prefix: conn.name,
+                apiKey: key.isEmpty ? nil : key
+            )
+        }
+
         connections.append(conn)
         save()
         return conn
@@ -63,6 +91,7 @@ final class APIConnectionStore: ObservableObject {
 
     func disconnect(id: String) {
         guard let conn = connections.first(where: { $0.id == id }) else { return }
+        UTCPToolBridge.shared.unregisterGroup(id)
         KeychainStore.shared.delete(account: conn.keychainAccount)
         connections.removeAll { $0.id == id }
         save()
@@ -89,6 +118,20 @@ final class APIConnectionStore: ObservableObject {
             let decoded = try? decoder.decode([APIConnection].self, from: data)
         else { return }
         connections = decoded
+
+        // Restore UTCP tool registrations for active connections
+        for conn in connections where conn.status == .connected {
+            guard let specText = conn.specText, !specText.isEmpty,
+                  let manual = try? UTCPManualParser.parse(text: specText)
+            else { continue }
+            let secret = KeychainStore.shared.string(for: conn.keychainAccount)
+            UTCPToolBridge.shared.register(
+                manual: manual,
+                groupKey: conn.id,
+                prefix: conn.name,
+                apiKey: secret.isEmpty ? nil : secret
+            )
+        }
     }
 
     private func save() {

@@ -219,9 +219,15 @@ struct AppIntegrationResourcesView: View {
             emptyMessage: "No API connected. Keys are stored in your Keychain.",
             items: summary.apiConnections
         ) { connection in
-            resourceRow(
+            let subtitle: String = {
+                if connection.toolCount > 0 {
+                    return "\(connection.baseURL) · \(connection.toolCount) direct UTCP tool\(connection.toolCount == 1 ? "" : "s") · \(connection.status.rawValue)"
+                }
+                return "\(connection.baseURL) · \(connection.status.rawValue)"
+            }()
+            return resourceRow(
                 title: connection.name,
-                subtitle: "\(connection.baseURL) · \(connection.status.rawValue)",
+                subtitle: subtitle,
                 icon: "link",
                 tint: connection.status == .connected ? .green : .orange,
                 isOn: nil,
