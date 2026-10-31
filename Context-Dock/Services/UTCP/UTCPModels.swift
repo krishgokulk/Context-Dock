@@ -8,7 +8,7 @@
 import Foundation
 
 /// Type-safe JSON value representation for Codable schemas and parameters.
-enum UTCPJSONValue: Codable, Sendable, Equatable {
+enum UTCPJSONValue: Codable, Sendable, Equatable, Hashable {
     case string(String)
     case integer(Int)
     case double(Double)
@@ -79,7 +79,7 @@ enum UTCPJSONValue: Codable, Sendable, Equatable {
 }
 
 /// Safety governance for UTCP tools matching DoraX's approval model.
-enum UTCPToolSafety: String, Codable, Sendable, Equatable {
+enum UTCPToolSafety: String, Codable, Sendable, Equatable, Hashable {
     case read
     case write
     case unknown
@@ -109,11 +109,11 @@ enum UTCPToolSafety: String, Codable, Sendable, Equatable {
 }
 
 /// Execution instructions for a single UTCP tool.
-enum UTCPExecution: Codable, Sendable, Equatable {
+enum UTCPExecution: Codable, Sendable, Equatable, Hashable {
     case http(HTTPExecution)
     case cli(CLIExecution)
 
-    struct HTTPExecution: Codable, Sendable, Equatable {
+    struct HTTPExecution: Codable, Sendable, Equatable, Hashable {
         var method: String
         var path: String
         var queryParams: [String]
@@ -135,7 +135,7 @@ enum UTCPExecution: Codable, Sendable, Equatable {
         }
     }
 
-    struct CLIExecution: Codable, Sendable, Equatable {
+    struct CLIExecution: Codable, Sendable, Equatable, Hashable {
         var command: String
         var args: [String]
 
@@ -147,7 +147,7 @@ enum UTCPExecution: Codable, Sendable, Equatable {
 }
 
 /// A single callable tool definition declared in a UTCP manual or generated from OpenAPI.
-struct UTCPToolDefinition: Codable, Sendable, Identifiable, Equatable {
+struct UTCPToolDefinition: Codable, Sendable, Identifiable, Equatable, Hashable {
     var id: String { name }
     var name: String
     var description: String
@@ -182,13 +182,13 @@ struct UTCPToolDefinition: Codable, Sendable, Identifiable, Equatable {
 }
 
 /// Protocol definitions in a UTCP manual.
-struct UTCPProtocolsConfig: Codable, Sendable, Equatable {
-    struct HTTPConfig: Codable, Sendable, Equatable {
+struct UTCPProtocolsConfig: Codable, Sendable, Equatable, Hashable {
+    struct HTTPConfig: Codable, Sendable, Equatable, Hashable {
         var baseURL: String
         var defaultHeaders: [String: String]?
     }
 
-    struct CLIConfig: Codable, Sendable, Equatable {
+    struct CLIConfig: Codable, Sendable, Equatable, Hashable {
         var executable: String?
         var defaultArgs: [String]?
     }
@@ -198,7 +198,7 @@ struct UTCPProtocolsConfig: Codable, Sendable, Equatable {
 }
 
 /// A complete UTCP Manual specifying tools, metadata, and protocols.
-struct UTCPManual: Codable, Sendable, Identifiable, Equatable {
+struct UTCPManual: Codable, Sendable, Identifiable, Equatable, Hashable {
     var id: String { name }
     var utcpVersion: String
     var name: String

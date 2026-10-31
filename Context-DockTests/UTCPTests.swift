@@ -287,6 +287,44 @@ struct UTCPTests {
         store.disconnect(id: conn.id)
         #expect(AgentToolRegistry.shared.tool(named: "notion_search_pages") == nil)
     }
+
+    @MainActor
+    @Test func appPetManifestRegistersBundledUTCPManuals() throws {
+        let manual = UTCPManual(
+            utcpVersion: "1.0",
+            name: "jira_service",
+            description: "Jira Issue Tracker",
+            protocols: UTCPProtocolsConfig(http: .init(baseURL: "https://jira.example.com")),
+            tools: [
+                UTCPToolDefinition(
+                    name: "get_ticket",
+                    description: "Fetch a ticket by key",
+                    execution: .http(.init(method: "GET", path: "/issue/{key}")),
+                    safety: .read
+                )
+            ]
+        )
+
+        let manifest = AppPetManifest(
+            id: "com.atlassian.Jira",
+            appName: "Jira",
+            bundleID: "com.atlassian.Jira",
+            summary: "Jira Pet companion",
+            utcpManuals: [manual]
+        )
+
+        let registry = AppPetManifestRegistry.shared
+        registry.register(manifest)
+
+        // Wait for main dispatch
+        let toolName = "jira_get_ticket"
+        let bridge = UTCPToolBridge.shared
+        bridge.register(manual: manual, groupKey: "pet:\(manifest.id)", prefix: manifest.appName)
+
+        #expect(AgentToolRegistry.shared.tool(named: toolName) != nil)
+        bridge.unregisterGroup("pet:\(manifest.id)")
+        #expect(AgentToolRegistry.shared.tool(named: toolName) == nil)
+    }
 }
 
 final class MockUTCPURLProtocol: URLProtocol {

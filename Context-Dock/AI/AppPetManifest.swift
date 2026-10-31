@@ -233,6 +233,7 @@ struct AppPetManifest: Codable, Hashable, Sendable, Identifiable {
     let customTools: [AppPetCustomTool]
     let capabilityFilter: AppPetCapabilityFilter?
     let modes: [AppPetModeManifest]
+    let utcpManuals: [UTCPManual]
 
     init(
         id: String,
@@ -244,7 +245,8 @@ struct AppPetManifest: Codable, Hashable, Sendable, Identifiable {
         customPrompt: String? = nil,
         customTools: [AppPetCustomTool] = [],
         capabilityFilter: AppPetCapabilityFilter? = nil,
-        modes: [AppPetModeManifest] = []
+        modes: [AppPetModeManifest] = [],
+        utcpManuals: [UTCPManual] = []
     ) {
         self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         self.appName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,6 +258,7 @@ struct AppPetManifest: Codable, Hashable, Sendable, Identifiable {
         self.customTools = customTools
         self.capabilityFilter = capabilityFilter
         self.modes = modes
+        self.utcpManuals = utcpManuals
     }
 
     var petID: AppPetID {
@@ -307,6 +310,18 @@ final class AppPetManifestRegistry: @unchecked Sendable {
         defer { lock.unlock() }
         let key = manifest.petID.canonicalKey
         manifests[key] = manifest
+
+        if !manifest.utcpManuals.isEmpty {
+            DispatchQueue.main.async {
+                for manual in manifest.utcpManuals {
+                    UTCPToolBridge.shared.register(
+                        manual: manual,
+                        groupKey: "pet:\(manifest.id)",
+                        prefix: manifest.appName
+                    )
+                }
+            }
+        }
     }
 
     /// Decodes a manifest from JSON data and registers it.
