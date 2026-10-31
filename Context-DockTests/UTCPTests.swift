@@ -204,6 +204,36 @@ struct UTCPTests {
         #expect(success)
         #expect(output.contains("Fix bug"))
     }
+
+    @MainActor
+    @Test func toolBridgeRegistersAndUnregistersWithRegistry() throws {
+        let manual = UTCPManual(
+            utcpVersion: "1.0",
+            name: "sample_service",
+            description: "Test service",
+            protocols: UTCPProtocolsConfig(http: .init(baseURL: "https://api.example.com")),
+            tools: [
+                UTCPToolDefinition(
+                    name: "get_status",
+                    description: "Fetch status",
+                    execution: .http(.init(method: "GET", path: "/status")),
+                    safety: .read
+                )
+            ]
+        )
+
+        let bridge = UTCPToolBridge.shared
+        let groupKey = "test_group_\(UUID().uuidString)"
+        let registered = bridge.register(manual: manual, groupKey: groupKey, prefix: "testapi")
+        #expect(registered == ["testapi_get_status"])
+
+        let tool = AgentToolRegistry.shared.tool(named: "testapi_get_status")
+        #expect(tool != nil)
+        #expect(tool?.name == "testapi_get_status")
+
+        bridge.unregisterGroup(groupKey)
+        #expect(AgentToolRegistry.shared.tool(named: "testapi_get_status") == nil)
+    }
 }
 
 final class MockUTCPURLProtocol: URLProtocol {

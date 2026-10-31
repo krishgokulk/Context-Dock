@@ -344,6 +344,10 @@ final class AgentToolRegistry {
         tools[tool.name] = tool
     }
 
+    func unregister(_ name: String) {
+        tools.removeValue(forKey: name)
+    }
+
     /// A message pointing at the registered capability, when a shell command would do the
     /// same job to the user's own files without any of the protection.
     ///
