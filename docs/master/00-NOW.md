@@ -12,7 +12,10 @@
 
 **Task #342: App Pets Stage 5 — Detached Pet presentation overlay (2026-10-31):**
 - In progress in separate session on branch `claude/issue-342-detached-pet`.
-- 3-tier lifecycle: floating desktop pet mascot with pinned bubbles, compact launcher, and expanded window.
+- 3-tier progressive disclosure lifecycle: floating desktop pet mascot with pinned bubbles, compact launcher, and expanded window.
+- Persistent action bubbles retention until explicit dismissal (`✕`).
+- Mascot click jumps directly to Tier 3 Expanded Window; chevron `^` opens Tier 2 Launcher; micro-bar `✏️` expands into inline input bar.
+- Dragging dormant Pet icons out from running apps row materializes floating desktop companion; reattaching/closing preserves conversation and verified memory.
 
 **Task #341: App Pets Stage 4 — Customization via /mods (2026-10-30):**
 - Completed and merged (#362). Per-Pet `AppPetManifest` schema, canonical manifests, `/mods` command parser, active mode state persistence, capability filtering, and UI integration.

@@ -18,6 +18,7 @@ struct CornerDockStrip: View {
     private let magnifier = DockMagnifier.shared
     @State private var isDropTarget = false
     @State private var draggingPinID: UUID?
+    @State private var draggingPetSlot: DockAppSlot?
     /// The magnifier is being hovered and the field is about to come back. The icons draw
     /// themselves condensing while this is true, so the glass morph has something to morph
     /// *from* rather than a strip that blinks out. Cancelled if the pointer leaves first.
@@ -425,6 +426,23 @@ struct CornerDockStrip: View {
                     }
                 }
             }
+            // Dragging a running app icon out of the strip materializes a detached desktop Pet (#342)
+            if !inside, let slot = draggingPetSlot {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if draggingPetSlot?.id == slot.id, NSEvent.pressedMouseButtons == 0 {
+                        if let petID = AppPetID(dockBundleID: slot.bundleID) {
+                            let mousePoint = NSEvent.mouseLocation
+                            DetachedPetManager.shared.detachPet(
+                                petID: petID,
+                                appName: slot.title,
+                                icon: slot.running?.icon,
+                                at: mousePoint
+                            )
+                        }
+                        draggingPetSlot = nil
+                    }
+                }
+            }
         }
         .overlay {
             if isDropTarget {
@@ -489,12 +507,12 @@ struct CornerDockStrip: View {
         .onTapGesture {
             model.handleStripClick(slot)
         }
-        // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
-        // and a running app nobody pinned has no place to be moved to.
-        // An app's pin drags the same way: off the strip unpins it.
-        .modifier(DockPinDrag(
+        // Drag to detach as companion (#342) or unpin/reorder if pinned
+        .modifier(DockSlotDrag(
+            slot: slot,
             pinID: slot.pin?.id ?? model.appPin(forIconID: slot.bundleID)?.id,
-            dragging: $draggingPinID))
+            draggingPinID: $draggingPinID,
+            draggingPetSlot: $draggingPetSlot))
         // A tab's menu pins it, a pin's unpins it; an app's menu (Quit, Hide, Show in
         // Finder) is for apps.
         .overlay(RightClickReporter { menuID = id })
@@ -731,6 +749,23 @@ struct CornerDockStrip: View {
             // unpinning it, not by hiding the app that is running under it.
             items.append(.init(title: "Remove from Strip") { model.hideRunningApp(bundleID) })
         }
+        if let petID = AppPetID(dockBundleID: bundleID) {
+            items.append(.separator)
+            if DetachedPetManager.shared.isDetached(petID: petID) {
+                items.append(.init(title: "Return Pet to Dock") {
+                    DetachedPetManager.shared.reattachPet(petID: petID)
+                })
+            } else {
+                items.append(.init(title: "Detach Pet Companion") {
+                    DetachedPetManager.shared.detachPet(
+                        petID: petID,
+                        appName: slot.title,
+                        icon: slot.running?.icon,
+                        at: .zero
+                    )
+                })
+            }
+        }
         if slot.isRunning {
             items.append(.separator)
             items.append(.init(title: "Quit \(slot.title)") {
@@ -861,17 +896,27 @@ struct CornerDockStrip: View {
 
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
         draggingPinID = nil
+        draggingPetSlot = nil
         var accepted = false
         for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
             provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let text = object as? String, text.hasPrefix("dockpin:"),
+                guard let text = object as? String else { return }
+                if text.hasPrefix("dockpin:"),
                     let id = UUID(uuidString: String(text.dropFirst("dockpin:".count)))
-                else { return }
-                Task { @MainActor in
-                    // Dropped back on the strip: move to the end of its own pins, Global's or
-                    // the app's. Per-slot targets are a refinement the user has not asked for.
-                    DockPinStore.shared.moveToEnd(id)
-                    model.updateTabStrip()
+                {
+                    Task { @MainActor in
+                        // Dropped back on the strip: move to the end of its own pins, Global's or
+                        // the app's. Per-slot targets are a refinement the user has not asked for.
+                        DockPinStore.shared.moveToEnd(id)
+                        model.updateTabStrip()
+                    }
+                } else if text.hasPrefix("apppet:"),
+                    let petID = AppPetID(dockBundleID: String(text.dropFirst("apppet:".count)))
+                {
+                    Task { @MainActor in
+                        // Dropped back on the strip: reattach to Dock
+                        DetachedPetManager.shared.reattachPet(petID: petID)
+                    }
                 }
             }
             accepted = true
@@ -908,6 +953,28 @@ private struct DockPinDrag: ViewModifier {
             }
         } else {
             content
+        }
+    }
+}
+
+/// Drag to reorder, drag off to unpin (for pinned icons), or drag out to detach as Pet companion (#342).
+private struct DockSlotDrag: ViewModifier {
+    let slot: DockAppSlot
+    let pinID: UUID?
+    @Binding var draggingPinID: UUID?
+    @Binding var draggingPetSlot: DockAppSlot?
+
+    func body(content: Content) -> some View {
+        content.onDrag {
+            if let pinID {
+                draggingPinID = pinID
+                return NSItemProvider(object: "dockpin:\(pinID.uuidString)" as NSString)
+            } else if let petID = AppPetID(dockBundleID: slot.bundleID) {
+                draggingPetSlot = slot
+                return NSItemProvider(object: "apppet:\(petID.dockBundleID)" as NSString)
+            } else {
+                return NSItemProvider()
+            }
         }
     }
 }
