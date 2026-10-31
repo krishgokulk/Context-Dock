@@ -158,4 +158,75 @@ struct UTCPTests {
         #expect(UTCPToolSafety.infer(method: "CUSTOM", name: "search_logs") == .read)
         #expect(UTCPToolSafety.infer(method: "CUSTOM", name: "delete_logs") == .write)
     }
+
+    @Test func directExecutorPerformsHTTPAndInjectsAuth() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockUTCPURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let executor = UTCPDirectExecutor(session: session)
+
+        MockUTCPURLProtocol.requestHandler = { request in
+            #expect(request.url?.absoluteString == "https://api.github.com/repos/apple/swift/issues?state=open")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret_test_token")
+            #expect(request.httpMethod == "GET")
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let data = """
+            [{"id": 1, "title": "Fix bug"}]
+            """.data(using: .utf8)!
+            return (response, data)
+        }
+
+        let exec = UTCPExecution.HTTPExecution(
+            method: "GET",
+            path: "/repos/{owner}/{repo}/issues",
+            queryParams: ["state"],
+            headerParams: [],
+            bodyParamNames: []
+        )
+
+        let (success, output) = await executor.executeHTTP(
+            execution: exec,
+            baseURL: URL(string: "https://api.github.com")!,
+            apiKey: "secret_test_token",
+            arguments: [
+                "owner": "apple",
+                "repo": "swift",
+                "state": "open"
+            ]
+        )
+
+        #expect(success)
+        #expect(output.contains("Fix bug"))
+    }
 }
+
+final class MockUTCPURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = MockUTCPURLProtocol.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
