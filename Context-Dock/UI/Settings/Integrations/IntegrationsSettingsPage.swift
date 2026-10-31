@@ -471,12 +471,20 @@ private struct IntegrationAPIConnectSheet: View {
     @State private var name = ""
     @State private var baseURL = ""
     @State private var apiKey = ""
+    @State private var specText = ""
+    @State private var showSpecInput = false
+
+    private var detectedToolCount: Int? {
+        let trimmed = specText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return (try? UTCPManualParser.parse(text: trimmed))?.tools.count
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Connect an API to \(appName)")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Scoped chat can call this service. The key is stored in your Keychain.")
+            Text("Scoped chat can call this service directly via UTCP. The key is stored in your Keychain.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
@@ -484,15 +492,42 @@ private struct IntegrationAPIConnectSheet: View {
             TextField("Base URL", text: $baseURL)
             SecureField("API Key", text: $apiKey)
 
+            DisclosureGroup("UTCP Manual or OpenAPI Spec (Optional)", isExpanded: $showSpecInput) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Paste a UTCP manual or OpenAPI 3.x JSON specification to generate direct, zero-daemon tools.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $specText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(height: 90)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
+                    if let count = detectedToolCount {
+                        Text("✓ \(count) direct tool\(count == 1 ? "" : "s") detected")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.green)
+                    } else if !specText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Invalid UTCP / OpenAPI specification JSON")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(.top, 4)
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") { onDone() }
                 Button("Connect") {
+                    let trimmedSpec = specText.trimmingCharacters(in: .whitespacesAndNewlines)
                     _ = APIConnectionStore.shared.connect(
                         name: name.trimmingCharacters(in: .whitespaces),
                         baseURL: baseURL.trimmingCharacters(in: .whitespaces),
                         apiKey: apiKey,
-                        bundleId: bundleID)
+                        bundleId: bundleID,
+                        specText: trimmedSpec.isEmpty ? nil : trimmedSpec)
                     onDone()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -504,6 +539,6 @@ private struct IntegrationAPIConnectSheet: View {
         }
         .textFieldStyle(.roundedBorder)
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 440)
     }
 }

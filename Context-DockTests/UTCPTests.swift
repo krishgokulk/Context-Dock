@@ -234,6 +234,59 @@ struct UTCPTests {
         bridge.unregisterGroup(groupKey)
         #expect(AgentToolRegistry.shared.tool(named: "testapi_get_status") == nil)
     }
+
+    @MainActor
+    @Test func apiConnectionStoreRegistersAndUnregistersTools() throws {
+        let spec = """
+        {
+          "utcp_version": "1.0",
+          "name": "notion_service",
+          "description": "Notion API",
+          "protocols": {
+            "http": {
+              "baseURL": "https://api.notion.com"
+            }
+          },
+          "tools": [
+            {
+              "name": "search_pages",
+              "description": "Search Notion pages",
+              "parametersSchema": {
+                "query": { "string": "Search query" }
+              },
+              "requiredParameters": ["query"],
+              "execution": {
+                "http": {
+                  "method": "POST",
+                  "path": "/v1/search",
+                  "queryParams": [],
+                  "headerParams": [],
+                  "bodyParamNames": ["query"]
+                }
+              },
+              "safety": "read"
+            }
+          ]
+        }
+        """
+
+        let bundleId = "test.bundle.\(UUID().uuidString)"
+        let store = APIConnectionStore.shared
+        let conn = store.connect(
+            name: "Notion",
+            baseURL: "https://api.notion.com",
+            apiKey: "ntn_mock_key",
+            bundleId: bundleId,
+            specText: spec
+        )
+
+        #expect(conn.toolCount == 1)
+        #expect(conn.specText != nil)
+        #expect(AgentToolRegistry.shared.tool(named: "notion_search_pages") != nil)
+
+        store.disconnect(id: conn.id)
+        #expect(AgentToolRegistry.shared.tool(named: "notion_search_pages") == nil)
+    }
 }
 
 final class MockUTCPURLProtocol: URLProtocol {
