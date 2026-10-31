@@ -14,6 +14,9 @@
 - In progress in separate session on branch `claude/issue-342-detached-pet`.
 - 3-tier lifecycle: floating desktop pet mascot with pinned bubbles, compact launcher, and expanded window.
 
+**Task #363: UTCP Direct Tool Calling Protocol for App Pets & API Connections (2026-10-31):**
+- Completed and merged (#365). Universal Tool Calling Protocol (utcp.io) and OpenAPI 3.x schema support for zero-daemon direct HTTP and CLI tool execution. Integrated with `AgentToolRegistry`, `APIConnectionStore`, `AppPetManifest`, Keychain auth, and Settings UI.
+
 **Task #341: App Pets Stage 4 — Customization via /mods (2026-10-30):**
 - Completed and merged (#362). Per-Pet `AppPetManifest` schema, canonical manifests, `/mods` command parser, active mode state persistence, capability filtering, and UI integration.
 
