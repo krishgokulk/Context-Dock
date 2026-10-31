@@ -1027,6 +1027,55 @@ struct AppChatPromptPill: View {
                     .lineLimit(1)
                     .fixedSize()
             }
+
+            let petID = AppPetID(dockBundleID: model.appBundleID)
+            let supportedModes = petID.map { AppPetManifestRegistry.shared.supportedModes(for: $0) } ?? []
+            let activeMode: AppPetModeManifest? = {
+                guard let petID else { return nil }
+                let scope = GeneralChatScope.app(bundleId: model.appBundleID)
+                let activeID = conversation.activeModeID ?? GeneralChatSessionStore.activeMode(for: petID, scope: scope)
+                return supportedModes.first { $0.id == activeID } ?? supportedModes.first
+            }()
+
+            if let activeMode {
+                Menu {
+                    ForEach(supportedModes) { mode in
+                        Button {
+                            if let petID {
+                                let scope = GeneralChatScope.app(bundleId: model.appBundleID)
+                                GeneralChatSessionStore.setActiveMode(mode.id, for: petID, scope: scope)
+                                conversation.activeModeID = mode.id
+                            }
+                        } label: {
+                            if mode.id == activeMode.id {
+                                Label(mode.name, systemImage: "checkmark")
+                            } else {
+                                Label(mode.name, systemImage: mode.icon ?? "sparkles")
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if let icon = activeMode.icon {
+                            Image(systemName: icon)
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        Text(activeMode.name)
+                            .font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("App Pet mode (/mods): \(activeMode.summary)")
+            }
             ForEach(identity.previewChips, id: \.self) { chip in
                 Text(chip)
                     .font(.system(size: 10.5, weight: .semibold))

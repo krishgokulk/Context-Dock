@@ -595,6 +595,15 @@ struct AIComposerBar: View {
         ChatSlashAppPicker.matches(for: text)
     }
 
+    private var slashMods: [AppPetModeManifest] {
+        guard let firstApp = attachedAppNames.first,
+              let pet = AppPetManifestRegistry.shared.manifest(forAppName: firstApp)
+        else { return [] }
+        return ChatSlashModPicker.matches(
+            for: text,
+            participant: ConversationParticipant(petID: pet.petID, displayName: pet.appName))
+    }
+
     private func pickSlashApp(_ app: ChatAppEntry) {
         onAttachApp(app.name)
         text = ""
@@ -602,7 +611,12 @@ struct AIComposerBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if rendersSlashMatches, !slashApps.isEmpty {
+            if rendersSlashMatches, !slashMods.isEmpty {
+                ChatSlashModChipStrip(matches: slashMods) { mode in
+                    text = "/mods \(mode.id)"
+                    onSubmit()
+                }
+            } else if rendersSlashMatches, !slashApps.isEmpty {
                 ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
             }
 

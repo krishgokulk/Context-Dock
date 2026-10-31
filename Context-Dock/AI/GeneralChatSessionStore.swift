@@ -381,6 +381,42 @@ enum GeneralChatSessionStore {
         return ParticipantSet(items)
     }
 
+    // MARK: - Active Pet Modes (#341)
+
+    private static func activeModesKey(_ scope: GeneralChatScope) -> String {
+        "dorax.appPet.session.\(scope.storageKey).activeModes.v1"
+    }
+
+    /// Loads active mode IDs mapped by participant canonicalKey for `scope`.
+    static func loadActiveModes(scope: GeneralChatScope) -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: activeModesKey(scope)) as? [String: String] ?? [:]
+    }
+
+    /// Saves active mode IDs mapped by participant canonicalKey for `scope`.
+    static func saveActiveModes(_ modes: [String: String], scope: GeneralChatScope) {
+        if modes.isEmpty {
+            UserDefaults.standard.removeObject(forKey: activeModesKey(scope))
+        } else {
+            UserDefaults.standard.set(modes, forKey: activeModesKey(scope))
+        }
+    }
+
+    /// Gets the active mode ID for a specific Pet in `scope`.
+    static func activeMode(for petID: AppPetID, scope: GeneralChatScope) -> String? {
+        loadActiveModes(scope: scope)[petID.canonicalKey]
+    }
+
+    /// Sets the active mode ID for a specific Pet in `scope`.
+    static func setActiveMode(_ modeID: String?, for petID: AppPetID, scope: GeneralChatScope) {
+        var modes = loadActiveModes(scope: scope)
+        if let modeID, !modeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            modes[petID.canonicalKey] = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        } else {
+            modes.removeValue(forKey: petID.canonicalKey)
+        }
+        saveActiveModes(modes, scope: scope)
+    }
+
     @MainActor
     private static func displayName(for petID: AppPetID) -> String {
         switch petID.normalized {
@@ -457,6 +493,15 @@ enum GeneralChatSessionStore {
         save(merged, scope: targetScope, title: title)
         saveParticipants(promoted, scope: targetScope)
         saveAttachedApps(promoted.displayNames, scope: targetScope)
+
+        let sourceModes = loadActiveModes(scope: sourceScope)
+        if !sourceModes.isEmpty {
+            var targetModes = loadActiveModes(scope: targetScope)
+            for (key, val) in sourceModes {
+                targetModes[key] = val
+            }
+            saveActiveModes(targetModes, scope: targetScope)
+        }
 
         if sourceScope != targetScope {
             if let panelKey = dockPanelKey(sourceScope) {

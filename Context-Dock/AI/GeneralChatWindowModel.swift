@@ -98,6 +98,34 @@ final class GeneralChatWindowModel: ObservableObject {
             previewChips: preview?.previewChips ?? [])
     }
 
+    /// Currently active mode for the primary Pet participant in this conversation (#341).
+    var activePetMode: AppPetModeManifest? {
+        guard let participant = participantSet.first else { return nil }
+        let modes = AppPetManifestRegistry.shared.supportedModes(for: participant.petID)
+        let modeID = GeneralChatSessionStore.activeMode(for: participant.petID, scope: activeScope) ?? modes.first?.id
+        return modes.first { $0.id == modeID } ?? modes.first
+    }
+
+    /// Supported modes for the primary Pet participant in this conversation (#341).
+    var supportedPetModes: [AppPetModeManifest] {
+        guard let participant = participantSet.first else { return [] }
+        return AppPetManifestRegistry.shared.supportedModes(for: participant.petID)
+    }
+
+    /// Switches the active Pet's mode to `modeID` (#341).
+    func switchPetMode(to modeID: String, participant: ConversationParticipant? = nil) {
+        let target = participant ?? participantSet.first
+        guard let target else { return }
+        let modes = AppPetManifestRegistry.shared.supportedModes(for: target.petID)
+        guard let mode = modes.first(where: { $0.id == modeID.lowercased() }) else { return }
+        let prev = GeneralChatSessionStore.activeMode(for: target.petID, scope: activeScope)
+        GeneralChatSessionStore.setActiveMode(mode.id, for: target.petID, scope: activeScope)
+        let result = AppPetModCommandResult.switchedMode(participant: target, mode: mode, previousModeID: prev)
+        let systemNote = AIChatMessage(role: .assistant, content: result.userFacingMessage)
+        messages.append(systemNote)
+        persist()
+    }
+
     /// In-flight answer per thread, so one thread's send is never cancelled by moving to
     /// another.
     private var sendTasks: [String: Task<Void, Never>] = [:]
@@ -428,6 +456,8 @@ final class GeneralChatWindowModel: ObservableObject {
                 evidenceReceipts: answer.evidenceReceipts,
                 subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
+                activeMode: answer.activeMode,
+                modeProvenance: answer.modeProvenance,
                 trace: durableTrace,
                 actionChoices: answer.routeChoices,
                 noRouteOptions: AgentToolRegistry.consumeLastNoRouteOptions())
@@ -1031,6 +1061,39 @@ final class GeneralChatWindowModel: ObservableObject {
             Self.log.notice(
                 "send ignored: \(self.activeScope.storageKey, privacy: .public) already sending")
             return
+        }
+
+        // Handle /mods command without hitting the AI provider (#341).
+        if AppPetModCommand.isModCommand(query) {
+            let activeModes = GeneralChatSessionStore.loadActiveModes(scope: activeScope)
+            let effective = participantSet.isEmpty
+                ? GeneralChatSessionStore.loadParticipants(scope: activeScope, fallbackTitle: activeTitle)
+                : participantSet
+            let result = AppPetModCommand.resolve(
+                query: query,
+                participants: effective,
+                focusedParticipant: effective.first,
+                activeModes: activeModes
+            )
+            if let result {
+                let userMessage = AIChatMessage(role: .user, content: query)
+                messages.append(userMessage)
+                input = ""
+                attachments = []
+
+                if let newMode = result.newActiveMode {
+                    GeneralChatSessionStore.setActiveMode(
+                        newMode.modeID, for: newMode.participant.petID, scope: activeScope)
+                }
+
+                let assistantMessage = AIChatMessage(
+                    role: .assistant,
+                    content: result.userFacingMessage
+                )
+                messages.append(assistantMessage)
+                persist()
+                return
+            }
         }
 
         let settings = AppSettings.shared
