@@ -861,6 +861,19 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// Explicitly opens the conversation chat sheet for the active scope (#342),
+    /// even before the first message is sent in this session.
+    @discardableResult
+    func forceOpenChat() -> Bool {
+        if openChat() { return true }
+        isConversationHidden = false
+        isShowingScopeCard = false
+        hasPresentedConversation = true
+        set(.chat)
+        touch()
+        return true
+    }
+
     func cancelTurn() {
         guard isAnswering else { return }
         NotificationCenter.default.post(name: .appChatPromptCancel, object: nil)

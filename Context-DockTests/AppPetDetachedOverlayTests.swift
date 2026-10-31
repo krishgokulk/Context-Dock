@@ -164,4 +164,41 @@ struct AppPetDetachedOverlayTests {
         vm.reattachToDock()
         #expect(reattached)
     }
+
+    @Test("Pupil offset tracks cursor position and updates dynamically")
+    @MainActor
+    func pupilOffsetTracking() {
+        let petID = AppPetID.app(bundleID: "com.apple.Safari")
+        let vm = DetachedPetViewModel(
+            petID: petID,
+            appName: "Safari",
+            bundleID: "com.apple.Safari"
+        )
+
+        #expect(vm.pupilOffset == .zero)
+        vm.pupilOffset = CGSize(width: 1.8, height: -1.2)
+        #expect(vm.pupilOffset.width == 1.8)
+        #expect(vm.pupilOffset.height == -1.2)
+    }
+
+    @Test("Dynamic bubble updates reflect live reasoning steps")
+    @MainActor
+    func dynamicReasoningBubbleUpdates() {
+        let petID = AppPetID.app(bundleID: "com.apple.Safari")
+        let vm = DetachedPetViewModel(
+            petID: petID,
+            appName: "Safari",
+            bundleID: "com.apple.Safari"
+        )
+
+        let thinking = AppPetActionBubble(kind: .thinking(detail: "Safari: Thinking…"))
+        vm.addBubble(thinking)
+        #expect(vm.pinnedBubbles.first?.displayTitle == "Safari: Thinking…")
+
+        vm.updateBubbleDetail(id: thinking.id, detail: "Safari: Reading tabs…")
+        #expect(vm.pinnedBubbles.first?.displayTitle == "Safari: Reading tabs…")
+
+        vm.updateBubbleDetail(id: thinking.id, detail: "Safari: Executing query…")
+        #expect(vm.pinnedBubbles.first?.displayTitle == "Safari: Executing query…")
+    }
 }

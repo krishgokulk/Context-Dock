@@ -22,6 +22,7 @@ final class DetachedPetPanel: NSPanel {
         self.hasShadow = false
         self.isMovable = true
         self.isMovableByWindowBackground = true
+        self.acceptsMouseMovedEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     }
 
@@ -91,10 +92,90 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
 
         vm.onJumpToLauncher = { [weak self] in
             guard let self else { return }
-            CornerChatPresentation.shared.showPet(
-                target: CornerChatTarget(name: self.appName, bundleID: self.bundleID)
+            CornerDockController.shared.showAppChatSheet(
+                appName: self.appName,
+                bundleID: self.bundleID
             )
         }
+
+        setupMonitors()
+    }
+
+    private final class MonitorBox: @unchecked Sendable {
+        var localMouse: Any?
+        var globalMouse: Any?
+        var mouseUpLocal: Any?
+        var mouseUpGlobal: Any?
+
+        func removeAll() {
+            if let m = localMouse { NSEvent.removeMonitor(m); localMouse = nil }
+            if let m = globalMouse { NSEvent.removeMonitor(m); globalMouse = nil }
+            if let m = mouseUpLocal { NSEvent.removeMonitor(m); mouseUpLocal = nil }
+            if let m = mouseUpGlobal { NSEvent.removeMonitor(m); mouseUpGlobal = nil }
+        }
+    }
+    private let monitorBox = MonitorBox()
+
+    private func setupMonitors() {
+        monitorBox.localMouse = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            self?.updatePupilFocus()
+            return event
+        }
+        monitorBox.globalMouse = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+            self?.updatePupilFocus()
+        }
+
+        let onMouseUp: () -> Void = { [weak self] in
+            guard let self else { return }
+            if self.isOverDock(windowFrame: self.panel.frame) {
+                DetachedPetManager.shared.reattachPet(petID: self.petID)
+                CornerDockController.shared.activate()
+                CornerChatPresentation.shared.showPet(
+                    target: CornerChatTarget(name: self.appName, bundleID: self.bundleID)
+                )
+            }
+        }
+        monitorBox.mouseUpLocal = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { event in
+            onMouseUp()
+            return event
+        }
+        monitorBox.mouseUpGlobal = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { _ in
+            onMouseUp()
+        }
+    }
+
+    private func updatePupilFocus() {
+        let mouse = NSEvent.mouseLocation
+        let windowFrame = panel.frame
+        let mascotCenter = CGPoint(x: windowFrame.midX, y: windowFrame.minY + 60)
+        let dx = mouse.x - mascotCenter.x
+        let dy = mouse.y - mascotCenter.y
+        let dist = hypot(dx, dy)
+        let maxOffset: CGFloat = 2.4
+        if dist > 1.0 {
+            let factor = min(1.0, dist / 80.0)
+            let ox = (dx / dist) * maxOffset * factor
+            let oy = -(dy / dist) * maxOffset * factor
+            viewModel.pupilOffset = CGSize(width: ox, height: oy)
+        } else {
+            viewModel.pupilOffset = .zero
+        }
+    }
+
+    private func isOverDock(windowFrame: NSRect) -> Bool {
+        if let dockWindow = CornerDockController.shared.window {
+            let dockFrame = dockWindow.frame.insetBy(dx: -30, dy: -30)
+            if windowFrame.intersects(dockFrame) || dockFrame.contains(NSEvent.mouseLocation) {
+                return true
+            }
+        }
+        if let screen = panel.screen ?? NSScreen.main {
+            let dockBottomBand = CGRect(x: screen.visibleFrame.minX, y: screen.frame.minY, width: screen.frame.width, height: 95)
+            if windowFrame.intersects(dockBottomBand) {
+                return true
+            }
+        }
+        return false
     }
 
     func show() {
@@ -102,11 +183,21 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
     }
 
     func close() {
+        removeMonitors()
         panel.orderOut(nil)
+    }
+
+    deinit {
+        removeMonitors()
+    }
+
+    nonisolated private func removeMonitors() {
+        monitorBox.removeAll()
     }
 
     func windowDidMove(_ notification: Notification) {
         let currentOrigin = panel.frame.origin
+        viewModel.isHoveringDock = isOverDock(windowFrame: panel.frame)
         var record = DetachedPetStore.record(for: petID) ?? DetachedPetRecord(
             petID: petID,
             appName: appName,

@@ -26,6 +26,8 @@ final class DetachedPetViewModel: ObservableObject {
     @Published var inputText: String = ""
     @Published var isHovered: Bool = false
     @Published var isBlinking: Bool = false
+    @Published var pupilOffset: CGSize = .zero
+    @Published var isHoveringDock: Bool = false
 
     /// Closure called when user requests window repositioning via drag.
     var onDragPositionChanged: ((CGPoint) -> Void)?
@@ -103,9 +105,7 @@ final class DetachedPetViewModel: ObservableObject {
         if let onJumpToLauncher {
             onJumpToLauncher()
         } else {
-            CornerChatPresentation.shared.showPet(
-                target: CornerChatTarget(name: appName, bundleID: bundleID)
-            )
+            CornerDockController.shared.showAppChatSheet(appName: appName, bundleID: bundleID)
         }
     }
 
@@ -124,7 +124,7 @@ final class DetachedPetViewModel: ObservableObject {
 
         // 2. Add pinned thinking bubble
         let thinkingBubble = AppPetActionBubble(
-            kind: .thinking(detail: "\(trimmed) — Thinking…"),
+            kind: .thinking(detail: "\(appName): Thinking…"),
             isPinned: true
         )
         addBubble(thinkingBubble)
@@ -140,23 +140,72 @@ final class DetachedPetViewModel: ObservableObject {
             GeneralChatWindowModel.shared.input = promptText
             GeneralChatWindowModel.shared.send()
 
-            // Await completion or simulate receipt reflection
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            // Observe live turn progress and real answer
+            let scopeKey = scope.storageKey
+            var turnFinished = false
+            let startTime = Date()
+
+            while !turnFinished {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard self.mascotState == .thinking else { return }
+
+                let isSending = GeneralChatWindowModel.shared.sendingScopeKeys.contains(scopeKey)
+                if !isSending && Date().timeIntervalSince(startTime) > 0.4 {
+                    turnFinished = true
+                    break
+                }
+
+                // Update live thinking bubble with real reasoning step / progress if available
+                if let liveStatus = GeneralChatWindowModel.shared.statusByScopeKey[scopeKey], !liveStatus.isEmpty {
+                    self.updateBubbleDetail(id: thinkingBubble.id, detail: "\(self.appName): \(liveStatus)")
+                } else if let progress = GeneralChatWindowModel.shared.progressByScopeKey[scopeKey], let lastProgress = progress.last, !lastProgress.isEmpty {
+                    self.updateBubbleDetail(id: thinkingBubble.id, detail: "\(self.appName): \(lastProgress)")
+                }
+            }
+
             self.mascotState = .completed
 
-            // Convert or replace thinking bubble with persistent success receipt
+            // Extract real answer from session
+            let messages = GeneralChatWindowModel.shared.messages
+            let assistantMsg = messages.last(where: { $0.role == .assistant })
+            let rawContent = assistantMsg?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            let detailText: String
+            if !rawContent.isEmpty {
+                if let tabs = assistantMsg?.browserTabs, !tabs.isEmpty {
+                    detailText = "\(rawContent)\n• \(tabs.count) open tabs"
+                } else {
+                    detailText = rawContent
+                }
+            } else {
+                detailText = "Answer ready for: \(promptText)"
+            }
+
+            // Convert thinking bubble to receipt with actual answer
             self.dismissBubble(id: thinkingBubble.id)
             let receipt = AppPetActionBubble(
-                kind: .receipt(title: "\(self.appName): Action completed", detail: promptText),
+                kind: .receipt(title: self.appName, detail: detailText),
                 isPinned: true
             )
             self.addBubble(receipt)
 
             // Return to idle after a pleasant moment
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
             if self.mascotState == .completed {
                 self.mascotState = .idle
             }
+        }
+    }
+
+    func updateBubbleDetail(id: UUID, detail: String) {
+        if let idx = pinnedBubbles.firstIndex(where: { $0.id == id }) {
+            let current = pinnedBubbles[idx]
+            pinnedBubbles[idx] = AppPetActionBubble(
+                id: current.id,
+                kind: .thinking(detail: detail),
+                isPinned: current.isPinned,
+                createdAt: current.createdAt
+            )
         }
     }
 
@@ -359,9 +408,14 @@ struct DetachedPetMascotSprite: View {
                     .frame(width: 68, height: 68)
                     .overlay {
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.35), lineWidth: 1.5)
+                            .strokeBorder(
+                                viewModel.isHoveringDock ? Color.accentColor : Color.white.opacity(0.35),
+                                lineWidth: viewModel.isHoveringDock ? 2.5 : 1.5
+                            )
                     }
+                    .scaleEffect(viewModel.isHoveringDock ? 0.94 : 1.0)
                     .shadow(color: Color.black.opacity(0.22), radius: 8, x: 0, y: 4)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: viewModel.isHoveringDock)
 
                 // Face expressions
                 mascotFace
@@ -432,18 +486,24 @@ struct DetachedPetMascotSprite: View {
             } else {
                 Circle()
                     .fill(Color.white)
-                    .frame(width: 8, height: 8)
-                    .overlay(alignment: .topTrailing) {
-                        Circle().fill(Color.black.opacity(0.7)).frame(width: 4, height: 4)
+                    .frame(width: 9, height: 9)
+                    .overlay {
+                        Circle()
+                            .fill(Color.black.opacity(0.8))
+                            .frame(width: 4.5, height: 4.5)
+                            .offset(viewModel.pupilOffset)
                     }
             }
         case .thinking:
-            // Wide awake alert eyes
+            // Alert eyes following cursor
             Circle()
                 .fill(Color.white)
                 .frame(width: 10, height: 10)
                 .overlay {
-                    Circle().fill(Color.black.opacity(0.8)).frame(width: 5, height: 5)
+                    Circle()
+                        .fill(Color.black.opacity(0.85))
+                        .frame(width: 5, height: 5)
+                        .offset(viewModel.pupilOffset)
                 }
         case .completed:
             // Curved happy closed eyes (^_^)
