@@ -10,11 +10,12 @@
 
 ## In progress
 
+**Task #342: App Pets Stage 5 — Detached Pet presentation overlay (2026-10-31):**
+- In progress in separate session on branch `claude/issue-342-detached-pet`.
+- 3-tier lifecycle: floating desktop pet mascot with pinned bubbles, compact launcher, and expanded window.
+
 **Task #341: App Pets Stage 4 — Customization via /mods (2026-10-30):**
-- In progress on branch `claude/issue-341-app-pets-mods` following `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` §7.
-- Implement AppPetManifest schema and loading for per-Pet /mods customization.
-- Support custom prompts, custom tools, and capability filtering per App Pet.
-- Integrate /mods command into App Pet chat interface.
+- Completed and merged (#362). Per-Pet `AppPetManifest` schema, canonical manifests, `/mods` command parser, active mode state persistence, capability filtering, and UI integration.
 
 **Task #340: App Pets Stage 3 — Three-tier memory (2026-10-30):**
 - Completed and merged (#361). Three-tier memory separation and provider context projection.
