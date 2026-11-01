@@ -525,6 +525,7 @@ final class CornerDockController: NSObject {
     func showAppChatSheet(appName: String, bundleID: String) {
         ensurePanel()
         cancelPendingAutoHide()
+        prompt.staysOpenWhenIdle = true
         chatPresentation.isCentred = false
         setAutoHidden(false)
         position()

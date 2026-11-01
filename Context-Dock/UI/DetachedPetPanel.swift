@@ -92,6 +92,19 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
 
         vm.onJumpToLauncher = { [weak self] in
             guard let self else { return }
+            // Smoothly convert pet as App Chat: animate pet glide and fade, then reattach to dock
+            let origin = self.panel.frame.origin
+            let targetOrigin = CGPoint(x: origin.x, y: max(20, origin.y - 80))
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                self.panel.animator().setFrameOrigin(targetOrigin)
+                self.panel.animator().alphaValue = 0.0
+            } completionHandler: {
+                DetachedPetManager.shared.reattachPet(petID: self.petID)
+            }
+
             CornerDockController.shared.showAppChatSheet(
                 appName: self.appName,
                 bundleID: self.bundleID
