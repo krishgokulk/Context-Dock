@@ -10,11 +10,16 @@
 
 ## In progress
 
+**Task #343: App Pets Stage 6 — Bounded proactive behavior:**
+- Opt-in Pet suggestions with verified triggers, interruption budgets, quiet periods, deduplication, and clear provenance.
+- Suggestions cannot act, widen scope, or launch UI silently.
+- Exit gate: deterministic tests prove opt-in defaults, deduplication, token/time budgets, and normal approval for every consequential follow-up.
+
 **Task #342: App Pets Stage 5 — Detached Pet presentation overlay (2026-10-31):**
-- In progress in separate session on branch `claude/issue-342-detached-pet`.
+- Completed and merged (#364).
 - 3-tier progressive disclosure lifecycle: floating desktop pet mascot with pinned bubbles, compact launcher, and expanded window.
 - Persistent action bubbles retention until explicit dismissal (`✕`).
-- Mascot click jumps directly to Tier 3 Expanded Window; chevron `^` opens Tier 2 Launcher; micro-bar `✏️` expands into inline input bar.
+- Mascot click jumps directly to Tier 3 Expanded Window; chevron `^` converts pet into Tier 2 Launcher/App Chat sheet with smooth expansion; micro-bar `✏️` expands into inline input bar without summoning dock.
 - Dragging dormant Pet icons out from running apps row materializes floating desktop companion; reattaching/closing preserves conversation and verified memory.
 
 **Task #363: UTCP Direct Tool Calling Protocol for App Pets & API Connections (2026-10-31):**
