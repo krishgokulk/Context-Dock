@@ -520,6 +520,33 @@ final class CornerDockController: NSObject {
         refresh()
     }
 
+    /// Summons the Corner App Chat sheet scoped to a specific App Pet (#342).
+    /// Used by detached Pets when the user taps `^` to smoothly expand into Tier 2 Compact Launcher.
+    func showAppChatSheet(appName: String, bundleID: String) {
+        ensurePanel()
+        cancelPendingAutoHide()
+        prompt.staysOpenWhenIdle = true
+        chatPresentation.isCentred = false
+        setAutoHidden(false)
+        position()
+        chatPresentation.showPet(
+            target: CornerChatTarget(name: appName, bundleID: bundleID)
+        )
+        panel?.orderFrontRegardless()
+        armKeyboard()
+        refresh()
+
+        // Smoothly expand the resting shell into the App Chat sheet
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                self.prompt.forceOpenChat()
+            }
+            self.refresh()
+            self.requestComposerFocus()
+        }
+    }
+
     /// A board — the result sheet, a card — is up under the field. Centred, only then are the
     /// field and the sheet one card; a bare field keeps the Corner's own Liquid Glass (owner
     /// 2026-10-12: the empty centred bar looked heavy, the sheet looked right).

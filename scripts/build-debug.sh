@@ -36,13 +36,18 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   LOG=/dev/stdout
 fi
 set +e
+CODE_SIGN_VAL="${CODE_SIGNING_ALLOWED:-NO}"
+PROV_ARGS=()
+if [ "$CODE_SIGN_VAL" != "NO" ]; then
+  PROV_ARGS=(-allowProvisioningUpdates)
+fi
 xcodebuild \
   -project "$ROOT_DIR/Context-Dock.xcodeproj" \
   -scheme Context-Dock \
   -configuration Debug \
   -derivedDataPath "$DERIVED_DATA_DIR" \
-  -allowProvisioningUpdates \
-  CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
+  ${PROV_ARGS[@]+"${PROV_ARGS[@]}"} \
+  CODE_SIGNING_ALLOWED="$CODE_SIGN_VAL" \
   ENABLE_DEBUG_DYLIB=NO \
   build >"$LOG" 2>&1
 STATUS=$?

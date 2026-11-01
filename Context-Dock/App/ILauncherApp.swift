@@ -301,6 +301,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // No launcher window: the engine runs without one, and the Corner is the launcher
         // (#257 E3).
 
+        // Restore detached Pet companions on the desktop (#342)
+        if !Self.isHostingTests { DetachedPetManager.shared.restoreDetachedPets() }
+
         // Register global hotkeys
         registerGlobalHotkey()
         registerContextDockHotkey()
