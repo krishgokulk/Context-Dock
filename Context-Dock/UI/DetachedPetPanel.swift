@@ -102,6 +102,8 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
             guard let self else { return }
             if isInput {
                 self.panel.makeKeyAndOrderFront(nil)
+            } else {
+                AppDelegate.shared?.previousFrontmostApp?.activate(options: [.activateIgnoringOtherApps])
             }
         }
 
@@ -115,7 +117,9 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
 
         vm.onDragEnded = { [weak self] in
             guard let self else { return }
-            if self.isOverDock(windowFrame: self.panel.frame) {
+            let overDock = self.isOverDock(windowFrame: self.panel.frame)
+            self.viewModel.isHoveringDock = false
+            if overDock {
                 DetachedPetManager.shared.reattachPet(petID: self.petID)
                 CornerDockController.shared.activate()
                 CornerChatPresentation.shared.showPet(
@@ -132,14 +136,10 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
     nonisolated private final class MonitorBox: @unchecked Sendable {
         var localMouse: Any?
         var globalMouse: Any?
-        var mouseUpLocal: Any?
-        var mouseUpGlobal: Any?
 
         func removeAll() {
             if let m = localMouse { NSEvent.removeMonitor(m); localMouse = nil }
             if let m = globalMouse { NSEvent.removeMonitor(m); globalMouse = nil }
-            if let m = mouseUpLocal { NSEvent.removeMonitor(m); mouseUpLocal = nil }
-            if let m = mouseUpGlobal { NSEvent.removeMonitor(m); mouseUpGlobal = nil }
         }
     }
     private let monitorBox = MonitorBox()
@@ -151,24 +151,6 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
         }
         monitorBox.globalMouse = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
             self?.updatePupilFocus()
-        }
-
-        let onMouseUp: () -> Void = { [weak self] in
-            guard let self else { return }
-            if self.isOverDock(windowFrame: self.panel.frame) {
-                DetachedPetManager.shared.reattachPet(petID: self.petID)
-                CornerDockController.shared.activate()
-                CornerChatPresentation.shared.showPet(
-                    target: CornerChatTarget(name: self.appName, bundleID: self.bundleID)
-                )
-            }
-        }
-        monitorBox.mouseUpLocal = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { event in
-            onMouseUp()
-            return event
-        }
-        monitorBox.mouseUpGlobal = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { _ in
-            onMouseUp()
         }
     }
 
@@ -191,15 +173,16 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
     }
 
     private func isOverDock(windowFrame: NSRect) -> Bool {
-        if let dockWindow = CornerDockController.shared.window {
-            let dockFrame = dockWindow.frame.insetBy(dx: -30, dy: -30)
-            if windowFrame.intersects(dockFrame) || dockFrame.contains(NSEvent.mouseLocation) {
+        let mascotCenter = CGPoint(x: windowFrame.midX, y: windowFrame.minY + 60)
+        if let dockWindow = CornerDockController.shared.window, dockWindow.isVisible {
+            let dockFrame = dockWindow.frame.insetBy(dx: -20, dy: -20)
+            if dockFrame.contains(mascotCenter) || dockFrame.contains(NSEvent.mouseLocation) {
                 return true
             }
         }
         if let screen = panel.screen ?? NSScreen.main {
-            let dockBottomBand = CGRect(x: screen.visibleFrame.minX, y: screen.frame.minY, width: screen.frame.width, height: 95)
-            if windowFrame.intersects(dockBottomBand) {
+            let dockBottomBand = CGRect(x: screen.visibleFrame.minX, y: screen.frame.minY, width: screen.frame.width, height: 50)
+            if dockBottomBand.contains(mascotCenter) || dockBottomBand.contains(NSEvent.mouseLocation) {
                 return true
             }
         }
@@ -242,6 +225,6 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
     private static func defaultScreenPosition() -> CGPoint {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return CGPoint(x: frame.maxX - 320, y: frame.minY + 120)
+        return CGPoint(x: frame.maxX - 320, y: frame.minY + 140)
     }
 }
