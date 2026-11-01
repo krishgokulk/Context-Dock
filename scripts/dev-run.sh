@@ -63,7 +63,7 @@ fi
 
 # Signed (ad-hoc/dev) builds keep macOS Accessibility behavior consistent between
 # runs; build-debug.sh defaults to unsigned, so override here.
-CODE_SIGNING_ALLOWED=YES "$ROOT_DIR/scripts/build-debug.sh"
+CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" "$ROOT_DIR/scripts/build-debug.sh"
 
 # Relaunch the exact app we just built.
 open "$APP"

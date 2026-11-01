@@ -21,7 +21,7 @@ final class DetachedPetPanel: NSPanel {
         self.isOpaque = false
         self.hasShadow = false
         self.isMovable = true
-        self.isMovableByWindowBackground = true
+        self.isMovableByWindowBackground = false
         self.acceptsMouseMovedEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     }
@@ -98,10 +98,38 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
             )
         }
 
+        vm.onToggleInlineInput = { [weak self] isInput in
+            guard let self else { return }
+            if isInput {
+                self.panel.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        vm.onDragPositionChanged = { [weak self] delta in
+            guard let self else { return }
+            let origin = self.panel.frame.origin
+            let newOrigin = CGPoint(x: origin.x + delta.x, y: origin.y + delta.y)
+            self.panel.setFrameOrigin(newOrigin)
+            self.viewModel.isHoveringDock = self.isOverDock(windowFrame: self.panel.frame)
+        }
+
+        vm.onDragEnded = { [weak self] in
+            guard let self else { return }
+            if self.isOverDock(windowFrame: self.panel.frame) {
+                DetachedPetManager.shared.reattachPet(petID: self.petID)
+                CornerDockController.shared.activate()
+                CornerChatPresentation.shared.showPet(
+                    target: CornerChatTarget(name: self.appName, bundleID: self.bundleID)
+                )
+            } else {
+                self.windowDidMove(Notification(name: NSWindow.didMoveNotification, object: self.panel))
+            }
+        }
+
         setupMonitors()
     }
 
-    private final class MonitorBox: @unchecked Sendable {
+    nonisolated private final class MonitorBox: @unchecked Sendable {
         var localMouse: Any?
         var globalMouse: Any?
         var mouseUpLocal: Any?

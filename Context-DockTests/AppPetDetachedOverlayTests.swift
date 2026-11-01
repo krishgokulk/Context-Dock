@@ -163,6 +163,15 @@ struct AppPetDetachedOverlayTests {
 
         vm.reattachToDock()
         #expect(reattached)
+
+        var inlineToggled: Bool?
+        vm.onToggleInlineInput = { isInput in inlineToggled = isInput }
+        vm.toggleInlineInput()
+        #expect(inlineToggled == true)
+        #expect(vm.microBarState == .inlineInput)
+        vm.toggleInlineInput()
+        #expect(inlineToggled == false)
+        #expect(vm.microBarState == .micro)
     }
 
     @Test("Pupil offset tracks cursor position and updates dynamically")

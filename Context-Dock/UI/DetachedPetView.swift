@@ -31,6 +31,10 @@ final class DetachedPetViewModel: ObservableObject {
 
     /// Closure called when user requests window repositioning via drag.
     var onDragPositionChanged: ((CGPoint) -> Void)?
+    /// Closure called when mascot drag ends.
+    var onDragEnded: (() -> Void)?
+    /// Closure called when inline input bar is toggled.
+    var onToggleInlineInput: ((Bool) -> Void)?
     /// Closure called to reattach this companion to the Dock.
     var onReattachToDock: (() -> Void)?
     /// Closure called to jump to Tier 3 Expanded Window.
@@ -86,8 +90,11 @@ final class DetachedPetViewModel: ObservableObject {
     }
 
     func toggleInlineInput() {
-        microBarState = DetachedPetStore.transitionOnMicroBarEdit(from: microBarState)
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+            microBarState = DetachedPetStore.transitionOnMicroBarEdit(from: microBarState)
+        }
         persistRecord()
+        onToggleInlineInput?(microBarState == .inlineInput)
     }
 
     func jumpToExpandedWindow() {
@@ -226,7 +233,7 @@ final class DetachedPetViewModel: ObservableObject {
 /// Root SwiftUI content for a detached desktop Pet.
 struct DetachedPetView: View {
     @ObservedObject var viewModel: DetachedPetViewModel
-    @State private var dragOffset: CGSize = .zero
+    @State private var dragAccumulated: CGSize = .zero
 
     var body: some View {
         VStack(spacing: 8) {
@@ -236,12 +243,22 @@ struct DetachedPetView: View {
             // Pixel Mascot Sprite
             DetachedPetMascotSprite(viewModel: viewModel)
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
+                .onTapGesture {
                     viewModel.jumpToExpandedWindow()
                 }
-                .onTapGesture(count: 1) {
-                    viewModel.jumpToExpandedWindow()
-                }
+                .gesture(
+                    DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                        .onChanged { value in
+                            let dx = value.translation.width - dragAccumulated.width
+                            let dy = -(value.translation.height - dragAccumulated.height)
+                            dragAccumulated = value.translation
+                            viewModel.onDragPositionChanged?(CGPoint(x: dx, y: dy))
+                        }
+                        .onEnded { _ in
+                            dragAccumulated = .zero
+                            viewModel.onDragEnded?()
+                        }
+                )
                 .contextMenu {
                     mascotContextMenu
                 }
@@ -541,9 +558,11 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "pencil")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.primary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Compose message")
+            .help("Compose message (✏️)")
 
             Divider()
                 .frame(height: 12)
@@ -555,6 +574,8 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "waveform")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Voice input")
@@ -569,12 +590,14 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.primary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Open in Compact Launcher (Tier 2)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background {
             Capsule()
                 .fill(.ultraThinMaterial)
@@ -594,6 +617,8 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -605,6 +630,9 @@ struct DetachedPetMicroBarView: View {
                 .onSubmit {
                     viewModel.sendInlinePrompt()
                 }
+                .onExitCommand {
+                    viewModel.toggleInlineInput()
+                }
 
             // [↑] send button
             Button {
@@ -613,6 +641,8 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(viewModel.inputText.isEmpty ? Color.secondary.opacity(0.5) : Color.accentColor)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -624,8 +654,11 @@ struct DetachedPetMicroBarView: View {
                 Image(systemName: "xmark.circle")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Close")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -639,7 +672,9 @@ struct DetachedPetMicroBarView: View {
                 .shadow(color: Color.black.opacity(0.16), radius: 6, x: 0, y: 3)
         }
         .onAppear {
-            isFieldFocused = true
+            DispatchQueue.main.async {
+                isFieldFocused = true
+            }
         }
     }
 }
