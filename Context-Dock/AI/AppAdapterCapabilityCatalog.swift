@@ -20,7 +20,7 @@ enum AppAdapterCapabilityCatalog {
         case "update": return "edit change amend revise"
         case "delete": return "remove trash erase clear"
         case "extract_tasks": return "todos tasks actions checklist"
-        case "topContacts": return "most often frequently ranking top who"
+        case "topContacts": return "most often frequently ranking top who messaged texted chatted"
         case "recent": return "latest last lately newest"
         default: return ""
         }
@@ -446,14 +446,29 @@ enum AppAdapterCapabilityCatalog {
         capabilities: [AICapability]
     ) -> DoraXActionCandidate? {
         let lower = query.lowercased()
+        let isTopContactsIntent =
+            (lower.contains("top") && (lower.contains("contact") || lower.contains("person") || lower.contains("people") || lower.contains("friend"))) ||
+            lower.contains("frequent") ||
+            (lower.contains("most") && (
+                lower.contains("message") || lower.contains("messaged") ||
+                lower.contains("text") || lower.contains("texted") ||
+                lower.contains("talk") || lower.contains("talked") ||
+                lower.contains("chat") || lower.contains("chatted")
+            )) ||
+            lower.contains("who do i message") || lower.contains("who do i text") ||
+            lower.contains("who do i messaged") || lower.contains("who do i texted") ||
+            lower.contains("who do i talk to") || lower.contains("who do i chat with") ||
+            lower.contains("who i message") || lower.contains("who i text") ||
+            lower.contains("who i talk to") || lower.contains("who i messaged")
+
         let capabilityID: String?
-        if lower.contains("top contact") || lower.contains("message most") || lower.contains("text most") || lower.contains("frequent") {
+        if isTopContactsIntent {
             capabilityID = "messages.topContacts"
         } else if lower.contains("compose") || lower.contains("send message") || lower.contains("send text") || lower.hasPrefix("text ") {
             capabilityID = "messages.compose"
         } else if lower.contains("search") || lower.contains("find message") || lower.contains("find text") || lower.contains("messages about") {
             capabilityID = "messages.search"
-        } else if lower.contains("recent") || lower.contains("latest") || lower.contains("unread") || lower.contains("messages") || lower.contains("texts") {
+        } else if lower.contains("recent") || lower.contains("latest") || lower.contains("unread") || lower.contains("messages") || lower.contains("texts") || lower.contains("message") {
             capabilityID = "messages.recent"
         } else {
             capabilityID = nil
@@ -467,7 +482,12 @@ enum AppAdapterCapabilityCatalog {
             confidence: 0.96, reason: "Messages intent router selected \(capabilityID)")
         switch capabilityID {
         case "messages.topContacts":
-            candidate.inputValues["limit"] = "10"
+            if let number = query.split(whereSeparator: { !$0.isNumber }).first,
+               let limitVal = Int(number), limitVal > 0 && limitVal <= 100 {
+                candidate.inputValues["limit"] = String(limitVal)
+            } else {
+                candidate.inputValues["limit"] = "10"
+            }
         case "messages.recent":
             candidate.inputValues["limit"] = "10"
         case "messages.search":

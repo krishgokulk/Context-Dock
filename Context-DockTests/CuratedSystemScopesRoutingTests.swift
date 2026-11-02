@@ -133,6 +133,27 @@ struct CuratedSystemScopesRoutingTests {
         #expect(top.count == 1)
         #expect(top.first?.capabilityID == "messages.topContacts")
 
+        let topPastTense = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: "who do i messaged most?")
+        #expect(topPastTense.count == 1)
+        #expect(topPastTense.first?.capabilityID == "messages.topContacts")
+
+        let topText = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: "who do i text most")
+        #expect(topText.count == 1)
+        #expect(topText.first?.capabilityID == "messages.topContacts")
+
+        let topTalk = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: "who do i talk to most")
+        #expect(topTalk.count == 1)
+        #expect(topTalk.first?.capabilityID == "messages.topContacts")
+
+        let topCustomLimit = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: "top 5 contacts")
+        #expect(topCustomLimit.count == 1)
+        #expect(topCustomLimit.first?.capabilityID == "messages.topContacts")
+        #expect(topCustomLimit.first?.inputValues["limit"] == "5")
+
         let search = AppAdapterCapabilityCatalog.registeredCandidates(
             appName: "Messages", bundleID: "com.apple.MobileSMS", query: "search messages about lunch")
         #expect(search.count == 1)

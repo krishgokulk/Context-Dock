@@ -149,6 +149,16 @@ enum AppToolCatalog {
             risk: .medium,
             vetting: "vetted Rust CLI for reading macOS chat.db messages without launching Messages"),
         AppToolCatalogEntry(
+            app: "Messages",
+            bundleIds: ["com.apple.mobilesms", "com.apple.messages"],
+            kind: .cli,
+            tool: "imsg",
+            repo: "stephancasas/imsg",
+            installCommand: "brew install stephancasas/formulae/imsg",
+            adds: ["send iMessage", "list chat history", "query attachments", "JSON output"],
+            risk: .medium,
+            vetting: "vetted Swift CLI tool for sending and querying iMessages via command line"),
+        AppToolCatalogEntry(
             app: "Safari",
             bundleIds: ["com.apple.safari", "com.apple.safaritechnologypreview"],
             kind: .cli,

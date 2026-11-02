@@ -73,6 +73,9 @@ struct AppToolCatalogTests {
             #expect(suggestions.contains(where: { $0.tool == scope.tool }),
                     "Scope \(scope.bundleId) should suggest \(scope.tool)")
         }
+
+        let smsSuggestions = AppToolCatalog.suggestions(forBundleId: "com.apple.MobileSMS")
+        #expect(smsSuggestions.contains(where: { $0.tool == "imsg" }))
     }
 
     // MARK: - The card's words
