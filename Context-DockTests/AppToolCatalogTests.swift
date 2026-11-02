@@ -54,6 +54,27 @@ struct AppToolCatalogTests {
         #expect(AppToolCatalog.suggestions(forBundleId: "org.example.unrelated").isEmpty)
     }
 
+    @Test func allRemainingCoreSystemScopesResolveVettedSuggestions() {
+        let expectedScopes: [(bundleId: String, tool: String)] = [
+            ("com.apple.mail", "mail-app-cli"),
+            ("com.apple.iCal", "ical-buddy"),
+            ("com.apple.reminders", "reminders-cli"),
+            ("com.apple.AddressBook", "contacts-cli"),
+            ("com.apple.Music", "nowplaying-cli"),
+            ("com.apple.Photos", "osxphotos"),
+            ("com.apple.MobileSMS", "imessage-exporter"),
+            ("com.apple.Safari", "browser-history"),
+            ("com.apple.finder", "trash"),
+            ("com.apple.Terminal", "tmux"),
+        ]
+        for scope in expectedScopes {
+            let suggestions = AppToolCatalog.suggestions(forBundleId: scope.bundleId)
+            #expect(!suggestions.isEmpty, "Scope \(scope.bundleId) should have curated suggestions")
+            #expect(suggestions.contains(where: { $0.tool == scope.tool }),
+                    "Scope \(scope.bundleId) should suggest \(scope.tool)")
+        }
+    }
+
     // MARK: - The card's words
 
     @Test @MainActor func cardLineNamesTheTruthfulInstallState() {
@@ -95,6 +116,29 @@ struct AppToolCatalogTests {
         #expect(
             card.fallback.contains("menus") || card.fallback.contains("menu path"),
             "the fallback must always name the slower menu path, never silence")
+    }
+
+    @Test @MainActor
+    func cardsForRemainingCoreScopesContainCuratedRowsAndTruthfulFallback() {
+        let scopes = [
+            ("com.apple.iCal", "Calendar", "ical-buddy"),
+            ("com.apple.reminders", "Reminders", "reminders-cli"),
+            ("com.apple.AddressBook", "Contacts", "contacts-cli"),
+            ("com.apple.Music", "Music", "nowplaying-cli"),
+            ("com.apple.Photos", "Photos", "osxphotos"),
+            ("com.apple.MobileSMS", "Messages", "imessage-exporter"),
+            ("com.apple.Safari", "Safari", "browser-history"),
+            ("com.apple.finder", "Finder", "trash"),
+            ("com.apple.Terminal", "Terminal", "tmux"),
+        ]
+        for (bundleId, appName, expectedTool) in scopes {
+            let card = AppToolCatalog.noRouteCard(forBundleId: bundleId, appName: appName)
+            #expect(!card.rows.isEmpty, "Card for \(appName) should have rows")
+            #expect(card.rows.contains(where: { $0.tool == expectedTool }),
+                    "Card for \(appName) should contain \(expectedTool)")
+            #expect(card.fallback.contains("menus") || card.fallback.contains("menu path"),
+                    "Fallback for \(appName) should point to menu path")
+        }
     }
 
     @Test @MainActor func cardForAnUnlistedAppIsEmptyAndHonest() {
