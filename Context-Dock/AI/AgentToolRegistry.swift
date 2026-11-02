@@ -2053,11 +2053,15 @@ final class AgentToolRegistry {
             }
             // A provider-authored write is not something the user agreed to by linking a
             // server. Mutations go through a deterministic capability with an approval card.
-            guard MCPToolSafety.isClearlyReadOnly(name: tool) else {
+            let linkedTools = await MCPRuntime.shared.tools(forBundleId: bundleID).map(\.tool.name)
+            guard MCPToolSafety.isClearlyReadOnly(name: tool),
+                linkedTools.isEmpty || linkedTools.contains(tool) else {
                 return AgentToolResult(
                     success: false,
-                    output: "MCP tool \(tool) is write or unknown risk. Use find_capability to "
-                        + "find a capability that does this with the user's approval.",
+                    output: "MCP tool \(tool) is not a read tool of this app's servers, or is write "
+                        + "or unknown risk." + MCPToolSafety.readToolHint(available: linkedTools)
+                        + " For a change, use find_capability to find a capability that does "
+                        + "this with the user's approval.",
                     displayCommand: "run_mcp_tool(\(tool))")
             }
             let toolArguments = (arguments["arguments"] as? [String: Any]) ?? [:]

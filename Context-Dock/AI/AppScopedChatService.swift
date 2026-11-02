@@ -1937,13 +1937,26 @@ enum AppScopedChatService {
             // and stacking the others behind it would dilute the instruction they picked.
             let skills = skillOverride ?? SkillStore.shared.instructionsBlock(for: bundleId)
             prompt.set(.skills, skills)
-            // The app's live MCP tools, in the prose protocol the loop understands, so a
-            // Reminders thread can read reminders instead of describing how to.
+            // The app's live MCP tools. For asksOnly turns, use toolListBlock instead of
+            // toolPromptBlock: toolPromptBlock teaches the prose {"mcp_call":…} format which
+            // the model uses INSTEAD of the native run_mcp_tool function — they conflict (#357).
+            // toolListBlock lists the same tools but says "call run_mcp_tool natively", so a
+            // read-only question like "how many tabs?" calls the MCP tool and gets a real answer.
             log.notice("stage: mcp block")
+            let isReadOnlyTurn = GeneralAIActionResolver.shared.asksOnly(query)
             let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
-                await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
+                if isReadOnlyTurn {
+                    return await MCPRuntime.shared.toolListBlock(forBundleId: bundleId)
+                }
+                return await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
             prompt.set(.mcp, mcpBlock)
+            if isReadOnlyTurn {
+                prompt.append(
+                    .mcp,
+                    "Do NOT write {\"menu_call\":...} JSON."
+                        + (mcpBlock.isEmpty ? " No MCP tools are linked for this app." : ""))
+            }
 
         case .folder(let path):
             let url = URL(fileURLWithPath: path)
@@ -2440,7 +2453,10 @@ enum AppScopedChatService {
         //
         // Routes are the deterministic path in this surface. If one exists for what was
         // asked, run it; the request is carried out rather than reported undeliverable.
-        if ChatAnswerSanitizer.isProtocolOnly(text) {
+        // A question that produced protocol JSON (the model wrote the wrong format) must
+        // not be answered by running a menu command — only action requests get that recovery (#357).
+        if ChatAnswerSanitizer.isProtocolOnly(text),
+            !GeneralAIActionResolver.shared.asksOnly(query) {
             // "Yes" agrees to a request made a turn ago. Resolved from the word itself it
             // matches no route, and the surface then reports it could not carry out the
             // thing the user had just approved.

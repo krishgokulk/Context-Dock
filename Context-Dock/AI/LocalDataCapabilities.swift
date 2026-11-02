@@ -151,7 +151,7 @@ enum LocalDataCapabilities {
                     return .general
                 }()
                 guard let confirmation = MarkdownMemoryStore.shared.remember(
-                    text, appBundleID: bundleID, conversationKind: kind)
+                    text, appBundleID: bundleID, conversationKind: kind, allowDirectFact: true)
                 else {
                     return .init(
                         success: false,

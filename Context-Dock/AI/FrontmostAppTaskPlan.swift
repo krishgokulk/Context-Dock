@@ -118,8 +118,14 @@ struct FrontmostAppTaskPlan: Equatable {
         // planned as an action and the model was handed `operate_app`. In a record-set app they
         // ask for a data read: no UI-lane tools (plan 2a). See `ScopedRecordRead`.
         let readsScopeRecords = ScopedRecordRead.matches(query: intentQuery, bundleId: bundleId)
-        let hasAction = actionWords.contains(where: lower.contains)
-            || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery))
+        // A question is not a command (#357). "How many tabs are open in Safari?" contains the
+        // action word "open " as an adjective, planned as an action and was handed
+        // run_menu_command. `asksOnly` already knows a question from an instruction ("can you
+        // open safari?" stays one), so the substring match only decides for non-questions.
+        let asksOnly = GeneralAIActionResolver.shared.asksOnly(intentQuery)
+        let hasAction = !asksOnly
+            && (actionWords.contains(where: lower.contains)
+                || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery)))
         let hasRead = readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 

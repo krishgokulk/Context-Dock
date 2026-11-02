@@ -35,6 +35,16 @@ enum MCPToolSafety {
     nonisolated static func isClearlyReadOnly(name: String) -> Bool {
         classify(name: name) == .read
     }
+
+    /// What to tell a model that named a tool the server does not have, or one that is not
+    /// read-only. The prompt lists a linked server by name only, so the model guesses the tool
+    /// ("browser_tabs" for Safari, whose tab reader is `list_tabs`); the refusal used to leave
+    /// it with nothing to correct the guess from, and the turn ended without an answer (#357).
+    nonisolated static func readToolHint(available: [String]) -> String {
+        let reads = available.filter(isClearlyReadOnly).sorted()
+        guard !reads.isEmpty else { return "" }
+        return " Read tools available: \(reads.joined(separator: ", "))."
+    }
 }
 
 actor MCPRuntime {
@@ -77,6 +87,25 @@ actor MCPRuntime {
             for t in await client.tools { out.append((config.name, config.id, t)) }
         }
         return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
+    }
+
+    /// MCP tool list for read-only turns that use native tool calling. Unlike `toolPromptBlock`,
+    /// this does NOT teach the prose `mcp_call` JSON format — the model should call the native
+    /// `run_mcp_tool` function instead. For asksOnly turns only (#357).
+    func toolListBlock(forBundleId bundleId: String) async -> String {
+        let all = await tools(forBundleId: bundleId)
+        guard !all.isEmpty else { return "" }
+        var lines: [String] = [
+            "## MCP Tools (linked for this app)",
+            "Call these via the native run_mcp_tool function — do NOT write {\"mcp_call\":...} JSON.",
+            "",
+            "Available tools:",
+        ]
+        for entry in all {
+            let desc = entry.tool.description.isEmpty ? "" : " — \(entry.tool.description)"
+            lines.append("- server \"\(entry.server)\", tool \"\(entry.tool.name)\"\(desc)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// AI-prompt block describing available MCP tools and how to call one. Empty when none.
