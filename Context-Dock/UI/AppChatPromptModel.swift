@@ -573,7 +573,14 @@ final class AppChatPromptModel: ObservableObject {
         }
         appName = name
         appBundleID = bundleID
-        self.suggestions = suggestions
+        var combinedSuggestions = suggestions
+        if let petID = AppPetID(dockBundleID: bundleID) {
+            let proactive = AppPetSuggestionCoordinator.shared.activeSuggestions
+                .filter { $0.petID == petID }
+                .map { AppChatSuggestion(icon: "sparkles", title: $0.title, kind: .action) }
+            combinedSuggestions = proactive + combinedSuggestions
+        }
+        self.suggestions = combinedSuggestions
         capabilitySummary = summary
         if leavingChat {
             set(restingInputPhase)
@@ -1038,7 +1045,14 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         appName = name
         appBundleID = bundleID
-        self.suggestions = suggestions
+        var combinedSuggestions = suggestions
+        if let petID = AppPetID(dockBundleID: bundleID) {
+            let proactive = AppPetSuggestionCoordinator.shared.activeSuggestions
+                .filter { $0.petID == petID }
+                .map { AppChatSuggestion(icon: "sparkles", title: $0.title, kind: .action) }
+            combinedSuggestions = proactive + combinedSuggestions
+        }
+        self.suggestions = combinedSuggestions
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
         applySelection(from: AXContextReader.shared.current, scopedTo: bundleID)
