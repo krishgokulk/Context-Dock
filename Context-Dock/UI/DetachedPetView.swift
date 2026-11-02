@@ -80,6 +80,10 @@ final class DetachedPetViewModel: ObservableObject {
     }
 
     func dismissBubble(id: UUID) {
+        if let bubble = pinnedBubbles.first(where: { $0.id == id }),
+           let sID = bubble.suggestionID {
+            AppPetSuggestionCoordinator.shared.dismissSuggestion(id: sID)
+        }
         pinnedBubbles.removeAll { $0.id == id }
         persistRecord()
     }
@@ -347,6 +351,26 @@ private struct ActionBubbleCard: View {
 
             Spacer(minLength: 4)
 
+            // Consequential action explicit approval button (#343)
+            if let actionName = bubble.suggestionActionName,
+               let suggestionID = bubble.suggestionID {
+                Button(action: {
+                    Task {
+                        try? await AppPetSuggestionCoordinator.shared.approveAndExecute(suggestionID: suggestionID)
+                    }
+                }) {
+                    Text(actionName)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.purple)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.purple.opacity(0.18)))
+                        .overlay(Capsule().stroke(Color.purple.opacity(0.4), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Approve suggested action")
+            }
+
             // Explicit close button '✕' to satisfy persistent retention rule
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
@@ -386,6 +410,10 @@ private struct ActionBubbleCard: View {
             Image(systemName: "hammer.fill")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.orange)
+        case .suggestion:
+            Image(systemName: "sparkles")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.purple)
         }
     }
 }

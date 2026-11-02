@@ -40,6 +40,8 @@ enum AppPetActionBubbleKind: Codable, Hashable, Sendable {
     case receipt(title: String, detail: String?)
     /// Tool execution bubble (e.g., "Save PDF to Downloads: Called js").
     case toolExecution(name: String, detail: String)
+    /// Proactive suggestion bubble with trigger provenance and optional action approval (#343).
+    case suggestion(suggestionID: UUID, title: String, detail: String?, trigger: String, actionName: String?)
 }
 
 /// A pinned action bubble anchored above the floating mascot.
@@ -65,6 +67,8 @@ struct AppPetActionBubble: Identifiable, Codable, Hashable, Sendable {
             return title
         case .toolExecution(let name, _):
             return name
+        case .suggestion(_, let title, _, _, _):
+            return title
         }
     }
 
@@ -76,6 +80,11 @@ struct AppPetActionBubble: Identifiable, Codable, Hashable, Sendable {
             return detail
         case .toolExecution(_, let detail):
             return detail
+        case .suggestion(_, _, let detail, let trigger, _):
+            if let detail, !detail.isEmpty {
+                return "\(detail) • \(trigger)"
+            }
+            return trigger
         }
     }
 
@@ -87,6 +96,21 @@ struct AppPetActionBubble: Identifiable, Codable, Hashable, Sendable {
     var isReceipt: Bool {
         if case .receipt = kind { return true }
         return false
+    }
+
+    var isSuggestion: Bool {
+        if case .suggestion = kind { return true }
+        return false
+    }
+
+    var suggestionID: UUID? {
+        if case .suggestion(let id, _, _, _, _) = kind { return id }
+        return nil
+    }
+
+    var suggestionActionName: String? {
+        if case .suggestion(_, _, _, _, let action) = kind { return action }
+        return nil
     }
 }
 
