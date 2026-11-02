@@ -3319,13 +3319,30 @@ extension DockCore {
                         await MainActor.run {
                             let browserTabs = self.structuredSafariTabs(
                                 for: query, bundleID: historyBundle)
+                            let appName = historyBundle == "com.apple.Safari"
+                                ? "Safari"
+                                : (frontmost.name.isEmpty ? "Browser" : frontmost.name)
+                            let displayContent: String
+                            let traceSteps: [String]
+                            if !browserTabs.isEmpty {
+                                let tabCount = browserTabs.count
+                                let countText = tabCount == 1 ? "one open tab" : "\(tabCount) open tabs"
+                                displayContent = "\(appName) has \(countText):"
+                                traceSteps = [
+                                    "Read open tabs from \(appName)",
+                                    "Found \(countText)",
+                                ]
+                            } else {
+                                displayContent = historyAnswer
+                                traceSteps = ["Read browser data from \(appName)"]
+                            }
                             l2.chatMessages.append(
                                 AIChatMessage(
                                     role: .assistant,
-                                    content: browserTabs.isEmpty ? historyAnswer : "",
+                                    content: displayContent,
                                     browserTabs: browserTabs,
-                                    mcpToolsRan: browserTabs.isEmpty
-                                        ? ["Local browser history"] : []))
+                                    mcpToolsRan: ["Local browser history"],
+                                    trace: l2.routerTrace + traceSteps))
                             finishL2AIRequest(l2RequestID)
                         }
                         return
