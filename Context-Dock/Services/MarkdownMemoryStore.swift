@@ -212,9 +212,10 @@ final class MarkdownMemoryStore {
         appBundleID: String? = nil,
         appName: String? = nil,
         conversationKind: ConversationKind? = nil,
-        capturedAt: Date = Date()
+        capturedAt: Date = Date(),
+        allowDirectFact: Bool = false
     ) -> String? {
-        guard let fact = explicitMemoryFact(from: rawText) else { return nil }
+        guard let fact = explicitMemoryFact(from: rawText, allowDirect: allowDirectFact) else { return nil }
 
         // Invariant: General Chat single-turn borrowing NEVER writes into Pet identity memory (#340).
         let effectiveBundleID: String? = {
@@ -731,7 +732,7 @@ final class MarkdownMemoryStore {
         try? (content + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func explicitMemoryFact(from query: String) -> String? {
+    private func explicitMemoryFact(from query: String, allowDirect: Bool = false) -> String? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         let prefixes = ["please remember that ", "remember that ", "please remember ", "remember "]
@@ -741,7 +742,7 @@ final class MarkdownMemoryStore {
             guard fact.count >= 2 else { return nil }
             return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
         }
-        guard trimmed.count >= 2 else { return nil }
+        guard allowDirect, trimmed.count >= 2 else { return nil }
         return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 

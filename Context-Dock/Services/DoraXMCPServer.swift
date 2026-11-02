@@ -948,7 +948,7 @@ final class DoraXMCPServer: ObservableObject {
                 return .general
             }()
             if let confirmation = MarkdownMemoryStore.shared.remember(
-                text, appBundleID: bundleID, appName: appName, conversationKind: kind)
+                text, appBundleID: bundleID, appName: appName, conversationKind: kind, allowDirectFact: true)
             {
                 return confirmation
             } else {
