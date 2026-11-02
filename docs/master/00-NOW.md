@@ -10,10 +10,20 @@
 
 ## In progress
 
-**Task #343: App Pets Stage 6 — Bounded proactive behavior:**
-- Opt-in Pet suggestions with verified triggers, interruption budgets, quiet periods, deduplication, and clear provenance.
-- Suggestions cannot act, widen scope, or launch UI silently.
-- Exit gate: deterministic tests prove opt-in defaults, deduplication, token/time budgets, and normal approval for every consequential follow-up.
+**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
+- Baseline on `origin/general-chat-agent` in a dedicated worktree.
+- Run `./scripts/check.sh` before hand-off.
+
+**Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
+- Completed and merged (#366).
+- User-controlled opt-in proactivity per Pet and per behavior (`AppPetProactivitySettings`, disabled by default).
+- Verified triggers based on read-only facts, clear provenance (`AppPetProvenance`), and explicit rationale ("why this Pet surfaced", "what changed").
+- Interruption budgets (daily suggestion cap, minimum cooldown), quiet periods (active user typing, in-call/DND, quiet hours), and fingerprint-based deduplication.
+- Headless monitoring bounded execution (`HeadlessMonitoringBudgetTracker`: max tokens, max duration, max rounds, max consecutive no-progress scans before backoff).
+- Consequential action approval gate (`requiresApproval`, explicit `approveAndExecute` authorization; suggestions never act, widen scope, or launch UI silently).
+- Unified suggestion state shared across detached Pet action bubbles (`AppPetActionBubbleKind.suggestion`), Dock strip, and App Chat sheets.
+- All 9 deterministic tests passed (`AppPetProactivityTests`); full regression suite passed (38 tests).
 
 **Task #342: App Pets Stage 5 — Detached Pet presentation overlay (2026-10-31):**
 - Completed and merged (#364).
