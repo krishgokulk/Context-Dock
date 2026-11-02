@@ -230,6 +230,14 @@ extension DockCore {
         scopedBundleId: String,
         scopedAppName: String
     ) -> UserContext {
+        let isFinder = scopedBundleId.caseInsensitiveCompare("com.apple.finder") == .orderedSame
+        let isPreview = scopedBundleId.caseInsensitiveCompare("com.apple.Preview") == .orderedSame
+        if !isFinder && !isPreview, case .filesSelected = context {
+            return .appFocused(
+                name: scopedAppName.isEmpty ? contextDockChatDraftAppName : scopedAppName,
+                bundleID: scopedBundleId
+            )
+        }
         guard !scopedBundleId.isEmpty, !isContextDockBrowserBundle(scopedBundleId) else {
             return context
         }
@@ -3121,6 +3129,8 @@ extension DockCore {
         // including it here inherits that consent rather than going around it.
         let submittedContextDockText = contextDockChatCapturedText ?? liveSelectionForChat()
         let submittedSelectedFiles: [URL] = {
+            let id = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            guard id.caseInsensitiveCompare("com.apple.finder") == .orderedSame else { return [] }
             if case .filesSelected(let urls) = scopedConversationContext { return urls }
             return initialFinderSelection
         }()
