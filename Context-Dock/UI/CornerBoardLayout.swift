@@ -337,7 +337,12 @@ extension AppChatPromptModel {
         }
         // The row Return takes — the highlighted one, else the top one — as the foot reads
         // it: the panel followed only an arrowed row, so it appeared and vanished.
-        guard let row = showsAskAIRow ? focusedRow : (focusedRow ?? rows.first) else { return nil }
+        guard let row = focusedRow ?? rows.first else {
+            if !isGlobalScope {
+                return .appScope(bundleID: appBundleID, name: appName)
+            }
+            return nil
+        }
         return CornerBoardLayout.preview(
             for: row, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)

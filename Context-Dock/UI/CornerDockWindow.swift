@@ -2208,8 +2208,6 @@ struct CornerDockSurface: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var selectionModel = CornerDockController.shared.selection
 
-    @State private var dragOffset: CGSize = .zero
-
     /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
     /// where the shell hit-tests it.
     private var anchor: CornerDockAnchor {
@@ -2470,38 +2468,10 @@ struct CornerDockSurface: View {
             }
             // The shell's one width (#189): every surface in it is drawn at this.
             .frame(width: DockShellWidth.current, alignment: rowEdge)
-            .background {
-                // Spotlight-style empty space dragging:
-                // Sits behind buttons, inputfield, icons and results list. Dragging anywhere
-                // on empty card background/header/footer moves the launcher smoothly.
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 3)
-                            .onChanged { value in
-                                dragOffset = value.translation
-                            }
-                            .onEnded { value in
-                                let newX = settings.centredLauncherOffsetX + Double(value.translation.width)
-                                let newY = settings.centredLauncherOffsetY + Double(value.translation.height)
-                                settings.centredLauncherOffsetX = min(max(-600, newX), 600)
-                                settings.centredLauncherOffsetY = min(max(-400, newY), 400)
-                                dragOffset = .zero
-                                CornerDockController.shared.refresh()
-                            }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            settings.centredLauncherOffsetX = 0
-                            settings.centredLauncherOffsetY = 0
-                        }
-                        CornerDockController.shared.refresh()
-                    }
-            }
         }
         .offset(
-            x: CGFloat(settings.centredLauncherOffsetX) + dragOffset.width,
-            y: CGFloat(settings.centredLauncherOffsetY) + dragOffset.height
+            x: CGFloat(settings.centredLauncherOffsetX),
+            y: CGFloat(settings.centredLauncherOffsetY)
         )
     }
 

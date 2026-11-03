@@ -142,6 +142,15 @@ struct TwoFingerSwipeGestureView: NSViewRepresentable {
 
 // MARK: - Glass Background
 
+private class NonInteractiveVisualEffectView: NSVisualEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+@available(macOS 26.0, *)
+private class NonInteractiveGlassEffectView: NSGlassEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// NSVisualEffectView wrapped in SwiftUI — provides true wallpaper-blur glass effect.
 /// Rounded corners are applied at the AppKit layer so they clip the blur itself.
 struct GlassBackground: NSViewRepresentable {
@@ -158,12 +167,12 @@ struct GlassBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         // macOS 26 Liquid Glass — the same material as Spotlight. Pure glass at 0% darkness.
         if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
+            let glass = NonInteractiveGlassEffectView()
             glass.wantsLayer = true
             configureGlass(glass)
             return glass
         }
-        let ve = NSVisualEffectView()
+        let ve = NonInteractiveVisualEffectView()
         ve.blendingMode = .behindWindow
         ve.state = .active
         ve.wantsLayer = true

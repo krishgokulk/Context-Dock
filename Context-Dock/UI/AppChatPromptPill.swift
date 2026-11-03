@@ -212,7 +212,10 @@ enum AppChatPromptMetrics {
             fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: appBarPillWidth(for: model),
-            shellWidth: model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current,
+            shellWidth: (CornerDockController.shared.chatPresentation.isCentred
+                || AppSettings.shared.launcherPresentationMode == .centerScreen)
+                ? DockShellWidth.current
+                : (model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current),
             fieldLines: model.fieldLines)
     }
 
