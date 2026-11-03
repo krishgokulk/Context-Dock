@@ -37,25 +37,23 @@ struct AppearanceSettingsPage: View {
                                     .foregroundStyle(.secondary)
 
                                 HStack {
-                                    Text("Window position & size:")
+                                    Text("Window position:")
                                         .font(.system(size: 12))
                                         .foregroundStyle(.secondary)
                                     let isCustom = settings.centredLauncherOffsetX != 0
                                         || settings.centredLauncherOffsetY != 0
-                                        || settings.centredLauncherWidth != 680
-                                        || settings.centredLauncherHeight != 440
                                         || settings.centredLauncherX >= 0
                                     if isCustom {
-                                        Text("Custom (\(Int(settings.centredLauncherWidth))×\(Int(settings.centredLauncherHeight)))")
+                                        Text("Custom (\(Int(settings.centredLauncherOffsetX)), \(Int(settings.centredLauncherOffsetY)))")
                                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                                             .foregroundStyle(.primary)
                                     } else {
-                                        Text("Default Center (680×440)")
+                                        Text("Screen Center (Default)")
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundStyle(.primary)
                                     }
                                     Spacer()
-                                    Button("Reset to Defaults") {
+                                    Button("Reset to Center") {
                                         settings.resetCentredLauncherPosition()
                                         NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                                         CornerDockController.shared.refresh()

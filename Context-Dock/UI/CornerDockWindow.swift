@@ -2209,9 +2209,6 @@ struct CornerDockSurface: View {
     @ObservedObject private var selectionModel = CornerDockController.shared.selection
 
     @State private var dragOffset: CGSize = .zero
-    @State private var dragHandleHovered: Bool = false
-    @State private var resizeHandleHovered: Bool = false
-    @State private var resizeDragInitial: CGSize = .zero
 
     /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
     /// where the shell hit-tests it.
@@ -2451,21 +2448,15 @@ struct CornerDockSurface: View {
                 if isTopDown {
                     // The bottom stack turned over: what the slots mirror — and one card
                     // around the field and its sheet, as Spotlight is one panel.
-                    VStack(alignment: .center, spacing: 0) {
-                        dragHandleBar
-                        VStack(alignment: .center, spacing: CornerDockController.shared.showsBoardUnderField ? 0 : CornerDockLayout.gap) {
-                            chatSurface
-                            // Drawn where the slots hit-test it, as at the bottom.
-                            chatBoards
-                                .offset(x: CornerDockController.shared.hoverCardDrawOffset)
-                        }
+                    VStack(alignment: .center, spacing: CornerDockController.shared.showsBoardUnderField ? 0 : CornerDockLayout.gap) {
+                        chatSurface
+                        // Drawn where the slots hit-test it, as at the bottom.
+                        chatBoards
+                            .offset(x: CornerDockController.shared.hoverCardDrawOffset)
                     }
                     .modifier(
                         CornerCombinedCard(
                             active: CornerDockController.shared.showsBoardUnderField))
-                    .overlay(alignment: .bottomTrailing) {
-                        resizeHandleGrip
-                    }
                     shelfCard
                 } else {
                     shelfCard
@@ -2479,83 +2470,39 @@ struct CornerDockSurface: View {
             }
             // The shell's one width (#189): every surface in it is drawn at this.
             .frame(width: DockShellWidth.current, alignment: rowEdge)
+            .background {
+                // Spotlight-style empty space dragging:
+                // Sits behind buttons, inputfield, icons and results list. Dragging anywhere
+                // on empty card background/header/footer moves the launcher smoothly.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 3)
+                            .onChanged { value in
+                                dragOffset = value.translation
+                            }
+                            .onEnded { value in
+                                let newX = settings.centredLauncherOffsetX + Double(value.translation.width)
+                                let newY = settings.centredLauncherOffsetY + Double(value.translation.height)
+                                settings.centredLauncherOffsetX = min(max(-600, newX), 600)
+                                settings.centredLauncherOffsetY = min(max(-400, newY), 400)
+                                dragOffset = .zero
+                                CornerDockController.shared.refresh()
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            settings.centredLauncherOffsetX = 0
+                            settings.centredLauncherOffsetY = 0
+                        }
+                        CornerDockController.shared.refresh()
+                    }
+            }
         }
         .offset(
             x: CGFloat(settings.centredLauncherOffsetX) + dragOffset.width,
             y: CGFloat(settings.centredLauncherOffsetY) + dragOffset.height
         )
-    }
-
-    private var dragHandleBar: some View {
-        HStack {
-            Spacer()
-            Capsule()
-                .fill(Color.white.opacity(dragHandleHovered ? 0.45 : 0.20))
-                .frame(width: 38, height: 4)
-                .padding(.top, 4)
-                .padding(.bottom, 2)
-                .contentShape(Rectangle().inset(by: -8))
-                .onHover { dragHandleHovered = $0 }
-                .gesture(
-                    DragGesture(minimumDistance: 1)
-                        .onChanged { value in
-                            dragOffset = value.translation
-                        }
-                        .onEnded { value in
-                            let newX = settings.centredLauncherOffsetX + Double(value.translation.width)
-                            let newY = settings.centredLauncherOffsetY + Double(value.translation.height)
-                            settings.centredLauncherOffsetX = min(max(-600, newX), 600)
-                            settings.centredLauncherOffsetY = min(max(-400, newY), 400)
-                            dragOffset = .zero
-                            CornerDockController.shared.refresh()
-                        }
-                )
-                .onTapGesture(count: 2) {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        settings.centredLauncherOffsetX = 0
-                        settings.centredLauncherOffsetY = 0
-                    }
-                    CornerDockController.shared.refresh()
-                }
-                .help("Drag to move launcher (double-click to reset)")
-            Spacer()
-        }
-    }
-
-    private var resizeHandleGrip: some View {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(Color.white.opacity(resizeHandleHovered ? 0.7 : 0.3))
-            .padding(8)
-            .contentShape(Rectangle().inset(by: -6))
-            .onHover { resizeHandleHovered = $0 }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if resizeDragInitial == .zero {
-                            resizeDragInitial = CGSize(
-                                width: settings.centredLauncherWidth,
-                                height: settings.centredLauncherHeight
-                            )
-                        }
-                        let newW = min(max(560, Double(resizeDragInitial.width + value.translation.width)), 880)
-                        let newH = min(max(320, Double(resizeDragInitial.height + value.translation.height)), 680)
-                        settings.centredLauncherWidth = newW
-                        settings.centredLauncherHeight = newH
-                    }
-                    .onEnded { _ in
-                        resizeDragInitial = .zero
-                        CornerDockController.shared.refresh()
-                    }
-            )
-            .onTapGesture(count: 2) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    settings.centredLauncherWidth = 680
-                    settings.centredLauncherHeight = 440
-                }
-                CornerDockController.shared.refresh()
-            }
-            .help("Drag to resize launcher (double-click to reset)")
     }
 
     private var column: some View {

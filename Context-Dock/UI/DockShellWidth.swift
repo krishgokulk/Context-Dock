@@ -61,7 +61,7 @@ enum DockShellWidth {
         let isCentredMode = CornerDockController.shared.chatPresentation.isCentred
             || AppSettings.shared.launcherPresentationMode == .centerScreen
         if isCentredMode {
-            return CGFloat(min(max(560, AppSettings.shared.centredLauncherWidth), 900))
+            return 680
         }
         return DockStripPlan.shellWidth
     }

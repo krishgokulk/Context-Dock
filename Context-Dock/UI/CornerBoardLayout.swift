@@ -354,8 +354,7 @@ extension AppChatPromptModel {
                 header: globalSectionHeaders.isEmpty),
             preview: boardPreview)
         if isCentred {
-            let targetHeight = CGFloat(AppSettings.shared.centredLauncherHeight)
-            return CGSize(width: calc.width, height: min(max(320, targetHeight), 680))
+            return CGSize(width: calc.width, height: 440)
         }
         return calc
     }
