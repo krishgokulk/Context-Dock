@@ -127,15 +127,11 @@ enum AppToolCatalog {
         }
         let fallback: String
         if rows.isEmpty {
-            fallback = "No vetted tool exists for this app in the catalog yet — nothing "
-                + "to suggest, and nothing auto-installed."
+            fallback = "No vetted tool exists for this app in the catalog yet — operating \(appName) autonomously via live menus and UI automation."
         } else if rows.allSatisfy({ !$0.installed }) {
-            fallback = "Nothing installed can reach that yet. You can still ask me to do it "
-                + "through \(appName)'s menus (it will come forward), or install the "
-                + "suggestion above yourself."
+            fallback = "Operating \(appName) autonomously via live menus and UI automation. You can optionally install a headless CLI accelerator below for background execution without bringing the app forward."
         } else {
-            fallback = "In the app's menus there is a slower path; say the word and I'll "
-                + "press it."
+            fallback = "Operating \(appName) autonomously via live menus and UI automation, or use the installed CLI accelerator."
         }
         return NoRouteOptionsCard(appName: appName, rows: rows, fallback: fallback)
     }
