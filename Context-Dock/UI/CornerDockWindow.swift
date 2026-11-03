@@ -181,10 +181,20 @@ final class CornerDockController: NSObject {
         // A text field selects all its text when its window becomes key again, so coming back to
         // the corner (⌘⌘, a click, the keys handed back) showed the typed words selected and
         // the next key replaced them. The caret goes to the end instead, as on first focus.
+        // Observe window moves in centered mode to remember user-dragged position
         NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeKeyNotification, object: p, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { FieldCaret.collapseSelectionToEndAfterFocus() }
+            forName: NSWindow.didMoveNotification, object: p, queue: .main
+        ) { [weak self] _ in
+            guard let self, let panel = self.panel else { return }
+            let isCentredMode = self.chatPresentation.isCentred || AppSettings.shared.launcherPresentationMode == .centerScreen
+            if isCentredMode {
+                let frame = panel.frame
+                if let screen = panel.screen ?? NSScreen.main,
+                   screen.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) {
+                    AppSettings.shared.centredLauncherX = Double(frame.origin.x)
+                    AppSettings.shared.centredLauncherY = Double(frame.origin.y)
+                }
+            }
         }
         position()
 
@@ -248,6 +258,20 @@ final class CornerDockController: NSObject {
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
         clipboardModel.$recentlyCopied.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+
+        DynamicNotchState.shared.$isExpanded.sink { [weak self] expanded in
+            Task { @MainActor in
+                self?.refresh()
+                if expanded {
+                    self?.position()
+                    self?.panel?.orderFrontRegardless()
+                }
+            }
+        }.store(in: &sinks)
+
+        DynamicNotchState.shared.$selectedPage.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
         // The board belongs to the App and Global field. The shell going away, or switching
@@ -470,7 +494,7 @@ final class CornerDockController: NSObject {
     /// have to agree on the answer in the same frame.
     var anchor: CornerDockAnchor {
         if chatPresentation.isCentred { return .center }
-        return CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
+        return AppSettings.shared.cornerDockAnchor
     }
 
     /// Move the app scope to whichever app is in front now — the frontmost-app update's own
@@ -572,18 +596,15 @@ final class CornerDockController: NSObject {
 
     private func position() {
         guard let panel else { return }
-        // Moving between an edge and the centre changes the shape of the window, not only
-        // where it sits: a row needs three cards' width, a column needs one.
         let screen =
             NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let pad = CornerDockLayout.pad
         let margin: CGFloat = 20
-        // The panel spans the screen at every anchor. Centred, that is what lets the field
-        // sit in the middle while the clipboard keeps the right-hand corner; at an edge it
-        // is what lets the dock strip be as wide as its icons instead of being cut off at
-        // one card. The origin works out the same for all three.
+
+        let isCentredMode = chatPresentation.isCentred || AppSettings.shared.launcherPresentationMode == .centerScreen
+
         let wanted = CornerDockLayout.panelSize(
             for: anchor, panelWidth: visible.width - 2 * margin + 2 * pad)
         if panel.frame.size != wanted {
@@ -592,26 +613,38 @@ final class CornerDockController: NSObject {
         }
         let size = panel.frame.size
         let x: CGFloat
-        switch anchor {
-        case .right: x = visible.maxX - margin + pad - size.width
-        case .left: x = visible.minX + margin - pad
-        case .center, .notch: x = visible.minX + margin - pad
-        }
-        // Centred, the field's top edge sits about two thirds up the screen, where Spotlight's
-        // does, and the panel hangs below it.
-        // Anchored at the notch, the field sits flush under or hugging the MacBook camera notch.
         let y: CGFloat
-        if chatPresentation.isCentred {
-            y = visible.minY + visible.height * 0.66 + pad - size.height
-        } else if anchor == .notch {
-            let screenTop = screen?.frame.maxY ?? (visible.maxY + pad)
-            y = screenTop - size.height + pad
+
+        if isCentredMode {
+            panel.isMovable = true
+            panel.isMovableByWindowBackground = true
+            let savedX = AppSettings.shared.centredLauncherX
+            let savedY = AppSettings.shared.centredLauncherY
+            let screenBounds = screen?.frame ?? visible
+            if savedX >= 0, savedY >= 0,
+               screenBounds.contains(CGPoint(x: savedX + size.width / 2, y: savedY + size.height / 2)) {
+                x = CGFloat(savedX)
+                y = CGFloat(savedY)
+            } else {
+                let screenW = screen?.frame.width ?? visible.width
+                let screenX = screen?.frame.minX ?? 0
+                x = (screenW - size.width) / 2 + screenX
+                y = visible.minY + visible.height * 0.62 + pad - size.height
+            }
         } else {
+            panel.isMovable = false
+            panel.isMovableByWindowBackground = false
+            switch anchor {
+            case .right: x = visible.maxX - margin + pad - size.width
+            case .left: x = visible.minX + margin - pad
+            case .center, .notch: x = visible.minX + margin - pad
+            }
             y = visible.minY + margin - pad
         }
+
         shownPanelOrigin = NSPoint(x: x, y: y)
         dockScreenFrame = screen?.frame ?? visible
-        panel.setFrameOrigin(isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin)
+        panel.setFrameOrigin(isCentredMode ? shownPanelOrigin : (isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin))
     }
 
     // MARK: - Auto-hide
@@ -639,8 +672,12 @@ final class CornerDockController: NSObject {
 
     /// Only the resting strip hides. Anything the user opened — or is typing into, or is
     /// dragging onto — keeps the shell where it is.
+    /// When anchored at .notch, the island sits framing the camera notch as an ambient minimal pill,
+    /// and never slides off-screen into negative coordinates.
     private var restsForAutoHide: Bool {
-        CornerDockAutoHide.canHide(
+        if AppSettings.shared.launcherPresentationMode == .centerScreen || chatPresentation.isCentred { return false }
+        if anchor == .notch { return false }
+        return CornerDockAutoHide.canHide(
             enabled: AppSettings.shared.cornerDockAutoHide,
             stripShowing: chatPresentation.isVisible && chatPresentation.mode != .general
                 && prompt.phase == .dock,
@@ -895,17 +932,21 @@ final class CornerDockController: NSObject {
             rects.append(
                 (slots.list.map { field.union($0) } ?? field)
                     .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
-            if anchor == .notch {
-                let notchH = ScreenNotchMetrics.currentNotchHeight
-                let notchR = ScreenNotchMetrics.notchRect(on: ScreenNotchMetrics.activeScreen)
-                let collar = CGRect(
-                    x: field.midX - max(notchR.width / 2, 110),
-                    y: field.maxY,
-                    width: max(notchR.width, 220),
-                    height: max(notchH, 34) + CornerDockLayout.pad
-                )
-                rects.append(collar)
-            }
+        }
+        if anchor == .notch, let p = self.panel {
+            let notchH = max(ScreenNotchMetrics.currentNotchHeight, 36)
+            let isExp = DynamicNotchState.shared.isExpanded
+            let islandW: CGFloat = isExp ? 410 : 330
+            let islandH: CGFloat = isExp ? 190 : (notchH + 10)
+            let midX = p.frame.width / 2
+            let collarY = p.frame.height - islandH
+            let collar = CGRect(
+                x: midX - islandW / 2,
+                y: collarY,
+                width: islandW,
+                height: islandH
+            )
+            rects.append(collar)
         }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
@@ -979,7 +1020,7 @@ final class CornerDockController: NSObject {
                                 : (showsPluginCard
                                     ? pluginCardPin.map { CornerPluginCardMetrics.size(for: $0.manifest) }
                                     : nil))))),
-            prompt: chatPresentation.isVisible && !selection.coversChat ? promptSize : nil,
+            prompt: (chatPresentation.isVisible || anchor == .notch) && !selection.coversChat ? promptSize : nil,
             listAnchorOffset: hoverCardAnchorOffset,
             anchor: anchor, panelWidth: panel?.frame.width)
     }
@@ -1221,6 +1262,8 @@ final class CornerDockController: NSObject {
         CornerSplitShell.splits(
             isVisible: chatPresentation.isVisible,
             isGeneral: chatPresentation.mode == .general,
+            isGlobalScope: prompt.isGlobalScope,
+            hasPins: prompt.showsTabBar,
             phase: prompt.phase,
             stripHasContent: splitWidths.strip > 0)
     }
@@ -1228,7 +1271,12 @@ final class CornerDockController: NSObject {
     /// The split bottom line's two widths: the apps fitted to what they hold, the field the
     /// rest of the shell — the whole of it when the apps' piece has nothing to show.
     var splitWidths: (field: CGFloat, strip: CGFloat) {
-        CornerSplitShell.widths(
+        // A non-global app without pins gets the full compact width; otherwise the
+        // field shrinks to the split-layout left column while the glass is wider.
+        if !prompt.isGlobalScope && !prompt.showsTabBar {
+            return (AppChatPromptMetrics.boardWidth(for: prompt), 0)
+        }
+        return CornerSplitShell.widths(
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
             apps: CornerSplitStrip.apps(for: prompt).count,
             pins: CornerSplitStrip.pins(for: prompt).count,
@@ -2147,13 +2195,13 @@ struct CornerDockSurface: View {
     /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
     /// where the shell hit-tests it.
     private var anchor: CornerDockAnchor {
-        if chatPresentation.isCentred { return .center }
-        return CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
+        if chatPresentation.isCentred || settings.launcherPresentationMode == .centerScreen { return .center }
+        return settings.cornerDockAnchor
     }
 
-    /// Centred (⌥⌥) or in Notch mode, the row is drawn top-down: the field first, its boards under it.
-    private var isTopDown: Bool { chatPresentation.isCentred || anchor == .notch }
-    private var centred: Bool { chatPresentation.isCentred }
+    /// Centred launcher is drawn top-down: the field first, its boards under it.
+    private var isTopDown: Bool { chatPresentation.isCentred || settings.launcherPresentationMode == .centerScreen }
+    private var centred: Bool { chatPresentation.isCentred || settings.launcherPresentationMode == .centerScreen }
     private var rowEdge: Alignment { isTopDown ? .top : .bottom }
     private var rowVertical: VerticalAlignment { isTopDown ? .top : .bottom }
 
@@ -2278,7 +2326,7 @@ struct CornerDockSurface: View {
                 // past the merge distance, so the glass pinches in two like a water droplet
                 // rather than a second capsule fading in beside the first.
                 GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
-                    HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
+                    HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 8) {
                         AppChatPromptPill(model: prompt)
                         if split {
                             CornerSplitStrip(
@@ -2308,42 +2356,23 @@ struct CornerDockSurface: View {
     /// Shelf | field-and-its-boards | clipboard-and-its-preview — the same arithmetic
     /// `CornerDockLayout.slots` measures, so what is drawn is what is hit-tested.
     private var centredRow: some View {
-        // Drawn the way `CornerDockLayout.slots` hit-tests it: the shelf and the field as a
-        // centred row, the clipboard on its own at the right-hand corner — the same spot the
-        // right anchor gives it, so a copy lands where the hand already knows to look.
         ZStack(alignment: rowEdge) {
-            if anchor == .notch {
-                notchTapArea
-            }
             centredRowContent
+                .transition(.opacity.combined(with: .move(edge: .top)))
             HStack(alignment: rowVertical, spacing: 0) {
                 Spacer(minLength: 0)
                 clipboardStack
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: rowEdge)
-        .padding(CornerDockLayout.pad)
-        .padding(.top, anchor == .notch ? ScreenNotchMetrics.currentNotchHeight : 0)
+        .padding(.horizontal, CornerDockLayout.pad)
+        .padding(.bottom, CornerDockLayout.pad)
+        .padding(.top, CornerDockLayout.pad)
         .animation(.spring(response: 0.36, dampingFraction: 0.82), value: shelf.phase.isCardShown)
         .animation(
             .spring(response: 0.36, dampingFraction: 0.82), value: clipboardModel.phase.isVisible)
         .animation(.spring(response: 0.36, dampingFraction: 0.82), value: prompt.phase)
         .animation(.spring(response: 0.36, dampingFraction: 0.82), value: chatPresentation.mode)
-    }
-
-    @ViewBuilder
-    private var notchTapArea: some View {
-        let notchH = ScreenNotchMetrics.currentNotchHeight
-        Color.clear
-            .frame(width: DockShellWidth.current, height: max(notchH, 32))
-            .offset(y: -CornerDockLayout.pad - (notchH > 0 ? 0 : 6))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if prompt.phase == .dock {
-                    _ = prompt.expandFromDock(seeding: nil)
-                    CornerDockController.shared.requestComposerFocus()
-                }
-            }
     }
 
     private var clipboardStack: some View {

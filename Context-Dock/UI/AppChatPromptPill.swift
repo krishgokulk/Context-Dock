@@ -209,7 +209,7 @@ enum AppChatPromptMetrics {
             fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: appBarPillWidth(for: model),
-            shellWidth: DockShellWidth.current,
+            shellWidth: model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current,
             fieldLines: model.fieldLines)
     }
 
@@ -803,7 +803,7 @@ struct AppChatPromptPill: View {
             if !sharesOneCard {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
+                .background(GlassBackground(cornerRadius: legacyRadius, isDark: nil))
                 .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
@@ -828,7 +828,7 @@ struct AppChatPromptPill: View {
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
     /// with a sheet over it keeps the 22-point card.
     private var legacyRadius: CGFloat {
-        model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
+        [.prompt, .suggesting].contains(model.phase)
             && size.height <= AppChatPromptMetrics.fieldHeight(global: true)
             ? AppChatPromptMetrics.fieldHeight(global: true) / 2 : 22
     }

@@ -209,13 +209,13 @@ final class AppChatPromptModel: ObservableObject {
     /// once it has pins (task 4b): the bar is the app's own things, and those are its pins.
     var showsTabBar: Bool {
         guard !isGlobalScope else { return false }
-        if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
-        // Every app's Context Dock has the bar, and rests and folds as Global does: its
-        // pinned actions when it has some, the running apps when it has none (owner
-        // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
+        // Show the app bar only when the user has actually pinned something for this app —
+        // browsers included: their tabs appear in the chat sheet, not beside the input
+        // (owner 2026-11-03).
         // Finder walking a folder is not a dock; otherwise Finder — in front or stepped into
         // from Global — is its own Context Dock and rests like any app's (owner 2026-10-09).
         return isAppContextDock && !isFinderFileSearch
+            && !dockPins.pins(forApp: appBundleID).isEmpty
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
@@ -240,7 +240,7 @@ final class AppChatPromptModel: ObservableObject {
     }
     /// Global's height: Global Context and every app's Context Dock are one bar (owner
     /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
-    var usesDockHeight: Bool { isGlobalScope || isAppContextDock }
+    var usesDockHeight: Bool { isGlobalScope || showsTabBar }
     /// The field carries the small pill of the strip's icons.
     var showsFieldPills: Bool { isSearchField || showsTabBar }
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
