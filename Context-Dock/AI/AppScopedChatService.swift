@@ -1805,19 +1805,36 @@ enum AppScopedChatService {
         // dock has decided this per question since it was written; the window asked every
         // question the same way and let the model pick, which is how a "what changed just
         // now" question got answered from a note written last week.
+        let effectiveBundleId: String = {
+            if case .app(let id) = scope { return id }
+            if case .folder = scope { return ChatAppDirectory.finderBundleID }
+            if let id = routingBundleId, !id.isEmpty { return id }
+            if let prev = AppDelegate.shared?.previousFrontmostApp,
+               let id = prev.bundleIdentifier, id != Bundle.main.bundleIdentifier {
+                return id
+            }
+            if let front = NSWorkspace.shared.frontmostApplication,
+               let id = front.bundleIdentifier, id != Bundle.main.bundleIdentifier {
+                return id
+            }
+            return ""
+        }()
+        let effectiveAppName: String = {
+            if !appName.isEmpty { return appName }
+            if !effectiveBundleId.isEmpty {
+                return NSRunningApplication.runningApplications(withBundleIdentifier: effectiveBundleId).first?.localizedName
+                    ?? InstalledApplicationsCatalog.cachedInstalledApps().first { $0.bundleId.caseInsensitiveCompare(effectiveBundleId) == .orderedSame }?.name
+                    ?? effectiveBundleId
+            }
+            return appName
+        }()
         let sourceDecision = AgentSourceAuthority.decide(
             query: query,
-            scopeBundleId: {
-                if case .app(let id) = scope { return id }
-                return nil
-            }())
+            scopeBundleId: effectiveBundleId.isEmpty ? nil : effectiveBundleId)
         let taskPlan = FrontmostAppTaskPlan.make(
             query: query,
-            bundleId: {
-                if case .app(let id) = scope { return id }
-                return ""
-            }(),
-            appName: appName,
+            bundleId: effectiveBundleId,
+            appName: effectiveAppName,
             hasSelection: !finderSelection.isEmpty,
             hasAttachments: !attachments.isEmpty,
             priorConversation: history.suffix(4).map(\.content).joined(separator: "\n"),
@@ -1935,8 +1952,16 @@ enum AppScopedChatService {
             // behaves differently from the dock's, which reads them.
             // A chosen skill replaces the full set: the user said which workflow applies,
             // and stacking the others behind it would dilute the instruction they picked.
-            let skills = skillOverride ?? SkillStore.shared.instructionsBlock(for: bundleId)
+            let skills = skillOverride ?? {
+                let perApp = SkillStore.shared.perAppSkillsPromptBlock(for: bundleId)
+                return perApp.isEmpty ? SkillStore.shared.instructionsBlock(for: bundleId) : perApp
+            }()
             prompt.set(.skills, skills)
+            let menuSnapshot = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
+                bundleIdentifier: bundleId, appName: appName, query: query)
+            if !menuSnapshot.isEmpty {
+                prompt.set(.liveMenu, menuSnapshot)
+            }
             // The app's live MCP tools. For asksOnly turns, use toolListBlock instead of
             // toolPromptBlock: toolPromptBlock teaches the prose {"mcp_call":…} format which
             // the model uses INSTEAD of the native run_mcp_tool function — they conflict (#357).
@@ -2032,6 +2057,22 @@ enum AppScopedChatService {
                 below to answer from real data rather than from memory. Never print a tool \
                 call as text — call it, then answer in plain language.
                 """)
+            if !effectiveBundleId.isEmpty {
+                let frontmostIdentity = ScopedAppPromptBuilder.appIdentityBlock(
+                    bundleId: effectiveBundleId, appName: effectiveAppName, query: query, compact: provider == .onDevice)
+                if !frontmostIdentity.isEmpty {
+                    prompt.append(.identity, frontmostIdentity)
+                }
+                let frontmostSkills = SkillStore.shared.perAppSkillsPromptBlock(for: effectiveBundleId)
+                if !frontmostSkills.isEmpty {
+                    prompt.set(.skills, frontmostSkills)
+                }
+                let frontmostMenu = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
+                    bundleIdentifier: effectiveBundleId, appName: effectiveAppName, query: query)
+                if !frontmostMenu.isEmpty {
+                    prompt.set(.liveMenu, frontmostMenu)
+                }
+            }
             // General Chat is frontmost while the user asks, so its UserContext cannot name
             // the browser that was underneath it. A live page question still has a direct
             // reader: try supported running browsers and provide the first current page that
@@ -2277,6 +2318,9 @@ enum AppScopedChatService {
         if case .app(let bundleId) = scope {
             grantedApps[appName.lowercased()] = bundleId
             grantedApps[bundleId.lowercased()] = bundleId
+        } else if !effectiveBundleId.isEmpty {
+            grantedApps[effectiveAppName.lowercased()] = effectiveBundleId
+            grantedApps[effectiveBundleId.lowercased()] = effectiveBundleId
         }
         for name in extraAppNames {
             let bundleId =

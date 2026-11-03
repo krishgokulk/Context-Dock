@@ -41,6 +41,19 @@ struct FrontmostAppTaskPlan: Equatable {
     let sources: Set<Source>
     let allowedToolNames: Set<String>
     let complexity: TaskComplexityRoute
+    let agentNeverRules: [String]
+
+    init(goal: String, appName: String, bundleId: String, intent: Intent, sources: Set<Source>,
+         allowedToolNames: Set<String>, complexity: TaskComplexityRoute, agentNeverRules: [String] = []) {
+        self.goal = goal
+        self.appName = appName
+        self.bundleId = bundleId
+        self.intent = intent
+        self.sources = sources
+        self.allowedToolNames = allowedToolNames
+        self.complexity = complexity
+        self.agentNeverRules = agentNeverRules
+    }
 
     func allows(_ source: Source) -> Bool { sources.contains(source) }
     var permitsUIAutomation: Bool { intent == .act || intent == .workflow }
@@ -57,7 +70,7 @@ struct FrontmostAppTaskPlan: Equatable {
             case .memory: return "relevant local memory"
             }
         }.sorted().joined(separator: ", ")
-        return """
+        var contract = """
             TASK CONTRACT
             Goal: \(goal)
             Target app: \(appName) (\(bundleId))
@@ -67,6 +80,11 @@ struct FrontmostAppTaskPlan: Equatable {
             minimum allowed tools, stop when evidence supports the goal, and report a missing \
             source plainly instead of substituting another source.
             """
+        if !agentNeverRules.isEmpty {
+            contract += "\n\nAPP SAFETY RULES (AGENT.md):\n"
+                + agentNeverRules.map { "- \($0)" }.joined(separator: "\n")
+        }
+        return contract
     }
 
     var initialProgress: [String] {
@@ -198,8 +216,29 @@ struct FrontmostAppTaskPlan: Equatable {
             ])
         }
 
+        var agentNeverRules: [String] = []
+        if !bundleId.isEmpty,
+           let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
+            agentNeverRules = profile.never
+            if let scripts = profile.tools.scripts, !scripts.isEmpty {
+                tools.insert("run_app_script")
+            }
+            if let caps = profile.tools.capabilities, !caps.isEmpty {
+                tools.formUnion(["find_capability", "run_capability"])
+            }
+            if let mcps = profile.tools.mcp, !mcps.isEmpty {
+                tools.insert("run_mcp_tool")
+            }
+            if let actions = profile.tools.actions, !actions.isEmpty {
+                tools.insert("run_adapter_action")
+            }
+            if let clis = profile.tools.cli, !clis.isEmpty {
+                tools.insert("run_command")
+            }
+        }
+
         return Self(goal: intentQuery.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
                     bundleId: bundleId, intent: intent, sources: sources,
-                    allowedToolNames: tools, complexity: complexity)
+                    allowedToolNames: tools, complexity: complexity, agentNeverRules: agentNeverRules)
     }
 }

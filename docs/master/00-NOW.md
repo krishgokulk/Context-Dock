@@ -10,10 +10,17 @@
 
 ## In progress
 
+**Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phase 1):**
+- Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
+- Injects frontmost app's AGENT.md, per-app skills (`SkillScope.app`), and live menu commands snapshot into user-selected AI Provider's turn context.
+- Ambient app discovery for General Chat & App Pet turns; non-blocking fallback to `run_menu_command` and `operate_app`.
+- Full unit test coverage in `FrontmostAppAgentPhase1Tests`.
+
+## Done (most recent first)
+
 **Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Completed, PR #367 open awaiting owner review and merge.
 - Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
-- Baseline on `origin/general-chat-agent` in a dedicated worktree.
-- Run `./scripts/check.sh` before hand-off.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).
