@@ -19,9 +19,9 @@ enum AppChatListMetrics {
     /// The board stands exactly as wide as the field below it: the shell's one width (#189).
     static var width: CGFloat { DockShellWidth.current }
     static let rowHeight: CGFloat = 40
-    static let headerHeight: CGFloat = 30
+    static let headerHeight: CGFloat = 22
     /// Room above and below the rows.
-    static let verticalPadding: CGFloat = 10
+    static let verticalPadding: CGFloat = 6
 
     /// A pure function of how many rows there are — the corner draws this frame and
     /// hit-tests the same number, so a measured height would leave the two disagreeing.

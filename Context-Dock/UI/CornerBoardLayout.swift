@@ -346,11 +346,18 @@ extension AppChatPromptModel {
 
     /// The list card and its panel together: the size the window reserves for the board.
     var boardSize: CGSize {
-        CornerBoardLayout.boardSize(
+        let isCentred = CornerDockController.shared.chatPresentation.isCentred
+            || AppSettings.shared.launcherPresentationMode == .centerScreen
+        let calc = CornerBoardLayout.boardSize(
             list: AppChatListMetrics.size(
                 rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self),
                 header: globalSectionHeaders.isEmpty),
             preview: boardPreview)
+        if isCentred {
+            let targetHeight = CGFloat(AppSettings.shared.centredLauncherHeight)
+            return CGSize(width: calc.width, height: min(max(320, targetHeight), 680))
+        }
+        return calc
     }
 
     /// The Context Dock's panel shows (#191, part 2). Read by the card that draws it.

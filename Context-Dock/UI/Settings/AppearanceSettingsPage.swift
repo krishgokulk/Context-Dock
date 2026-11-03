@@ -37,26 +37,32 @@ struct AppearanceSettingsPage: View {
                                     .foregroundStyle(.secondary)
 
                                 HStack {
-                                    Text("Window position:")
+                                    Text("Window position & size:")
                                         .font(.system(size: 12))
                                         .foregroundStyle(.secondary)
-                                    if settings.centredLauncherX >= 0 {
-                                        Text("Custom (\(Int(settings.centredLauncherX)), \(Int(settings.centredLauncherY)))")
+                                    let isCustom = settings.centredLauncherOffsetX != 0
+                                        || settings.centredLauncherOffsetY != 0
+                                        || settings.centredLauncherWidth != 680
+                                        || settings.centredLauncherHeight != 440
+                                        || settings.centredLauncherX >= 0
+                                    if isCustom {
+                                        Text("Custom (\(Int(settings.centredLauncherWidth))×\(Int(settings.centredLauncherHeight)))")
                                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                                             .foregroundStyle(.primary)
                                     } else {
-                                        Text("Screen Center (Default)")
+                                        Text("Default Center (680×440)")
                                             .font(.system(size: 12, weight: .medium))
                                             .foregroundStyle(.primary)
                                     }
                                     Spacer()
-                                    Button("Reset to Center") {
+                                    Button("Reset to Defaults") {
                                         settings.resetCentredLauncherPosition()
                                         NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                        CornerDockController.shared.refresh()
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
-                                    .disabled(settings.centredLauncherX < 0)
+                                    .disabled(!isCustom)
                                 }
                                 .padding(.top, 4)
                             }

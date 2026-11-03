@@ -57,7 +57,14 @@ enum DockShellWidth {
     /// surface reads — Global's strip and field, an app's Context Dock, General Chat and
     /// the boards above them.
     @MainActor
-    static var current: CGFloat { DockStripPlan.shellWidth }
+    static var current: CGFloat {
+        let isCentredMode = CornerDockController.shared.chatPresentation.isCentred
+            || AppSettings.shared.launcherPresentationMode == .centerScreen
+        if isCentredMode {
+            return CGFloat(min(max(560, AppSettings.shared.centredLauncherWidth), 900))
+        }
+        return DockStripPlan.shellWidth
+    }
 }
 
 /// How tall a field stands for what is typed in it (#189): one line, then two, then three,

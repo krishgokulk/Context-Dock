@@ -928,9 +928,23 @@ class AppSettings: ObservableObject {
     @AppStorage("centredLauncherX") var centredLauncherX: Double = -1
     @AppStorage("centredLauncherY") var centredLauncherY: Double = -1
 
+    /// Interactive drag offset for the centered launcher from default screen center.
+    @AppStorage("centredLauncherOffsetX") var centredLauncherOffsetX: Double = 0
+    @AppStorage("centredLauncherOffsetY") var centredLauncherOffsetY: Double = 0
+
+    /// User-resizable width of the centered launcher (default 680, clamped 560...880).
+    @AppStorage("centredLauncherWidth") var centredLauncherWidth: Double = 680
+
+    /// User-resizable height of the centered launcher (default 440, clamped 320...680).
+    @AppStorage("centredLauncherHeight") var centredLauncherHeight: Double = 440
+
     func resetCentredLauncherPosition() {
         centredLauncherX = -1
         centredLauncherY = -1
+        centredLauncherOffsetX = 0
+        centredLauncherOffsetY = 0
+        centredLauncherWidth = 680
+        centredLauncherHeight = 440
     }
 
     /// Where the corner shell sits along the screen: left, centre, right or notch.
