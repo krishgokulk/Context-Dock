@@ -2233,12 +2233,29 @@ struct CornerDockSurface: View {
         }
     }
 
+    /// Raycast and Spotlight parity: in top-down mode (centred launcher), boards and results
+    /// glide downwards smoothly from directly beneath the search field. In dock mode, they rise from the bottom.
+    private var boardTransition: AnyTransition {
+        if isTopDown {
+            return .asymmetric(
+                insertion: .opacity
+                    .combined(with: .offset(y: -14))
+                    .combined(with: .scale(scale: 0.98, anchor: .top)),
+                removal: .opacity
+                    .combined(with: .offset(y: -14))
+                    .combined(with: .scale(scale: 0.98, anchor: .top))
+            )
+        } else {
+            return .opacity.combined(with: .move(edge: .bottom))
+        }
+    }
+
     /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
     @ViewBuilder
     private var shelfCard: some View {
         if shelf.phase.isCardShown {
             DropShelfCard(presentation: shelf, store: shelfStore)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(boardTransition)
         }
     }
 
@@ -2247,7 +2264,7 @@ struct CornerDockSurface: View {
     private var chatBoards: some View {
         if CornerDockController.shared.selection.phase.isVisible {
             SelectionScopeCard(model: CornerDockController.shared.selection)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(boardTransition)
         }
         if chatPresentation.isVisible, !selectionModel.coversChat,
             chatPresentation.mode != .general
@@ -2255,11 +2272,11 @@ struct CornerDockSurface: View {
             if CornerDockController.shared.showsClipboardBoard {
                 // The clipboard, as Raycast lays it out: clips beside the chosen one.
                 ClipboardBoardCard(model: clipboardModel, prompt: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsScopeBoard {
                 // The app's card, in the board rather than hanging off the chip.
                 AppScopeBoard(model: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves
                 // the scope, as Backspace does.
@@ -2267,31 +2284,31 @@ struct CornerDockSurface: View {
                     pin: nil, manifest: plugin, model: prompt,
                     onClose: { _ = prompt.leaveScopeForGlobal() })
                     .id(plugin.id)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel,
                 prompt.scopedCommand?.isNotificationsBoard == true
             {
                 // Notifications (D9): the clipboard's kind of board, list beside the chosen row.
                 NotificationsBoardCard(prompt: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel,
                 prompt.scopedCommand?.isQuickNoteBoard == true
             {
                 // Quick Note (D11): the notes beside the open note's editor; the field asks.
                 QuickNoteBoardCard(prompt: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(
                     model: prompt, ext: prompt.scopedExtension,
                     command: prompt.scopedCommand)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsAppSnapshot {
                 AppSnapshotCard(model: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsAppChatList {
                 // The list, with the highlighted row's preview in its right half (#191).
                 AppChatListCard(model: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsHoverCard {
                 // One card, whatever it is showing. Three views in this chain meant crossing
                 // from an app to a pin tore one down and raised the other from the bottom,
@@ -2299,7 +2316,7 @@ struct CornerDockSurface: View {
                 // three now; what is inside crossfades and the shell slides and resizes.
                 CornerHoverCardHost(prompt: prompt)
                     .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(boardTransition)
             }
         }
     }
@@ -2389,7 +2406,7 @@ struct CornerDockSurface: View {
                     isPinned: clipboardModel.isPreviewPinned,
                     onTogglePin: { clipboardModel.togglePreviewPin() }
                 )
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(boardTransition)
             }
             if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
                 ClipboardDockPill(model: clipboardModel)
@@ -2453,7 +2470,7 @@ struct CornerDockSurface: View {
                     isPinned: clipboardModel.isPreviewPinned,
                     onTogglePin: { clipboardModel.togglePreviewPin() }
                 )
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(boardTransition)
             }
             if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
                 ClipboardDockPill(model: clipboardModel)
