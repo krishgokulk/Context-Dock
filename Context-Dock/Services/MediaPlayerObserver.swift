@@ -400,38 +400,167 @@ class MediaPlayerObserver: ObservableObject {
             playbackRate = 0
         }
 
-        let commandSent = MediaRemoteBridge.shared.sendCommand(shouldPlay ? .play : .pause)
+        let isSpotify = (appName.localizedCaseInsensitiveContains("Spotify") || lastBundleID == "com.spotify.client" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.spotify.client" })
+        let isMusic = (appName.localizedCaseInsensitiveContains("Music") || lastBundleID == "com.apple.Music" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.Music" })
 
+        var handled = false
+        if isSpotify {
+            AppleScriptQueue.shared.async {
+                let verb = shouldPlay ? "play" : "pause"
+                let s = NSAppleScript(source: "tell application \"Spotify\" to \(verb)")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
+        }
+        if isMusic && !isSpotify {
+            AppleScriptQueue.shared.async {
+                let verb = shouldPlay ? "play" : "pause"
+                let s = NSAppleScript(source: "tell application \"Music\" to \(verb)")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
+        }
         if let bid = lastBundleID, isBrowser(bid) {
             Task { await browserSetPlaying(bundleID: bid, shouldPlay: shouldPlay) }
-        } else if !commandSent {
-            _ = MediaInfoProvider.shared.handleMediaCommand([shouldPlay ? "play" : "pause"])
+            handled = true
+        }
+
+        // Send MediaRemote command .play / .pause or .togglePlayPause for universal media support
+        let mrSent = MediaRemoteBridge.shared.sendCommand(shouldPlay ? .play : .pause)
+        if !handled && !mrSent {
+            _ = MediaRemoteBridge.shared.sendCommand(.togglePlayPause)
+            simulateSystemMediaKey(16) // NX_KEYTYPE_PLAY = 16
         }
 
         // Confirm real state after action settles.
         scheduleFetch(delay: 0.18)
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            try? await Task.sleep(nanoseconds: 500_000_000)
             await self?.refreshNowPlaying()
+        }
+    }
+
+    func seek(to position: Double) {
+        let t = max(0, min(position, duration > 0 ? duration : position))
+        elapsed = t
+        anchorDate = Date()
+        anchorElapsed = t
+        MediaRemoteBridge.shared.setElapsedTime(t)
+
+        let isSpotify = (appName.localizedCaseInsensitiveContains("Spotify") || lastBundleID == "com.spotify.client")
+        let isMusic = (appName.localizedCaseInsensitiveContains("Music") || lastBundleID == "com.apple.Music")
+
+        if isSpotify {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Spotify\" to set player position to \(t)")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+        } else if isMusic {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Music\" to set player position to \(t)")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+        } else if let bid = lastBundleID, isBrowser(bid) {
+            Task { await browserSeek(bundleID: bid, to: t) }
         }
     }
 
     func skipBack(seconds: Double = 15) {
         let t = max(0, elapsed - seconds)
-        elapsed = t; anchorDate = Date(); anchorElapsed = t
-        MediaRemoteBridge.shared.setElapsedTime(t)
-        if let bid = lastBundleID, isBrowser(bid) {
-            Task.detached { await self.browserSeek(bundleID: bid, to: t) }
-        }
+        seek(to: t)
     }
 
     func skipForward(seconds: Double = 15) {
         let t = duration > 0 ? min(elapsed + seconds, duration) : elapsed + seconds
-        elapsed = t; anchorDate = Date(); anchorElapsed = t
-        MediaRemoteBridge.shared.setElapsedTime(t)
-        if let bid = lastBundleID, isBrowser(bid) {
-            Task.detached { await self.browserSeek(bundleID: bid, to: t) }
+        seek(to: t)
+    }
+
+    func nextTrack() {
+        let isSpotify = (appName.localizedCaseInsensitiveContains("Spotify") || lastBundleID == "com.spotify.client" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.spotify.client" })
+        let isMusic = (appName.localizedCaseInsensitiveContains("Music") || lastBundleID == "com.apple.Music" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.Music" })
+
+        var handled = false
+        if isSpotify {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Spotify\" to next track")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
         }
+        if isMusic && !isSpotify {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Music\" to next track")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
+        }
+        let mrSent = MediaRemoteBridge.shared.sendCommand(.nextTrack)
+        if !handled && !mrSent {
+            simulateSystemMediaKey(17) // NX_KEYTYPE_NEXT = 17
+        }
+        scheduleFetch(delay: 0.18)
+    }
+
+    func previousTrack() {
+        let isSpotify = (appName.localizedCaseInsensitiveContains("Spotify") || lastBundleID == "com.spotify.client" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.spotify.client" })
+        let isMusic = (appName.localizedCaseInsensitiveContains("Music") || lastBundleID == "com.apple.Music" ||
+            NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.Music" })
+
+        var handled = false
+        if isSpotify {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Spotify\" to previous track")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
+        }
+        if isMusic && !isSpotify {
+            AppleScriptQueue.shared.async {
+                let s = NSAppleScript(source: "tell application \"Music\" to previous track")
+                var err: NSDictionary?
+                s?.executeSerialized(error: &err)
+            }
+            handled = true
+        }
+        let mrSent = MediaRemoteBridge.shared.sendCommand(.previousTrack)
+        if !handled && !mrSent {
+            simulateSystemMediaKey(18) // NX_KEYTYPE_PREVIOUS = 18
+        }
+        scheduleFetch(delay: 0.18)
+    }
+
+    private func simulateSystemMediaKey(_ keyType: Int32) {
+        func post(down: Bool) {
+            let flags: NSEvent.ModifierFlags = down ? [.init(rawValue: 0xa00)] : []
+            let data1 = Int((keyType << 16) | (down ? 0xa00 : 0xb00))
+            if let ev = NSEvent.otherEvent(
+                with: .systemDefined,
+                location: .zero,
+                modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                subtype: 8,
+                data1: data1,
+                data2: -1
+            ) {
+                ev.cgEvent?.post(tap: .cghidEventTap)
+            }
+        }
+        post(down: true)
+        post(down: false)
     }
 
     func dismiss() { isDismissed = true }

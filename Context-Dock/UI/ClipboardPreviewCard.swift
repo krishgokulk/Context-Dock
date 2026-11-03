@@ -36,7 +36,7 @@ struct ClipboardPreviewCard: View {
         }
         .frame(width: ClipboardPreviewMetrics.size.width,
                height: ClipboardPreviewMetrics.size.height)
-        .background(GlassBackground(cornerRadius: 22, isDark: true))
+        .background(GlassBackground(cornerRadius: 22, isDark: nil))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)

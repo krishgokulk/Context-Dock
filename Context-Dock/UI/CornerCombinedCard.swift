@@ -64,7 +64,7 @@ struct BoardGlass: ViewModifier {
             } else {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(Color.clear)
-                    .background(GlassBackground(cornerRadius: radius, isDark: true))
+                    .background(GlassBackground(cornerRadius: radius, isDark: nil))
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: radius, style: .continuous)

@@ -897,13 +897,83 @@ class AppSettings: ObservableObject {
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     /// The corner's Global field folds into the dock strip after a second untouched.
     @AppStorage("autoShrinkInputField") var autoShrinkInputField: Bool = true
+    // MARK: - Launcher Presentation Mode & Positioning
+
+    enum LauncherPresentationMode: String, CaseIterable, Codable {
+        case centerScreen = "center" // Floating Spotlight/Raycast-style in middle of display
+        case bottomDock = "bottom"   // Bottom screen edge dock
+    }
+
+    enum BottomDockPosition: String, CaseIterable, Codable {
+        case left = "left"
+        case center = "center"
+        case right = "right"
+    }
+
+    @AppStorage("launcherPresentationMode") var launcherPresentationModeRaw: String = LauncherPresentationMode.centerScreen.rawValue
+    @AppStorage("bottomDockPosition") var bottomDockPositionRaw: String = BottomDockPosition.center.rawValue
+
+    var launcherPresentationMode: LauncherPresentationMode {
+        get { LauncherPresentationMode(rawValue: launcherPresentationModeRaw) ?? .centerScreen }
+        set { launcherPresentationModeRaw = newValue.rawValue }
+    }
+
+    var bottomDockPosition: BottomDockPosition {
+        get { BottomDockPosition(rawValue: bottomDockPositionRaw) ?? .center }
+        set { bottomDockPositionRaw = newValue.rawValue }
+    }
+
+    /// Remembered position of the centered launcher when dragged by user.
+    /// -1 indicates default screen center.
+    @AppStorage("centredLauncherX") var centredLauncherX: Double = -1
+    @AppStorage("centredLauncherY") var centredLauncherY: Double = -1
+
+    func resetCentredLauncherPosition() {
+        centredLauncherX = -1
+        centredLauncherY = -1
+    }
+
     /// Where the corner shell sits along the screen: left, centre, right or notch.
-    /// Centred, with the input bar under it, it reads as a dock; anchored at the notch, it frames
-    /// the camera notch as a Dynamic Island.
-    @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.right.rawValue
-    /// Dynamic Island & Live Activities in the MacBook camera notch.
+    /// Centred, with the input bar under it, it reads as a dock.
+    @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.center.rawValue
+
+    var cornerDockAnchor: CornerDockAnchor {
+        get {
+            if launcherPresentationMode == .centerScreen {
+                return .center
+            }
+            switch bottomDockPosition {
+            case .left: return .left
+            case .center: return .center
+            case .right: return .right
+            }
+        }
+        set {
+            switch newValue {
+            case .left:
+                launcherPresentationMode = .bottomDock
+                bottomDockPosition = .left
+            case .right:
+                launcherPresentationMode = .bottomDock
+                bottomDockPosition = .right
+            case .center:
+                // preserves current presentation mode or switches to bottom dock center
+                bottomDockPosition = .center
+            case .notch:
+                notchLiveActivityEnabled = true
+                launcherPresentationMode = .centerScreen
+            }
+            cornerDockAnchorRaw = newValue.rawValue
+            UserDefaults.standard.set(newValue.rawValue, forKey: "cornerDockAnchor")
+        }
+    }
+
+    /// Dynamic Island & Live Activities in the MacBook camera notch (DynamicBar / Dynamic Notch parity).
     @AppStorage("notchLiveActivityEnabled") var notchLiveActivityEnabled: Bool = true
     @AppStorage("notchCompactIslandAtRest") var notchCompactIslandAtRest: Bool = true
+    @AppStorage("notchOpenOnHover") var notchOpenOnHover: Bool = true
+    @AppStorage("notchSwellOnHover") var notchSwellOnHover: Bool = true
+    @AppStorage("notchDrawOnExternalDisplay") var notchDrawOnExternalDisplay: Bool = true
     /// The macOS Dock's "Automatically hide and show": the resting strip slides below the
     /// bottom edge (or into the notch), and the pointer reaching that edge brings it back.
     @AppStorage("cornerDockAutoHide") var cornerDockAutoHide: Bool = false
@@ -1949,6 +2019,15 @@ class AppSettings: ObservableObject {
     }
 
     init() {
+        if UserDefaults.standard.object(forKey: "cornerDockAnchor") == nil {
+            if let alias = UserDefaults.standard.string(forKey: "cornerAnchor") {
+                UserDefaults.standard.set(alias, forKey: "cornerDockAnchor")
+                cornerDockAnchorRaw = alias
+            } else {
+                UserDefaults.standard.set(CornerDockAnchor.center.rawValue, forKey: "cornerDockAnchor")
+                cornerDockAnchorRaw = CornerDockAnchor.center.rawValue
+            }
+        }
         migrateAIKeysToKeychain()
         migrateClaudeBridgeModelIfUnusable()
         migrateChatGPTBridgeModelIfUnusable()

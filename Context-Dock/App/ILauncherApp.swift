@@ -348,6 +348,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AppUpdateService.shared.runLaunchAutoCheckIfNeeded()
         #endif
 
+        // Activate CornerDockController so the launcher dock is created
+        // and positioned at the user's chosen location (Center or Bottom Dock).
+        CornerDockController.shared.activate()
+
+        // Start dedicated Dynamic Notch controller at camera bezel
+        DynamicNotchController.shared.start()
+
         // Start binary watcher so L2 auto-discovers newly installed CLI tools
         Task { @MainActor in
             BinaryWatcherService.shared.startWatching()
@@ -1150,12 +1157,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// ⌥⌥ again while it is up puts it away, as the other scope hotkeys do.
+    /// ⌥⌥: Spotlight / Raycast-style search in the middle of the display.
+    /// Pressed again while it is up puts it away.
     func toggleCentredCorner() {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
+
         let presentation = CornerDockController.shared.chatPresentation
         if presentation.isVisible, presentation.isCentred {
             presentation.dismiss()
@@ -1164,9 +1173,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CornerDockController.shared.showCentred()
     }
 
-    /// ⌘⌘: the app in front's Context Dock. Pressed again while that is up (and not slid away
-    /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
+    /// ⌘⌘: Launch or toggle Context-Dock in the user's chosen presentation mode:
+    /// - Center of Display (Spotlight / Raycast style floating draggable window)
+    /// - Bottom Dock (Left, Centre, Right).
     func activateContextDockFromDoubleCommand() {
+        if settings.launcherPresentationMode == .centerScreen {
+            toggleCentredCorner()
+            return
+        }
+
         let presentation = CornerDockController.shared.chatPresentation
         // Only an open field is put away: the resting bar at the bottom is not open, and ⌘⌘
         // hid it instead of opening it (owner 2026-10-18).
