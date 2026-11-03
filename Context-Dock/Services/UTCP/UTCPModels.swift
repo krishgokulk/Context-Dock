@@ -113,12 +113,58 @@ enum UTCPExecution: Codable, Sendable, Equatable, Hashable {
     case http(HTTPExecution)
     case cli(CLIExecution)
 
+    enum CodingKeys: String, CodingKey {
+        case http
+        case cli
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.http) {
+            let httpExec = try container.decode(HTTPExecution.self, forKey: .http)
+            self = .http(httpExec)
+        } else if container.contains(.cli) {
+            let cliExec = try container.decode(CLIExecution.self, forKey: .cli)
+            self = .cli(cliExec)
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: container.codingPath,
+                    debugDescription: "Expected either 'http' or 'cli' key in execution object"
+                )
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .http(let httpExec):
+            try container.encode(httpExec, forKey: .http)
+        case .cli(let cliExec):
+            try container.encode(cliExec, forKey: .cli)
+        }
+    }
+
     struct HTTPExecution: Codable, Sendable, Equatable, Hashable {
         var method: String
         var path: String
         var queryParams: [String]
         var headerParams: [String]
         var bodyParamNames: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case method, path, queryParams, headerParams, bodyParamNames
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            method = try container.decode(String.self, forKey: .method).uppercased()
+            path = try container.decode(String.self, forKey: .path)
+            queryParams = try container.decodeIfPresent([String].self, forKey: .queryParams) ?? []
+            headerParams = try container.decodeIfPresent([String].self, forKey: .headerParams) ?? []
+            bodyParamNames = try container.decodeIfPresent([String].self, forKey: .bodyParamNames) ?? []
+        }
 
         init(
             method: String,
@@ -139,6 +185,16 @@ enum UTCPExecution: Codable, Sendable, Equatable, Hashable {
         var command: String
         var args: [String]
 
+        enum CodingKeys: String, CodingKey {
+            case command, args
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            command = try container.decode(String.self, forKey: .command)
+            args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
+        }
+
         init(command: String, args: [String] = []) {
             self.command = command
             self.args = args
@@ -156,6 +212,21 @@ struct UTCPToolDefinition: Codable, Sendable, Identifiable, Equatable, Hashable 
     var execution: UTCPExecution
     var safety: UTCPToolSafety
     var tags: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, parametersSchema, requiredParameters, execution, safety, tags
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        parametersSchema = try container.decodeIfPresent([String: UTCPJSONValue].self, forKey: .parametersSchema) ?? [:]
+        requiredParameters = try container.decodeIfPresent([String].self, forKey: .requiredParameters) ?? []
+        execution = try container.decode(UTCPExecution.self, forKey: .execution)
+        safety = try container.decodeIfPresent(UTCPToolSafety.self, forKey: .safety) ?? .unknown
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+    }
 
     init(
         name: String,
@@ -212,6 +283,15 @@ struct UTCPManual: Codable, Sendable, Identifiable, Equatable, Hashable {
         case description
         case protocols
         case tools
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        utcpVersion = try container.decodeIfPresent(String.self, forKey: .utcpVersion) ?? "1.0"
+        name = try container.decode(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        protocols = try container.decodeIfPresent(UTCPProtocolsConfig.self, forKey: .protocols) ?? UTCPProtocolsConfig()
+        tools = try container.decodeIfPresent([UTCPToolDefinition].self, forKey: .tools) ?? []
     }
 
     init(
