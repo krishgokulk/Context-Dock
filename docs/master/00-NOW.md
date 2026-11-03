@@ -10,10 +10,22 @@
 
 ## In progress
 
+None — Task #368 completed, PR #368 opened against `general-chat-agent`. Awaiting owner review or next task order.
+
+## Done (most recent first)
+
+**Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phases 1-4):**
+- Completed, PR #368 open into `general-chat-agent` awaiting owner review and merge.
+- Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
+- Phase 1 (Context Assembler Unification): Injects frontmost app's AGENT.md, per-app skills (`SkillScope.app`), and live menu commands snapshot into user-selected AI Provider's turn context. Ambient app discovery for General Chat & App Pet turns; non-blocking fallback to `run_menu_command` and `operate_app`. Verified by `FrontmostAppAgentPhase1Tests` (6/6 pass).
+- Phase 2 (Autonomous Scripting Tool): Sandboxed `run_synthesized_script` capability allowing Claude/Codex to execute on-the-fly AppleScript/JXA with `AICapabilityApprovalCenter` approval gating and `AGENT.md` safety verification; `read_app_dictionary` tool to inspect sdef classes, properties, and commands. Verified by `SynthesizedScriptToolTests` (8/8 pass).
+- Phase 3 (Seamless Computer Use Cascading): Deprecated blocking "Install CLI" cards in favor of autonomous escalation with optional accelerators; enhanced `ComputerUseTargetResolver` with hierarchy/path segment delimiter parsing (`>`, `▸`, `›`, `/`, `|`) and full-path token matching; added `AXUIFocusHelper` for one-shot search field focusing and direct text entry; verified with `ComputerUseEscalationPhase3Tests` (7/7 pass).
+- Phase 4 (End-to-End Verification Across 3-Tier Escalation Ladder): Verified Tier 1 Apple Native App headless / data lane planning and context assembly, Tier 2 Scriptable Third-Party App sdef inspection and synthesized scripting execution, Tier 3 Non-Scriptable UI App fallback escalation to live menu commands and Computer Use, and ambient context isolation across app switches. Verified by `FrontmostAppAgentE2ETests` (4/4 pass).
+- Gate `./scripts/check.sh` clean build passed. Full test suite (25/25 tests) passed.
+
 **Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Completed, PR #367 open awaiting owner review and merge.
 - Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
-- Baseline on `origin/general-chat-agent` in a dedicated worktree.
-- Run `./scripts/check.sh` before hand-off.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).

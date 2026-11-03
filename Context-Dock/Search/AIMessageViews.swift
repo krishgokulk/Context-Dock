@@ -1282,11 +1282,11 @@ struct AIChatMessageView: View {
     private func noRouteOptionsCard(_ card: NoRouteOptionsCard) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.branch")
+                Image(systemName: "bolt.horizontal.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.tint)
                     .accessibilityHidden(true)
-                Text("\(card.appName) can't do that yet")
+                Text("\(card.appName) Autonomous Action Escalation")
                     .font(.system(size: 12, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
             }
@@ -1310,7 +1310,7 @@ struct AIChatMessageView: View {
                             NSPasteboard.general.setString(
                                 row.installCommand, forType: .string)
                         } label: {
-                            Label("Copy install", systemImage: "doc.on.doc")
+                            Label("Copy CLI installer", systemImage: "doc.on.doc")
                                 .font(.system(size: 10))
                         }
                         .buttonStyle(.plain)

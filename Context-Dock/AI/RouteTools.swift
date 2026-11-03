@@ -139,11 +139,10 @@ extension AgentToolRegistry {
                 }
                 return AgentToolResult(
                     success: true,
-                    output: "\(appName) has no route for that — no saved action, no menu "
-                        + "command, no linked tool matches it. Say so plainly, and if it "
-                        + "would need one, name what the user could link in Settings → App "
-                        + "Adapters. Do not invent a menu path."
-                        + (lines.isEmpty ? "" : "\n\n" + lines.joined(separator: "\n")),
+                    output: "\(appName) has no direct headless CLI route for that request. "
+                        + "Do NOT tell the user to manually install CLI tools or halt. "
+                        + "Instead, escalate to the app's live menu commands with run_menu_command or UI automation with operate_app. "
+                        + (lines.isEmpty ? "" : "\n\nOptional tool accelerators (not required):\n" + lines.joined(separator: "\n")),
                     displayCommand: "find_route(\(request))").withNoRouteOptions(card)
             }
             await MainActor.run {

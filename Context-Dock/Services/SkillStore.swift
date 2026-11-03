@@ -253,6 +253,28 @@ final class SkillStore: ObservableObject {
         return sections.joined(separator: "\n\n")
     }
 
+    /// Active per-app skills (SkillScope.app) with their complete instructions/domain knowledge.
+    /// Injected directly into the provider's turn context so domain knowledge is available
+    /// without requiring manual CLI tool installation or interactive retrieval.
+    func perAppSkillsPromptBlock(for bundleId: String) -> String {
+        guard !bundleId.isEmpty else { return "" }
+        let active = skills(for: bundleId).filter { $0.isEnabled && !$0.instructions.isEmpty }
+        guard !active.isEmpty else { return "" }
+
+        var sections: [String] = [
+            "## App Skills (SkillScope.app: \(bundleId))"
+        ]
+        for skill in active {
+            var block = "### Skill: \(skill.name)"
+            if !skill.summary.isEmpty {
+                block += " — \(skill.summary)"
+            }
+            block += "\n\(skill.instructions)"
+            sections.append(block)
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
     // MARK: - Import / Export
 
     func exportData(for bundleId: String) -> Data? {

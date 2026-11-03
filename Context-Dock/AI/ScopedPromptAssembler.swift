@@ -49,6 +49,8 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     case mcp
     /// The cross-app capability catalogue.
     case capabilities
+    /// Live menu commands snapshot for the frontmost or scoped app.
+    case liveMenu
     /// The user's own written workflows for this app.
     case skills
     /// What DoraX has durably learned.
@@ -74,7 +76,7 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     /// Order of sacrifice, least valuable first. Reference material goes first: the model can
     /// say it does not know, which is survivable, where being wrong about live state is not.
     static let dropOrder: [ScopedPromptSection] = [
-        .reference, .cli, .memory, .skills, .capabilities, .mcp, .liveAppData,
+        .reference, .cli, .memory, .skills, .capabilities, .liveMenu, .mcp, .liveAppData,
         .attachments, .folder, .browserPage, .workspace,
     ]
 }

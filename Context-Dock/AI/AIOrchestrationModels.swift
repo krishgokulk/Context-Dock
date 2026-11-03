@@ -43,6 +43,8 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case operateApp
     /// Run a script the app's own AGENT.md declares.
     case appScript
+    /// Run an on-the-fly synthesized AppleScript or JXA script.
+    case synthesizedScript
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -309,6 +311,27 @@ enum AITypedInvocationResolver {
                     }
                     return AITypedInvocation(
                         kind: .appScript, capabilityID: "appAgent.runScript",
+                        arguments: args, requiresApproval: true)
+                }
+            }
+
+            // Synthesized AppleScript / JXA: {"synthesized_script": {"script": "...", "language": "applescript", "reason": "..."}}
+            if let call = root["synthesized_script"] as? [String: Any] {
+                let script = ((call["script"] as? String) ?? (call["code"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !script.isEmpty {
+                    var args: [String: String] = ["script": script]
+                    if let language = call["language"] as? String, !language.isEmpty {
+                        args["language"] = language
+                    }
+                    if let reason = call["reason"] as? String, !reason.isEmpty {
+                        args["reason"] = reason
+                    }
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String), !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .synthesizedScript, capabilityID: "appAgent.synthesizedScript",
                         arguments: args, requiresApproval: true)
                 }
             }

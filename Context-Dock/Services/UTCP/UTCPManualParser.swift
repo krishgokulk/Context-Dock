@@ -23,7 +23,6 @@ enum UTCPManualParserError: LocalizedError {
 enum UTCPManualParser {
     /// Ingests either a native UTCP manual or an OpenAPI 3.x document and produces a normalized UTCPManual.
     static func parse(data: Data) throws -> UTCPManual {
-        // Attempt native UTCP decode first
         let decoder = JSONDecoder()
         if let manual = try? decoder.decode(UTCPManual.self, from: data) {
             return manual
@@ -32,6 +31,10 @@ enum UTCPManualParser {
         // Check if it's an OpenAPI or Swagger document
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw UTCPManualParserError.unreadableData
+        }
+
+        if json["utcp_version"] != nil {
+            return try decoder.decode(UTCPManual.self, from: data)
         }
 
         if json["openapi"] != nil || json["swagger"] != nil || json["paths"] != nil {

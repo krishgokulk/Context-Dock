@@ -45,6 +45,10 @@ extension AgentToolRegistry {
                         "description": "One line the user will read on the approval card, "
                             + "saying what this achieves.",
                     ],
+                    "text": [
+                        "type": "string",
+                        "description": "Optional text to enter into a focused element or search field.",
+                    ],
                 ],
                 required: ["target"]
             ) { arguments, context in
@@ -52,13 +56,14 @@ extension AgentToolRegistry {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let reason = (arguments["reason"] as? String ?? "").trimmingCharacters(
                     in: .whitespacesAndNewlines)
+                let text = (arguments["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !target.isEmpty else {
                     return AgentToolResult(
                         success: false, output: "operate_app needs 'target'.",
                         displayCommand: "operate_app")
                 }
                 return await ComputerUseRunner.run(
-                    target: target, reason: reason, scope: context.chatScope)
+                    target: target, reason: reason, text: text, scope: context.chatScope)
             })
     }
 }
@@ -67,7 +72,7 @@ extension AgentToolRegistry {
 enum ComputerUseRunner {
 
     static func run(
-        target: String, reason: String, scope: GeneralChatScope?
+        target: String, reason: String, text: String? = nil, scope: GeneralChatScope?
     ) async -> AgentToolResult {
         guard let bundleID = AgentToolRegistry.scopedBundleID(for: scope), !bundleID.isEmpty
         else {
@@ -77,7 +82,7 @@ enum ComputerUseRunner {
                     + "needs a named app. Ask in that app's own chat.",
                 displayCommand: "operate_app(\(target))")
         }
-        return await run(target: target, reason: reason, bundleID: bundleID, scope: scope)
+        return await run(target: target, reason: reason, text: text, bundleID: bundleID, scope: scope)
     }
 
     /// The same press, entered by bundle id.
@@ -89,7 +94,7 @@ enum ComputerUseRunner {
     /// exactly what happened: Computer Use shipped and the owner's own chat still said "not in
     /// my menu cache, so I cannot fire it".
     static func run(
-        target: String, reason: String, bundleID: String, scope: GeneralChatScope? = nil
+        target: String, reason: String, text: String? = nil, bundleID: String, scope: GeneralChatScope? = nil
     ) async -> AgentToolResult {
         guard !bundleID.isEmpty else {
             return AgentToolResult(
@@ -226,6 +231,22 @@ enum ComputerUseRunner {
                     + "action.")
 
         case .noMatch:
+            // One-shot search/text field focusing fallback
+            let lower = target.lowercased()
+            if lower == "search" || lower == "find" || lower == "search field" || lower == "focus search"
+                || lower.starts(with: "search ") || lower.starts(with: "find ") || lower == "enter text" || lower == "type"
+            {
+                let focusRes = AXUIFocusHelper.focusSearchOrTextField(in: app.processIdentifier, text: text)
+                if focusRes.success {
+                    return AgentToolResult(
+                        success: true,
+                        output: "\(focusRes.elementDescription) in \(appName). Ready for input."
+                            + (startedStep.map { "\n\n" + $0 } ?? ""),
+                        displayCommand: "operate_app(\(appName): \(focusRes.elementDescription))"
+                    ).withUserSummary("Focused search field in \(appName).")
+                }
+            }
+
             // The refusal the owner called perfect, kept — now with the live list behind it
             // rather than a stale one, so "it is not there" means it is really not there.
             let nearby = candidates
