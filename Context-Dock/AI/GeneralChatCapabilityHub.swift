@@ -895,6 +895,29 @@ final class GeneralChatCapabilityHub {
                 handled: true, success: scriptResult.success, output: scriptResult.output,
                 label: scriptResult.displayCommand)
 
+        case .synthesizedScript:
+            let script = invocation.arguments["script"] ?? ""
+            guard !script.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No script code provided.", label: "synthesized script blocked")
+            }
+            let language = invocation.arguments["language"] ?? "applescript"
+            let reason = invocation.arguments["reason"] ?? ""
+            let app = invocation.arguments["bundleId"] ?? invocation.arguments["app"] ?? ""
+            let effectiveScope: GeneralChatScope = {
+                if case .contextDock(let bundleID, _) = scope { return .app(bundleId: bundleID) }
+                return chatScope ?? .general
+            }()
+            let scriptResult = await SynthesizedScriptRunner.run(
+                script: script, language: language, reason: reason,
+                appInput: app, scope: effectiveScope, grantedApps: [:],
+                userRequest: reason
+            )
+            return ToolCallResult(
+                handled: true, success: scriptResult.success, output: scriptResult.output,
+                label: scriptResult.displayCommand)
+
         case .terminal:
             let plan = AIActionPlan(
                 capability: "terminal.runCommand",

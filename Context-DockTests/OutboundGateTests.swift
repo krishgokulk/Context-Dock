@@ -626,6 +626,7 @@ struct OutboundGateRegistryTests {
             ("run_capability", ["capability_id": "mail.createDraft", "input": [:] as [String: Any]]),
             ("run_menu_command", ["app": "Mail", "path": "Message > Send"]),
             ("run_app_script", ["name": "x.sh"]),
+            ("run_synthesized_script", ["script": "tell application \"Finder\" to get name of front window", "reason": "test"]),
             ("run_adapter_action", ["action_id": "unknown.action"]),
         ]
         for (name, args) in calls {

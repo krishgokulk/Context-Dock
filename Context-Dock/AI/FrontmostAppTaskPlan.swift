@@ -212,28 +212,30 @@ struct FrontmostAppTaskPlan: Equatable {
         if hasAction {
             tools.formUnion([
                 "find_menu_command", "run_menu_command", "send_keys", "window_control",
-                "operate_app",
+                "operate_app", "read_app_dictionary", "run_synthesized_script",
             ])
         }
 
         var agentNeverRules: [String] = []
-        if !bundleId.isEmpty,
-           let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
-            agentNeverRules = profile.never
-            if let scripts = profile.tools.scripts, !scripts.isEmpty {
-                tools.insert("run_app_script")
-            }
-            if let caps = profile.tools.capabilities, !caps.isEmpty {
-                tools.formUnion(["find_capability", "run_capability"])
-            }
-            if let mcps = profile.tools.mcp, !mcps.isEmpty {
-                tools.insert("run_mcp_tool")
-            }
-            if let actions = profile.tools.actions, !actions.isEmpty {
-                tools.insert("run_adapter_action")
-            }
-            if let clis = profile.tools.cli, !clis.isEmpty {
-                tools.insert("run_command")
+        if !bundleId.isEmpty {
+            tools.formUnion(["read_app_dictionary", "run_synthesized_script"])
+            if let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
+                agentNeverRules = profile.never
+                if let scripts = profile.tools.scripts, !scripts.isEmpty {
+                    tools.insert("run_app_script")
+                }
+                if let caps = profile.tools.capabilities, !caps.isEmpty {
+                    tools.formUnion(["find_capability", "run_capability"])
+                }
+                if let mcps = profile.tools.mcp, !mcps.isEmpty {
+                    tools.insert("run_mcp_tool")
+                }
+                if let actions = profile.tools.actions, !actions.isEmpty {
+                    tools.insert("run_adapter_action")
+                }
+                if let clis = profile.tools.cli, !clis.isEmpty {
+                    tools.insert("run_command")
+                }
             }
         }
 

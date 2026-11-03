@@ -771,6 +771,10 @@ enum AppScopedChatService {
         case .mcp, .capability:
             return AgentToolNarration.route(
                 tool: "run_capability", arguments: ["capability_id": invocation.capabilityID])
+        case .synthesizedScript:
+            let lang = invocation.arguments["language"]?.lowercased() == "jxa" ? "jxa" : "applescript"
+            return AgentToolNarration.route(
+                tool: "run_synthesized_script", arguments: ["language": lang])
         case .appScript, .terminal, .share:
             return nil
         }
@@ -778,6 +782,9 @@ enum AppScopedChatService {
 
     static func runningLabel(for invocation: AITypedInvocation) -> String {
         switch invocation.kind {
+        case .synthesizedScript:
+            let lang = invocation.arguments["language"]?.uppercased() == "JXA" ? "JXA" : "AppleScript"
+            return "Running synthesized \(lang)…"
         case .menuAction:
             let path = (invocation.arguments["path"] ?? "")
                 .components(separatedBy: "\u{1F}")
