@@ -174,7 +174,7 @@ struct UnifiedDockRowBackground: View {
             if isFocused {
                 Capsule(style: .continuous)
                     .fill(Color.clear)
-                    .background(GlassBackground(cornerRadius: 999, isDark: isDark))
+                    .background(GlassBackground(cornerRadius: 999, isDark: isDark, ignoresDarkness: true))
                     .clipShape(Capsule(style: .continuous))
                 Capsule(style: .continuous)
                     .fill(
