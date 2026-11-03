@@ -574,10 +574,23 @@ final class CornerDockController: NSObject {
         }
     }
 
+    var hasActiveBoard: Bool {
+        !selection.coversChat && (
+            showsClipboardBoard
+            || showsScopeBoard
+            || showsExtensionPanel
+            || showsAppSnapshot
+            || showsAppChatList
+            || showsWindowRow
+            || showsPinPreview
+            || (showsPluginCard && pluginCardPin != nil)
+        )
+    }
+
     /// A board — the result sheet, a card — is up under the field. Centred, only then are the
     /// field and the sheet one card; a bare field keeps the Corner's own Liquid Glass (owner
     /// 2026-10-12: the empty centred bar looked heavy, the sheet looked right).
-    var showsBoardUnderField: Bool { bottomSlots().list != nil }
+    var showsBoardUnderField: Bool { hasActiveBoard }
 
     var isCentredMode: Bool {
         chatPresentation.isCentred || AppSettings.shared.launcherPresentationMode == .centerScreen
