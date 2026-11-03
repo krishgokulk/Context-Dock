@@ -10,10 +10,18 @@
 
 ## In progress
 
-**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
-- Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
-- Baseline on `origin/general-chat-agent` in a dedicated worktree.
-- Run `./scripts/check.sh` before hand-off.
+**Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (2026-11-03):**
+- Unify Settings Integrations (Overview, Actions, Resources, AGENT.md, Access), per-app Skills (`SkillScope.app`), and live menu trees into user-selected AI Provider context.
+- Eliminate blocking "go install CLI" cards; establish the 3-Tier Escalation Ladder:
+  1. Tier 1: Zero-config local headless (SQLite, sdef AppleScript, native frameworks).
+  2. Tier 2: AI autonomous scripting (on-the-fly AppleScript/JXA with approval gate).
+  3. Tier 3: Universal fallback via Computer Use agent (live menu clicks, AX UI element press).
+- Canonical spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
+
+**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes (2026-11-02):**
+- Completed, in review via PR #367 (`3fed8d8`).
+- Curated tool catalog, parameter schemas, and route discovery for all 11 core macOS system scopes (Calendar, Reminders, Contacts, Music, Photos, Messages, Mail, Finder, Safari, Terminal).
+- All 21 tests passed across `CuratedSystemScopesRoutingTests` and `AppToolCatalogTests`; `./scripts/check.sh` clean.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).
