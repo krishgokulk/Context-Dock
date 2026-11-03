@@ -233,6 +233,9 @@ final class CornerDockController: NSObject {
                     // Let DockCore consume the same environment event first, then
                     // switch the shared session and redraw this second presentation.
                     await Task.yield()
+                    // User switched apps — dock should hide promptly using hideDelay,
+                    // not wait out the full idleDelay (owner 2026-11-03).
+                    self.pointerVisitedDock = true
                     self.prompt.frontmostAppDidChange(
                         app: appInfo.name,
                         bundleID: appInfo.bundleID,
