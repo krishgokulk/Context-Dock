@@ -1257,6 +1257,8 @@ final class AgentToolRegistry {
         registerComputerUseTool()
         // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
         registerAppAgentScriptTool()
+        // Tier 2: AI Autonomous Scripting Tool. See SynthesizedScriptTool.swift.
+        registerSynthesizedScriptTool()
         // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.
         registerOutputFileTool()
         // The user's Shortcuts: list freely, run on the approval sheet. See ShortcutsTool.swift.

@@ -61,7 +61,6 @@ final class CapabilityContractTests: XCTestCase {
             "app.menu.click",  // can be Quit, or Delete
             "project.build",  // runs a script from the repository
             "cli.run",  // runs a linked binary
-            "memory.save",  // changes what the user is told later
             "finder.trash",  // deletes
             "reminders.create",  // writes to the user's reminder lists
             "reminders.complete",  // changes a record the user owns
@@ -82,7 +81,7 @@ final class CapabilityContractTests: XCTestCase {
             "browser.history", "browser.bookmarks", "browser.currentPage", "browser.tabs",
             "files.recentDocuments", "files.search", "quicknotes.search",
             "apps.mostUsed", "clipboard.history", "extensions.list",
-            "cli.list", "memory.search",
+            "cli.list", "memory.search", "memory.save",
             "reminders.today", "reminders.list", "reminders.overdue",
         ] {
             let capability = try self.capability(id)

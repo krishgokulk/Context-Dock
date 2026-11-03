@@ -206,6 +206,23 @@ final class AppMenuCapabilityCache {
         guard let bundleIdentifier = app.bundleIdentifier, !bundleIdentifier.isEmpty else { return }
         let appName = app.localizedName ?? bundleIdentifier
         let bundleVersion = bundleVersion(for: app)
+        store(
+            items: items,
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            bundleVersion: bundleVersion,
+            replace: replace
+        )
+    }
+
+    nonisolated func store(
+        items: [AXMenuItem],
+        bundleIdentifier: String,
+        appName: String,
+        bundleVersion: String = "",
+        replace: Bool = false
+    ) {
+        guard !bundleIdentifier.isEmpty else { return }
         let localeIdentifier = Locale.current.identifier
         let now = Date()
 
@@ -648,6 +665,34 @@ final class AppMenuCapabilityCache {
                 modifiers: item.shortcutModifiers
             ).map { " [\($0)]" } ?? ""
             lines.append("- \(item.pathString)\(shortcut)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Formatted snapshot of live menu commands for the frontmost or scoped application.
+    /// Injected directly into the provider's turn context so the agent can execute commands
+    /// natively with run_menu_command without guesswork or manual CLI tool installation.
+    nonisolated func menuCommandsSnapshotBlock(
+        bundleIdentifier: String,
+        appName: String,
+        query: String = "",
+        maxResults: Int = 50
+    ) -> String {
+        guard !bundleIdentifier.isEmpty else { return "" }
+        let items = menuItems(bundleIdentifier: bundleIdentifier, appName: appName, query: query, maxResults: maxResults)
+        let leaves = items.filter { $0.isLeaf && !$0.path.isEmpty && !$0.isAppleMenu }
+        guard !leaves.isEmpty else { return "" }
+
+        var seen = Set<String>()
+        var lines: [String] = [
+            "## Live Menu Commands for \(appName)",
+            "The following menu commands are available in \(appName). You can execute any of these directly using `run_menu_command(app: \"\(appName)\", path: \"<exact path>\")` without requiring manual CLI tool installation:",
+        ]
+        for item in leaves {
+            let path = item.path.joined(separator: " ▸ ")
+            guard seen.insert(path.lowercased()).inserted else { continue }
+            let shortcut = item.shortcutDisplay.map { " (\($0))" } ?? ""
+            lines.append("- \(path)\(shortcut)")
         }
         return lines.joined(separator: "\n")
     }

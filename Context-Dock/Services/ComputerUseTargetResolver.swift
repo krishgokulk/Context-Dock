@@ -77,27 +77,63 @@ enum ComputerUseTargetResolver {
         case noMatch
     }
 
+    /// Extract path segments if the phrase uses common menu hierarchy separators (`>`, `▸`, `›`, `/`, `|`).
+    static func pathSegments(from phrase: String) -> [String] {
+        let separators = CharacterSet(charactersIn: ">›▸/|")
+        guard phrase.rangeOfCharacter(from: separators) != nil else { return [] }
+        return phrase
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "…", with: "") }
+            .filter { !$0.isEmpty }
+    }
+
     /// The typed resolution. `best` is kept as the thin wrapper below.
     static func resolve(phrase: String, among candidates: [ComputerUseTarget]) -> Resolution {
+        let segments = pathSegments(from: phrase)
         let wanted = tokens(phrase)
-        guard !wanted.isEmpty else { return .noMatch }
+        guard !wanted.isEmpty || !segments.isEmpty else { return .noMatch }
 
         // Everything is scored, including items that cannot be pressed, so the answer can say
         // *why* rather than reporting a greyed-out match as an absent one.
         var scored: [(score: Double, target: ComputerUseTarget)] = []
         for candidate in candidates {
+            // Direct path segment match (e.g. "File > Export To > PDF" or "File ▸ Save")
+            if !segments.isEmpty {
+                let candClean = candidate.path.map {
+                    $0.replacingOccurrences(of: "…", with: "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                }
+                let segClean = segments.map { $0.lowercased() }
+                if candClean == segClean
+                    || (candClean.count >= segClean.count
+                        && candClean.suffix(segClean.count) == ArraySlice(segClean))
+                {
+                    scored.append((10.0, candidate))
+                    continue
+                }
+            }
+
             let itemTokens = tokens(candidate.title)
-            guard !itemTokens.isEmpty else { continue }
-            let shared = wanted.intersection(itemTokens)
-            guard !shared.isEmpty else { continue }
+            let pathTokens = tokens(candidate.path.joined(separator: " "))
+            guard !pathTokens.isEmpty else { continue }
+
+            let sharedTitle = wanted.intersection(itemTokens)
+            let sharedPath = wanted.intersection(pathTokens)
+            guard !sharedPath.isEmpty else { continue }
 
             // Both directions matter. Coverage of the item's own words stops "update" matching
             // "Check for Updates and Restart Now" as readily as "Check for Updates"; coverage
             // of the phrase stops a one-word overlap from carrying a long request.
-            let itemCoverage = Double(shared.count) / Double(itemTokens.count)
-            let phraseCoverage = Double(shared.count) / Double(wanted.count)
-            guard itemCoverage >= 0.6 || phraseCoverage >= 0.6 else { continue }
-            scored.append((itemCoverage + phraseCoverage, candidate))
+            let titleCoverage = itemTokens.isEmpty ? 0.0 : Double(sharedTitle.count) / Double(itemTokens.count)
+            let pathCoverage = Double(sharedPath.count) / Double(pathTokens.count)
+            let phraseCoverage = wanted.isEmpty ? 0.0 : Double(sharedPath.count) / Double(wanted.count)
+
+            guard titleCoverage >= 0.6 || phraseCoverage >= 0.6 || (pathCoverage >= 0.5 && phraseCoverage >= 0.5) else {
+                continue
+            }
+            let score = titleCoverage * 1.5 + pathCoverage + phraseCoverage
+            scored.append((score, candidate))
         }
 
         let ranked = scored.sorted { $0.score > $1.score }

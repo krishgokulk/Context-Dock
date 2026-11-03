@@ -286,6 +286,9 @@ enum OutboundGate {
         case "run_app_script":
             return Target(kind: .external, host: nil, label: "run an app script that can reach the network")
 
+        case "run_synthesized_script":
+            return Target(kind: .external, host: nil, label: "run a synthesized script that can reach the network")
+
         case "run_adapter_action":
             let id = (arguments["action_id"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -323,7 +326,7 @@ enum OutboundGate {
     /// Tools `target` can classify as outbound (its switch above).
     static let outboundTools: Set<String> = [
         "read_url", "run_shortcut", "compose_message", "run_command", "spawn_worker",
-        "run_menu_command", "run_app_script", "run_adapter_action", "run_route", "run_capability",
+        "run_menu_command", "run_app_script", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
     ]
 
     /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
@@ -332,6 +335,7 @@ enum OutboundGate {
         "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
+        "read_app_dictionary",
     ]
 
     /// Built-in tools that can reach further than the table above judges, left ungated on

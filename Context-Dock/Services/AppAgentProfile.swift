@@ -78,6 +78,55 @@ struct AppAgentProfile: Equatable {
             && instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Prompt block containing frontmatter declarations and instructions for the system prompt.
+    func promptBlock() -> String {
+        var lines: [String] = []
+        lines.append("## How \(appName) is worked with (this app's AGENT.md profile)")
+        if !summary.isEmpty { lines.append(summary) }
+        if !instructions.isEmpty { lines.append(instructions) }
+        if !never.isEmpty {
+            lines.append("Never, in this app:")
+            lines += never.map { "- \($0)" }
+        }
+        if !verify.isEmpty {
+            lines.append(
+                "Check your own work with these: "
+                + verify.keys.sorted()
+                    .map { "\($0) → \(verify[$0] ?? "")" }
+                    .joined(separator: ", ")
+                + ". Report what the check read, not that you did it.")
+        }
+        if let caps = tools.capabilities, !caps.isEmpty {
+            lines.append("Declared capabilities: " + caps.joined(separator: ", "))
+        }
+        if let mcps = tools.mcp, !mcps.isEmpty {
+            lines.append("Declared MCP servers: " + mcps.joined(separator: ", "))
+        }
+        if let clis = tools.cli, !clis.isEmpty {
+            lines.append("Declared CLI tools: " + clis.joined(separator: ", "))
+        }
+        if let actions = tools.actions, !actions.isEmpty {
+            lines.append("Declared actions: " + actions.joined(separator: ", "))
+        }
+        if let scripts = tools.scripts, !scripts.isEmpty {
+            lines.append(
+                "Scripts this app carries: " + scripts.joined(separator: ", ")
+                + ". Run one with the run_app_script tool, or — if you were given no tools "
+                + "this turn — reply with ONLY "
+                + "{\"app_script\": {\"name\": \"\(scripts[0])\"}}. Never look for these "
+                + "files yourself and never run them through the shell: the name is the "
+                + "whole interface, and the user approves each run.")
+        }
+        let declared = tools.allNames
+        if !declared.isEmpty {
+            lines.append(
+                "Routes this app declares, in preference order: "
+                + declared.joined(separator: ", ")
+                + ". Prefer these over anything else listed below.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Reading
 
     static func parse(_ text: String, bundleID: String = "", appName: String = "")
