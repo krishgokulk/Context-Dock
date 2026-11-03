@@ -180,29 +180,32 @@ struct DynamicNotchLiveActivityView: View {
         ZStack(alignment: .top) {
             islandBackground
 
-            if isExpanded {
-                expandedContent
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
-                            removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
+            Group {
+                if isExpanded {
+                    expandedContent
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
+                                removal: .opacity.animation(.easeIn(duration: 0.12))
+                            )
                         )
-                    )
-            } else {
-                restingContent
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                            notchState.expand()
-                            if shelfStore.items.count > 0 {
-                                notchState.selectedPage = 1
-                            } else if mediaObserver.isPlaying {
-                                notchState.selectedPage = 0
+                } else {
+                    restingContent
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                                notchState.expand()
+                                if shelfStore.items.count > 0 {
+                                    notchState.selectedPage = 1
+                                } else if mediaObserver.isPlaying {
+                                    notchState.selectedPage = 0
+                                }
                             }
                         }
-                    }
-                    .transition(.opacity)
+                        .transition(.opacity)
+                }
             }
+            .clipShape(DynamicIslandNotchShape(cornerRadius: currentCornerRadius, earRadius: currentEarRadius, hasNotch: hasNotch))
         }
         .frame(width: islandWidth, height: islandHeight, alignment: .top)
         .contentShape(DynamicIslandNotchShape(cornerRadius: currentCornerRadius, earRadius: currentEarRadius, hasNotch: hasNotch))
