@@ -185,8 +185,12 @@ struct DynamicNotchLiveActivityView: View {
                     expandedContent
                         .transition(
                             .asymmetric(
-                                insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
-                                removal: .opacity.animation(.easeIn(duration: 0.12))
+                                insertion: .opacity
+                                    .combined(with: .offset(y: -25))
+                                    .combined(with: .scale(scale: 0.94, anchor: .top)),
+                                removal: .opacity
+                                    .combined(with: .offset(y: -70))
+                                    .combined(with: .scale(scale: 0.85, anchor: .top))
                             )
                         )
                 } else {
@@ -205,9 +209,11 @@ struct DynamicNotchLiveActivityView: View {
                         .transition(.opacity)
                 }
             }
-            .clipShape(DynamicIslandNotchShape(cornerRadius: currentCornerRadius, earRadius: currentEarRadius, hasNotch: hasNotch))
+            .frame(width: islandWidth, height: islandHeight, alignment: .top)
+            .clipped()
         }
         .frame(width: islandWidth, height: islandHeight, alignment: .top)
+        .clipped()
         .contentShape(DynamicIslandNotchShape(cornerRadius: currentCornerRadius, earRadius: currentEarRadius, hasNotch: hasNotch))
         .onHover { hovering in
             withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
