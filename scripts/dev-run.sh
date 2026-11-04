@@ -61,9 +61,9 @@ if pgrep -x Context-Dock >/dev/null; then
 fi
 fi
 
-# Signed (ad-hoc/dev) builds keep macOS Accessibility behavior consistent between
-# runs; build-debug.sh defaults to unsigned, so override here.
-CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" "$ROOT_DIR/scripts/build-debug.sh"
+# Signed (Apple Development) builds keep macOS Accessibility & Screen Recording permissions
+# consistent across builds by preserving a stable designated code requirement.
+CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" "$ROOT_DIR/scripts/build-debug.sh"
 
 # Relaunch the exact app we just built.
 open "$APP"
