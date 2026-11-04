@@ -21,7 +21,16 @@ struct AppIntegrationOverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var isEnabled: Bool { summary.adapter?.isEnabled ?? false }
+    private var isEnabled: Bool {
+        if let adapter = summary.adapter {
+            return adapter.isEnabled
+        }
+        return true
+    }
+
+    private var isBuiltIn: Bool {
+        summary.adapter?.isBuiltIn == true || summary.adapter == nil
+    }
 
     private var statusRow: some View {
         HStack(spacing: 8) {
@@ -30,7 +39,7 @@ struct AppIntegrationOverviewView: View {
                 .frame(width: 7, height: 7)
             Text(isEnabled ? "Enabled" : "Disabled")
                 .font(.system(size: 12, weight: .medium))
-            if summary.adapter?.isBuiltIn == true {
+            if isBuiltIn {
                 Text("Built-in")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)

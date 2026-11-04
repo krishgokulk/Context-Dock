@@ -775,6 +775,10 @@ enum AppScopedChatService {
             let lang = invocation.arguments["language"]?.lowercased() == "jxa" ? "jxa" : "applescript"
             return AgentToolNarration.route(
                 tool: "run_synthesized_script", arguments: ["language": lang])
+        case .axSnapshot:
+            return "Route: window elements · read"
+        case .axAct:
+            return "Route: window element · \(args["action"] ?? "act") \(args["id"] ?? "")"
         case .appScript, .terminal, .share:
             return nil
         }
@@ -796,6 +800,10 @@ enum AppScopedChatService {
             return target.isEmpty
                 ? "Reading the live menu bar…"
                 : "Looking for “\(target)” in the live menu bar…"
+        case .axSnapshot:
+            return "Reading the app's window…"
+        case .axAct:
+            return "Operating the app's window…"
         case .appScript:
             let name = invocation.arguments["name"] ?? ""
             return name.isEmpty ? "Running this app's script…" : "Running \(name)…"

@@ -920,6 +920,7 @@ final class AgentToolRegistry {
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
             "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
+            "ax_act",
         ]
         return policyFiltered.filter { !actionOnly.contains($0.name) }
     }
@@ -1255,6 +1256,8 @@ final class AgentToolRegistry {
         // The rung below a verified menu, off unless the user turned it on for that app.
         // See ComputerUseTool.swift.
         registerComputerUseTool()
+        // Phase 3.5: snapshot + element actions for work inside a window. See ComputerUseAXTools.swift.
+        registerComputerUseAXTools()
         // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
         registerAppAgentScriptTool()
         // Tier 2: AI Autonomous Scripting Tool. See SynthesizedScriptTool.swift.

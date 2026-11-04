@@ -13,6 +13,10 @@ enum ScopedRecordRead {
         "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
         "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
         "quit ", "enable ", "disable ", "export ",
+        // Switching a setting or pressing a control. "turn on the spelling option" had none of
+        // the words above, planned as a read, and was handed no menu or window tool at all.
+        "turn on ", "turn off ", "switch on ", "switch off ", "toggle ", "uncheck ", "untick ",
+        "click ", "press ",
     ]
 
     static func hasExplicitAction(_ query: String) -> Bool {
@@ -179,8 +183,7 @@ struct FrontmostAppTaskPlan: Equatable {
         var tools: Set<String> = ["find_capability", "run_capability", "run_adapter_action", "run_mcp_tool", "verify_outcome"]
         let id = bundleId.lowercased()
         if id.contains("imessage") || id.contains("messages") || id.contains("mobilesms") {
-            tools.formUnion(["get_messages_conversations", "search_messages"])
-            if hasAction { tools.insert("compose_message") }
+            tools.formUnion(["get_messages_conversations", "search_messages", "compose_message"])
         }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
@@ -205,14 +208,20 @@ struct FrontmostAppTaskPlan: Equatable {
             tools.formUnion(["list_shortcuts", "run_shortcut"])
         }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
-        // operate_app is offered on action turns even when Computer Use is switched off for
-        // this app, because its refusal *is* the offer: it tells the model to ask the user for
-        // permission in one line. Withholding it until the setting is on means nobody who has
-        // not already found the setting ever learns the rung exists.
-        if hasAction {
+
+        // Universal App Pet principle: an app-scoped pet is NEVER starved of its app's
+        // control and vision tools by brittle keyword matchers. The model is the brain;
+        // Context-Dock is the safe native body. The safety guards (consent store,
+        // approval cards, emergency stop HUD, destructive denylist) govern execution.
+        if !bundleId.isEmpty {
             tools.formUnion([
                 "find_menu_command", "run_menu_command", "send_keys", "window_control",
-                "operate_app", "read_app_dictionary", "run_synthesized_script",
+                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
+            ])
+        } else if hasAction {
+            tools.formUnion([
+                "find_menu_command", "run_menu_command", "send_keys", "window_control",
+                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
             ])
         }
 

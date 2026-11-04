@@ -290,6 +290,9 @@ enum ChatRouteResolver {
             "minimize", "minimise", "maximize", "maximise", "hide", "unhide", "zoom",
             "resize", "fullscreen", "collapse", "expand", "focus", "activate", "arrange",
             "tile", "split", "dock", "undock",
+            // Settings and controls: imperatives that name an option in the app's UI.
+            "turn on", "turn off", "switch on", "switch off", "enable", "disable",
+            "uncheck", "untick", "click", "press",
         ]
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }

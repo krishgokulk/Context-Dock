@@ -169,3 +169,47 @@ sequenceDiagram
    - Commit this specification to the repo.
 3. **Session Handoff:**
    - Conclude this planning turn cleanly so implementation can begin fresh.
+
+---
+
+## 8. Computer Use Perfection Addendum (2026-11-04)
+
+**Decision:** Do not embed AutoCua (cross-platform, separate runtime and consent model). Borrow its ideas and build a macOS-native loop on the existing `ComputerUseRunner`, consent store, and approval card.
+
+**Current state:** `operate_app` presses one live-menu item per call (plus search-field focus). There is no multi-step loop, no general AX element targeting, and no vision fallback.
+
+### Action preference order
+tool/MCP → AppleScript/JXA → menu press → AX press / set-value → keyboard shortcut → vision/coordinate click.
+
+### Phase 3.5: Observe → Act → Verify loop
+- `ax_snapshot`: frontmost-window AX tree plus menus, each element given a short ID (`e14`); optional screenshot + Vision OCR for canvas apps.
+- Tools: `list_menus`, `press_menu`, `ax_snapshot`, `ax_click(id)`, `ax_type(id, text)`, `key(combo)`, `screenshot`, `run_script`, `done(summary)`.
+- After each action, re-snapshot and compare state. Stop on success, a step budget, or 2 identical failures (stall detection).
+- Pin the target `bundleId`; if another app becomes frontmost, re-activate it or abort.
+- Compress earlier steps in long runs.
+
+### Phase 3.6: Safety & UX
+- Risky-action classifier (Send, Delete, Pay, Submit, overwrite) → one-click approval card. Reads and navigation run automatically.
+- Visible "DoraX is operating <App>" indicator with a Stop button and an Esc kill switch.
+- Prefer AX actions and AppleScript (no cursor hijack); CGEvent input only as a last resort.
+- Vision/coordinate steps are marked low-confidence and ask for approval more often.
+
+### Phase 5: Skill capture
+- After a successful Tier 2/3 run, offer "Save as skill for this app" (`SkillScope.app(bundleId)`) so the next run takes the fast path.
+
+### Acceptance (Task #368)
+End-to-end "export as PDF"-style task passes for three app types: scriptable, menu-only, and canvas. Every run ends with a verified read-back.
+
+### Implementation status (2026-11-04)
+
+| Item | Status | Where |
+| :--- | :--- | :--- |
+| Phase 3.5 observe → act → verify loop (`ax_snapshot`, `ax_act`, step budget, stall guard) | Implemented, build-verified; live-app test pending | `AI/ComputerUseAXTools.swift` |
+| Claude Code directives (`ax_snapshot`, `ax_act`) | Implemented | `AIOrchestrationModels.swift`, `GeneralChatCapabilityHub.swift`, `ScopedCommandExecutor.swift` |
+| Phase 3.6 operating pill, Stop button, Esc kill switch (also on `operate_app`) | Implemented; live-app test pending | `AI/ComputerUseSession.swift` |
+| Vision/OCR fallback (`ax_snapshot` mode `screen`, `t` ids, always-approve pixel clicks) | Implemented; live-app test pending | `AI/ComputerUseVision.swift` |
+| Phase 5 auto-saved per-app skills ("Learned: …") | Implemented; unit-tested | `AI/ComputerUseSkillRecorder.swift` |
+| Task #368 acceptance (export-as-PDF in scriptable, menu-only and canvas apps) | Not run | — |
+
+Notes: the full test suite has the same 240 failing suites with and without these changes (pre-existing). Stop holds for 30 seconds. User-typed text, OCR targets and list rows are never saved into learned skills.
+

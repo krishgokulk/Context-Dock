@@ -173,8 +173,14 @@ enum ComputerUseRunner {
         // is what said the item did not exist.
         let items = AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
             for: app.processIdentifier)
-        let candidates = flatten(items).map {
-            ComputerUseTarget(path: $0.path, isEnabled: $0.isEnabled)
+        // The same menu item can be read more than once (a lazy menu opened twice, a submenu
+        // reachable from two parents), and two entries with an identical path are one item,
+        // not an ambiguity. TextEdit reported "Check Spelling While Typing" three times and
+        // the resolver, finding three equal best matches, refused to press any of them.
+        var seenPaths = Set<[String]>()
+        let candidates = flatten(items).compactMap { item -> ComputerUseTarget? in
+            guard seenPaths.insert(item.path).inserted else { return nil }
+            return ComputerUseTarget(path: item.path, isEnabled: item.isEnabled)
         }
         guard !candidates.isEmpty else {
             return AgentToolResult(
@@ -316,15 +322,31 @@ enum ComputerUseRunner {
             }
         }
 
+        // Stop may have been pressed while the approval card was open; show the pill otherwise.
+        if ComputerUseSession.shared.isStopped {
+            return AgentToolResult(
+                success: false,
+                output: "The user pressed Stop. Do not take any more steps in \(appName). Say what "
+                    + "was done and ask whether to continue.",
+                displayCommand: "operate_app(\(appName)) · stopped by user"
+            ).withUserSummary("Stopped. DoraX won't take more steps in \(appName) unless you ask again.")
+        }
+        ComputerUseSession.shared.began(appName: appName, bundleID: bundleID)
+
         let pressed = AXMenuReader.shared.clickMenuItemReliably(
             path: chosen.path, in: app.processIdentifier)
         guard pressed else {
+            ComputerUseSkillRecorder.shared.failed(bundleID: bundleID)
             return AgentToolResult(
                 success: false,
                 output: "\(chosen.display) could not be pressed, so nothing happened.",
                 displayCommand: "operate_app(\(appName): \(chosen.display)) · failed")
                 .withUserSummary("\(chosen.display) couldn't be pressed, so nothing happened.")
         }
+
+        ComputerUseSkillRecorder.shared.succeeded(
+            bundleID: bundleID, appName: appName, goal: reason,
+            step: ComputerUseSkillRecorder.describeMenu(path: chosen.display))
 
         // Let the app respond before reading it back; a window that has not appeared yet
         // reads as an unchanged app, and "nothing happened" is the one wrong answer here.

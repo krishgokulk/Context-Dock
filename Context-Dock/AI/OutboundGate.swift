@@ -342,7 +342,7 @@ enum OutboundGate {
     /// purpose and listed here so that is a decision on the record, not an omission: an MCP
     /// tool, and the three that drive another app's UI (the owner's call, #164).
     static let ungatedTools: Set<String> = [
-        "run_mcp_tool", "operate_app", "send_keys", "window_control",
+        "run_mcp_tool", "operate_app", "ax_snapshot", "ax_act", "send_keys", "window_control",
     ]
 
     /// Whether a tool name has been judged. The registry test requires it of every built-in, so

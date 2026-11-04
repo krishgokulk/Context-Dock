@@ -44,6 +44,9 @@ enum AgentToolNarration {
                 $0.components(separatedBy: " > ")
             }
             return "Route: \(parts.filter { !$0.isEmpty }.joined(separator: " ▸ ")) · menu command"
+        case "ax_snapshot": return "Route: window elements · read"
+        case "ax_act":
+            return text("id").map { "Route: window element · \($0)" }
         case "operate_app":
             return text("target").map { "Route: live menu bar · \($0)" }
         case "run_adapter_action":
@@ -97,6 +100,8 @@ enum AgentToolNarration {
         case "run_command": return "Running"
         case "run_menu_command": return "Pressing"
         case "operate_app": return "Looking in the live menu bar for"
+        case "ax_snapshot": return "Reading the window"
+        case "ax_act": return "Operating the window"
         case "run_adapter_action": return "Running app action"
         case "run_capability", "run_mcp_tool", "run_route": return "Running"
         case "send_keys": return "Typing"

@@ -10,7 +10,11 @@
 
 ## In progress
 
-None — Task #368 completed, PR #368 opened against `general-chat-agent`. Awaiting owner review or next task order.
+**Task #369: Universal 5-Tool Engine & Messages Gold Standard Pipeline:**
+- In progress on `general-chat-agent`.
+- Spec: `docs/superpowers/specs/2026-11-04-one-app-perfect-flow-messages.md`.
+- Principle: The AI Model is the Brain, Context-Dock is the Safe Native Body.
+- Goal: Abolish fragile keyword-based intent withholding (`actionWords`, `isActionRequest`, `readWords`). Give every App Pet the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`). Perfect Messages end-to-end first as the reference implementation.
 
 ## Done (most recent first)
 
