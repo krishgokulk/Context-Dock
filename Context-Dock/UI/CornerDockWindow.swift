@@ -516,7 +516,9 @@ final class CornerDockController: NSObject {
         cancelPendingAutoHide()
         chatPresentation.isCentred = true
         prompt.staysOpenWhenIdle = true
-        setAutoHidden(false)
+        isAutoHidden = false
+        panel?.alphaValue = 1
+        panel?.ignoresMouseEvents = false
         position()
         // The app in front's Context Dock, as the old launcher opened (owner 2026-10-12);
         // Global when there is no app to scope to. A ⌘ tap or ⌫ walks to Global from there.
@@ -525,6 +527,7 @@ final class CornerDockController: NSObject {
         } else {
             chatPresentation.showGlobalContext()
         }
+        panel?.orderFrontRegardless()
         armKeyboard()
         refresh()
     }
@@ -961,9 +964,13 @@ final class CornerDockController: NSObject {
 
         let shouldShow = !rects.isEmpty
         if shouldShow {
-            if !panel.isVisible {
+            if isCentredMode || !panel.isVisible {
                 position()
                 panel.orderFrontRegardless()
+            }
+            if isCentredMode {
+                panel.alphaValue = 1
+                panel.ignoresMouseEvents = false
             }
             startHoverWatch()
         } else {
