@@ -577,6 +577,7 @@ final class CornerDockController: NSObject {
             || showsWindowRow
             || showsPinPreview
             || (showsPluginCard && pluginCardPin != nil)
+            || prompt.phase == .chat
         )
     }
 

@@ -713,10 +713,8 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: typing never pops the sheet open by itself — ↓ is the door in — but once it
-        // is open it stays open while anything is typed, its rows following each keystroke,
-        // as Spotlight's do (owner 2026-10-12). Clearing the field closes it (`queryChanged`).
-        if typed { return phase == .suggesting ? .suggesting : .prompt }
+        // Typed: auto-expand the result sheet when there are matching rows (Raycast/Spotlight parity).
+        if typed { return rows.isEmpty ? .prompt : .suggesting }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }

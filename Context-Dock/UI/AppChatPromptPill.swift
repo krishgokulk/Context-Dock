@@ -205,15 +205,13 @@ enum AppChatPromptMetrics {
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools,
             promptIcons: model.promptIconCount,
-            fieldHeight: fieldHeight(
-                global: model.usesDockHeight,
-                isCentred: CornerDockController.shared.chatPresentation.isCentred
-                    || AppSettings.shared.launcherPresentationMode == .centerScreen),
+            fieldHeight: fieldHeight(global: model.usesDockHeight),
             fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: appBarPillWidth(for: model),
             shellWidth: (CornerDockController.shared.chatPresentation.isCentred
-                || AppSettings.shared.launcherPresentationMode == .centerScreen)
+                || AppSettings.shared.launcherPresentationMode == .centerScreen
+                || CornerDockController.shared.showsBoardUnderField)
                 ? DockShellWidth.current
                 : (model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current),
             fieldLines: model.fieldLines)
@@ -282,11 +280,7 @@ enum AppChatPromptMetrics {
     /// Every open field is the Dock's input bar height, 56 (owner 2026-10-05: the Corner
     /// stood taller than the Dock). Global's included: its strip keeps the dock's 68 at rest
     /// and, while the field is up, centres its pins and shelf in the field's height.
-    static func fieldHeight(global: Bool, isCentred: Bool = false) -> CGFloat {
-        let isLauncher = isCentred || CornerDockController.shared.chatPresentation.isCentred
-            || AppSettings.shared.launcherPresentationMode == .centerScreen
-        return isLauncher ? 46 : inputHeight
-    }
+    static func fieldHeight(global: Bool, isCentred: Bool = false) -> CGFloat { inputHeight }
 
     private static func runWidth(_ count: Int) -> CGFloat {
         guard count > 0 else { return 0 }
@@ -1626,10 +1620,7 @@ struct AppChatPromptPill: View {
         .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
-            base: AppChatPromptMetrics.fieldHeight(
-                global: model.usesDockHeight,
-                isCentred: CornerDockController.shared.chatPresentation.isCentred
-                    || AppSettings.shared.launcherPresentationMode == .centerScreen),
+            base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
             lines: model.fieldLines))
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
