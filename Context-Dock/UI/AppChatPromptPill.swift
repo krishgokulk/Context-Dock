@@ -602,6 +602,10 @@ struct AppChatPromptPill: View {
         if model.phase != .chat {
             return CornerDockController.shared.splitFieldLayoutWidth
         }
+        // Panel hidden: lay out at the transcript-only width so the chat card is compact.
+        if !model.showsLivePanel {
+            return compactChatWidth
+        }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
         // conversation's alike.
         return size(for: .prompt).width
@@ -629,8 +633,17 @@ struct AppChatPromptPill: View {
     /// its full width (`globalInputWidth`, `legacyInputWidth`) and is only revealed less of,
     /// exactly as the dock → field morph does — no inner width moves, so the field's focus
     /// subtree is never re-laid out (the hang `globalBody` describes).
+    /// Chat-card width with the sidebar hidden: just the transcript column, matching
+    /// what the transcript already occupies when the panel is open.
+    private var compactChatWidth: CGFloat {
+        let full = DockShellWidth.current
+        return full - CornerLivePanelLayout.panelWidth(card: full)
+    }
+
     private var drawnWidth: CGFloat {
-        splitsShell ? CornerDockController.shared.splitWidths.field : size.width
+        if splitsShell { return CornerDockController.shared.splitWidths.field }
+        if model.phase == .chat && !model.showsLivePanel { return compactChatWidth }
+        return size.width
     }
 
     /// Global's field and strip share their trailing edge: they are one width. An app bar's
@@ -825,8 +838,10 @@ struct AppChatPromptPill: View {
     /// so its stack is laid out at the field's own width and its trailing controls stay in
     /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
     private var legacyInputWidth: CGFloat {
-        model.phase == .chat
-            ? size(for: .prompt).width : CornerDockController.shared.splitFieldLayoutWidth
+        if model.phase == .chat {
+            return model.showsLivePanel ? size(for: .prompt).width : compactChatWidth
+        }
+        return CornerDockController.shared.splitFieldLayoutWidth
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
