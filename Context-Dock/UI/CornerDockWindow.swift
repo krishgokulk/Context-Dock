@@ -178,24 +178,6 @@ final class CornerDockController: NSObject {
 
         panel = p
         hostView = host
-        // A text field selects all its text when its window becomes key again, so coming back to
-        // the corner (⌘⌘, a click, the keys handed back) showed the typed words selected and
-        // the next key replaced them. The caret goes to the end instead, as on first focus.
-        // Observe window moves in centered mode to remember user-dragged position
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification, object: p, queue: .main
-        ) { [weak self] _ in
-            guard let self, let panel = self.panel else { return }
-            let isCentredMode = self.chatPresentation.isCentred || AppSettings.shared.launcherPresentationMode == .centerScreen
-            if isCentredMode {
-                let frame = panel.frame
-                if let screen = panel.screen ?? NSScreen.main,
-                   screen.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) {
-                    AppSettings.shared.centredLauncherX = Double(frame.origin.x)
-                    AppSettings.shared.centredLauncherY = Double(frame.origin.y)
-                }
-            }
-        }
         position()
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
@@ -574,6 +556,14 @@ final class CornerDockController: NSObject {
         }
     }
 
+    func repositionCentredLauncher() {
+        position()
+    }
+
+    func updateShownPanelOrigin(_ origin: NSPoint) {
+        shownPanelOrigin = origin
+    }
+
     var hasActiveBoard: Bool {
         !selection.coversChat && (
             showsClipboardBoard
@@ -638,19 +628,16 @@ final class CornerDockController: NSObject {
         if isCentredMode {
             panel.isMovable = true
             panel.isMovableByWindowBackground = true
-            let savedX = AppSettings.shared.centredLauncherX
-            let savedY = AppSettings.shared.centredLauncherY
-            let screenBounds = screen?.frame ?? visible
-            if savedX >= 0, savedY >= 0,
-               screenBounds.contains(CGPoint(x: savedX + size.width / 2, y: savedY + size.height / 2)) {
-                x = CGFloat(savedX)
-                y = CGFloat(savedY)
-            } else {
-                let screenW = screen?.frame.width ?? visible.width
-                let screenX = screen?.frame.minX ?? 0
-                x = (screenW - size.width) / 2 + screenX
-                y = visible.minY + visible.height * 0.62 + pad - size.height
-            }
+            let screenW = screen?.frame.width ?? visible.width
+            let screenX = screen?.frame.minX ?? 0
+            let defaultX = (screenW - size.width) / 2 + screenX
+            let defaultY = visible.minY + visible.height * 0.62 + pad - size.height
+            let maxOffsetY = max(0, visible.maxY - (visible.minY + visible.height * 0.62 + pad) - 40)
+            let minOffsetY = -(visible.height * 0.45)
+            let clampedOffsetY = min(max(minOffsetY, CGFloat(AppSettings.shared.centredLauncherOffsetY)), maxOffsetY)
+            let clampedOffsetX = min(max(-screenW * 0.4, CGFloat(AppSettings.shared.centredLauncherOffsetX)), screenW * 0.4)
+            x = defaultX + clampedOffsetX
+            y = defaultY + clampedOffsetY
         } else {
             panel.isMovable = false
             panel.isMovableByWindowBackground = false
@@ -948,16 +935,7 @@ final class CornerDockController: NSObject {
         }
         // Centred or in Notch mode, the field and its sheet are one card: the gap between them and the card's
         // margin answer the pointer too, or a click there fell through to the app beneath.
-        if isCentredMode {
-            let offX = CGFloat(AppSettings.shared.centredLauncherOffsetX)
-            let offY = CGFloat(AppSettings.shared.centredLauncherOffsetY)
-            rects = rects.map { $0.offsetBy(dx: offX, dy: -offY) }
-            if let field = slots.prompt {
-                let combined = (slots.list.map { field.union($0) } ?? field)
-                    .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset)
-                rects.append(combined.offsetBy(dx: offX, dy: -offY))
-            }
-        } else if (chatPresentation.isCentred || anchor == .notch), let field = slots.prompt {
+        if (isCentredMode || chatPresentation.isCentred || anchor == .notch), let field = slots.prompt {
             rects.append(
                 (slots.list.map { field.union($0) } ?? field)
                     .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
@@ -2482,10 +2460,6 @@ struct CornerDockSurface: View {
             // The shell's one width (#189): every surface in it is drawn at this.
             .frame(width: DockShellWidth.current, alignment: rowEdge)
         }
-        .offset(
-            x: CGFloat(settings.centredLauncherOffsetX),
-            y: CGFloat(settings.centredLauncherOffsetY)
-        )
     }
 
     private var column: some View {

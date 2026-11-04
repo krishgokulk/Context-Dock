@@ -20,6 +20,7 @@ struct LauncherDragBackground: NSViewRepresentable {
 
     final class DragView: NSView {
         private var initialMouse: NSPoint = .zero
+        private var initialWindowOrigin: NSPoint = .zero
         private var initialOffsetX: Double = 0
         private var initialOffsetY: Double = 0
         private var isDragging = false
@@ -29,16 +30,18 @@ struct LauncherDragBackground: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             if event.clickCount == 2 {
                 AppSettings.shared.resetCentredLauncherPosition()
-                CornerDockController.shared.refresh()
+                CornerDockController.shared.repositionCentredLauncher()
                 return
             }
             initialMouse = NSEvent.mouseLocation
+            initialWindowOrigin = window?.frame.origin ?? .zero
             initialOffsetX = AppSettings.shared.centredLauncherOffsetX
             initialOffsetY = AppSettings.shared.centredLauncherOffsetY
             isDragging = false
         }
 
         override func mouseDragged(with event: NSEvent) {
+            guard let window = self.window else { return }
             let current = NSEvent.mouseLocation
             let dx = current.x - initialMouse.x
             let dy = current.y - initialMouse.y
@@ -46,13 +49,25 @@ struct LauncherDragBackground: NSViewRepresentable {
             isDragging = true
             let isCentredMode = CornerDockController.shared.chatPresentation.isCentred
                 || AppSettings.shared.launcherPresentationMode == .centerScreen
-            if isCentredMode {
-                let newX = min(max(-600, initialOffsetX + Double(dx)), 600)
-                let newY = min(max(-400, initialOffsetY - Double(dy)), 400)
-                AppSettings.shared.centredLauncherOffsetX = newX
-                AppSettings.shared.centredLauncherOffsetY = newY
-                CornerDockController.shared.refresh()
-            }
+            guard isCentredMode else { return }
+
+            let screen = window.screen ?? NSScreen.main
+            let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            let maxOffsetY = Double(max(0, visible.maxY - (visible.minY + visible.height * 0.62 + CornerDockLayout.pad) - 40))
+            let minOffsetY = Double(-(visible.height * 0.45))
+            let maxOffsetX = Double(visible.width * 0.4)
+
+            let newOffsetX = min(max(-maxOffsetX, initialOffsetX + Double(dx)), maxOffsetX)
+            let newOffsetY = min(max(minOffsetY, initialOffsetY + Double(dy)), maxOffsetY)
+            AppSettings.shared.centredLauncherOffsetX = newOffsetX
+            AppSettings.shared.centredLauncherOffsetY = newOffsetY
+
+            let targetOrigin = NSPoint(
+                x: initialWindowOrigin.x + CGFloat(newOffsetX - initialOffsetX),
+                y: initialWindowOrigin.y + CGFloat(newOffsetY - initialOffsetY)
+            )
+            window.setFrameOrigin(targetOrigin)
+            CornerDockController.shared.updateShownPanelOrigin(targetOrigin)
         }
     }
 }
