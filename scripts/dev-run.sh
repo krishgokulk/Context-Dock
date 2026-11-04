@@ -65,6 +65,10 @@ fi
 # consistent across builds by preserving a stable designated code requirement.
 CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" "$ROOT_DIR/scripts/build-debug.sh"
 
+# Ensure Context-Dock is accessible in ~/Applications for System Settings and Finder.
+mkdir -p "$HOME/Applications"
+ln -sfn "$APP" "$HOME/Applications/Context-Dock.app"
+
 # Relaunch the exact app we just built.
 open "$APP"
 
