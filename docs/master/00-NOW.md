@@ -13,6 +13,15 @@
 **Issue #331: UI/UX queue 1/5 — Live-panel detail modes:**
 - Detailed modes for live panels, inspector views, and surface integration.
 
+## Queued (next)
+
+**Task #373: Streamline Settings & Extensions Architecture (Packs, Apps, Store):**
+- Spec: `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
+- Consolidate 4 fragmented sidebar items (`App Packs`, `Integrations`, `Plugins`, `Plugin Creator`) into unified `Extensions` (`Apps` and `Store / Packs`).
+- Simplify per-app detail view from 5 tabs and 8-bucket technical count into 3 clean tabs: `Capabilities & Skills`, `Agent (AGENT.md)`, and `Access & Permissions`.
+- Automatic App Binding: Packs installed from the Store bind directly to matching app `bundleId`.
+- AI Pack Creator: AI introspects local app `sdef`, menu tree, and online OpenAPI/UTCP specs to synthesize complete packs automatically.
+
 ## Done (most recent first)
 
 **Fix: Activate Target App Before Reading and Operating Menus in Computer Use:**
@@ -418,6 +427,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-27 | #327 architecture confirmed after clarification: headless means structured adapter/API/MCP/CLI/Shortcut work, not Computer Use; Computer Use is the visible-UI last resort. Clicking a running-app icon changes the active Pet inside the same Dock and does not foreground the underlying app or create a window; dragging detaches it. |
 | 2026-10-28 | **General Chat and App Pet Chat are separate identities.** General Chat is Dora's Mac-wide conversation and may use an app ability only for the current turn; this does not rename it, load Pet memory or restrict later turns. **Open in App Pet** explicitly creates the anchored, remembered app conversation. Combined Chat requires persistent connected Pets, not merely multiple tool routes. |
 | 2026-10-28 | **Pet presentation & expansion lifecycle:** clicking/double-clicking the floating desktop mascot jumps directly to Tier 3 (Expanded Window); action receipt bubbles stay pinned until explicitly closed with ✕; micro-bar ✏️ expands into inline input `[+] [Start new chat] [↑]` without opening a window (spec: `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md`). |
+| 2026-11-05 | **Two-Sided Normalized Adapter Architecture & Settings Consolidation:** Documented in `FRONTMOST_AGENT.md` (§7) and `CAPABILITY_LAYER.md`. DoraX acts as the governor and sandbox between frontmost apps and AI providers (Claude Code / Codex / Gemini), replacing fragmented manual scripts with the 3-Tier Escalation Ladder (built-in/UTCP → synthesized scripting → Computer Use UI automation). Settings UI consolidated via Task #373 (`docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`). |
 
 ## Open decisions (owner)
 

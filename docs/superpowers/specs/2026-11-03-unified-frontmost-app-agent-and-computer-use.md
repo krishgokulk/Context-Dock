@@ -37,9 +37,9 @@ Context-Dock already possesses the necessary architectural building blocks insid
   2. **Actions:** Registered first-party and custom capabilities (`AICapabilityRegistry.swift`, e.g. `safari.summarizePage`, `messages.topContacts`).
   3. **Resources:**
      - **Per-App Skills (`SkillStore.swift`):** Instructions specifically scoped to this application (`SkillScope.app(bundleId)`).
-     - **MCP Servers:** Local or sandboxed MCP daemons (e.g., Apple's native `safari-mcp`).
+     - **MCP Servers:** Local or sandboxed MCP daemons (e.g., Apple's native `safari-mcp`). Note: MCP runs external Node/Python processes which are resource-heavy.
      - **CLI Tools:** Known or linked binaries (`markitdown`, `yt-dlp`, `trash`).
-     - **API Connections (UTCP):** Universal Tool Calling Protocol and OpenAPI definitions.
+     - **API Connections (UTCP):** Universal Tool Calling Protocol (`utcp.io`) and OpenAPI definitions. Zero-daemon direct HTTP and CLI execution via native Swift `URLSession` and `Process`, eliminating heavy background runtimes.
      - **Shortcuts & Context Readers:** System Shortcuts and file/window readers.
   4. **Agent (`AGENT.md` via `AppIntegrationAgentView.swift`):**
      - YAML frontmatter declaring tools: `capabilities: [...]`, `mcp: [...]`, `cli: [...]`, `actions: [...]`.
