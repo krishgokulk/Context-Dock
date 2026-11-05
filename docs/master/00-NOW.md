@@ -10,14 +10,21 @@
 
 ## In progress
 
+**Issue #331: UI/UX queue 1/5 — Live-panel detail modes:**
+- Detailed modes for live panels, inspector views, and surface integration.
+
+## Done (most recent first)
+
 **Task #368 Part 5: Autonomous Computer Use Acceptance Across 3 App Types (Scriptable, Menu-Only, Canvas):**
+- Completed and merged via PR #370.
 - Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md` (§8 Computer Use Perfection Addendum).
-- End-to-end verification of the observe → act → verify loop (`ax_snapshot`, `ax_act`, step budget, stall guard) with verified read-back across 3 application tiers:
-  1. Scriptable App (sdef inspection + synthesized scripting execution with verified read-back)
-  2. Menu-Only App (live menu clicks + AX UI sheet interaction, e.g. export-as-PDF flow)
-  3. Canvas App (AX element tree with vision/OCR fallback when elements are absent)
-- Verify `ComputerUseSkillRecorder` automatically offers/saves learned workflows into per-app skills (`SkillScope.app(bundleId)`).
-- Verify safety HUD (operating pill, Stop button, Esc kill switch) during multi-step runs.
+- End-to-end verification of observe → act → verify loop across 3 application tiers:
+  1. Scriptable App (sdef inspection + synthesized scripting execution with verified read-back and AGENT.md safety rules enforcement).
+  2. Menu-Only App (hierarchical menu resolution with `>`, `▸`, `›`, `/`, `|` delimiters, sheet AX snapshotting, loop guard with stall detection and 25-step budget, outbound destructive command forbidden protection).
+  3. Canvas App (Vision/OCR fallback target detection with `t`-prefix IDs, global screen point mapping with top-left origin, per-step approval gating).
+- Verified `ComputerUseSkillRecorder` multi-step workflow recording into per-app skills (`SkillScope.app(bundleId)`), stripping user-typed text, OCR coordinates, and dynamic data rows.
+- Verified Safety HUD lifecycle (`ComputerUseSession.shared.began`), emergency Stop (Esc key monitor), and 30-second stop cooldown.
+- 16/16 tests passing in `Context-DockTests/ComputerUseAcceptance3AppTypesTests.swift`. Clean gate build `./scripts/check.sh` passed.
 
 ## Done (most recent first)
 
