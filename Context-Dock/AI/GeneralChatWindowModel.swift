@@ -74,6 +74,8 @@ final class GeneralChatWindowModel: ObservableObject {
     @Published private(set) var pendingParticipantRequest: EnableAppRequest?
     /// Sidebar contents, most recently used first.
     @Published private(set) var sessions: [GeneralChatSession] = GeneralChatSessionStore.index()
+    /// Active temporary side thread branched off the current conversation (#333).
+    @Published var activeSideThread: SideThreadState? = nil
 
     /// Persistent identity of the active conversation, separate from per-turn `activeTurnScope`.
     var conversationKind: ConversationKind {
@@ -201,6 +203,7 @@ final class GeneralChatWindowModel: ObservableObject {
         if !isSending { persist() }
         activeScope = scope
         activeTurnScope = .empty
+        activeSideThread = nil
         messages = GeneralChatSessionStore.load(scope: scope)
         input = ""
         attachments = []
@@ -247,6 +250,7 @@ final class GeneralChatWindowModel: ObservableObject {
     func openGeneralSession() {
         activeScope = .general
         activeTurnScope = .empty
+        activeSideThread = nil
         participantSet = .empty
         messages = GeneralChatSessionStore.load(scope: .general)
         attachedAppNames = []
@@ -1096,6 +1100,18 @@ final class GeneralChatWindowModel: ObservableObject {
             }
         }
 
+        // Handle /side command (#333).
+        if query.lowercased().hasPrefix("/side") {
+            let sideQuery = String(query.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            branchSideThread(from: messages.last)
+            input = ""
+            attachments = []
+            if !sideQuery.isEmpty {
+                sendSideThread(query: sideQuery)
+            }
+            return
+        }
+
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let turnScope = resolveTurnScope(for: query)
@@ -1325,6 +1341,88 @@ final class GeneralChatWindowModel: ObservableObject {
         stored.append(message)
         GeneralChatSessionStore.save(stored, scope: scope, title: title)
         sessions = GeneralChatSessionStore.index()
+    }
+
+    // MARK: - Side Thread (sub-conversation branch) (#333)
+
+    func branchSideThread(from message: AIChatMessage? = nil, snippet: String? = nil) {
+        let parentMsg = message ?? messages.last
+        let derivedSnippet = snippet ?? SideThreadSummarizer.extractTurnSnippet(from: parentMsg)
+        activeSideThread = SideThreadState(
+            parentMessageID: parentMsg?.id,
+            parentTurnSnippet: derivedSnippet,
+            parentScopeKey: activeScope.storageKey
+        )
+    }
+
+    func foldBackSideThread() {
+        guard let side = activeSideThread else { return }
+        let summary = SideThreadSummarizer.generateFoldBackSummary(
+            parentSnippet: side.parentTurnSnippet,
+            messages: side.messages
+        )
+        let summaryMessage = AIChatMessage(role: .assistant, content: summary)
+        messages.append(summaryMessage)
+        persist()
+        activeSideThread = nil
+    }
+
+    func discardSideThread() {
+        activeSideThread = nil
+    }
+
+    func sendSideThread(query: String) {
+        guard var side = activeSideThread else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !side.isSending else { return }
+
+        let userMsg = AIChatMessage(role: .user, content: trimmed)
+        side.messages.append(userMsg)
+        side.isSending = true
+        side.liveSteps = ["Researching side question…"]
+        activeSideThread = side
+
+        let parentSnippet = side.parentTurnSnippet
+        let history: [ChatMessage] = [
+            ChatMessage(role: .assistant, content: "Context from main thread: \(parentSnippet)")
+        ] + side.messages.dropLast().compactMap { msg in
+            switch msg.role {
+            case .user: return ChatMessage(role: .user, content: msg.content)
+            case .assistant: return ChatMessage(role: .assistant, content: msg.content)
+            case .tool, .approval: return nil
+            }
+        }
+
+        let sendScope = activeScope
+        let sendAppName = activeScopeAppName ?? activeTitle
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let answer = try await AppScopedChatService.send(
+                    scope: sendScope,
+                    appName: sendAppName,
+                    query: trimmed,
+                    history: history
+                )
+
+                if var currentSide = self.activeSideThread, currentSide.id == side.id {
+                    let assistantMsg = AIChatMessage(role: .assistant, content: answer.text)
+                    currentSide.messages.append(assistantMsg)
+                    currentSide.isSending = false
+                    currentSide.liveSteps = []
+                    self.activeSideThread = currentSide
+                }
+            } catch {
+                if var currentSide = self.activeSideThread, currentSide.id == side.id {
+                    let errorMsg = AIChatMessage(role: .assistant, content: "Error: \(error.localizedDescription)", isError: true)
+                    currentSide.messages.append(errorMsg)
+                    currentSide.isSending = false
+                    currentSide.liveSteps = []
+                    self.activeSideThread = currentSide
+                }
+            }
+        }
     }
 
     private func persist() {

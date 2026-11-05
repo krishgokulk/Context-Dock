@@ -247,7 +247,16 @@ struct CornerGeneralChatView: View {
     @ViewBuilder
     private var board: some View {
         VStack(spacing: 0) {
-            if showsTranscript {
+            if let sideThread = model.activeSideThread {
+                SideThreadChildView(
+                    sideThread: sideThread,
+                    scopeTitle: model.activeTitle,
+                    onSend: { query in model.sendSideThread(query: query) },
+                    onFoldBack: { model.foldBackSideThread() },
+                    onDiscard: { model.discardSideThread() },
+                    onBack: { model.discardSideThread() }
+                )
+            } else if showsTranscript {
                 header
                 Divider().opacity(0.18)
                 transcript
@@ -512,6 +521,7 @@ struct CornerGeneralChatView: View {
                                 onEnableApp: { model.enableApp($0) },
                                 onDeclineEnableApp: { model.declineEnableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
+                                onBranchSideThread: { msg in model.branchSideThread(from: msg) },
                                 liveSteps: message.id == model.messages.last?.id
                                     ? model.activeProgress : [],
                                 liveActivity: message.id == model.messages.last?.id

@@ -16,9 +16,6 @@ Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
 
 ## Queued (next)
 
-**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
-- Issue #333. Branch a temporary side question from an active App Pet, Combined Chat, or General Chat without polluting the main conversation or Pet memory; supports explicit fold-back summary or discard.
-
 **Task UI/UX 4/5 (#334): Auto Context Mode (bounded workspace pre-gathering):**
 - Issue #334. Bounded pre-gathering of focused app context before the model turn.
 
@@ -30,6 +27,14 @@ Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
+- Completed on branch `claude/task-333-side-thread` (Issue #333).
+- Implemented `SideThreadState` and `SideThreadSummarizer` (`Context-Dock/AI/SideThread.swift`) allowing temporary side tangent conversations branched off an active App Pet, Combined Chat, or General Chat turn without polluting the main conversation transcript or Pet memory.
+- Implemented `SideThreadChildView` (`Context-Dock/UI/SideThreadChildView.swift`) as a child view within the existing surface shell (Corner Dock, Corner General Chat, and Standalone General Chat window), preserving active scope and grounding.
+- Added explicit Fold Back summary action (synthesizing side findings into a single structured summary turn in the main thread) and Discard action (dismissing without modifying main messages).
+- Added `Side thread` action button to `AIChatMessageView` assistant turn footers, `/side [query]` slash command support in `AppChatPromptModel` and `GeneralChatWindowModel`, and registered `chat.sideThread` (`⌥S`) in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/SideThreadTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
 - Completed on branch `claude/task-332-keys-overlay` (Issue #332).
