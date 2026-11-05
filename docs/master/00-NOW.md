@@ -10,19 +10,36 @@
 
 ## In progress
 
-**Issue #331: UI/UX queue 1/5 — Live-panel detail modes:**
-- Detailed modes for live panels, inspector views, and surface integration.
-
-## Queued (next)
-
 **Task #373: Streamline Settings & Extensions Architecture (Packs, Apps, Store):**
 - Spec: `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
 - Consolidate 4 fragmented sidebar items (`App Packs`, `Integrations`, `Plugins`, `Plugin Creator`) into unified `Extensions` (`Apps` and `Store / Packs`).
 - Simplify per-app detail view from 5 tabs and 8-bucket technical count into 3 clean tabs: `Capabilities & Skills`, `Agent (AGENT.md)`, and `Access & Permissions`.
 - Automatic App Binding: Packs installed from the Store bind directly to matching app `bundleId`.
 - AI Pack Creator: AI introspects local app `sdef`, menu tree, and online OpenAPI/UTCP specs to synthesize complete packs automatically.
+- Active in worktree `.claude/worktrees/task-373-streamline-settings-extensions` on branch `claude/task-373-streamline-settings-extensions`.
+
+Coordinator: Antigravity Planner — since 2026-11-05 16:00 UTC
+
+## Queued (next)
+
+**Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
+- Issue #332. On-demand overlay listing active keyboard shortcuts (⌘⌘ Global Context, ⌥⌥ launcher, scope toggle, swipes, expand) read from the real key map without hardcoded copies or drift.
+
+**AI Engine Plan Backlog:**
+- **#151: E3 Prompt order: stable sections first** (`ready`).
+- **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 1/5 (#331): Live-panel detail modes (Summary / Normal / Verbose):**
+- Completed and merged via PR #373 (`909a4937`).
+- Implemented per-answer density control in answer views and live panel:
+  1. Summary: Headline + core verdict.
+  2. Normal: Current standard view.
+  3. Verbose: Expanded user-facing steps, receipts, and verified evidence (never leaks raw model/internal tool output, per #316).
+- Toggling density updates existing rendered answers dynamically without re-running turns.
+- View-level state only; does not change routing, approvals, or engine execution.
+- Verified with unit tests in `Context-DockTests/LivePanelDetailModeTests.swift` (12 tests). Gate `./scripts/check.sh` clean. Relaunched via `./scripts/dev-run.sh`.
 
 **Fix: Activate Target App Before Reading and Operating Menus in Computer Use:**
 - Completed and merged via PR #372 (`3e6a525`).
@@ -143,8 +160,6 @@ architecture truth for one Dock, Global Context, App Pets, Combined Chat, memory
 No product code starts from this document until the owner verifies the final decision card and an
 implementation plan is approved. Canonical spec:
 `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`.
-
-Coordinator: Planner `Context-Dock planner — land #312` (Opus) — since 2026-10-26 (fresh session took over to save tokens). On takeover rewrite this line.
 
 **Fresh planner, start here (2026-10-26):** **#318 MERGED** — PR **#320** (`fab61e8e`) unified Global Context + frontmost Context Dock into one surface (`SurfaceFocus` + pure `SurfaceFocusRules.decide` + tests; lanes/`DockEngine`/`DockCore` untouched; "never merge layers" reworded in AGENTS.md/CLAUDE.md/blueprint). Owner hand-checked "320 passed"; issue #318 closed. Planner review posted a swipe-up-in-General finding then **retracted it as a false positive** (`destination()` early-returns for `.general` before the layer branch; read the diff hunk without the unchanged top block — lesson: review the whole function). Also merged: **#310** (opencode.json, `6f920942`), **#322** (planner handoff docs). **Local worktree `issue-318-unify-dock-surface-561302` not removed** (held the owner's running hand-check app). Cleanup is the owner's, once the app is quit and after checking the tree — `git -C <wt> status` shows one **untracked** `docs/screenshots/318/frontmost-focus.png` (an extra not in the merged PR; the numbered shots 1–3 are committed and in `fab61e8e`). Preserve that file if wanted, then remove (the squash-merge leaves the branch reading "3 commits ahead" though its content is merged): `git worktree remove --force .claude/worktrees/issue-318-unify-dock-surface-561302` then `git branch -D claude/issue-318-unify-dock-surface-561302`. `--force` only after confirming nothing untracked there matters (AGENTS.md cleanup rule). **#208 P13 / PR #312 MERGED** (`42c0b70e`, owner "312 passed" 2026-10-26) — dictionary rung + tool-less-provider live property read; frontier moves to #204. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidate not yet `ready`: **#316** (refusal-text-as-answer). Builder sessions the planner spawns must be set to **Sonnet**; cross-session send can't reach a builder a *previous* planner spawned (memory `fresh-planner-cannot-reach-prior-builder`). Queue fed: `ready` = **#323** (Corner UI size/expand/side-rail — new, verify scope), **#205**. New: **#321** docs-only design proposal (owner's own cloud session) — owner's, not planner queue.
 
