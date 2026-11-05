@@ -76,6 +76,30 @@ final class AppleNotesMCPServer {
         return await AppleNotesMetadataIndex.shared.search(query: "", maxResults: maxResults)
     }
 
+    /// Read recent notes sorted by modification date without launching Notes or opening UI.
+    func recentNotes(limit: Int = 15) async throws -> [NoteMetadata] {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        let count = await AppleNotesMetadataIndex.shared.cachedCount
+        if count == 0 {
+            try await AppleNotesMetadataIndex.shared.forceRefresh()
+        } else {
+            Task.detached(priority: .background) {
+                try? await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+            }
+        }
+        let results = await AppleNotesMetadataIndex.shared.search(query: "", maxResults: limit)
+        AppleNotesMCPAuditLogger.shared.record(
+            toolName: "notes.recent",
+            noteIDs: results.map(\.id),
+            riskLevel: .low,
+            approvalStatus: .notRequired
+        )
+        return results
+    }
+
     func selectedNoteID() async throws -> String {
         try assertEnabled()
         return try await AppleNotesExecutionService.shared.selectedNoteID()

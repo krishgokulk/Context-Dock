@@ -14,7 +14,11 @@
 - In progress on `general-chat-agent`.
 - Spec: `docs/superpowers/specs/2026-11-04-one-app-perfect-flow-messages.md`.
 - Principle: The AI Model is the Brain, Context-Dock is the Safe Native Body.
-- Goal: Abolish fragile keyword-based intent withholding (`actionWords`, `isActionRequest`, `readWords`). Give every App Pet the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`). Perfect Messages end-to-end first as the reference implementation.
+- Milestone 1 (Zero-Withholding Tool Surface): Removed keyword-based tool withholding in `FrontmostAppTaskPlan.swift`; App Pets always receive full sensory and execution tools. Fixed Settings › Integrations display for native apps (shows "Messages" and 4 built-in actions).
+- Milestone 2 (Messages Send Pipeline): Implemented `send_message` / `messages.send` with automatic Contact resolution (`CNContactStore`), explicit outbound draft card confirmation (`AICapabilityApprovalCenter`), headless AppleScript execution with UI automation fallback (`imessage://` + `AXUIFocusHelper`), and verified read-back against `chat.db` (`MessagesChatDBReader.verifySentMessage`). Verified by `MessagesSendWorkflowTests` (4/4 pass). All 12 unit tests pass.
+- Milestone 3 (Action Creator Simplification): Restructured `AdapterActionEditorSheet` from 10 technical items down to 3 clean choices (🌟 AI Goal [Recommended], ⚡️ Shortcut or Link, 💻 Custom Script). AI Goal directly defaults to `aiPrompt` and lets the model act as the brain.
+- Milestone 4 (Notes & Safari Capabilities Expansion): Implemented `notes.recent` and verified read-back for `notes.create` / `notes.append`. Built `AppleSafariMCPCapabilities` (`safari.currentTab`, `safari.pageContent`, `safari.listTabs`, `safari.switchTab`) with verified read-back and tab switching. Verified by `NotesAndSafariCapabilityTests`. Clean `./scripts/check.sh` build passed.
+- Milestone 5 (Native MCP Server Bridge): Exposed the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`) over Context-Dock's native MCP server (`context-dock`). External agents and CLIs (e.g. Claude Code) can invoke Mac capabilities natively over standard JSON-RPC HTTP transport (`127.0.0.1:8213/mcp`). Updated registration command to `claude mcp add --transport http context-dock ...`. Verified by `DoraXMCPCapabilityToolTests`.
 
 ## Done (most recent first)
 

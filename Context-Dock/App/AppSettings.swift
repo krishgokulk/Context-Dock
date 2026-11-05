@@ -1107,6 +1107,7 @@ class AppSettings: ObservableObject {
     @AppStorage("mailMCPEnabled") var mailMCPEnabled: Bool = true
     @AppStorage("musicMCPEnabled") var musicMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") var messagesMCPEnabled: Bool = true
+    @AppStorage("safariMCPEnabled") var safariMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 
     // UI Feature Toggles

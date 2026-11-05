@@ -3375,12 +3375,46 @@ struct AdapterActionEditorSheet: View {
     let onDone: () -> Void
 
     @ObservedObject private var adapterManager = AppAdapterManager.shared
+
+    enum ActionCategory: String, CaseIterable, Identifiable {
+        case aiGoal = "AI Goal"
+        case shortcutOrLink = "Shortcut or Link"
+        case customScript = "Custom Script"
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .aiGoal: return "AI Goal"
+            case .shortcutOrLink: return "Shortcut or Link"
+            case .customScript: return "Custom Script"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .aiGoal: return "You state what you want, AI figures it out"
+            case .shortcutOrLink: return "Apple Shortcut or deep link"
+            case .customScript: return "AppleScript, JXA, or Shell"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .aiGoal: return "sparkles"
+            case .shortcutOrLink: return "bolt.fill"
+            case .customScript: return "chevron.left.forwardslash.chevron.right"
+            }
+        }
+    }
+
     // Form fields
     @State private var name: String        = ""
     @State private var description: String = ""
-    @State private var iconName: String    = "bolt"
+    @State private var iconName: String    = "sparkles"
     @State private var triggersRaw: String = ""
-    @State private var actionType: AdapterActionType = .urlScheme
+    @State private var category: ActionCategory = .aiGoal
+    @State private var actionType: AdapterActionType = .aiPrompt
     @State private var urlScheme: String   = ""
     @State private var script: String      = ""
     @State private var filePath: String    = ""
@@ -3443,11 +3477,11 @@ struct AdapterActionEditorSheet: View {
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             LabeledField("Name") {
-                                TextField("e.g. Open Wi-Fi", text: $name)
+                                TextField("e.g. Export as PDF", text: $name)
                                     .textFieldStyle(.roundedBorder)
                             }
                             LabeledField("SF Symbol") {
-                                TextField("e.g. wifi", text: $iconName)
+                                TextField("e.g. sparkles", text: $iconName)
                                     .textFieldStyle(.roundedBorder)
                                     .onChange(of: iconName) { v in
                                         previewIconValid = NSImage(systemSymbolName: v, accessibilityDescription: nil) != nil
@@ -3464,7 +3498,7 @@ struct AdapterActionEditorSheet: View {
 
                     // ── Trigger Keywords ─────────────────────────────────────
                     LabeledField("Trigger Keywords") {
-                        TextField("comma-separated: wifi, wireless, network", text: $triggersRaw)
+                        TextField("comma-separated: export, pdf, document", text: $triggersRaw)
                             .textFieldStyle(.roundedBorder)
                     }
                     Text("When the user types any of these keywords in the dock, this action surfaces automatically.")
@@ -3474,133 +3508,214 @@ struct AdapterActionEditorSheet: View {
 
                     Divider()
 
-                    // ── Action (intent-grouped) ──────────────────────────────
-                    LabeledField("Action") {
+                    // ── Action Type (3 Clean Choices) ────────────────────────
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Action Type")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
                         HStack(spacing: 8) {
-                            Picker("", selection: $actionType) {
-                                Section("Recommended") {
-                                    Text("Open URL / Deep Link").tag(AdapterActionType.urlScheme)
-                                    Text("Open Application or File").tag(AdapterActionType.openItem)
-                                    Text("Run Shortcut").tag(AdapterActionType.shortcut)
-                                    Text("AI Prompt").tag(AdapterActionType.aiPrompt)
+                            ForEach(ActionCategory.allCases) { cat in
+                                Button {
+                                    selectCategory(cat)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: cat.icon)
+                                                .font(.system(size: 12, weight: .semibold))
+                                            Text(cat.title)
+                                                .font(.system(size: 12, weight: .semibold))
+                                            Spacer(minLength: 0)
+                                            if cat == .aiGoal {
+                                                Text("Recommended")
+                                                    .font(.system(size: 8, weight: .bold))
+                                                    .padding(.horizontal, 4)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                                    .foregroundStyle(Color.accentColor)
+                                            }
+                                        }
+                                        Text(cat.subtitle)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(category == cat ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(category == cat ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: category == cat ? 1.5 : 1)
+                                    )
                                 }
-                                Section("Automation") {
-                                    Text("Menu Item").tag(AdapterActionType.menubar)
-                                    Text("AppleScript").tag(AdapterActionType.applescript)
-                                    Text("JavaScript for Automation").tag(AdapterActionType.jxa)
-                                }
-                                Section("Browser") {
-                                    Text("Browser JavaScript").tag(AdapterActionType.pageJS)
-                                }
-                                Section("Advanced") {
-                                    Text("Terminal Command").tag(AdapterActionType.shell)
-                                    Text("External Script").tag(AdapterActionType.scriptFile)
-                                }
+                                .buttonStyle(.plain)
                             }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                            .onChange(of: actionType) { t in
-                                if t.riskLevel == .high { requiresApproval = true }
-                            }
-                            riskBadge
-                            Spacer()
                         }
                     }
 
-                    // ── Payload ──────────────────────────────────────────────
-                    switch actionType {
-                    case .urlScheme:
-                        LabeledField("URL Scheme") {
-                            TextField("x-apple.systempreferences:com.apple...", text: $urlScheme)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 11, design: .monospaced))
+                    // ── Category Configuration ───────────────────────────────
+                    switch category {
+                    case .aiGoal:
+                        VStack(alignment: .leading, spacing: 8) {
+                            LabeledField("AI Goal / Prompt") {
+                                TextEditor(text: $script)
+                                    .font(.system(size: 12))
+                                    .frame(minHeight: 88)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12)))
+                            }
+                            Text("State what you want done in plain English (e.g. “Export active document as PDF to Desktop” or “Summarize selected text”). Context-Dock's AI model inspects the active app and safely carries it out.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
-                        Text("Supports $CURRENT_URL, $SELECTED_TEXT variables.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
 
-                    case .openItem:
-                        LabeledField("Target App / File / URL") {
-                            HStack(spacing: 8) {
-                                TextField("/Applications/WhatsApp.app or ~/Documents/file.pdf", text: $filePath)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 11, design: .monospaced))
-                                Button("Browse") {
-                                    chooseFilePath(canChooseDirectories: true, canChooseFiles: true, allowedFileTypes: nil)
+                    case .shortcutOrLink:
+                        VStack(alignment: .leading, spacing: 10) {
+                            LabeledField("Kind") {
+                                Picker("", selection: $actionType) {
+                                    Text("Run Shortcut").tag(AdapterActionType.shortcut)
+                                    Text("Open URL / Deep Link").tag(AdapterActionType.urlScheme)
+                                    Text("Open Application or File").tag(AdapterActionType.openItem)
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                            }
+
+                            switch actionType {
+                            case .shortcut:
+                                VStack(alignment: .leading, spacing: 6) {
+                                    LabeledField("Shortcut Name") {
+                                        TextField("Exact macOS Shortcut name from Shortcuts.app", text: $shortcutName)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    Text("Runs an Apple Shortcut by name from Shortcuts.app.")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                            case .urlScheme:
+                                VStack(alignment: .leading, spacing: 6) {
+                                    LabeledField("URL Scheme") {
+                                        TextField("x-apple.systempreferences:com.apple... or https://...", text: $urlScheme)
+                                            .textFieldStyle(.roundedBorder)
+                                            .font(.system(size: 11, design: .monospaced))
+                                    }
+                                    Text("Supports $CURRENT_URL, $SELECTED_TEXT variables.")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                            case .openItem:
+                                VStack(alignment: .leading, spacing: 6) {
+                                    LabeledField("Target App / File / URL") {
+                                        HStack(spacing: 8) {
+                                            TextField("/Applications/WhatsApp.app or ~/Documents/file.pdf", text: $filePath)
+                                                .textFieldStyle(.roundedBorder)
+                                                .font(.system(size: 11, design: .monospaced))
+                                            Button("Browse…") {
+                                                chooseFilePath(canChooseDirectories: true, canChooseFiles: true, allowedFileTypes: nil)
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        }
+                                    }
+                                    Text("Opens any installed app, file, folder, or file:// URL.")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                            default:
+                                EmptyView()
                             }
                         }
-                        Text("Opens any installed app, file, folder, or file:// URL.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
 
-                    case .applescript, .shell, .jxa, .aiPrompt:
-                        LabeledField(editorLabel) {
-                            TextEditor(text: $script)
-                                .font(.system(size: 11, design: .monospaced))
-                                .frame(minHeight: 80)
-                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.1)))
-                        }
+                    case .customScript:
+                        VStack(alignment: .leading, spacing: 10) {
+                            LabeledField("Script Engine") {
+                                HStack(spacing: 8) {
+                                    Picker("", selection: $actionType) {
+                                        Text("AppleScript").tag(AdapterActionType.applescript)
+                                        Text("JavaScript for Automation (JXA)").tag(AdapterActionType.jxa)
+                                        Text("Terminal Command").tag(AdapterActionType.shell)
+                                        Text("Menu Item").tag(AdapterActionType.menubar)
+                                        Text("Browser JavaScript").tag(AdapterActionType.pageJS)
+                                        Text("External Script").tag(AdapterActionType.scriptFile)
+                                    }
+                                    .pickerStyle(.menu)
+                                    .labelsHidden()
+                                    .onChange(of: actionType) { t in
+                                        if t.riskLevel == .high { requiresApproval = true }
+                                    }
 
-                    case .pageJS:
-                        LabeledField("Page JavaScript") {
-                            TextEditor(text: $script)
-                                .font(.system(size: 11, design: .monospaced))
-                                .frame(minHeight: 120)
-                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.1)))
-                        }
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Runs directly inside the active Safari page — full access to document, window, fetch, localStorage, etc.")
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                            Text("Variables: $CURRENT_URL · $PAGE_TITLE · $PAGE_TEXT · $SELECTED_TEXT · {{query}}")
-                                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                            Text("Example: return document.querySelector('.price')?.innerText ?? 'not found'")
-                                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
-                        }
-                        .padding(.top, -8)
-
-                    case .scriptFile:
-                        LabeledField("Script File") {
-                            HStack(spacing: 8) {
-                                TextField("script.sh, tool.py, automation.js, helper.rb", text: $filePath)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 11, design: .monospaced))
-                                Button("Browse") {
-                                    chooseFilePath(
-                                        canChooseDirectories: false,
-                                        canChooseFiles: true,
-                                        allowedFileTypes: ["sh", "py", "js", "rb", "scpt", "applescript"]
-                                    )
+                                    riskBadge
+                                    Spacer()
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                            }
+
+                            switch actionType {
+                            case .applescript, .shell, .jxa:
+                                LabeledField(editorLabel) {
+                                    TextEditor(text: $script)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .frame(minHeight: 90)
+                                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.1)))
+                                }
+
+                            case .pageJS:
+                                LabeledField("Page JavaScript") {
+                                    TextEditor(text: $script)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .frame(minHeight: 110)
+                                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.1)))
+                                }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Runs directly inside the active Safari page — full access to document, window, fetch, localStorage, etc.")
+                                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                                    Text("Variables: $CURRENT_URL · $PAGE_TITLE · $PAGE_TEXT · $SELECTED_TEXT · {{query}}")
+                                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                }
+                                .padding(.top, -4)
+
+                            case .scriptFile:
+                                LabeledField("Script File") {
+                                    HStack(spacing: 8) {
+                                        TextField("script.sh, tool.py, automation.js, helper.rb", text: $filePath)
+                                            .textFieldStyle(.roundedBorder)
+                                            .font(.system(size: 11, design: .monospaced))
+                                        Button("Browse…") {
+                                            chooseFilePath(
+                                                canChooseDirectories: false,
+                                                canChooseFiles: true,
+                                                allowedFileTypes: ["sh", "py", "js", "rb", "scpt", "applescript"]
+                                            )
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
+                                }
+                                Text("Supports .sh, .py, .js, .rb, .scpt, and .applescript files. Relative paths are resolved from the AppAdapters folder.")
+                                    .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -4)
+
+                            case .menubar:
+                                LabeledField("Menu Path (comma-separated)") {
+                                    TextField("File, New Tab", text: $script)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                Text("e.g. \"View, Zoom In\" clicks View › Zoom In in the menu bar.")
+                                    .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -4)
+
+                            default:
+                                EmptyView()
                             }
                         }
-                        Text("Supports .sh, .py, .js, .rb, .scpt, and .applescript files. Relative paths are resolved from the AppAdapters folder.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
-
-                    case .menubar:
-                        LabeledField("Menu Path (comma-separated)") {
-                            TextField("File, New Tab", text: $script)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        Text("e.g. \"View, Zoom In\" clicks View › Zoom In in the menu bar.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
-
-                    case .shortcut:
-                        LabeledField("Shortcut Name") {
-                            TextField("Exact macOS Shortcut name", text: $shortcutName)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        Text("Runs a macOS Shortcut by name (Shortcuts.app).")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                    default:
-                        EmptyView()
                     }
 
                     if actionType.riskLevel == .high {
                         Label(
-                            "High-risk action — DoraX will ask for confirmation before it runs.",
+                            "High-risk action — Context-Dock will ask for confirmation before it runs.",
                             systemImage: "exclamationmark.shield.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(.orange)
@@ -3616,14 +3731,14 @@ struct AdapterActionEditorSheet: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                     HStack(spacing: 10) {
-                        Image(systemName: previewIconValid ? iconName : "bolt")
+                        Image(systemName: previewIconValid ? iconName : category.icon)
                             .font(.system(size: 14))
-                            .foregroundStyle(.teal)
+                            .foregroundStyle(category == .aiGoal ? Color.indigo : Color.accentColor)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(resolvedActionName.isEmpty ? "Action name" : resolvedActionName)
                                 .font(.system(size: 12, weight: .medium))
-                            Text(actionType.displayName)
+                            Text(category == .aiGoal ? "AI Goal" : "\(category.title) • \(actionType.displayName)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
@@ -3632,15 +3747,43 @@ struct AdapterActionEditorSheet: View {
                     }
                     .padding(10)
                     .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-                    Text("How this action appears in DoraX.")
+                    Text("How this action appears in Context-Dock.")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
                 .padding(16)
             }
         }
-        .frame(width: 500, alignment: .leading)
+        .frame(width: 520, alignment: .leading)
         .onAppear { prefill() }
+    }
+
+    private func selectCategory(_ newCategory: ActionCategory) {
+        category = newCategory
+        switch newCategory {
+        case .aiGoal:
+            actionType = .aiPrompt
+            if iconName.isEmpty || iconName == "bolt" || iconName == "bolt.fill" || iconName == "chevron.left.forwardslash.chevron.right" {
+                iconName = "sparkles"
+            }
+        case .shortcutOrLink:
+            if actionType != .shortcut && actionType != .urlScheme && actionType != .openItem {
+                actionType = .shortcut
+            }
+            if iconName.isEmpty || iconName == "sparkles" || iconName == "chevron.left.forwardslash.chevron.right" {
+                iconName = "bolt.fill"
+            }
+        case .customScript:
+            if actionType != .applescript && actionType != .jxa && actionType != .shell && actionType != .menubar && actionType != .pageJS && actionType != .scriptFile && actionType != .cliTool {
+                actionType = .applescript
+            }
+            if iconName.isEmpty || iconName == "sparkles" || iconName == "bolt" || iconName == "bolt.fill" {
+                iconName = "chevron.left.forwardslash.chevron.right"
+            }
+        }
+        if actionType.riskLevel == .high {
+            requiresApproval = true
+        }
     }
 
     private var payloadEmpty: Bool {
@@ -3665,7 +3808,12 @@ struct AdapterActionEditorSheet: View {
     }
 
     private func prefill() {
-        guard let a = existing else { return }
+        guard let a = existing else {
+            category = .aiGoal
+            actionType = .aiPrompt
+            iconName = "sparkles"
+            return
+        }
         name        = a.name
         description = a.description
         iconName    = a.icon
@@ -3676,6 +3824,15 @@ struct AdapterActionEditorSheet: View {
         script      = a.script ?? a.cliToolCommand ?? a.menuPath?.joined(separator: ", ") ?? a.aiPromptTemplate ?? ""
         shortcutName = a.shortcutName ?? ""
         requiresApproval = a.requiresApproval
+
+        switch a.type {
+        case .aiPrompt:
+            category = .aiGoal
+        case .shortcut, .urlScheme, .openItem:
+            category = .shortcutOrLink
+        default:
+            category = .customScript
+        }
     }
 
     private func save() {
