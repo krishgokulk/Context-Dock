@@ -10,9 +10,20 @@ import Testing
 struct DoraXMCPCapabilityToolTests {
     @Test func theToolListOffersRunAndListCapabilities() {
         let names = DoraXMCPServer.toolDefinitions(attended: false).compactMap { $0["name"] as? String }
+        #expect(names.contains("look"))
+        #expect(names.contains("do"))
+        #expect(names.contains("script"))
+        #expect(names.contains("read_data"))
+        #expect(names.contains("ask"))
         #expect(names.contains("dorax_run_capability"))
         #expect(names.contains("dorax_list_capabilities"))
         #expect(names.contains("dorax_remember"))
+    }
+
+    @Test func registrationCommandUsesContextDockBranding() {
+        let cmd = DoraXMCPServer.registrationCommand
+        #expect(cmd.contains("claude mcp add --transport http context-dock"))
+        #expect(cmd.contains("/mcp"))
     }
 
     @Test func doraxRememberSavesDirectlyToMemory() async {

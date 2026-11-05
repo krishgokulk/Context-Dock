@@ -287,6 +287,16 @@ final class GeneralChatCapabilityHub {
                 + "DoraX reads the app's LIVE menu bar, shows the user the exact item and "
                 + "presses it once they approve. Use it before telling the user to click "
                 + "something themselves — that is the last thing to say, not the first.",
+            // Work inside a window (a button, a field, a tab) that no menu, route or script
+            // reaches. One step per reply, reading the fresh snapshot before the next.
+            "- When the work is inside the app's window and no route, menu item or script does "
+                + "it, reply with ONLY {\"ax_snapshot\": {\"reason\": \"why\"}} to read the window "
+                + "as element ids, then ONE step per reply: {\"ax_act\": {\"action\": "
+                + "\"click|type|focus\", \"id\": \"e7\", \"text\": \"only for type\"}}. Read the "
+                + "fresh snapshot after each step; never reuse old ids and never claim success "
+                + "the snapshot does not show. Send/Delete/Pay-style controls are refused. If the window exposes no elements "
+                + "(a canvas app), use {\"ax_snapshot\": {\"mode\": \"screen\"}} to read it by OCR and "
+                + "act on t-ids the same way.",
             "- Something the user attached to the message is read with the read_attachment "
                 + "tool, never guessed at from the clipboard.",
             // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
@@ -877,6 +887,39 @@ final class GeneralChatCapabilityHub {
                 // owner nothing about what their Mac was about to do.
                 label: result.displayCommand)
 
+        case .axSnapshot, .axAct:
+            let bundleId = invocation.arguments["bundleId"]
+                ?? scopedBundleID(for: scope)
+                ?? AXContextReader.shared.current.bundleId
+            guard !bundleId.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No app to operate.", label: "computer use blocked")
+            }
+            let reason = invocation.arguments["reason"] ?? ""
+            let result: AgentToolResult
+            if invocation.kind == .axSnapshot {
+                result = await ComputerUseAXRunner.snapshot(
+                    bundleID: bundleId, reason: reason, scope: nil,
+                    screen: invocation.arguments["mode"]?.lowercased() == "screen")
+            } else {
+                guard
+                    let action = ComputerUseAXRunner.Action(
+                        rawValue: invocation.arguments["action"] ?? ""),
+                    let id = invocation.arguments["id"]
+                else {
+                    return ToolCallResult(
+                        handled: true, success: false,
+                        output: "ax_act needs action and id.", label: "computer use blocked")
+                }
+                result = await ComputerUseAXRunner.act(
+                    action: action, id: id, text: invocation.arguments["text"],
+                    reason: reason, bundleID: bundleId, scope: nil)
+            }
+            return ToolCallResult(
+                handled: true, success: result.success, output: result.output,
+                label: result.displayCommand)
+
         case .appScript:
             let name = invocation.arguments["name"] ?? ""
             guard !name.isEmpty else {
@@ -891,6 +934,29 @@ final class GeneralChatCapabilityHub {
             let scriptResult = await AppAgentScriptRunner.run(
                 name: name, reason: invocation.arguments["reason"] ?? "",
                 scope: chatScope, query: name)
+            return ToolCallResult(
+                handled: true, success: scriptResult.success, output: scriptResult.output,
+                label: scriptResult.displayCommand)
+
+        case .synthesizedScript:
+            let script = invocation.arguments["script"] ?? ""
+            guard !script.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No script code provided.", label: "synthesized script blocked")
+            }
+            let language = invocation.arguments["language"] ?? "applescript"
+            let reason = invocation.arguments["reason"] ?? ""
+            let app = invocation.arguments["bundleId"] ?? invocation.arguments["app"] ?? ""
+            let effectiveScope: GeneralChatScope = {
+                if case .contextDock(let bundleID, _) = scope { return .app(bundleId: bundleID) }
+                return chatScope ?? .general
+            }()
+            let scriptResult = await SynthesizedScriptRunner.run(
+                script: script, language: language, reason: reason,
+                appInput: app, scope: effectiveScope, grantedApps: [:],
+                userRequest: reason
+            )
             return ToolCallResult(
                 handled: true, success: scriptResult.success, output: scriptResult.output,
                 label: scriptResult.displayCommand)

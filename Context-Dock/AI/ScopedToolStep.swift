@@ -38,6 +38,7 @@ enum ScopedToolStep {
         case "verify_outcome": return "Checking it worked…"
         case "get_messages_conversations", "search_messages": return "Searching Messages…"
         case "compose_message": return "Composing a message…"
+        case "send_message": return "Sending a message…"
         default:
             // An extension's own tool, whose name the user chose. Shown as written rather
             // than hidden: they named it, so it means more to them than to us.

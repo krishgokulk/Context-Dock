@@ -544,6 +544,9 @@ extension AppChatPromptModel {
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
         allMenuItems = []
+        // Tell DockEngine that Global Context is active so pureGlobalResults returns
+        // running-app menu pills (shouldUsePureGlobalAppSearch requires this).
+        DockEngine.shared.core.globalContextActivation = .manual
         refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)

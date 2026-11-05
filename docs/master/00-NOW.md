@@ -10,18 +10,44 @@
 
 ## In progress
 
-**Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (2026-11-03):**
-- Unify Settings Integrations (Overview, Actions, Resources, AGENT.md, Access), per-app Skills (`SkillScope.app`), and live menu trees into user-selected AI Provider context.
-- Eliminate blocking "go install CLI" cards; establish the 3-Tier Escalation Ladder:
-  1. Tier 1: Zero-config local headless (SQLite, sdef AppleScript, native frameworks).
-  2. Tier 2: AI autonomous scripting (on-the-fly AppleScript/JXA with approval gate).
-  3. Tier 3: Universal fallback via Computer Use agent (live menu clicks, AX UI element press).
-- Canonical spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
+**Next 3-Step Work Order: Land PR #367 + Core Apps #4 & #5 (Mail & Reminders) + Dogfood MCP Server:**
+- Active on `general-chat-agent` and `.claude/worktrees/issue-205-system-scopes`.
+- Work order:
+  1. **Land PR #367 (Task #205 P11 - Curated System Scopes):**
+     - Merge `general-chat-agent` into `claude/issue-205-curated-system-scopes` in `.claude/worktrees/issue-205-system-scopes`.
+     - Verify with `./scripts/check.sh` and `./scripts/try-pr.sh 367`.
+     - Push and merge PR #367.
+  2. **Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5):**
+     - Apple Mail: Headless read (`mail.unread`, `mail.search`), drafted send with `AICapabilityApprovalCenter` approval + verified read-back.
+     - Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create`, `calendar.todayEvents`).
+  3. **Dogfood Native MCP Server (`context-dock`):**
+     - Register `context-dock` in Claude Code / Cursor / Codex via `claude mcp add --transport http context-dock http://127.0.0.1:8213/mcp --header "Authorization: Bearer <token>"`.
+     - Verify end-to-end tool execution (`look`, `do`, `script`, `read_data`, `ask`) from external model turns.
 
-**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes (2026-11-02):**
-- Completed, in review via PR #367 (`3fed8d8`).
-- Curated tool catalog, parameter schemas, and route discovery for all 11 core macOS system scopes (Calendar, Reminders, Contacts, Music, Photos, Messages, Mail, Finder, Safari, Terminal).
-- All 21 tests passed across `CuratedSystemScopesRoutingTests` and `AppToolCatalogTests`; `./scripts/check.sh` clean.
+## Done (most recent first)
+
+**Task #369: Universal 5-Tool Engine & Messages Gold Standard Pipeline (Milestones 1-5):**
+- Completed and landed on `general-chat-agent` (`5b86f59`).
+- Spec: `docs/superpowers/specs/2026-11-04-one-app-perfect-flow-messages.md`.
+- Principle: The AI Model is the Brain, Context-Dock is the Safe Native Body.
+- Milestone 1 (Zero-Withholding Tool Surface): Removed keyword-based tool withholding in `FrontmostAppTaskPlan.swift`; App Pets always receive full sensory and execution tools. Fixed Settings › Integrations display for native apps (shows "Messages" and 4 built-in actions).
+- Milestone 2 (Messages Send Pipeline): Implemented `send_message` / `messages.send` with automatic Contact resolution (`CNContactStore`), explicit outbound draft card confirmation (`AICapabilityApprovalCenter`), headless AppleScript execution with UI automation fallback (`imessage://` + `AXUIFocusHelper`), and verified read-back against `chat.db` (`MessagesChatDBReader.verifySentMessage`). Verified by `MessagesSendWorkflowTests` (4/4 pass). All 12 unit tests pass.
+- Milestone 3 (Action Creator Simplification): Restructured `AdapterActionEditorSheet` from 10 technical items down to 3 clean choices (🌟 AI Goal [Recommended], ⚡️ Shortcut or Link, 💻 Custom Script). AI Goal directly defaults to `aiPrompt` and lets the model act as the brain.
+- Milestone 4 (Notes & Safari Capabilities Expansion): Implemented `notes.recent` and verified read-back for `notes.create` / `notes.append`. Built `AppleSafariMCPCapabilities` (`safari.currentTab`, `safari.pageContent`, `safari.listTabs`, `safari.switchTab`) with verified read-back and tab switching. Verified by `NotesAndSafariCapabilityTests`. Clean `./scripts/check.sh` build passed.
+- Milestone 5 (Native MCP Server Bridge): Exposed the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`) over Context-Dock's native MCP server (`context-dock`). External agents and CLIs (e.g. Claude Code) can invoke Mac capabilities natively over standard JSON-RPC HTTP transport (`127.0.0.1:8213/mcp`). Updated registration command and added one-click copy buttons in Settings › AI Providers. Verified by `DoraXMCPCapabilityToolTests`.
+
+**Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phases 1-4):**
+- Completed, PR #368 open into `general-chat-agent` awaiting owner review and merge.
+- Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
+- Phase 1 (Context Assembler Unification): Injects frontmost app's AGENT.md, per-app skills (`SkillScope.app`), and live menu commands snapshot into user-selected AI Provider's turn context. Ambient app discovery for General Chat & App Pet turns; non-blocking fallback to `run_menu_command` and `operate_app`. Verified by `FrontmostAppAgentPhase1Tests` (6/6 pass).
+- Phase 2 (Autonomous Scripting Tool): Sandboxed `run_synthesized_script` capability allowing Claude/Codex to execute on-the-fly AppleScript/JXA with `AICapabilityApprovalCenter` approval gating and `AGENT.md` safety verification; `read_app_dictionary` tool to inspect sdef classes, properties, and commands. Verified by `SynthesizedScriptToolTests` (8/8 pass).
+- Phase 3 (Seamless Computer Use Cascading): Deprecated blocking "Install CLI" cards in favor of autonomous escalation with optional accelerators; enhanced `ComputerUseTargetResolver` with hierarchy/path segment delimiter parsing (`>`, `▸`, `›`, `/`, `|`) and full-path token matching; added `AXUIFocusHelper` for one-shot search field focusing and direct text entry; verified with `ComputerUseEscalationPhase3Tests` (7/7 pass).
+- Phase 4 (End-to-End Verification Across 3-Tier Escalation Ladder): Verified Tier 1 Apple Native App headless / data lane planning and context assembly, Tier 2 Scriptable Third-Party App sdef inspection and synthesized scripting execution, Tier 3 Non-Scriptable UI App fallback escalation to live menu commands and Computer Use, and ambient context isolation across app switches. Verified by `FrontmostAppAgentE2ETests` (4/4 pass).
+- Gate `./scripts/check.sh` clean build passed. Full test suite (25/25 tests) passed.
+
+**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Completed, PR #367 open awaiting owner review and merge.
+- Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).

@@ -15,7 +15,7 @@ enum CornerDockAutoHide {
     static let hideDelay: Double = 0.45
     /// How long a dock nobody has pointed at stays up — raised by a hotkey, say, and then
     /// left alone. Long enough to read, short enough to be out of the way.
-    static let idleDelay: Double = 3
+    static let idleDelay: Double = 1.5
     static let slideDuration: Double = 0.28
     /// How close to the bottom edge counts as "at the edge". A pointer cannot go below the
     /// screen, so this is a band a couple of points tall, as the system's is.

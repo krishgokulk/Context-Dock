@@ -920,6 +920,7 @@ final class AgentToolRegistry {
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
             "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
+            "ax_act",
         ]
         return policyFiltered.filter { !actionOnly.contains($0.name) }
     }
@@ -1255,8 +1256,12 @@ final class AgentToolRegistry {
         // The rung below a verified menu, off unless the user turned it on for that app.
         // See ComputerUseTool.swift.
         registerComputerUseTool()
+        // Phase 3.5: snapshot + element actions for work inside a window. See ComputerUseAXTools.swift.
+        registerComputerUseAXTools()
         // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
         registerAppAgentScriptTool()
+        // Tier 2: AI Autonomous Scripting Tool. See SynthesizedScriptTool.swift.
+        registerSynthesizedScriptTool()
         // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.
         registerOutputFileTool()
         // The user's Shortcuts: list freely, run on the approval sheet. See ShortcutsTool.swift.
@@ -2542,6 +2547,92 @@ final class AgentToolRegistry {
                 success: !output.hasPrefix("❌"),
                 output: output,
                 displayCommand: "compose_message(\(recipient))")
+        })
+
+        register(AgentTool(
+            name: "send_message",
+            description: "Send a message to a recipient (contact name, phone number, or email) via Messages. "
+                + "Resolves contact names, prompts the user for approval with the draft, and verifies delivery via chat.db.",
+            properties: [
+                "recipient": ["type": "string", "description": "Recipient contact name, phone number, or email."],
+                "body": ["type": "string", "description": "The message text to send."],
+            ],
+            required: ["recipient", "body"]
+        ) { arguments, context in
+            guard let recipient = arguments["recipient"] as? String, !recipient.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "send_message requires 'recipient'.",
+                    displayCommand: "send_message(invalid)")
+            }
+            guard let body = arguments["body"] as? String, !body.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "send_message requires 'body'.",
+                    displayCommand: "send_message(invalid)")
+            }
+
+            // 1. Resolve contact
+            let targetHandle: String
+            let displayName: String
+            switch MessagesAutomation.resolveRecipient(recipient) {
+            case .resolved(let contact):
+                targetHandle = contact.handle
+                displayName = contact.name
+            case .ambiguous(let contacts):
+                let options = contacts.prefix(4).map { "\($0.name) (\($0.handle))" }.joined(separator: ", ")
+                return AgentToolResult(
+                    success: false,
+                    output: "Multiple contacts match '\(recipient)': \(options). Ask the user which one they want to message.",
+                    displayCommand: "send_message(\(recipient)) · ambiguous"
+                ).withUserSummary("Found multiple contacts for '\(recipient)': \(options). Which one did you mean?")
+            case .notFound:
+                targetHandle = recipient
+                displayName = recipient
+            }
+
+            // 2. Request user approval with exact content
+            let plan = AIActionPlan(
+                capability: "messages.send",
+                input: ["to": displayName, "handle": targetHandle, "message": body],
+                explanation: "DoraX will send the following message to \(displayName):\n\n\"\(body)\""
+            )
+            let capability = CapabilityRegistry.shared.capability(id: "messages.send") ?? AICapability(
+                id: "messages.send",
+                title: "Send Message to \(displayName)",
+                appBundleID: "com.apple.MobileSMS",
+                inputSchema: .init(fields: []),
+                riskLevel: .high,
+                selectionSafety: .unsafe,
+                executor: { _ in .init(success: true, output: "") }
+            )
+            let approved = await AICapabilityApprovalCenter.shared.requestApproval(
+                plan: plan,
+                capability: capability,
+                context: .appFocused(name: "Messages", bundleID: "com.apple.MobileSMS"),
+                chatScope: context.chatScope
+            )
+
+            guard approved else {
+                return AgentToolResult(
+                    success: false,
+                    output: "The user declined to send the message to \(displayName).",
+                    displayCommand: "send_message(\(displayName)) · declined"
+                ).withUserSummary("Message not sent. You declined to send to \(displayName).")
+            }
+
+            // 3. Dispatch send
+            let result = await MessagesAutomation.sendMessage(to: targetHandle, body: body)
+            var toolResult = AgentToolResult(
+                success: result.success,
+                output: result.message,
+                displayCommand: "send_message(\(displayName))"
+            ).withUserSummary(result.message)
+
+            if result.verified {
+                toolResult.verifiedByReadBack = "Sent message confirmed in Messages history."
+            }
+            return toolResult
         })
     }
 }

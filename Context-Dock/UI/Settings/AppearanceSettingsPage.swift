@@ -21,69 +21,127 @@ struct AppearanceSettingsPage: View {
                     }
                 }
 
-                CardSection(title: "Corner Position", systemImage: "rectangle.bottomthird.inset.filled") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picker("", selection: $settings.cornerDockAnchorRaw) {
-                            ForEach(CornerDockAnchor.allCases, id: \.rawValue) { anchor in
-                                Text(anchor.label).tag(anchor.rawValue)
-                            }
+                CardSection(title: "Launcher Presentation", systemImage: "macwindow") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Launcher Mode", selection: $settings.launcherPresentationModeRaw) {
+                            Text("Centre of Display (Raycast / Spotlight)").tag(AppSettings.LauncherPresentationMode.centerScreen.rawValue)
+                            Text("Bottom Dock").tag(AppSettings.LauncherPresentationMode.bottomDock.rawValue)
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        Text(
-                            """
-                            Where the chat, clipboard, selection and shelf sit along the \
-                            screen. Centred, they read as a dock. Notch anchors the dock directly \
-                            into your MacBook camera notch as a Dynamic Island.
-                            """)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
 
-                        Divider().padding(.vertical, 6)
+                        if settings.launcherPresentationMode == .centerScreen {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Opens as a floating, draggable launcher in the middle of your screen. Context-Dock remembers where you move it.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
 
-                        Toggle(isOn: $settings.cornerDockAutoHide) {
-                            Text("Automatically hide and show the dock")
-                                .font(.system(size: 13, weight: .medium))
+                                HStack {
+                                    Text("Window position:")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                    let isCustom = settings.centredLauncherOffsetX != 0
+                                        || settings.centredLauncherOffsetY != 0
+                                        || settings.centredLauncherX >= 0
+                                    if isCustom {
+                                        Text("Custom (\(Int(settings.centredLauncherOffsetX)), \(Int(settings.centredLauncherOffsetY)))")
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(.primary)
+                                    } else {
+                                        Text("Screen Center (Default)")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                    }
+                                    Spacer()
+                                    Button("Reset to Center") {
+                                        settings.resetCentredLauncherPosition()
+                                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                        CornerDockController.shared.refresh()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(!isCustom)
+                                }
+                                .padding(.top, 4)
+                            }
+                            .padding(.top, 4)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Dock Position along the bottom screen edge:")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                Picker("Position", selection: $settings.bottomDockPositionRaw) {
+                                    Text("Left Corner").tag(AppSettings.BottomDockPosition.left.rawValue)
+                                    Text("Centre").tag(AppSettings.BottomDockPosition.center.rawValue)
+                                    Text("Right Corner").tag(AppSettings.BottomDockPosition.right.rawValue)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+
+                                Divider().padding(.vertical, 4)
+
+                                Toggle(isOn: $settings.cornerDockAutoHide) {
+                                    Text("Automatically hide and show the bottom dock")
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                .toggleStyle(.switch)
+                                Text("At rest the bottom dock slides below the screen. Move the pointer to the bottom edge to bring it back.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.top, 4)
                         }
-                        .toggleStyle(.switch)
-                        Text(
-                            """
-                            At rest the dock slides below the screen or into the notch. Move the pointer to the \
-                            edge to bring it back.
-                            """)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 10)
                 }
 
-                CardSection(title: "Dynamic Island & Live Activity", systemImage: "sparkles") {
-                    VStack(alignment: .leading, spacing: 6) {
+                CardSection(title: "Dynamic Notch (Dynamic Island)", systemImage: "sparkles") {
+                    VStack(alignment: .leading, spacing: 8) {
                         Toggle(isOn: $settings.notchLiveActivityEnabled) {
-                            Text("Show Live Activities in Notch")
+                            Text("Show Dynamic Island in Camera Notch")
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .toggleStyle(.switch)
                         Text(
                             """
-                            Display real-time AI reasoning steps, background CLI builds, and media \
-                            playback directly in the camera notch.
+                            Independent Dynamic Island attached directly to your MacBook camera notch. \
+                            Displays real-time media player, file drop shelf, frontmost app extensions, \
+                            window controls, and AI approvals.
                             """)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
 
-                        Divider().padding(.vertical, 6)
+                        Divider().padding(.vertical, 4)
 
                         Toggle(isOn: $settings.notchCompactIslandAtRest) {
                             Text("Compact Dynamic Island at rest")
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .toggleStyle(.switch)
-                        Text(
-                            """
-                            Keep a minimal pill framing the camera notch when idle, expanding \
-                            downwards smoothly on hover or keyboard shortcut.
-                            """)
+                        Text("Keep a minimal pill framing the camera notch when idle, expanding downwards smoothly on hover.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        Divider().padding(.vertical, 4)
+
+                        Toggle(isOn: $settings.notchOpenOnHover) {
+                            Text("Open on hover")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text("The island opens smoothly when the pointer rests on it.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        Divider().padding(.vertical, 4)
+
+                        Toggle(isOn: $settings.notchSwellOnHover) {
+                            Text("Swell on hover")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text("The island grows slightly under the pointer before expanding.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }

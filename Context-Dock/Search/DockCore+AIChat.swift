@@ -3612,8 +3612,15 @@ extension DockCore {
                 }
                 // Adapter Skills — reusable instruction bundles for this app, fed
                 // as extra AI context (never executable).
+                let targetAppBundleID = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+                let targetAppDisplayName = scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName
                 let skillsBlock = await MainActor.run {
-                    SkillStore.shared.instructionsBlock(for: scopedBundleId)
+                    let perApp = SkillStore.shared.perAppSkillsPromptBlock(for: targetAppBundleID)
+                    return perApp.isEmpty ? SkillStore.shared.instructionsBlock(for: targetAppBundleID) : perApp
+                }
+                let liveMenuBlock = await MainActor.run {
+                    AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
+                        bundleIdentifier: targetAppBundleID, appName: targetAppDisplayName, query: query)
                 }
                 // Always-present identity + tool inventory: WHICH app this chat is
                 // scoped to and every integration it can use. Without this the model
@@ -3736,6 +3743,7 @@ extension DockCore {
                     prompt.set(.liveAppData, appleData)
                     prompt.set(.mcp, mcpBlock)
                     prompt.set(.capabilities, scopedModelCandidates)
+                    prompt.set(.liveMenu, liveMenuBlock)
                     prompt.set(.skills, skillsBlock)
                     prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)

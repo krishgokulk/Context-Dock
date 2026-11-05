@@ -23,7 +23,7 @@ struct DropShelfCard: View {
         .background {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
+                .background(GlassBackground(cornerRadius: 22, isDark: nil))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)

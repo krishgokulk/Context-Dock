@@ -273,8 +273,8 @@ enum OutboundGate {
         case "run_shortcut":
             return Target(kind: .shortcut, host: nil, label: "run a Shortcut, which can send data out")
 
-        case "compose_message":
-            return Target(kind: .message, host: nil, label: "start a message to someone")
+        case "compose_message", "send_message":
+            return Target(kind: .message, host: nil, label: "send a message to someone")
 
         case "run_command", "spawn_worker":
             let command = arguments["command"] as? String ?? ""
@@ -285,6 +285,9 @@ enum OutboundGate {
 
         case "run_app_script":
             return Target(kind: .external, host: nil, label: "run an app script that can reach the network")
+
+        case "run_synthesized_script":
+            return Target(kind: .external, host: nil, label: "run a synthesized script that can reach the network")
 
         case "run_adapter_action":
             let id = (arguments["action_id"] as? String ?? "")
@@ -322,8 +325,8 @@ enum OutboundGate {
 
     /// Tools `target` can classify as outbound (its switch above).
     static let outboundTools: Set<String> = [
-        "read_url", "run_shortcut", "compose_message", "run_command", "spawn_worker",
-        "run_menu_command", "run_app_script", "run_adapter_action", "run_route", "run_capability",
+        "read_url", "run_shortcut", "compose_message", "send_message", "run_command", "spawn_worker",
+        "run_menu_command", "run_app_script", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
     ]
 
     /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
@@ -332,13 +335,14 @@ enum OutboundGate {
         "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
+        "read_app_dictionary",
     ]
 
     /// Built-in tools that can reach further than the table above judges, left ungated on
     /// purpose and listed here so that is a decision on the record, not an omission: an MCP
     /// tool, and the three that drive another app's UI (the owner's call, #164).
     static let ungatedTools: Set<String> = [
-        "run_mcp_tool", "operate_app", "send_keys", "window_control",
+        "run_mcp_tool", "operate_app", "ax_snapshot", "ax_act", "send_keys", "window_control",
     ]
 
     /// Whether a tool name has been judged. The registry test requires it of every built-in, so

@@ -12,6 +12,10 @@ struct AIProvidersSettingsPage: View {
     @ObservedObject private var server = DoraXMCPServer.shared
     @ObservedObject private var computerUse = ComputerUseConsentStore.shared
 
+    @State private var copiedCommand = false
+    @State private var copiedSnippet = false
+    @State private var copiedToken = false
+
     /// Names the apps rather than counting them: "2 apps" is a number, and what the user needs
     /// to decide anything is which two.
     private var grantedAppsTitle: String {
@@ -104,16 +108,16 @@ struct AIProvidersSettingsPage: View {
                 }
             }
 
-            CardSection(title: "Agent Access (MCP)", systemImage: "antenna.radiowaves.left.and.right") {
+            CardSection(title: "Context-Dock MCP Server", systemImage: "antenna.radiowaves.left.and.right") {
                 VStack(spacing: 0) {
                     SettingsPageRow(
                         icon: "eye.fill",
                         iconColor: .teal,
-                        title: "Let Agents See This Mac",
+                        title: "Enable Native MCP Server",
                         subtitle:
-                            "Claude Code, Codex and any other MCP client can ask what app is in "
-                            + "front, what you have selected, what Safari has open, and take a "
-                            + "screenshot. Local only, and every request needs the token below."
+                            "Expose Context-Dock's 5 universal tools (look, do, script, read_data, ask) "
+                            + "to Claude Code, Claude Desktop, Cursor, Codex, and external AI providers. "
+                            + "Local-only on 127.0.0.1, protected by Bearer token authentication."
                     ) {
                         Toggle("", isOn: $mcpEnabled)
                             .labelsHidden()
@@ -123,23 +127,87 @@ struct AIProvidersSettingsPage: View {
                     }
                     if mcpEnabled {
                         Divider()
-                        SettingsPageRow(
-                            icon: "terminal.fill",
-                            iconColor: .gray,
-                            title: server.isRunning
-                                ? "Connect Your Agent" : "Starting…",
-                            subtitle: server.isRunning
-                                ? "Run this once in any project. The token is what keeps other "
-                                    + "programs on this Mac from using it."
-                                : "Waiting for the local port."
-                        ) {
-                            Button("Copy Command") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(
-                                    DoraXMCPServer.registrationCommand, forType: .string)
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(server.isRunning ? Color.green : Color.orange)
+                                    .frame(width: 8, height: 8)
+                                Text(server.isRunning ? "Running on http://127.0.0.1:\(DoraXMCPServer.port)/mcp" : "Starting server…")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(server.isRunning ? .primary : .secondary)
+                                Spacer()
                             }
-                            .disabled(!server.isRunning)
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(
+                                        DoraXMCPServer.registrationCommand, forType: .string)
+                                    copiedCommand = true
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        copiedCommand = false
+                                    }
+                                } label: {
+                                    Label(copiedCommand ? "Copied Command!" : "Copy CLI Command",
+                                          systemImage: copiedCommand ? "checkmark" : "terminal")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(!server.isRunning)
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(
+                                        DoraXMCPServer.jsonConfigurationSnippet, forType: .string)
+                                    copiedSnippet = true
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        copiedSnippet = false
+                                    }
+                                } label: {
+                                    Label(copiedSnippet ? "Copied JSON!" : "Copy JSON Config",
+                                          systemImage: copiedSnippet ? "checkmark" : "curlybraces")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!server.isRunning)
+
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(
+                                        DoraXMCPServer.token, forType: .string)
+                                    copiedToken = true
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                        copiedToken = false
+                                    }
+                                } label: {
+                                    Label(copiedToken ? "Copied Token!" : "Copy Token",
+                                          systemImage: copiedToken ? "checkmark" : "key")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!server.isRunning)
+                            }
+
+                            DisclosureGroup("View MCP Config Snippet") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Add to claude_desktop_config.json, Cursor, or your AI client settings:")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                    ScrollView(.horizontal) {
+                                        Text(DoraXMCPServer.jsonConfigurationSnippet)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .padding(8)
+                                    }
+                                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                                }
+                                .padding(.top, 4)
+                            }
+                            .font(.system(size: 11))
                         }
+                        .padding(14)
                     }
                 }
             }

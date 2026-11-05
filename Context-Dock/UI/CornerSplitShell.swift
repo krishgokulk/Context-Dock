@@ -34,12 +34,22 @@ enum CornerSplitShell {
 
     /// Whether the shell splits now: while the field is open (typed into or about to be) in
     /// Global or an app's scope, and only when the apps' piece has something to hold — an
-    /// empty capsule beside the field is glass for nothing. A conversation keeps its own
-    /// composer (`splitsChat`), General is its own surface.
+    /// empty capsule beside the field is glass for nothing. In frontmost app scope with no
+    /// pins, returns false to use the plain compact frontmost-app chat field (matching UI spec).
     static func splits(
-        isVisible: Bool, isGeneral: Bool, phase: AppChatPromptPhase, stripHasContent: Bool
+        isVisible: Bool,
+        isGeneral: Bool,
+        isGlobalScope: Bool = true,
+        hasPins: Bool = false,
+        phase: AppChatPromptPhase,
+        stripHasContent: Bool
     ) -> Bool {
         guard isVisible, !isGeneral, phase == .prompt || phase == .suggesting else { return false }
+        // For app scopes: show the split shell only when the app has pins —
+        // running apps alone beside an unpinned app are clutter (owner 2026-11-03).
+        // Global Context is unchanged: it always shows the right running-apps strip
+        // when apps are running.
+        if !isGlobalScope { return hasPins }
         return stripHasContent
     }
 

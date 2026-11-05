@@ -70,6 +70,10 @@ final class ScopedCommandExecutor {
                 return await runMCP(invocation, command: command)
             case .operateApp:
                 return await runComputerUse(invocation)
+            case .axSnapshot, .axAct:
+                return await runComputerUseAX(invocation)
+            case .synthesizedScript:
+                return await runSynthesizedScript(invocation)
             default:
                 break
             }
@@ -112,6 +116,48 @@ final class ScopedCommandExecutor {
         let result = await ComputerUseRunner.run(
             target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
         return (result.success, result.output, result.success ? 0 : -1)
+    }
+
+    private func runComputerUseAX(_ invocation: AITypedInvocation) async -> (Bool, String, Int32) {
+        let bundle = nonEmpty(invocation.arguments["bundleId"]) ?? configuration.bundleId
+        let reason = invocation.arguments["reason"] ?? ""
+        let result: AgentToolResult
+        if invocation.kind == .axSnapshot {
+            onStatus?("Reading \(configuration.appName)'s window…")
+            result = await ComputerUseAXRunner.snapshot(
+                bundleID: bundle, reason: reason, scope: nil,
+                screen: invocation.arguments["mode"]?.lowercased() == "screen")
+        } else {
+            guard
+                let action = ComputerUseAXRunner.Action(
+                    rawValue: invocation.arguments["action"] ?? ""),
+                let id = invocation.arguments["id"]
+            else { return (false, "ax_act needs action and id.", -1) }
+            onStatus?("Operating \(configuration.appName)…")
+            result = await ComputerUseAXRunner.act(
+                action: action, id: id, text: invocation.arguments["text"], reason: reason,
+                bundleID: bundle, scope: nil)
+        }
+        return (result.success, result.output, result.success ? 0 : -1)
+    }
+
+    // MARK: - Synthesized Script
+
+    private func runSynthesizedScript(_ invocation: AITypedInvocation) async -> (Bool, String, Int32) {
+        let script = invocation.arguments["script"] ?? ""
+        guard !script.isEmpty else { return (false, "No script provided.", -1) }
+        let language = invocation.arguments["language"] ?? "applescript"
+        let reason = invocation.arguments["reason"] ?? ""
+        let bundle = nonEmpty(invocation.arguments["bundleId"]) ?? configuration.bundleId
+        onStatus?("Running synthesized \(language.capitalized)…")
+        let result = await SynthesizedScriptRunner.run(
+            script: script, language: language, reason: reason,
+            appInput: bundle,
+            scope: configuration.scope,
+            grantedApps: [configuration.bundleId.lowercased(): configuration.bundleId],
+            userRequest: ""
+        )
+        return (result.success, result.output, result.exitCode ?? (result.success ? 0 : -1))
     }
 
     // MARK: - Adapter action

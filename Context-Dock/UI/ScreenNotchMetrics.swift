@@ -10,6 +10,19 @@ import CoreGraphics
 import Foundation
 
 enum ScreenNotchMetrics {
+    /// Screen that carries the physical hardware camera notch (if present on the system).
+    static var screenWithNotch: NSScreen? {
+        if #available(macOS 12.0, *) {
+            return NSScreen.screens.first { $0.safeAreaInsets.top > 0 }
+        }
+        return nil
+    }
+
+    /// True if the current host machine has a built-in display with a physical hardware notch.
+    static var hasHardwareNotch: Bool {
+        screenWithNotch != nil
+    }
+
     /// Detects if the screen has a physical hardware notch.
     static func hasHardwareNotch(on screen: NSScreen) -> Bool {
         if #available(macOS 12.0, *) {
@@ -64,8 +77,38 @@ enum ScreenNotchMetrics {
         notchHeight(on: activeScreen)
     }
 
-    /// Standard dimensions for the Dynamic Island presentation at rest and when expanded.
+    /// Standard dimensions for the Dynamic Island presentation at rest and when expanded
+    /// (aligned with DynamicBar and MacBook Air 2024 / MacBook Pro display geometry).
     static let islandRestingWidth: CGFloat = 210
-    static let islandRestingHeight: CGFloat = 36
-    static let cornerRadius: CGFloat = 18
+    static let islandRestingHeight: CGFloat = 34
+    static let cornerRadius: CGFloat = 20
+
+    /// DynamicBar reference dimensions for the open island.
+    static let openIslandDefaultWidth: CGFloat = 378
+    static let openIslandDefaultHeight: CGFloat = 172
+    static let openIslandMaxWidth: CGFloat = 600
+    static let openIslandMaxHeight: CGFloat = 320
+
+    /// Safe area insets inside the open island (safe from camera notch cutout & border curves).
+    static let safeAreaSideInset: CGFloat = 32
+    static let safeAreaTopInset: CGFloat = 36
+    static let safeAreaBottomInset: CGFloat = 26
+
+    /// Wing dimensions beside the physical camera cutout for the closed island.
+    static let wingWidth: CGFloat = 52
+    static let hoverSwellAmount: CGFloat = 4.0
+
+    /// Calculates the full resting island width (camera cutout + left & right glanceable wings).
+    static func restingIslandWidth(on screen: NSScreen = activeScreen) -> CGFloat {
+        let notchW = notchRect(on: screen).width
+        return notchW + (wingWidth * 2)
+    }
+
+    /// Computes the safe content area within an open island of given size.
+    static func safeArea(for islandSize: CGSize, on screen: NSScreen = activeScreen) -> CGRect {
+        let topH = max(notchHeight(on: screen), safeAreaTopInset)
+        let w = max(0, islandSize.width - (safeAreaSideInset * 2))
+        let h = max(0, islandSize.height - topH - safeAreaBottomInset)
+        return CGRect(x: safeAreaSideInset, y: safeAreaBottomInset, width: w, height: h)
+    }
 }

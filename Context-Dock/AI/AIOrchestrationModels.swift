@@ -41,8 +41,14 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case menuAction
     /// Press what the app's LIVE menu bar has, when the cached map does not have it.
     case operateApp
+    /// Read the front window as element ids (ComputerUseAXTools).
+    case axSnapshot
+    /// Click / type / focus one element id from the latest snapshot.
+    case axAct
     /// Run a script the app's own AGENT.md declares.
     case appScript
+    /// Run an on-the-fly synthesized AppleScript or JXA script.
+    case synthesizedScript
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -293,6 +299,30 @@ enum AITypedInvocationResolver {
                 }
             }
 
+            // Window-level Computer Use for providers with no tools of their own:
+            // {"ax_snapshot":{"reason":"…"}} then {"ax_act":{"action":"click","id":"e7"}}.
+            if let call = root["ax_snapshot"] as? [String: Any] {
+                var args: [String: String] = [:]
+                if let reason = call["reason"] as? String, !reason.isEmpty { args["reason"] = reason }
+                if let mode = call["mode"] as? String { args["mode"] = mode }
+                return AITypedInvocation(
+                    kind: .axSnapshot, capabilityID: "computerUse.axSnapshot",
+                    arguments: args, requiresApproval: true)
+            }
+            if let call = root["ax_act"] as? [String: Any],
+                let action = (call["action"] as? String)?.lowercased(),
+                ["click", "type", "focus"].contains(action),
+                let id = (call["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !id.isEmpty
+            {
+                var args: [String: String] = ["action": action, "id": id]
+                if let text = call["text"] as? String { args["text"] = text }
+                if let reason = call["reason"] as? String, !reason.isEmpty { args["reason"] = reason }
+                return AITypedInvocation(
+                    kind: .axAct, capabilityID: "computerUse.axAct",
+                    arguments: args, requiresApproval: true)
+            }
+
             // A script the app's profile declares: {"app_script": {"name": "tabs-to-md.sh"}}.
             //
             // Without this a provider with no tools of its own cannot reach `run_app_script`
@@ -309,6 +339,27 @@ enum AITypedInvocationResolver {
                     }
                     return AITypedInvocation(
                         kind: .appScript, capabilityID: "appAgent.runScript",
+                        arguments: args, requiresApproval: true)
+                }
+            }
+
+            // Synthesized AppleScript / JXA: {"synthesized_script": {"script": "...", "language": "applescript", "reason": "..."}}
+            if let call = root["synthesized_script"] as? [String: Any] {
+                let script = ((call["script"] as? String) ?? (call["code"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !script.isEmpty {
+                    var args: [String: String] = ["script": script]
+                    if let language = call["language"] as? String, !language.isEmpty {
+                        args["language"] = language
+                    }
+                    if let reason = call["reason"] as? String, !reason.isEmpty {
+                        args["reason"] = reason
+                    }
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String), !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .synthesizedScript, capabilityID: "appAgent.synthesizedScript",
                         arguments: args, requiresApproval: true)
                 }
             }

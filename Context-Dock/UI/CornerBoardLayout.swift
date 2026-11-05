@@ -337,7 +337,12 @@ extension AppChatPromptModel {
         }
         // The row Return takes — the highlighted one, else the top one — as the foot reads
         // it: the panel followed only an arrowed row, so it appeared and vanished.
-        guard let row = showsAskAIRow ? focusedRow : (focusedRow ?? rows.first) else { return nil }
+        guard let row = focusedRow ?? rows.first else {
+            if !isGlobalScope {
+                return .appScope(bundleID: appBundleID, name: appName)
+            }
+            return nil
+        }
         return CornerBoardLayout.preview(
             for: row, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)
@@ -346,11 +351,18 @@ extension AppChatPromptModel {
 
     /// The list card and its panel together: the size the window reserves for the board.
     var boardSize: CGSize {
-        CornerBoardLayout.boardSize(
+        let isExpanded = CornerDockController.shared.showsBoardUnderField
+            || CornerDockController.shared.chatPresentation.isCentred
+            || AppSettings.shared.launcherPresentationMode == .centerScreen
+        let calc = CornerBoardLayout.boardSize(
             list: AppChatListMetrics.size(
                 rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self),
                 header: globalSectionHeaders.isEmpty),
             preview: boardPreview)
+        if isExpanded {
+            return CGSize(width: max(calc.width, 680), height: 440)
+        }
+        return calc
     }
 
     /// The Context Dock's panel shows (#191, part 2). Read by the card that draws it.

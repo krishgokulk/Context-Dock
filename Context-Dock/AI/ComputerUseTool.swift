@@ -45,6 +45,10 @@ extension AgentToolRegistry {
                         "description": "One line the user will read on the approval card, "
                             + "saying what this achieves.",
                     ],
+                    "text": [
+                        "type": "string",
+                        "description": "Optional text to enter into a focused element or search field.",
+                    ],
                 ],
                 required: ["target"]
             ) { arguments, context in
@@ -52,13 +56,14 @@ extension AgentToolRegistry {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let reason = (arguments["reason"] as? String ?? "").trimmingCharacters(
                     in: .whitespacesAndNewlines)
+                let text = (arguments["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !target.isEmpty else {
                     return AgentToolResult(
                         success: false, output: "operate_app needs 'target'.",
                         displayCommand: "operate_app")
                 }
                 return await ComputerUseRunner.run(
-                    target: target, reason: reason, scope: context.chatScope)
+                    target: target, reason: reason, text: text, scope: context.chatScope)
             })
     }
 }
@@ -67,7 +72,7 @@ extension AgentToolRegistry {
 enum ComputerUseRunner {
 
     static func run(
-        target: String, reason: String, scope: GeneralChatScope?
+        target: String, reason: String, text: String? = nil, scope: GeneralChatScope?
     ) async -> AgentToolResult {
         guard let bundleID = AgentToolRegistry.scopedBundleID(for: scope), !bundleID.isEmpty
         else {
@@ -77,7 +82,7 @@ enum ComputerUseRunner {
                     + "needs a named app. Ask in that app's own chat.",
                 displayCommand: "operate_app(\(target))")
         }
-        return await run(target: target, reason: reason, bundleID: bundleID, scope: scope)
+        return await run(target: target, reason: reason, text: text, bundleID: bundleID, scope: scope)
     }
 
     /// The same press, entered by bundle id.
@@ -89,7 +94,7 @@ enum ComputerUseRunner {
     /// exactly what happened: Computer Use shipped and the owner's own chat still said "not in
     /// my menu cache, so I cannot fire it".
     static func run(
-        target: String, reason: String, bundleID: String, scope: GeneralChatScope? = nil
+        target: String, reason: String, text: String? = nil, bundleID: String, scope: GeneralChatScope? = nil
     ) async -> AgentToolResult {
         guard !bundleID.isEmpty else {
             return AgentToolResult(
@@ -168,8 +173,14 @@ enum ComputerUseRunner {
         // is what said the item did not exist.
         let items = AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
             for: app.processIdentifier)
-        let candidates = flatten(items).map {
-            ComputerUseTarget(path: $0.path, isEnabled: $0.isEnabled)
+        // The same menu item can be read more than once (a lazy menu opened twice, a submenu
+        // reachable from two parents), and two entries with an identical path are one item,
+        // not an ambiguity. TextEdit reported "Check Spelling While Typing" three times and
+        // the resolver, finding three equal best matches, refused to press any of them.
+        var seenPaths = Set<[String]>()
+        let candidates = flatten(items).compactMap { item -> ComputerUseTarget? in
+            guard seenPaths.insert(item.path).inserted else { return nil }
+            return ComputerUseTarget(path: item.path, isEnabled: item.isEnabled)
         }
         guard !candidates.isEmpty else {
             return AgentToolResult(
@@ -226,6 +237,22 @@ enum ComputerUseRunner {
                     + "action.")
 
         case .noMatch:
+            // One-shot search/text field focusing fallback
+            let lower = target.lowercased()
+            if lower == "search" || lower == "find" || lower == "search field" || lower == "focus search"
+                || lower.starts(with: "search ") || lower.starts(with: "find ") || lower == "enter text" || lower == "type"
+            {
+                let focusRes = AXUIFocusHelper.focusSearchOrTextField(in: app.processIdentifier, text: text)
+                if focusRes.success {
+                    return AgentToolResult(
+                        success: true,
+                        output: "\(focusRes.elementDescription) in \(appName). Ready for input."
+                            + (startedStep.map { "\n\n" + $0 } ?? ""),
+                        displayCommand: "operate_app(\(appName): \(focusRes.elementDescription))"
+                    ).withUserSummary("Focused search field in \(appName).")
+                }
+            }
+
             // The refusal the owner called perfect, kept — now with the live list behind it
             // rather than a stale one, so "it is not there" means it is really not there.
             let nearby = candidates
@@ -295,15 +322,31 @@ enum ComputerUseRunner {
             }
         }
 
+        // Stop may have been pressed while the approval card was open; show the pill otherwise.
+        if ComputerUseSession.shared.isStopped {
+            return AgentToolResult(
+                success: false,
+                output: "The user pressed Stop. Do not take any more steps in \(appName). Say what "
+                    + "was done and ask whether to continue.",
+                displayCommand: "operate_app(\(appName)) · stopped by user"
+            ).withUserSummary("Stopped. DoraX won't take more steps in \(appName) unless you ask again.")
+        }
+        ComputerUseSession.shared.began(appName: appName, bundleID: bundleID)
+
         let pressed = AXMenuReader.shared.clickMenuItemReliably(
             path: chosen.path, in: app.processIdentifier)
         guard pressed else {
+            ComputerUseSkillRecorder.shared.failed(bundleID: bundleID)
             return AgentToolResult(
                 success: false,
                 output: "\(chosen.display) could not be pressed, so nothing happened.",
                 displayCommand: "operate_app(\(appName): \(chosen.display)) · failed")
                 .withUserSummary("\(chosen.display) couldn't be pressed, so nothing happened.")
         }
+
+        ComputerUseSkillRecorder.shared.succeeded(
+            bundleID: bundleID, appName: appName, goal: reason,
+            step: ComputerUseSkillRecorder.describeMenu(path: chosen.display))
 
         // Let the app respond before reading it back; a window that has not appeared yet
         // reads as an unchanged app, and "nothing happened" is the one wrong answer here.

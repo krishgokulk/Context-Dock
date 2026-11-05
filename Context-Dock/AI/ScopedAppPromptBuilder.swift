@@ -205,40 +205,7 @@ enum ScopedAppPromptBuilder {
             forBundleID: bundleId, appName: appName), !profile.isEmpty
         {
             lines.append("")
-            lines.append("## How \(appName) is worked with (this app's profile)")
-            if !profile.summary.isEmpty { lines.append(profile.summary) }
-            if !profile.instructions.isEmpty { lines.append(profile.instructions) }
-            if !profile.never.isEmpty {
-                lines.append("Never, in this app:")
-                lines += profile.never.map { "- \($0)" }
-            }
-            if !profile.verify.isEmpty {
-                lines.append(
-                    "Check your own work with these: "
-                    + profile.verify.keys.sorted()
-                        .map { "\($0) → \(profile.verify[$0] ?? "")" }
-                        .joined(separator: ", ")
-                    + ". Report what the check read, not that you did it.")
-            }
-            // A declared script is unreachable unless the model is told how to ask for one.
-            // Asked to run `tabs-to-md.sh`, a tool-less provider went hunting the file system
-            // with shell commands instead — the wrong answer by the wrong authority.
-            if let scripts = profile.tools.scripts, !scripts.isEmpty {
-                lines.append(
-                    "Scripts this app carries: " + scripts.joined(separator: ", ")
-                    + ". Run one with the run_app_script tool, or — if you were given no tools "
-                    + "this turn — reply with ONLY "
-                    + "{\"app_script\": {\"name\": \"\(scripts[0])\"}}. Never look for these "
-                    + "files yourself and never run them through the shell: the name is the "
-                    + "whole interface, and the user approves each run.")
-            }
-            let declared = profile.tools.allNames
-            if !declared.isEmpty {
-                lines.append(
-                    "Routes this app declares, in preference order: "
-                    + declared.joined(separator: ", ")
-                    + ". Prefer these over anything else listed below.")
-            }
+            lines.append(profile.promptBlock())
         }
 
         lines.append("")
@@ -389,11 +356,12 @@ enum ScopedAppPromptBuilder {
         // request, instead of being listed up front.
         if !bundleId.isEmpty {
             lines.append(
-                "- Menu commands: not listed here. For an interface command (Minimize, New "
+                "- Menu commands: live menu commands for \(appName) are surfaced in this context and can be run with "
+                + "run_menu_command. For additional interface commands (Minimize, New "
                 + "Tab, Export, Close…) call find_menu_command with a short query to get the "
-                + "few matching menu paths, then run that path with run_menu_command. Menus are "
-                + "the UI lane, below every headless route — reach for them when the request is "
-                + "about the window, or when nothing headless fits.")
+                + "matching menu paths. Menus are the UI lane, below every headless route — "
+                + "reach for them when the request is about the window, or when nothing headless fits, "
+                + "without requiring manual CLI tool installation.")
         }
 
         lines.append("")

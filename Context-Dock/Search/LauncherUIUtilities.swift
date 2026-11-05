@@ -142,6 +142,15 @@ struct TwoFingerSwipeGestureView: NSViewRepresentable {
 
 // MARK: - Glass Background
 
+private class NonInteractiveVisualEffectView: NSVisualEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+@available(macOS 26.0, *)
+private class NonInteractiveGlassEffectView: NSGlassEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// NSVisualEffectView wrapped in SwiftUI — provides true wallpaper-blur glass effect.
 /// Rounded corners are applied at the AppKit layer so they clip the blur itself.
 struct GlassBackground: NSViewRepresentable {
@@ -149,17 +158,21 @@ struct GlassBackground: NSViewRepresentable {
     /// Explicit dark flag passed from SwiftUI environment — enables reactive system-appearance updates.
     /// When nil, falls back to settings + NSApp.effectiveAppearance (non-reactive in system mode).
     var isDark: Bool? = nil
+    /// When true the glassDarkness setting is ignored and a minimal tint is used.
+    /// Use for nested glass elements (e.g. row-selection highlights) that must stay
+    /// visibly lighter than the outer container at any darkness level.
+    var ignoresDarkness: Bool = false
     @ObservedObject private var settings = AppSettings.shared
 
     func makeNSView(context: Context) -> NSView {
         // macOS 26 Liquid Glass — the same material as Spotlight. Pure glass at 0% darkness.
         if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
+            let glass = NonInteractiveGlassEffectView()
             glass.wantsLayer = true
             configureGlass(glass)
             return glass
         }
-        let ve = NSVisualEffectView()
+        let ve = NonInteractiveVisualEffectView()
         ve.blendingMode = .behindWindow
         ve.state = .active
         ve.wantsLayer = true
@@ -185,12 +198,14 @@ struct GlassBackground: NSViewRepresentable {
         glass.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
 
         // `glassDarkness` is stored as 0...1. Use it as extra lens strength:
-        // light mode stays neutral silver glass, dark mode gets smoked glass.
-        let d = max(0, min(1, settings.glassDarkness))
+        // 0% is pure liquid crystal glass, 100% is smoked dark glass (DynamicBar parity).
+        // Nested elements (row highlights) pass ignoresDarkness=true so they stay
+        // visibly lighter than the outer container at any darkness level.
+        let d = ignoresDarkness ? 0.0 : max(0, min(1, settings.glassDarkness))
         if dark {
-            glass.tintColor = NSColor.black.withAlphaComponent(0.18 + d * 0.34)
+            glass.tintColor = NSColor.black.withAlphaComponent(0.15 + d * 0.65)
         } else {
-            glass.tintColor = NSColor(calibratedWhite: 0.86, alpha: 0.10 + d * 0.12)
+            glass.tintColor = NSColor(calibratedWhite: 0.86, alpha: 0.08 + d * 0.35)
         }
     }
 
@@ -204,6 +219,7 @@ struct GlassBackground: NSViewRepresentable {
         guard let rootLayer = ve.layer else { return }
 
         let dark = resolvedIsDark
+        let d = ignoresDarkness ? 0.0 : max(0, min(1, settings.glassDarkness))
 
         // ── Material: white liquid glass in light, smoked glass in dark ──
         ve.material = dark ? .hudWindow : .popover
@@ -221,8 +237,8 @@ struct GlassBackground: NSViewRepresentable {
         base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         base.backgroundColor =
             dark
-            ? CGColor(red: 0.02, green: 0.024, blue: 0.03, alpha: 0.34)
-            : CGColor(red: 0.78, green: 0.80, blue: 0.80, alpha: 0.28)
+            ? CGColor(red: 0.02, green: 0.024, blue: 0.03, alpha: 0.20 + d * 0.65)
+            : CGColor(red: 0.78, green: 0.80, blue: 0.80, alpha: 0.15 + d * 0.45)
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
         let grad = existingGradientLayer(named: "gradientOverlay", in: rootLayer) {

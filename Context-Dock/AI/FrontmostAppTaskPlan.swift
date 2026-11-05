@@ -13,6 +13,10 @@ enum ScopedRecordRead {
         "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
         "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
         "quit ", "enable ", "disable ", "export ",
+        // Switching a setting or pressing a control. "turn on the spelling option" had none of
+        // the words above, planned as a read, and was handed no menu or window tool at all.
+        "turn on ", "turn off ", "switch on ", "switch off ", "toggle ", "uncheck ", "untick ",
+        "click ", "press ",
     ]
 
     static func hasExplicitAction(_ query: String) -> Bool {
@@ -41,6 +45,19 @@ struct FrontmostAppTaskPlan: Equatable {
     let sources: Set<Source>
     let allowedToolNames: Set<String>
     let complexity: TaskComplexityRoute
+    let agentNeverRules: [String]
+
+    init(goal: String, appName: String, bundleId: String, intent: Intent, sources: Set<Source>,
+         allowedToolNames: Set<String>, complexity: TaskComplexityRoute, agentNeverRules: [String] = []) {
+        self.goal = goal
+        self.appName = appName
+        self.bundleId = bundleId
+        self.intent = intent
+        self.sources = sources
+        self.allowedToolNames = allowedToolNames
+        self.complexity = complexity
+        self.agentNeverRules = agentNeverRules
+    }
 
     func allows(_ source: Source) -> Bool { sources.contains(source) }
     var permitsUIAutomation: Bool { intent == .act || intent == .workflow }
@@ -57,7 +74,7 @@ struct FrontmostAppTaskPlan: Equatable {
             case .memory: return "relevant local memory"
             }
         }.sorted().joined(separator: ", ")
-        return """
+        var contract = """
             TASK CONTRACT
             Goal: \(goal)
             Target app: \(appName) (\(bundleId))
@@ -67,6 +84,11 @@ struct FrontmostAppTaskPlan: Equatable {
             minimum allowed tools, stop when evidence supports the goal, and report a missing \
             source plainly instead of substituting another source.
             """
+        if !agentNeverRules.isEmpty {
+            contract += "\n\nAPP SAFETY RULES (AGENT.md):\n"
+                + agentNeverRules.map { "- \($0)" }.joined(separator: "\n")
+        }
+        return contract
     }
 
     var initialProgress: [String] {
@@ -161,8 +183,7 @@ struct FrontmostAppTaskPlan: Equatable {
         var tools: Set<String> = ["find_capability", "run_capability", "run_adapter_action", "run_mcp_tool", "verify_outcome"]
         let id = bundleId.lowercased()
         if id.contains("imessage") || id.contains("messages") || id.contains("mobilesms") {
-            tools.formUnion(["get_messages_conversations", "search_messages"])
-            if hasAction { tools.insert("compose_message") }
+            tools.formUnion(["get_messages_conversations", "search_messages", "compose_message", "send_message"])
         }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
@@ -187,19 +208,48 @@ struct FrontmostAppTaskPlan: Equatable {
             tools.formUnion(["list_shortcuts", "run_shortcut"])
         }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
-        // operate_app is offered on action turns even when Computer Use is switched off for
-        // this app, because its refusal *is* the offer: it tells the model to ask the user for
-        // permission in one line. Withholding it until the setting is on means nobody who has
-        // not already found the setting ever learns the rung exists.
-        if hasAction {
+
+        // Universal App Pet principle: an app-scoped pet is NEVER starved of its app's
+        // control and vision tools by brittle keyword matchers. The model is the brain;
+        // Context-Dock is the safe native body. The safety guards (consent store,
+        // approval cards, emergency stop HUD, destructive denylist) govern execution.
+        if !bundleId.isEmpty {
             tools.formUnion([
                 "find_menu_command", "run_menu_command", "send_keys", "window_control",
-                "operate_app",
+                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
             ])
+        } else if hasAction {
+            tools.formUnion([
+                "find_menu_command", "run_menu_command", "send_keys", "window_control",
+                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
+            ])
+        }
+
+        var agentNeverRules: [String] = []
+        if !bundleId.isEmpty {
+            tools.formUnion(["read_app_dictionary", "run_synthesized_script"])
+            if let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
+                agentNeverRules = profile.never
+                if let scripts = profile.tools.scripts, !scripts.isEmpty {
+                    tools.insert("run_app_script")
+                }
+                if let caps = profile.tools.capabilities, !caps.isEmpty {
+                    tools.formUnion(["find_capability", "run_capability"])
+                }
+                if let mcps = profile.tools.mcp, !mcps.isEmpty {
+                    tools.insert("run_mcp_tool")
+                }
+                if let actions = profile.tools.actions, !actions.isEmpty {
+                    tools.insert("run_adapter_action")
+                }
+                if let clis = profile.tools.cli, !clis.isEmpty {
+                    tools.insert("run_command")
+                }
+            }
         }
 
         return Self(goal: intentQuery.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
                     bundleId: bundleId, intent: intent, sources: sources,
-                    allowedToolNames: tools, complexity: complexity)
+                    allowedToolNames: tools, complexity: complexity, agentNeverRules: agentNeverRules)
     }
 }

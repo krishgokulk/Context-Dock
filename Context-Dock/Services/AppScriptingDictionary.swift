@@ -174,6 +174,50 @@ struct AppScriptingDictionary: Codable, Equatable, Sendable {
             + " and \(commands.count) command\(commands.count == 1 ? "" : "s") — "
             + "\(writes) are writes that ask first."
     }
+
+    /// Clean markdown representation for the agent to inspect scriptable classes and commands.
+    func formattedSummary(query: String? = nil) -> String {
+        var lines: [String] = []
+        lines.append("## Scripting Dictionary (sdef) for \(appName) (\(bundleID))")
+        let needle = query?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+
+        let filteredCommands = needle.isEmpty ? commands : commands.filter {
+            $0.name.lowercased().contains(needle) || $0.parameters.contains { $0.name.lowercased().contains(needle) }
+        }
+        if !filteredCommands.isEmpty {
+            lines.append("### Commands")
+            for cmd in filteredCommands.prefix(30) {
+                var desc = "- `\(cmd.name)`"
+                if let direct = cmd.directType, !direct.isEmpty {
+                    desc += " [direct: \(direct)]"
+                }
+                if !cmd.parameters.isEmpty {
+                    let params = cmd.parameters.map { "\($0.name): \($0.type)" }.joined(separator: ", ")
+                    desc += " (\(params))"
+                }
+                lines.append(desc)
+            }
+        }
+
+        let filteredClasses = needle.isEmpty ? classes : classes.filter {
+            $0.name.lowercased().contains(needle) || $0.properties.contains { $0.name.lowercased().contains(needle) }
+        }
+        if !filteredClasses.isEmpty {
+            lines.append("### Classes & Properties")
+            for cls in filteredClasses.prefix(25) {
+                let readableProps = cls.properties.prefix(15).map { prop -> String in
+                    let mode = prop.isReadOnly ? " (ro)" : (prop.isWriteOnly ? " (wo)" : "")
+                    return "\(prop.name): \(prop.type)\(mode)"
+                }.joined(separator: ", ")
+                lines.append("- **\(cls.name)**: \(readableProps.isEmpty ? "no properties" : readableProps)")
+            }
+        }
+
+        if lines.count == 1 {
+            lines.append("No classes or commands matched query '\(needle)'.")
+        }
+        return lines.joined(separator: "\n")
+    }
 }
 
 extension AppScriptingDictionary {

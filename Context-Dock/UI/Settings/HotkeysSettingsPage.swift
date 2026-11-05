@@ -8,76 +8,80 @@ struct HotkeysSettingsPage: View {
         ScrollView {
             VStack(spacing: 20) {
                 CardSection(title: "Launch Shortcut", systemImage: "bolt.fill") {
-                    HStack(spacing: 12) {
-                        Text("⌘⌘")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.teal)
-                            .frame(width: 38, height: 30)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Double-press Command")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Tap Command twice from anywhere to open the app in front's Context Dock in the corner.")
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            Text("⌘⌘")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.teal)
+                                .frame(width: 38, height: 30)
+                                .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Double-press Command (⌘⌘)")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Primary launch trigger. Summons Context-Dock at your chosen presentation (Centre of Display or Bottom Dock, configured in Appearance).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Toggle("Double-press Command", isOn: Binding(
+                                get: { settings.useDoubleCommandGlobalContext },
+                                set: {
+                                    settings.useDoubleCommandGlobalContext = $0
+                                    NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                }
+                            ))
+                            .labelsHidden()
+                        }
+                        .padding(.top, 8)
+
+                        HStack(spacing: 12) {
+                            Color.clear.frame(width: 38, height: 1)
+                            Text("or record a custom launch key")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("Double-press Command", isOn: Binding(
-                            get: { settings.useDoubleCommandGlobalContext },
-                            set: {
-                                settings.useDoubleCommandGlobalContext = $0
+                            Spacer()
+                            HotkeyRecorderControl(
+                                displayString: settings.globalContextHotkeyDisplayString,
+                                onClear: {
+                                    settings.globalContextHotkeyKeyCode = 0
+                                    settings.globalContextHotkeyModifiers = 0
+                                    NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                }
+                            ) { keyCode, modifiers in
+                                settings.globalContextHotkeyKeyCode = keyCode
+                                settings.globalContextHotkeyModifiers = modifiers
                                 NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                             }
-                        ))
-                        .labelsHidden()
-                    }
-                    .padding(.top, 12)
-                    // Optional key for the same action. Registered on its own, so it keeps
-                    // working when double-press Command is off.
-                    HStack(spacing: 12) {
-                        Color.clear.frame(width: 38, height: 1)
-                        Text("or record a key")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        HotkeyRecorderControl(
-                            displayString: settings.globalContextHotkeyDisplayString,
-                            onClear: {
-                                settings.globalContextHotkeyKeyCode = 0
-                                settings.globalContextHotkeyModifiers = 0
-                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
-                            }
-                        ) { keyCode, modifiers in
-                            settings.globalContextHotkeyKeyCode = keyCode
-                            settings.globalContextHotkeyModifiers = modifiers
-                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                         }
-                    }
-                    .padding(.bottom, 12)
-                    Divider()
-                    HStack(spacing: 12) {
-                        Text("⌥⌥")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.orange)
-                            .frame(width: 38, height: 30)
-                            .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Double-press Option")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Tap Option twice quickly from anywhere to search, in the middle of the screen.")
-                                .font(.caption)
+                        .padding(.bottom, 6)
+
+                        Divider()
+
+                        HStack(spacing: 12) {
+                            Text("⌥⌥")
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { settings.useDoubleOptionLaunch },
-                            set: {
-                                settings.useDoubleOptionLaunch = $0
-                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                .frame(width: 38, height: 30)
+                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Alternative: Double-press Option (⌥⌥)")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Optional secondary trigger to directly pop the centre screen spotlight search.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                        ))
-                        .labelsHidden()
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { settings.useDoubleOptionLaunch },
+                                set: {
+                                    settings.useDoubleOptionLaunch = $0
+                                    NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                                }
+                            ))
+                            .labelsHidden()
+                        }
+                        .padding(.vertical, 6)
                     }
-                    .padding(.vertical, 12)
                 }
 
                 CardSection(title: "Custom Shortcuts", systemImage: "keyboard") {

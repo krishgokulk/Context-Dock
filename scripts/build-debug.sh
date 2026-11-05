@@ -36,7 +36,14 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   LOG=/dev/stdout
 fi
 set +e
-CODE_SIGN_VAL="${CODE_SIGNING_ALLOWED:-NO}"
+if [ -z "${CODE_SIGNING_ALLOWED:-}" ]; then
+  if security find-identity -v -p codesigning 2>/dev/null | grep -Eq "[1-9][0-9]* valid identities found"; then
+    CODE_SIGNING_ALLOWED="YES"
+  else
+    CODE_SIGNING_ALLOWED="NO"
+  fi
+fi
+CODE_SIGN_VAL="$CODE_SIGNING_ALLOWED"
 PROV_ARGS=()
 if [ "$CODE_SIGN_VAL" != "NO" ]; then
   PROV_ARGS=(-allowProvisioningUpdates)

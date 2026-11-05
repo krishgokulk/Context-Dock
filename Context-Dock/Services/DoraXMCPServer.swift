@@ -99,8 +99,29 @@ final class DoraXMCPServer: ObservableObject {
 
     /// What the user pastes into their agent to connect it.
     static var registrationCommand: String {
-        "claude mcp add --transport http dorax http://127.0.0.1:\(port)/mcp "
+        "claude mcp add --transport http context-dock http://127.0.0.1:\(port)/mcp "
             + "--header \"Authorization: Bearer \(token)\""
+    }
+
+    static var endpointURL: String {
+        "http://127.0.0.1:\(port)/mcp"
+    }
+
+    /// Formatted JSON snippet for Claude Desktop, Cursor, Zed, or other MCP clients.
+    static var jsonConfigurationSnippet: String {
+        """
+        {
+          "mcpServers": {
+            "context-dock": {
+              "type": "http",
+              "url": "http://127.0.0.1:\(port)/mcp",
+              "headers": {
+                "Authorization": "Bearer \(token)"
+              }
+            }
+          }
+        }
+        """
     }
 
     // MARK: - Lifecycle
@@ -275,7 +296,7 @@ final class DoraXMCPServer: ObservableObject {
             result = [
                 "protocolVersion": "2025-06-18",
                 "capabilities": ["tools": [:] as [String: Any]],
-                "serverInfo": ["name": "dorax", "version": "1.0.0"],
+                "serverInfo": ["name": "context-dock", "version": "2.0.0"],
             ]
 
         case "tools/list":
@@ -386,6 +407,11 @@ final class DoraXMCPServer: ObservableObject {
         if nested { headers[nestedHeader] = "1" }
         let config: [String: Any] = [
             "mcpServers": [
+                "context-dock": [
+                    "type": "http",
+                    "url": "http://127.0.0.1:\(port)/mcp",
+                    "headers": headers,
+                ],
                 serverName: [
                     "type": "http",
                     "url": "http://127.0.0.1:\(port)/mcp",
@@ -483,6 +509,130 @@ final class DoraXMCPServer: ObservableObject {
     ]
 
     private static let baseToolDefinitions: [[String: Any]] = [
+        [
+            "name": "look",
+            "description":
+                "Observe the active app window: returns interactive UI element IDs [e1, e2...] "
+                + "with roles and labels, or live menu bar items. Optional mode: 'screen' for OCR on canvas apps, "
+                + "or 'menus' for the full menu bar hierarchy.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "app": [
+                        "type": "string",
+                        "description": "App name or bundle id. Defaults to the frontmost active app.",
+                    ],
+                    "mode": [
+                        "type": "string",
+                        "enum": ["elements", "menus", "screen"],
+                        "description": "'elements' (default) reads window UI elements; 'menus' reads menu bar items; 'screen' performs vision OCR.",
+                    ],
+                    "reason": [
+                        "type": "string",
+                        "description": "Short explanation of why you are inspecting the window.",
+                    ],
+                ] as [String: Any],
+            ],
+        ],
+        [
+            "name": "do",
+            "description":
+                "Act on an element or menu in the target app: click a button/tab by element ID, "
+                + "type text into a focused field, or trigger a menu bar item.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "app": [
+                        "type": "string",
+                        "description": "App name or bundle id. Defaults to the frontmost app.",
+                    ],
+                    "action": [
+                        "type": "string",
+                        "enum": ["click", "type", "focus", "menu"],
+                        "description": "The action to perform: 'click', 'type', 'focus', or 'menu'.",
+                    ],
+                    "target": [
+                        "type": "string",
+                        "description": "Element ID from look (e.g. 'e1', 'e2') or menu path (e.g. 'File > New Tab').",
+                    ],
+                    "text": [
+                        "type": "string",
+                        "description": "Text to enter (required when action is 'type').",
+                    ],
+                    "reason": [
+                        "type": "string",
+                        "description": "One line explaining the action for user consent.",
+                    ],
+                ] as [String: Any],
+                "required": ["action", "target"],
+            ],
+        ],
+        [
+            "name": "script",
+            "description":
+                "Execute synthesized AppleScript or JavaScript for Automation (JXA) against an application. "
+                + "Subject to macOS Apple Events permissions and safety verification.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "app": [
+                        "type": "string",
+                        "description": "Target app name or bundle id.",
+                    ],
+                    "language": [
+                        "type": "string",
+                        "enum": ["applescript", "jxa"],
+                        "description": "Scripting language: 'applescript' (default) or 'jxa'.",
+                    ],
+                    "code": [
+                        "type": "string",
+                        "description": "The AppleScript or JXA script source to execute.",
+                    ],
+                ] as [String: Any],
+                "required": ["code"],
+            ],
+        ],
+        [
+            "name": "read_data",
+            "description":
+                "Direct, zero-latency headless data reader for macOS applications (Messages, Notes, Safari, Mail, Reminders, Calendar). "
+                + "Examples: 'messages.recent', 'messages.search', 'notes.recent', 'notes.search', 'safari.currentTab', "
+                + "'safari.pageContent', 'safari.listTabs', 'safari.switchTab', 'mail.search'.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "source": [
+                        "type": "string",
+                        "description": "Capability ID, e.g. 'messages.recent', 'notes.recent', 'safari.currentTab', 'safari.pageContent', 'safari.listTabs'.",
+                    ],
+                    "input": [
+                        "type": "object",
+                        "description": "Input parameters for the capability as key-value pairs (e.g. {\"query\": \"meeting\"}).",
+                    ],
+                ] as [String: Any],
+                "required": ["source"],
+            ],
+        ],
+        [
+            "name": "ask",
+            "description":
+                "Ask Context-Dock's native AI assistant to carry out a goal, answer a question, or inspect the user's Mac. "
+                + "Context-Dock handles multi-step tool execution, verified read-backs, and safety checks.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "The goal or question worded in natural language.",
+                    ],
+                    "app": [
+                        "type": "string",
+                        "description": "Optional app name or bundle id to scope the request to.",
+                    ],
+                ] as [String: Any],
+                "required": ["query"],
+            ],
+        ],
         [
             "name": "dorax_remember",
             "description":
@@ -816,7 +966,7 @@ final class DoraXMCPServer: ObservableObject {
         // user did not write (untrusted).
         switch name {
         case "dorax_frontmost_app", "dorax_selection", "dorax_screenshot", "dorax_browser_tabs",
-            "dorax_find_files":
+            "dorax_find_files", "look", "read_data", "context_dock_look", "context_dock_read_data":
             // E1c: a CLI turn still holding its own fetch or shell does not get the user's data;
             // it is stopped and run again without them, and then this read goes ahead.
             if let turn, ClaudeCodeCLIService.stopBeforePrivateRead(turnID: turn.id) {
@@ -828,6 +978,116 @@ final class DoraXMCPServer: ObservableObject {
         default: break
         }
         switch name {
+        case "look", "context_dock_look", "dorax_look":
+            let appInput = arguments["app"] as? String
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: appInput, capabilityTurn: self.capabilityTurn)
+            guard let resolvedBundle = bundleID ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+                return "No target or active application found."
+            }
+            let mode = (arguments["mode"] as? String ?? "elements").lowercased()
+            let reason = (arguments["reason"] as? String ?? "MCP look inspection")
+            if mode == "menus" {
+                if let app = NSRunningApplication.runningApplications(withBundleIdentifier: resolvedBundle).first {
+                    let items = AXMenuReader.shared.cachedAllMenuItems(for: app.processIdentifier, maxDepth: 6)
+                    if !items.isEmpty {
+                        let lines = items.prefix(80).map { "- \($0.path.joined(separator: " ▸ "))" }
+                        return "\(appName) Menu Items (\(items.count)):\n" + lines.joined(separator: "\n")
+                    }
+                }
+                return "No accessible menu bar found for \(appName)."
+            } else {
+                let result = await ComputerUseAXRunner.snapshot(
+                    bundleID: resolvedBundle,
+                    reason: reason,
+                    scope: self.capabilityTurn?.scope,
+                    screen: mode == "screen"
+                )
+                return result.output
+            }
+
+        case "do", "context_dock_do", "dorax_do":
+            let appInput = arguments["app"] as? String
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: appInput, capabilityTurn: self.capabilityTurn)
+            guard let resolvedBundle = bundleID ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+                return "No target or active application found."
+            }
+            let actionStr = (arguments["action"] as? String ?? "").lowercased()
+            let target = arguments["target"] as? String ?? ""
+            let reason = arguments["reason"] as? String ?? "MCP do action"
+            guard !actionStr.isEmpty, !target.isEmpty else {
+                return "Both 'action' and 'target' are required."
+            }
+
+            if actionStr == "menu" {
+                let grantedApps: [String: String] = [appName.lowercased(): resolvedBundle]
+                let context = AgentToolContext(
+                    commandExecutor: { _, _, _ in (false, "Shell unavailable", 1) },
+                    userRequest: "Menu command requested via MCP do: \(appName) ▸ \(target)",
+                    grantedApps: grantedApps, turn: turn
+                )
+                let result = await AgentToolRegistry.shared.dispatch(
+                    name: "run_menu_command",
+                    arguments: ["app": appName, "path": target],
+                    context: context
+                )
+                guard let result else { return "Menu commands unavailable." }
+                return result.success ? (result.output.isEmpty ? "Done — \(appName) ▸ \(target)." : result.output) : "Did not run — \(result.output)"
+            }
+
+            guard let axAction = ComputerUseAXRunner.Action(rawValue: actionStr) else {
+                return "Unknown action '\(actionStr)'. Supported: 'click', 'type', 'focus', 'menu'."
+            }
+
+            let result = await ComputerUseAXRunner.act(
+                action: axAction,
+                id: target,
+                text: arguments["text"] as? String,
+                reason: reason,
+                bundleID: resolvedBundle,
+                scope: self.capabilityTurn?.scope
+            )
+            return result.output
+
+        case "script", "context_dock_script", "dorax_script":
+            let code = (arguments["code"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !code.isEmpty else { return "Script code is required." }
+            let lang = (arguments["language"] as? String ?? "applescript").lowercased()
+            let appInput = arguments["app"] as? String ?? ""
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: appInput, capabilityTurn: self.capabilityTurn)
+            let result = await SynthesizedScriptRunner.run(
+                script: code,
+                language: lang,
+                reason: "External MCP script execution",
+                appInput: appName,
+                scope: self.capabilityTurn?.scope,
+                grantedApps: bundleID != nil ? [appName.lowercased(): bundleID!] : [:],
+                userRequest: "MCP tool script"
+            )
+            return result.output
+
+        case "read_data", "context_dock_read_data", "dorax_read_data":
+            let source = (arguments["source"] as? String ?? arguments["capability_id"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !source.isEmpty else { return "Data source / capability_id is required." }
+            var toolArgs = arguments
+            toolArgs["capability_id"] = source
+            if toolArgs["input"] == nil {
+                var nestedInput: [String: Any] = [:]
+                for (k, v) in arguments where k != "source" && k != "capability_id" && k != "app" && k != "explanation" {
+                    nestedInput[k] = v
+                }
+                toolArgs["input"] = nestedInput
+            }
+            return await callTool(named: "dorax_run_capability", arguments: toolArgs, attended: attended, turn: turn, nested: nested)
+
+        case "ask", "context_dock_ask":
+            let query = (arguments["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return "query is required." }
+            let app = arguments["app"] as? String
+            return await runTurn(query: query, app: app, attended: attended)
         case "dorax_frontmost_app":
             // Read live rather than trusting the shared snapshot. That snapshot updates on
             // app-activation events, so an agent asking a second after the user switched
