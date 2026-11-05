@@ -209,7 +209,8 @@ extension AppChatPromptModel {
             return
         }
         if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,
-            let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
+            let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName),
+            !scoped.isEmpty {
             rows = scoped.map(AppChatRow.dock)
             // An app stepped into from Global learns as its own list does (S5).
             if let learned = pickMemory.favourite(in: rows, query: typed, scope: pickScope) {
@@ -547,6 +548,15 @@ extension AppChatPromptModel {
         // Tell DockEngine that Global Context is active so pureGlobalResults returns
         // running-app menu pills (shouldUsePureGlobalAppSearch requires this).
         DockEngine.shared.core.globalContextActivation = .manual
+        // Warm the AX menu cache for all running apps so their menus appear in Global
+        // Context search results (mirrors the ⌥⌥ launcher warming path).
+        if AXIsProcessTrusted() {
+            let runningApps = NSWorkspace.shared.runningApplications.filter {
+                $0.activationPolicy == .regular && !$0.isTerminated
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps, maxApps: 12)
+        }
         refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)
@@ -824,6 +834,10 @@ extension AppChatPromptModel {
         _ = leaveSelectionScope()
         refreshSelectionForCurrentScope()
         Self.changeScope(app: name, bundleID: bundleID)
+        // retargetCornerAppChat (triggered synchronously by the changeScope notification) resets
+        // globalContextActivation to nil. Restore it so shouldUsePureGlobalAppSearch and the
+        // scopedResults / hasAuthoritativeLiveMenus paths keep returning results.
+        DockEngine.shared.core.globalContextActivation = .manual
         loadMenuItems()
         // `loadMenuItems` returns early when the scope is not a running app — a CLI tool
         // never is — so the rows have to be rebuilt here or the scope opens still showing
