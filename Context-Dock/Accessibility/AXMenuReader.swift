@@ -659,6 +659,26 @@ final class AXMenuReader {
         return clickMenuItemViaSystemEvents(path: path, in: pid)
     }
 
+    /// Reliably checks whether a menu item is enabled.
+    ///
+    /// macOS AppKit validates menu items (`validateMenuItem:`) lazily on the responder chain
+    /// only when menus are active or open. A static Accessibility scan can therefore report
+    /// `kAXEnabled = false` for perfectly valid commands (e.g. TextEdit's `Export as PDF…`).
+    /// This queries System Events to obtain Cocoa's true dynamic enabled state.
+    func isMenuItemEnabledReliably(path: [String], in pid: pid_t) -> Bool {
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.processIdentifier == pid && !$0.isTerminated
+        }), let appName = app.localizedName, !appName.isEmpty {
+            if let enabled = isMenuItemEnabledViaSystemEvents(path: path, appName: appName) {
+                return enabled
+            }
+        }
+        if let item = menuItem(path: path, in: pid) {
+            return item.isEnabled
+        }
+        return false
+    }
+
     // MARK: - Private — tree reading
 
     private func readChildren(
@@ -938,6 +958,54 @@ final class AXMenuReader {
 
         let result = Self.runAppleScript(script) ?? Self.runOsaScriptProcess(script)
         return result.error == nil
+    }
+
+    private func isMenuItemEnabledViaSystemEvents(path: [String], appName: String) -> Bool? {
+        let cleanPath = path
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard cleanPath.count >= 2 else { return nil }
+
+        let appNameLiteral = appleScriptStringLiteral(appName)
+        let pathList = cleanPath.map(appleScriptStringLiteral).joined(separator: ", ")
+        let script = """
+        tell application "System Events"
+            try
+                tell process \(appNameLiteral)
+                    set pathParts to {\(pathList)}
+                    set topName to item 1 of pathParts
+                    set currentMenu to menu 1 of menu bar item topName of menu bar 1
+                    repeat with i from 2 to (count of pathParts)
+                        set itemName to item i of pathParts
+                        if i is (count of pathParts) then
+                            try
+                                return (enabled of menu item itemName of currentMenu)
+                            on error
+                                repeat with mi in (every menu item of currentMenu)
+                                    set n to (name of mi as text)
+                                    if n is itemName or n is (itemName & "…") or (itemName is (n & "…")) then
+                                        return (enabled of mi)
+                                    end if
+                                end repeat
+                                return "error"
+                            end try
+                        else
+                            set currentMenu to menu 1 of menu item itemName of currentMenu
+                        end if
+                    end repeat
+                end tell
+            on error
+                return "error"
+            end try
+        end tell
+        """
+        let result = Self.runAppleScript(script) ?? Self.runOsaScriptProcess(script)
+        guard let output = result.output?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return nil
+        }
+        if output == "true" { return true }
+        if output == "false" { return false }
+        return nil
     }
 
     private func appleScriptStringLiteral(_ value: String) -> String {

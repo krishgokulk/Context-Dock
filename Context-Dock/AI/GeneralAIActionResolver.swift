@@ -2826,7 +2826,18 @@ final class GeneralAIActionResolver {
             return .missing(
                 appName: target.name, nearest: records.prefix(5).map(\.pathString))
         }
-        guard match.isEnabled else {
+        if !match.isEnabled {
+            // If the app is currently running, check dynamic enabled state before treating as disabled
+            // (macOS AppKit validates menu items lazily only when menus are opened).
+            if let running = NSRunningApplication.runningApplications(withBundleIdentifier: target.bundleId).first(where: { !$0.isTerminated }) {
+                if AXMenuReader.shared.isMenuItemEnabledReliably(path: match.path, in: running.processIdentifier) {
+                    return .ready(verifiedMenuCandidate(
+                        title: match.path.joined(separator: " → "),
+                        path: match.path,
+                        shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
+                        appName: target.name, bundleID: target.bundleId, confidence: 0.9))
+                }
+            }
             return .disabled(path: match.pathString, appName: target.name)
         }
         return .ready(verifiedMenuCandidate(
