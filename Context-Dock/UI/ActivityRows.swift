@@ -17,8 +17,16 @@ struct ActivityRows: View {
     /// Narration to list when nothing was recorded as a step — a path that ran no tool
     /// through the registry still says what it did. Filler is already removed.
     var fallbackLines: [String] = []
+    var isInitiallyExpanded: Bool = false
 
     @State private var isExpanded = false
+
+    init(steps: [ActivityStep], fallbackLines: [String] = [], isInitiallyExpanded: Bool = false) {
+        self.steps = steps
+        self.fallbackLines = fallbackLines
+        self.isInitiallyExpanded = isInitiallyExpanded
+        self._isExpanded = State(initialValue: isInitiallyExpanded)
+    }
 
     private var header: String {
         steps.isEmpty
@@ -73,6 +81,9 @@ struct ActivityRows: View {
                 .padding(.top, 4)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .onChange(of: isInitiallyExpanded) { _, newValue in
+            withAnimation(.dockSoft) { isExpanded = newValue }
         }
     }
 }
