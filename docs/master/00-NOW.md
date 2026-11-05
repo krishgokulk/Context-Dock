@@ -15,6 +15,14 @@
 
 ## Done (most recent first)
 
+**Fix: Activate Target App Before Reading and Operating Menus in Computer Use:**
+- Completed and merged via PR #372 (`3e6a525`).
+- Solved false "greyed out" refusal in App Pet (e.g., TextEdit `export this as pdf`). macOS Cocoa/AppKit validates document menu items (`validateMenuItem:`) lazily on the responder chain only when the target app is frontmost/active. When DoraX was active, TextEdit was in the background with document commands reporting disabled.
+- Fix:
+  1. In `ComputerUseRunner.run` (`Context-Dock/AI/ComputerUseTool.swift`), activate the target app (`app.activate(options: [.activateIgnoringOtherApps])`) and sleep 120ms before querying menus.
+  2. In `AXMenuReader.swift` (`isMenuItemEnabledReliably` and `isMenuItemEnabledViaSystemEvents`), activate the app and set `frontmost to true` in AppleScript before inspecting `enabled of menu item`.
+- Verified 17/17 tests passing in `ComputerUseAcceptance3AppTypesTests.swift`. Gate `./scripts/check.sh` clean. Relaunched via `./scripts/dev-run.sh`.
+
 **Task #368 Part 5: Autonomous Computer Use Acceptance Across 3 App Types (Scriptable, Menu-Only, Canvas):**
 - Completed and merged via PR #370.
 - Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md` (§8 Computer Use Perfection Addendum).
