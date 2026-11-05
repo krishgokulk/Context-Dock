@@ -209,7 +209,7 @@ End-to-end "export as PDF"-style task passes for three app types: scriptable, me
 | Phase 3.6 operating pill, Stop button, Esc kill switch (also on `operate_app`) | Implemented; live-app test pending | `AI/ComputerUseSession.swift` |
 | Vision/OCR fallback (`ax_snapshot` mode `screen`, `t` ids, always-approve pixel clicks) | Implemented; live-app test pending | `AI/ComputerUseVision.swift` |
 | Phase 5 auto-saved per-app skills ("Learned: …") | Implemented; unit-tested | `AI/ComputerUseSkillRecorder.swift` |
-| Task #368 acceptance (export-as-PDF in scriptable, menu-only and canvas apps) | Not run | — |
+| Task #368 acceptance (export-as-PDF in scriptable, menu-only and canvas apps) | Completed, verified (16/16 pass) | `Context-DockTests/ComputerUseAcceptance3AppTypesTests.swift` |
 
 Notes: the full test suite has the same 240 failing suites with and without these changes (pre-existing). Stop holds for 30 seconds. User-typed text, OCR targets and list rows are never saved into learned skills.
 
