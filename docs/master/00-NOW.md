@@ -11,20 +11,23 @@
 ## In progress
 
 **Next 3-Step Work Order: Land PR #367 + Core Apps #4 & #5 (Mail & Reminders) + Dogfood MCP Server:**
-- Active on `general-chat-agent` and `.claude/worktrees/issue-205-system-scopes`.
+- Active on `general-chat-agent`.
 - Work order:
-  1. **Land PR #367 (Task #205 P11 - Curated System Scopes):**
-     - Merge `general-chat-agent` into `claude/issue-205-curated-system-scopes` in `.claude/worktrees/issue-205-system-scopes`.
-     - Verify with `./scripts/check.sh` and `./scripts/try-pr.sh 367`.
-     - Push and merge PR #367.
+  1. **Land PR #367 (Task #205 P11 - Curated System Scopes):** Completed and merged (`8f02fa9`).
   2. **Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5):**
-     - Apple Mail: Headless read (`mail.unread`, `mail.search`), drafted send with `AICapabilityApprovalCenter` approval + verified read-back.
-     - Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create`, `calendar.todayEvents`).
+     - Completed and in review via PR #369 (`feat/mail-reminders-capabilities`).
+     - Apple Mail: Headless read (`mail.unread`, `mail.search` with query support), drafted send (`mail.send`, `send_mail`) with `AICapabilityApprovalCenter` outbound confirmation card and verified read-back.
+     - Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create` with verified read-back, `calendar.todayEvents`, `calendar.today`).
+     - Verified with `MailAndCalendarRemindersEngineTests` (7/7 pass).
   3. **Dogfood Native MCP Server (`context-dock`):**
      - Register `context-dock` in Claude Code / Cursor / Codex via `claude mcp add --transport http context-dock http://127.0.0.1:8213/mcp --header "Authorization: Bearer <token>"`.
      - Verify end-to-end tool execution (`look`, `do`, `script`, `read_data`, `ask`) from external model turns.
 
 ## Done (most recent first)
+
+**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Completed and merged via PR #367 (`8f02fa9`).
+- Curated tool catalog, parameter schemas, and route discovery for all 11 core macOS system scopes.
 
 **Task #369: Universal 5-Tool Engine & Messages Gold Standard Pipeline (Milestones 1-5):**
 - Completed and landed on `general-chat-agent` (`5b86f59`).

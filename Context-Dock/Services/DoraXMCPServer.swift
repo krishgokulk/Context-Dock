@@ -597,13 +597,13 @@ final class DoraXMCPServer: ObservableObject {
             "description":
                 "Direct, zero-latency headless data reader for macOS applications (Messages, Notes, Safari, Mail, Reminders, Calendar). "
                 + "Examples: 'messages.recent', 'messages.search', 'notes.recent', 'notes.search', 'safari.currentTab', "
-                + "'safari.pageContent', 'safari.listTabs', 'safari.switchTab', 'mail.search'.",
+                + "'safari.pageContent', 'safari.listTabs', 'safari.switchTab', 'mail.unread', 'mail.search', 'reminders.list', 'calendar.todayEvents'.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "source": [
                         "type": "string",
-                        "description": "Capability ID, e.g. 'messages.recent', 'notes.recent', 'safari.currentTab', 'safari.pageContent', 'safari.listTabs'.",
+                        "description": "Capability ID, e.g. 'messages.recent', 'notes.recent', 'safari.currentTab', 'mail.unread', 'mail.search', 'reminders.list', 'calendar.todayEvents'.",
                     ],
                     "input": [
                         "type": "object",

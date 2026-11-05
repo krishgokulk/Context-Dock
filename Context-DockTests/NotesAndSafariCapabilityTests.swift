@@ -6,7 +6,7 @@ import Foundation
 struct NotesAndSafariCapabilityTests {
 
     @Test func notesCapabilitiesIncludeRecentAndSearch() {
-        let registry = CapabilityRegistry()
+        let registry = CapabilityRegistry.shared
         AppleNotesMCPCapabilities.register(in: registry)
 
         let notesRecent = registry.capability(id: "notes.recent")
@@ -28,7 +28,7 @@ struct NotesAndSafariCapabilityTests {
     }
 
     @Test func safariCapabilitiesRegisteredCleanly() {
-        let registry = CapabilityRegistry()
+        let registry = CapabilityRegistry.shared
         AppleSafariMCPCapabilities.register(in: registry)
 
         let currentTab = registry.capability(id: "safari.currentTab")

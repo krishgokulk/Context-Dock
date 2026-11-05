@@ -511,7 +511,9 @@ enum AppAdapterCapabilityCatalog {
     ) -> DoraXActionCandidate? {
         let lower = query.lowercased()
         let capabilityID: String?
-        if lower.contains("current email") || lower.contains("this email") || lower.contains("selected message") {
+        if lower.contains("send email") || lower.contains("send mail") {
+            capabilityID = "mail.send"
+        } else if lower.contains("current email") || lower.contains("this email") || lower.contains("selected message") {
             capabilityID = "mail.currentMessage"
         } else if lower.contains("draft") || lower.contains("compose") || lower.contains("write email") || lower.contains("reply") {
             capabilityID = "mail.createDraft"
@@ -552,6 +554,14 @@ enum AppAdapterCapabilityCatalog {
                 candidate.inputValues["to"] = recipient
             }
             candidate.inputValues["subject"] = ""
+            candidate.inputValues["body"] = ""
+        case "mail.send":
+            if let recipient = textAfterMarker(query, markers: ["to "])?.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)) {
+                candidate.inputValues["to"] = recipient
+            }
+            if let subject = textAfterMarker(query, markers: ["subject ", "about "])?.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters)) {
+                candidate.inputValues["subject"] = subject
+            }
             candidate.inputValues["body"] = ""
         default:
             break

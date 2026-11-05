@@ -30,6 +30,7 @@ extension AgentToolRegistry {
         case "run_command", "spawn_worker": pick = arguments["command"] as? String
         case "run_shortcut": pick = arguments["name"] as? String
         case "compose_message", "send_message": pick = arguments["recipient"] as? String
+        case "send_mail": pick = arguments["to"] as? String
         case "run_menu_command": pick = arguments["path"] as? String
         case "run_capability": pick = arguments["capability_id"] as? String
         default: pick = nil
