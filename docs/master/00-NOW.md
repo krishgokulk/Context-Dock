@@ -10,20 +10,24 @@
 
 ## In progress
 
-**Next 3-Step Work Order: Land PR #367 + Core Apps #4 & #5 (Mail & Reminders) + Dogfood MCP Server:**
-- Active on `general-chat-agent`.
-- Work order:
-  1. **Land PR #367 (Task #205 P11 - Curated System Scopes):** Completed and merged (`8f02fa9`).
-  2. **Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5):**
-     - Completed and in review via PR #369 (`feat/mail-reminders-capabilities`).
-     - Apple Mail: Headless read (`mail.unread`, `mail.search` with query support), drafted send (`mail.send`, `send_mail`) with `AICapabilityApprovalCenter` outbound confirmation card and verified read-back.
-     - Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create` with verified read-back, `calendar.todayEvents`, `calendar.today`).
-     - Verified with `MailAndCalendarRemindersEngineTests` (7/7 pass).
-  3. **Dogfood Native MCP Server (`context-dock`):**
-     - Register `context-dock` in Claude Code / Cursor / Codex via `claude mcp add --transport http context-dock http://127.0.0.1:8213/mcp --header "Authorization: Bearer <token>"`.
-     - Verify end-to-end tool execution (`look`, `do`, `script`, `read_data`, `ask`) from external model turns.
+**Task #368 Part 5: Autonomous Computer Use Acceptance Across 3 App Types (Scriptable, Menu-Only, Canvas):**
+- Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md` (§8 Computer Use Perfection Addendum).
+- End-to-end verification of the observe → act → verify loop (`ax_snapshot`, `ax_act`, step budget, stall guard) with verified read-back across 3 application tiers:
+  1. Scriptable App (sdef inspection + synthesized scripting execution with verified read-back)
+  2. Menu-Only App (live menu clicks + AX UI sheet interaction, e.g. export-as-PDF flow)
+  3. Canvas App (AX element tree with vision/OCR fallback when elements are absent)
+- Verify `ComputerUseSkillRecorder` automatically offers/saves learned workflows into per-app skills (`SkillScope.app(bundleId)`).
+- Verify safety HUD (operating pill, Stop button, Esc kill switch) during multi-step runs.
 
 ## Done (most recent first)
+
+**Task #369 Part 2: Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5) + Native MCP Server Dogfooding:**
+- Completed and merged via PR #369 (`2ca630e`).
+- Apple Mail: Headless reads (`mail.unread`, `mail.search` with query support), drafted send (`mail.send`, `send_mail`) with `AICapabilityApprovalCenter` outbound confirmation card, automatic contact resolution (`resolveRecipient`), headless AppleScript dispatch, and verified read-back against Sent mailbox history (`verifySentMail`).
+- Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create` with verified read-back, `calendar.todayEvents`, `calendar.today`).
+- Universal 5-Tool Engine: Registered `read_unread_mail`, `search_mail`, `send_mail`, `list_reminders`, `create_reminder`, and `get_today_events` in `AgentToolRegistry`. Classified tools in `OutboundGate` and added step narrations.
+- Native MCP Server Bridge: Verified end-to-end execution of `initialize`, `tools/list`, `read_data` (Calendar events, Reminders list, Mail unread, Mail search), and `look` (menu hierarchy) via `http://127.0.0.1:8213/mcp`. Added `context-dock` to Claude CLI configuration (`✔ Connected`).
+- Verified with `MailAndCalendarRemindersEngineTests` (7/7 pass), `NotesAndSafariCapabilityTests` (2/2 pass), and `MessagesSendWorkflowTests` (4/4 pass). Clean gate build `./scripts/check.sh` passed.
 
 **Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
 - Completed and merged via PR #367 (`8f02fa9`).
