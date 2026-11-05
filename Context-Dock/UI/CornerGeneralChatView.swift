@@ -371,6 +371,22 @@ struct CornerGeneralChatView: View {
                 .help("Open this conversation in the full window")
             }
 
+            Button {
+                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+            } label: {
+                let shown = CornerDockController.shared.chatPresentation.isShowingKeysOverlay
+                Image(systemName: "keyboard")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(shown ? Color.accentColor : .secondary)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        shown ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle()
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Keyboard shortcuts (⌘/)")
+
             // Beside expand, because both are about this card rather than this question.
             Button {
                 CornerDockController.shared.chatPresentation.toggleGeneralPin()

@@ -10,26 +10,38 @@
 
 ## In progress
 
-**Task #373: Streamline Settings & Extensions Architecture (Packs, Apps, Store):**
-- Spec: `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
-- Consolidate 4 fragmented sidebar items (`App Packs`, `Integrations`, `Plugins`, `Plugin Creator`) into unified `Extensions` (`Apps` and `Store / Packs`).
-- Simplify per-app detail view from 5 tabs and 8-bucket technical count into 3 clean tabs: `Capabilities & Skills`, `Agent (AGENT.md)`, and `Access & Permissions`.
-- Automatic App Binding: Packs installed from the Store bind directly to matching app `bundleId`.
-- AI Pack Creator: AI introspects local app `sdef`, menu tree, and online OpenAPI/UTCP specs to synthesize complete packs automatically.
-- Active in worktree `.claude/worktrees/task-373-streamline-settings-extensions` on branch `claude/task-373-streamline-settings-extensions`.
+_None — ready for next queued task._
 
-Coordinator: Antigravity Planner — since 2026-11-05 16:00 UTC
+Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
 
 ## Queued (next)
 
-**Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
-- Issue #332. On-demand overlay listing active keyboard shortcuts (⌘⌘ Global Context, ⌥⌥ launcher, scope toggle, swipes, expand) read from the real key map without hardcoded copies or drift.
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
+- Issue #333. Branch a temporary side question from an active App Pet, Combined Chat, or General Chat without polluting the main conversation or Pet memory; supports explicit fold-back summary or discard.
+
+**Task UI/UX 4/5 (#334): Auto Context Mode (bounded workspace pre-gathering):**
+- Issue #334. Bounded pre-gathering of focused app context before the model turn.
+
+**Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
+- Issue #335. Browse and inspect available capabilities and learned skills in the surface.
 
 **AI Engine Plan Backlog:**
 - **#151: E3 Prompt order: stable sections first** (`ready`).
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
+- Completed on branch `claude/task-332-keys-overlay` (Issue #332).
+- Implemented `DockKeyMap` (`Context-Dock/UI/KeysOverlay.swift`) as the single canonical source of truth for active keyboard shortcuts across 4 surface groups (`Launch & Global`, `Scope & Navigation`, `Global Context & App Pet`, `Chat & Clipboard`), reading live from `AppSettings`, `DockKey`, `DockKeyRules`, `CornerNavigation`, and `ClipboardBoardKey` (plus dynamic `DockKeyMap.register(_:)`).
+- Implemented `KeysOverlayCard` over `CornerDockSurface` (`CornerDockWindow.swift`), triggered by `⌘/`, `⌘?` (`⇧⌘/`), bare `?` when the dock is at rest, or the `keyboard` button in board footers (`BoardFooter.pinAndSettings`, `AppChatListCard.footer`) and chat headers (`AppChatPromptPill.header`, `CornerGeneralChatView.header`).
+- Dismissing via `⎋` (Esc), `⌘/`, close `✕`, or clicking outside returns to the exact prior surface state without recreating the window or changing dock size/state.
+- Updated `HotkeysSettingsPage.swift` so Settings → Hotkeys and the Keys overlay render from the same `DockKeyMap` source of truth.
+- Verified with unit tests in `Context-DockTests/KeysOverlayTests.swift` (5 tests). Gate `./scripts/check.sh` clean.
+
+**Task #373: Streamline Settings & Extensions Architecture (Packs, Apps, Store):**
+- Completed and merged via PR #374 (`91e18360`).
+- Consolidated fragmented sidebar items (`App Packs`, `Integrations`, `Plugins`, `Plugin Creator`) into unified `Extensions` (`Apps` and `Store / Packs`), simplified per-app detail tabs (`Capabilities & Skills`, `Agent (AGENT.md)`, `Access & Permissions`), automatic app binding by `bundleId`, and AI Pack Creator.
 
 **Task UI/UX 1/5 (#331): Live-panel detail modes (Summary / Normal / Verbose):**
 - Completed and merged via PR #373 (`909a4937`).

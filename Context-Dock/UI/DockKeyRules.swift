@@ -16,8 +16,22 @@
 import Foundation
 
 /// The keys the rules speak about. Anything else is none of theirs.
-enum DockKey: Equatable {
+enum DockKey: Equatable, CaseIterable {
     case left, right, up, down, tab, escape, backspace, returnKey
+
+    /// Canonical keycap glyph rendered by the Keys overlay and board footers (#332).
+    var symbol: String {
+        switch self {
+        case .left: return "←"
+        case .right: return "→"
+        case .up: return "↑"
+        case .down: return "↓"
+        case .tab: return "⇥"
+        case .escape: return "⎋"
+        case .backspace: return "⌫"
+        case .returnKey: return "↩"
+        }
+    }
 
     /// Only a bare key: with ⌘, ⌃ or ⌥ down it is a shortcut, and a shortcut belongs to
     /// whoever defined it.
@@ -214,11 +228,31 @@ enum DockKeyRules {
 
     // MARK: - ⌘R re-reads the app's menus (C12)
 
+    static let menuRereadKeyCode: UInt16 = 15
+    static let menuRereadKeycaps: [String] = ["⌘", "R"]
+
     /// ⌘R and nothing else held: the menu re-read's key in both shells.
     static func isMenuRereadKey(
         keyCode: UInt16, command: Bool, control: Bool, option: Bool, shift: Bool
     ) -> Bool {
-        keyCode == 15 && command && !control && !option && !shift
+        keyCode == menuRereadKeyCode && command && !control && !option && !shift
+    }
+
+    // MARK: - ⌘/ (⌘?) toggles the Keys reference overlay (#332)
+
+    static let keysOverlayKeyCode: UInt16 = 44
+    static let keysOverlayKeycaps: [String] = ["⌘", "/"]
+
+    /// ⌘/ or ⇧⌘/ (⌘?) toggles the shortcuts reference overlay over the active surface.
+    /// When no text field holds the caret (`allowsBareQuestionMark`), bare `?` (⇧/) also
+    /// opens or dismisses the overlay.
+    static func isKeysOverlayKey(
+        keyCode: UInt16, command: Bool, control: Bool, option: Bool, shift: Bool,
+        allowsBareQuestionMark: Bool = false
+    ) -> Bool {
+        guard keyCode == keysOverlayKeyCode, !control, !option else { return false }
+        if command { return true }
+        return allowsBareQuestionMark && shift
     }
 
     /// Whether ⌘R re-reads the scoped app's live menus — for a menu that changed since the

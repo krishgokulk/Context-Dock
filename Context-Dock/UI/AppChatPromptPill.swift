@@ -1149,6 +1149,16 @@ struct AppChatPromptPill: View {
                 .help("Open this conversation in the full window")
             }
 
+            Button {
+                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+            } label: {
+                headerGlyph(
+                    "keyboard",
+                    tinted: CornerDockController.shared.chatPresentation.isShowingKeysOverlay)
+            }
+            .buttonStyle(.plain)
+            .help("Keyboard shortcuts (⌘/)")
+
             Button { model.newConversation() } label: {
                 headerGlyph("trash")
             }
@@ -1384,6 +1394,12 @@ struct AppChatPromptPill: View {
                     .onKeyPress(keys: ["k"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
                         model.newConversation()
+                        return .handled
+                    }
+                    .onKeyPress(keys: ["/", "?"]) { press in
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        CornerDockController.shared.chatPresentation.toggleKeysOverlay()
                         return .handled
                     }
                     .simultaneousGesture(TapGesture().onEnded {

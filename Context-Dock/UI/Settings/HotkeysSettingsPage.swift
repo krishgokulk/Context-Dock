@@ -211,21 +211,29 @@ struct HotkeysSettingsPage: View {
                     captureSaveFolderRow
                 }
 
-                CardSection(title: "Context Dock", systemImage: "rectangle.grid.1x2.fill") {
+                CardSection(title: "Scope & Navigation", systemImage: "arrow.up.arrow.down") {
                     VStack(spacing: 0) {
-                        HotkeysInfoRow(keys: "⌘R", action: "Refresh Context — re-scan the frontmost app's live menus")
+                        let navBindings = DockKeyMap.navigationBindings
+                        ForEach(Array(navBindings.enumerated()), id: \.element.id) { index, binding in
+                            if index > 0 { Divider() }
+                            HotkeysInfoRow(
+                                keys: binding.keysDisplay,
+                                action: binding.subtitle.map { "\(binding.title) — \($0)" } ?? binding.title
+                            )
+                        }
                     }
                 }
 
-                CardSection(title: "Dock Key Map", systemImage: "command") {
+                CardSection(title: "Dock Key Map (⌘/ in Dock)", systemImage: "command") {
                     VStack(spacing: 0) {
-                        HotkeysInfoRow(keys: "⌘", action: "Switch between Global Context and Context Dock")
-                        Divider()
-                        HotkeysInfoRow(keys: "→", action: "Autocomplete to scope the highlighted app")
-                        Divider()
-                        HotkeysInfoRow(keys: "↩", action: "Run the focused result or pill")
-                        Divider()
-                        HotkeysInfoRow(keys: "Esc", action: "Close — clear focus / dismiss the dock")
+                        let dockBindings = DockKeyMap.dockBindings
+                        ForEach(Array(dockBindings.enumerated()), id: \.element.id) { index, binding in
+                            if index > 0 { Divider() }
+                            HotkeysInfoRow(
+                                keys: binding.keysDisplay,
+                                action: binding.subtitle.map { "\(binding.title) — \($0)" } ?? binding.title
+                            )
+                        }
                     }
                 }
 

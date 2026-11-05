@@ -126,6 +126,9 @@ final class CornerChatPresentation: ObservableObject {
     @Published var isCentred = false
     @Published private(set) var generalPhase: CornerGeneralPhase = .expanded
     @Published private(set) var isGeneralPinned = false
+    /// On-demand shortcuts reference overlay (#332). Shown over the current surface without
+    /// mutating `mode`, `appChat.phase`, `appChat.query`, or window geometry.
+    @Published private(set) var isShowingKeysOverlay = false
     private var latestTarget: CornerChatTarget?
     private var generalStandDownTask: Task<Void, Never>?
     private var isGeneralPointerInside = false
@@ -509,8 +512,21 @@ final class CornerChatPresentation: ObservableObject {
         generalStandDownTask = nil
     }
 
+    func toggleKeysOverlay() {
+        isShowingKeysOverlay.toggle()
+    }
+
+    func showKeysOverlay() {
+        isShowingKeysOverlay = true
+    }
+
+    func dismissKeysOverlay() {
+        isShowingKeysOverlay = false
+    }
+
     func dismiss() {
         cancelGeneralStandDown()
+        isShowingKeysOverlay = false
         isVisible = false
         generalPhase = .expanded
         isGeneralPinned = false
