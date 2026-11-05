@@ -2634,6 +2634,239 @@ final class AgentToolRegistry {
             }
             return toolResult
         })
+
+        // MARK: - Apple Mail Tools
+
+        register(AgentTool(
+            name: "read_unread_mail",
+            description: "Read unread emails headlessly from Apple Mail. Returns subject, sender, and date.",
+            properties: [
+                "sender": ["type": "string", "description": "Optional sender filter."],
+                "subject": ["type": "string", "description": "Optional subject filter."],
+                "limit": ["type": "integer", "description": "Maximum unread emails to return, default 20."],
+            ],
+            required: []
+        ) { arguments, _ in
+            let limit = arguments["limit"] as? Int ?? 20
+            let sender = arguments["sender"] as? String ?? ""
+            let subject = arguments["subject"] as? String ?? ""
+            let output = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    cont.resume(returning: MailAutomation.mailboxSnapshot(
+                        senderContains: sender, subjectContains: subject,
+                        unreadOnly: true, relativeDay: "", limit: limit))
+                }
+            }
+            return AgentToolResult(success: true, output: output, displayCommand: "read_unread_mail")
+        })
+
+        register(AgentTool(
+            name: "search_mail",
+            description: "Search emails headlessly in Apple Mail by query, sender, or subject.",
+            properties: [
+                "query": ["type": "string", "description": "Search keyword matching sender or subject."],
+                "sender": ["type": "string", "description": "Sender to filter by."],
+                "subject": ["type": "string", "description": "Subject to filter by."],
+                "unread_only": ["type": "boolean", "description": "Whether to return only unread emails."],
+                "limit": ["type": "integer", "description": "Maximum emails to return, default 20."],
+            ],
+            required: []
+        ) { arguments, _ in
+            let query = arguments["query"] as? String ?? ""
+            var sender = arguments["sender"] as? String ?? ""
+            var subject = arguments["subject"] as? String ?? ""
+            let unreadOnly = arguments["unread_only"] as? Bool ?? false
+            let limit = arguments["limit"] as? Int ?? 20
+            if !query.isEmpty && sender.isEmpty && subject.isEmpty {
+                subject = query
+            }
+            let output = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    cont.resume(returning: MailAutomation.mailboxSnapshot(
+                        senderContains: sender, subjectContains: subject,
+                        unreadOnly: unreadOnly, relativeDay: "", limit: limit))
+                }
+            }
+            return AgentToolResult(success: true, output: output, displayCommand: "search_mail(\(query.isEmpty ? sender : query))")
+        })
+
+        register(AgentTool(
+            name: "send_mail",
+            description: "Send an email via Apple Mail with contact resolution, user approval card (AICapabilityApprovalCenter), and verified read-back against Sent history.",
+            properties: [
+                "to": ["type": "string", "description": "Recipient email or contact name."],
+                "subject": ["type": "string", "description": "Email subject."],
+                "body": ["type": "string", "description": "Email body."],
+            ],
+            required: ["to", "subject", "body"]
+        ) { arguments, context in
+            guard let to = arguments["to"] as? String, !to.isEmpty else {
+                return AgentToolResult(success: false, output: "send_mail requires 'to'.", displayCommand: "send_mail(invalid)")
+            }
+            guard let subject = arguments["subject"] as? String, !subject.isEmpty else {
+                return AgentToolResult(success: false, output: "send_mail requires 'subject'.", displayCommand: "send_mail(invalid)")
+            }
+            guard let body = arguments["body"] as? String, !body.isEmpty else {
+                return AgentToolResult(success: false, output: "send_mail requires 'body'.", displayCommand: "send_mail(invalid)")
+            }
+
+            // 1. Resolve contact
+            let targetEmail: String
+            let displayName: String
+            switch MailAutomation.resolveRecipient(to) {
+            case .resolved(let contact):
+                targetEmail = contact.handle
+                displayName = contact.name
+            case .ambiguous(let contacts):
+                let options = contacts.prefix(4).map { "\($0.name) <\($0.handle)>" }.joined(separator: ", ")
+                return AgentToolResult(
+                    success: false,
+                    output: "Multiple contacts match '\(to)': \(options). Ask the user which email address to use.",
+                    displayCommand: "send_mail(\(to)) · ambiguous"
+                ).withUserSummary("Found multiple contacts for '\(to)': \(options). Which email address did you mean?")
+            case .notFound:
+                targetEmail = to
+                displayName = to
+            }
+
+            // 2. Request user approval with exact content
+            let plan = AIActionPlan(
+                capability: "mail.send",
+                input: ["to": targetEmail, "subject": subject, "body": body],
+                explanation: "DoraX will send an email to \(displayName) (\(targetEmail)):\n\nSubject: \(subject)\n\n\(body)"
+            )
+            let capability = CapabilityRegistry.shared.capability(id: "mail.send") ?? AICapability(
+                id: "mail.send",
+                title: "Send Email to \(displayName)",
+                appBundleID: "com.apple.mail",
+                inputSchema: .init(fields: []),
+                riskLevel: .high,
+                selectionSafety: .unsafe,
+                executor: { _ in .init(success: true, output: "") }
+            )
+            let approved = await AICapabilityApprovalCenter.shared.requestApproval(
+                plan: plan,
+                capability: capability,
+                context: .appFocused(name: "Mail", bundleID: "com.apple.mail"),
+                chatScope: context.chatScope
+            )
+
+            guard approved else {
+                return AgentToolResult(
+                    success: false,
+                    output: "The user declined to send the email to \(displayName).",
+                    displayCommand: "send_mail(\(displayName)) · declined"
+                ).withUserSummary("Email not sent. You declined to send to \(displayName).")
+            }
+
+            // 3. Dispatch send
+            let result = await MailAutomation.sendMail(to: targetEmail, subject: subject, body: body)
+            var toolResult = AgentToolResult(
+                success: result.success,
+                output: result.message,
+                displayCommand: "send_mail(\(displayName))"
+            ).withUserSummary(result.message)
+
+            if result.verified {
+                toolResult.verifiedByReadBack = "Sent email confirmed in Sent mailbox."
+            }
+            return toolResult
+        })
+
+        // MARK: - Apple Reminders & Calendar Tools
+
+        register(AgentTool(
+            name: "list_reminders",
+            description: "List active reminders headlessly from Apple Reminders via EventKit.",
+            properties: [
+                "limit": ["type": "integer", "description": "Maximum reminders to return, default 20."],
+            ],
+            required: []
+        ) { arguments, _ in
+            let limit = arguments["limit"] as? Int ?? 20
+            let reminders = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    cont.resume(returning: AppleAppsAPI.shared.getReminders(limit: limit))
+                }
+            }
+            if reminders.isEmpty {
+                return AgentToolResult(success: true, output: "No active reminders.", displayCommand: "list_reminders")
+            }
+            let lines = reminders.map { r -> String in
+                let title = r["title"] as? String ?? "Untitled"
+                let due = r["dueDate"] as? String
+                return due != nil ? "• \(title) (due: \(due!))" : "• \(title)"
+            }
+            return AgentToolResult(success: true, output: "Active reminders (\(reminders.count)):\n" + lines.joined(separator: "\n"), displayCommand: "list_reminders")
+        })
+
+        register(AgentTool(
+            name: "create_reminder",
+            description: "Create a reminder in Apple Reminders via EventKit with verified read-back.",
+            properties: [
+                "title": ["type": "string", "description": "Reminder title."],
+                "due_date": ["type": "string", "description": "Optional due date (ISO 8601)."],
+                "notes": ["type": "string", "description": "Optional notes."],
+                "list_name": ["type": "string", "description": "Optional list name."],
+            ],
+            required: ["title"]
+        ) { arguments, _ in
+            guard let title = arguments["title"] as? String, !title.isEmpty else {
+                return AgentToolResult(success: false, output: "create_reminder requires 'title'.", displayCommand: "create_reminder(invalid)")
+            }
+            let dueDate = arguments["due_date"] as? String
+            let notes = arguments["notes"] as? String
+            let listName = arguments["list_name"] as? String
+
+            let success = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    cont.resume(returning: AppleRemindersMCPCapabilities.createReminder(
+                        title: title,
+                        dueDateString: dueDate,
+                        notes: notes,
+                        listName: listName
+                    ))
+                }
+            }
+            guard success else {
+                return AgentToolResult(success: false, output: "Failed to create reminder '\(title)'. Check Reminders permissions.", displayCommand: "create_reminder(\(title)) · failed")
+            }
+            let verified = AppleAppsAPI.shared.getReminders(limit: 20).contains(where: { ($0["title"] as? String) == title })
+            var result = AgentToolResult(
+                success: true,
+                output: "Created reminder '\(title)'\(verified ? " (Verified in Reminders)" : "").",
+                displayCommand: "create_reminder(\(title))"
+            )
+            if verified {
+                result.verifiedByReadBack = "Reminder creation confirmed in Reminders database."
+            }
+            return result
+        })
+
+        register(AgentTool(
+            name: "get_today_events",
+            description: "Get today's calendar events headlessly from Apple Calendar via EventKit.",
+            properties: [:],
+            required: []
+        ) { _, _ in
+            let events = await withCheckedContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    cont.resume(returning: AppleAppsAPI.shared.getTodayEvents())
+                }
+            }
+            if events.isEmpty {
+                return AgentToolResult(success: true, output: "No events scheduled for today.", displayCommand: "get_today_events")
+            }
+            let lines = events.map { ev -> String in
+                let title = ev["title"] as? String ?? "Untitled"
+                let allDay = ev["isAllDay"] as? Bool ?? false
+                let start = ev["startDate"] as? String ?? ""
+                let end = ev["endDate"] as? String ?? ""
+                if allDay { return "• \(title) (all day)" }
+                return "• \(title) (\(start) - \(end))"
+            }
+            return AgentToolResult(success: true, output: "Today's events (\(events.count)):\n" + lines.joined(separator: "\n"), displayCommand: "get_today_events")
+        })
     }
 }
 

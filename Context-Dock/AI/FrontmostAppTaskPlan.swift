@@ -185,6 +185,15 @@ struct FrontmostAppTaskPlan: Equatable {
         if id.contains("imessage") || id.contains("messages") || id.contains("mobilesms") {
             tools.formUnion(["get_messages_conversations", "search_messages", "compose_message", "send_message"])
         }
+        if id.contains("mail") {
+            tools.formUnion(["read_unread_mail", "search_mail", "send_mail"])
+        }
+        if id.contains("reminders") {
+            tools.formUnion(["list_reminders", "create_reminder"])
+        }
+        if id.contains("ical") || id.contains("calendar") {
+            tools.formUnion(["get_today_events"])
+        }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }

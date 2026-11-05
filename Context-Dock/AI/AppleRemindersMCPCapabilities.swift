@@ -437,7 +437,14 @@ enum AppleRemindersMCPCapabilities {
                     df.timeStyle = .short
                     msg += " due \(df.string(from: dueDate))"
                 }
-                if success { msg += "." }
+                if success {
+                    let verified = AppleAppsAPI.shared.getReminders(limit: 20).contains(where: { ($0["title"] as? String) == title })
+                    if verified {
+                        msg += " (Verified in Reminders)."
+                    } else {
+                        msg += "."
+                    }
+                }
                 return .init(success: success, output: msg)
             }
         )
@@ -445,7 +452,7 @@ enum AppleRemindersMCPCapabilities {
 
     // MARK: - EventKit create helper (runs on background thread)
 
-    private nonisolated static func createReminder(
+    nonisolated static func createReminder(
         title: String,
         dueDateString: String?,
         notes: String?,

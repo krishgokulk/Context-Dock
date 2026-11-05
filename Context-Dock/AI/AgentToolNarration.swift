@@ -59,6 +59,8 @@ enum AgentToolNarration {
             return "Route: command line"
         case "send_message":
             return text("recipient").map { "Route: Messages · \($0)" }
+        case "send_mail":
+            return text("to").map { "Route: Mail · \($0)" }
         default:
             return nil
         }
@@ -110,6 +112,11 @@ enum AgentToolNarration {
         case "window_control": return "Moving the window"
         case "compose_message": return "Drafting a message"
         case "send_message": return "Sending message"
+        case "send_mail": return "Sending email"
+        case "read_unread_mail", "search_mail": return "Checking Mail"
+        case "create_reminder": return "Creating reminder"
+        case "list_reminders": return "Checking Reminders"
+        case "get_today_events": return "Checking Calendar"
         case "verify_outcome": return "Checking the result"
         case "spawn_worker": return "Handing this to a worker"
         default: return "Running \(tool)"

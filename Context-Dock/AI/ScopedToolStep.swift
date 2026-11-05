@@ -39,6 +39,11 @@ enum ScopedToolStep {
         case "get_messages_conversations", "search_messages": return "Searching Messages…"
         case "compose_message": return "Composing a message…"
         case "send_message": return "Sending a message…"
+        case "read_unread_mail", "search_mail": return "Checking Mail…"
+        case "send_mail": return "Sending an email…"
+        case "list_reminders": return "Checking Reminders…"
+        case "create_reminder": return "Creating a reminder…"
+        case "get_today_events": return "Checking Calendar…"
         default:
             // An extension's own tool, whose name the user chose. Shown as written rather
             // than hidden: they named it, so it means more to them than to us.
