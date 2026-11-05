@@ -57,16 +57,23 @@ enum LivePanelDetailMode: String, CaseIterable, Identifiable, Sendable {
         while line.hasPrefix("#") || line.hasPrefix(">") || line.hasPrefix("-") || line.hasPrefix("*") {
             line = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
         }
-        if line.hasPrefix("**") && line.hasSuffix("**") && line.count > 4 {
-            line = String(line.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
-        }
+        line = line.replacingOccurrences(of: "**", with: "")
+        line = line.replacingOccurrences(of: "__", with: "")
 
-        // Truncate at sentence boundary or clean character limit
-        if let periodIndex = line.firstIndex(of: ".") {
-            let nextIndex = line.index(after: periodIndex)
-            if nextIndex == line.endIndex || line[nextIndex] == " " {
-                line = String(line[...periodIndex])
+        // Truncate at sentence boundary, skipping numbered list prefixes like "1." or "2."
+        var searchStart = line.startIndex
+        while let periodIndex = line[searchStart...].firstIndex(of: ".") {
+            let prefix = line[..<periodIndex]
+            let isNumberedList = prefix.allSatisfy(\.isNumber) || prefix.count < 8
+            if !isNumberedList {
+                let nextIndex = line.index(after: periodIndex)
+                if nextIndex == line.endIndex || line[nextIndex] == " " {
+                    line = String(line[...periodIndex])
+                    break
+                }
             }
+            searchStart = line.index(after: periodIndex)
+            if searchStart == line.endIndex { break }
         }
 
         if line.count > 120 {
