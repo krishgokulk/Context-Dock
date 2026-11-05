@@ -570,7 +570,31 @@ struct ScopeInventory {
             groups.append(
                 Group(
                     title: "API connections", symbol: "link",
-                    items: apis.map { "\($0.name) — configured, not callable yet" }))
+                    items: apis.map { conn in
+                        if conn.toolCount > 0 {
+                            return "\(conn.name) — \(conn.toolCount) direct UTCP tool\(conn.toolCount == 1 ? "" : "s")"
+                        }
+                        return "\(conn.name) — configured, not callable yet"
+                    }))
+        }
+
+        let boundPacks = PluginRegistry.shared.enabledPlugins.filter {
+            $0.manifest.targetApp?.bundleId == bundleId
+        }
+        if !boundPacks.isEmpty {
+            let existingActionNames = Set(actions.map(\.name))
+            let packItems = boundPacks.flatMap { plugin -> [String] in
+                let capNames = (plugin.manifest.capabilities ?? []).map(\.name)
+                let actNames = plugin.manifest.actions.values.compactMap(\.title)
+                let combined = (capNames + actNames).filter { !existingActionNames.contains($0) }
+                return combined.isEmpty ? [plugin.manifest.name] : combined
+            }
+            if !packItems.isEmpty {
+                groups.append(
+                    Group(
+                        title: "Installed packs", symbol: "shippingbox.fill",
+                        items: packItems))
+            }
         }
 
         let shortcuts = actions.filter { $0.type == .shortcut }.compactMap(\.shortcutName)

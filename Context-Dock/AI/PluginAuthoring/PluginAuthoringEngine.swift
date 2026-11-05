@@ -78,9 +78,16 @@ final class PluginAuthoringEngine {
     /// One draft: the request, the manifest it edits when there is one, and a repair turn if
     /// the first reply does not validate. Two rounds at most — a model that cannot fix its
     /// own validator errors in one go is not going to in three, and every round is paid for.
-    func draft(_ request: String, current: String?) async throws -> PluginAuthoringDraft {
+    func draft(
+        _ request: String,
+        current: String?,
+        introspection: AppIntrospectionReport? = nil
+    ) async throws -> PluginAuthoringDraft {
         let system = PluginAuthoringPrompt.system
-        var turn = PluginAuthoringPrompt.userTurn(request: request, current: current)
+        var turn = PluginAuthoringPrompt.userTurn(
+            request: request,
+            current: current,
+            introspection: introspection)
         var last: PluginAuthoringDraft?
 
         for _ in 0..<2 {

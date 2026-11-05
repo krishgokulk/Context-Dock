@@ -159,9 +159,9 @@ struct IntegrationBrowserView: View {
     }
 
     private func subtitle(for app: AppIntegrationSummary) -> String {
-        let actions = app.counts.actions
-        let resources = app.counts.resources
-        return "\(actions) action\(actions == 1 ? "" : "s") · \(resources) resource\(resources == 1 ? "" : "s")"
+        let caps = app.counts.capabilities
+        let skills = app.counts.skills
+        return "\(caps) capabilit\(caps == 1 ? "y" : "ies") · \(skills) skill\(skills == 1 ? "" : "s")"
     }
 
     private var globalSubtitle: String {
