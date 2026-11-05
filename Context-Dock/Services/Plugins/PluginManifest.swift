@@ -270,11 +270,216 @@ struct PluginViews: Codable, Equatable {
     }
 }
 
+struct PluginTargetApp: Codable, Equatable {
+    var bundleId: String
+    var name: String
+
+    init(bundleId: String, name: String) {
+        self.bundleId = bundleId
+        self.name = name
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case bundleId = "bundle_id"
+        case bundleIdCamel = "bundleId"
+        case name
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bundleId = try c.decodeIfPresent(String.self, forKey: .bundleId)
+            ?? c.decodeIfPresent(String.self, forKey: .bundleIdCamel)
+            ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? bundleId
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(bundleId, forKey: .bundleId)
+        try c.encode(name, forKey: .name)
+    }
+}
+
+struct PluginPackCapability: Codable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var intent: String
+    var triggers: [String]
+    var type: String
+    var script: String?
+    var menuPath: [String]?
+    var urlScheme: String?
+    var safety: String
+
+    init(
+        id: String,
+        name: String,
+        intent: String = "",
+        triggers: [String] = [],
+        type: String = "aiPrompt",
+        script: String? = nil,
+        menuPath: [String]? = nil,
+        urlScheme: String? = nil,
+        safety: String = "read"
+    ) {
+        self.id = id
+        self.name = name
+        self.intent = intent
+        self.triggers = triggers
+        self.type = type
+        self.script = script
+        self.menuPath = menuPath
+        self.urlScheme = urlScheme
+        self.safety = safety
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, intent, description, triggers, type, script
+        case menuPath = "menu_path"
+        case menuPathCamel = "menuPath"
+        case urlScheme = "url_scheme"
+        case urlSchemeCamel = "urlScheme"
+        case safety, risk
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedName = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? decodedName.lowercased().replacingOccurrences(of: " ", with: "-")
+        name = decodedName.isEmpty ? id : decodedName
+        intent = try c.decodeIfPresent(String.self, forKey: .intent)
+            ?? c.decodeIfPresent(String.self, forKey: .description)
+            ?? ""
+        triggers = try c.decodeIfPresent([String].self, forKey: .triggers) ?? [name]
+        type = try c.decodeIfPresent(String.self, forKey: .type) ?? "aiPrompt"
+        script = try c.decodeIfPresent(String.self, forKey: .script)
+        menuPath = try c.decodeIfPresent([String].self, forKey: .menuPath)
+            ?? c.decodeIfPresent([String].self, forKey: .menuPathCamel)
+        urlScheme = try c.decodeIfPresent(String.self, forKey: .urlScheme)
+            ?? c.decodeIfPresent(String.self, forKey: .urlSchemeCamel)
+        let rawSafety = try c.decodeIfPresent(String.self, forKey: .safety)
+            ?? c.decodeIfPresent(String.self, forKey: .risk)
+            ?? "read"
+        safety = rawSafety.lowercased() == "read" ? "read" : "write"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(intent, forKey: .intent)
+        try c.encode(triggers, forKey: .triggers)
+        try c.encode(type, forKey: .type)
+        try c.encodeIfPresent(script, forKey: .script)
+        try c.encodeIfPresent(menuPath, forKey: .menuPath)
+        try c.encodeIfPresent(urlScheme, forKey: .urlScheme)
+        try c.encode(safety, forKey: .safety)
+    }
+}
+
+struct PluginPackUTCPEndpoint: Codable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var baseURL: String
+    var method: String
+    var path: String
+    var description: String
+    var requiresAuth: Bool
+    var specJSON: String?
+
+    init(
+        id: String,
+        name: String,
+        baseURL: String,
+        method: String = "GET",
+        path: String = "/",
+        description: String = "",
+        requiresAuth: Bool = true,
+        specJSON: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.method = method
+        self.path = path
+        self.description = description
+        self.requiresAuth = requiresAuth
+        self.specJSON = specJSON
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case baseURL = "base_url"
+        case baseURLCamel = "baseURL"
+        case method, path, description
+        case requiresAuth = "requires_auth"
+        case specJSON = "spec_json"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedName = try c.decodeIfPresent(String.self, forKey: .name) ?? "endpoint"
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? decodedName.lowercased().replacingOccurrences(of: " ", with: "-")
+        name = decodedName
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL)
+            ?? c.decodeIfPresent(String.self, forKey: .baseURLCamel)
+            ?? ""
+        method = (try c.decodeIfPresent(String.self, forKey: .method) ?? "GET").uppercased()
+        path = try c.decodeIfPresent(String.self, forKey: .path) ?? "/"
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        requiresAuth = try c.decodeIfPresent(Bool.self, forKey: .requiresAuth) ?? true
+        specJSON = try c.decodeIfPresent(String.self, forKey: .specJSON)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(baseURL, forKey: .baseURL)
+        try c.encode(method, forKey: .method)
+        try c.encode(path, forKey: .path)
+        try c.encode(description, forKey: .description)
+        try c.encode(requiresAuth, forKey: .requiresAuth)
+        try c.encodeIfPresent(specJSON, forKey: .specJSON)
+    }
+}
+
+struct PluginPackSkill: Codable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var summary: String
+    var instructions: String
+
+    init(id: String, name: String, summary: String = "", instructions: String) {
+        self.id = id
+        self.name = name
+        self.summary = summary
+        self.instructions = instructions
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, summary, instructions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedName = try c.decodeIfPresent(String.self, forKey: .name) ?? "Skill"
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? decodedName.lowercased().replacingOccurrences(of: " ", with: "-")
+        name = decodedName
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        instructions = try c.decodeIfPresent(String.self, forKey: .instructions) ?? ""
+    }
+}
+
 struct PluginManifest: Codable, Equatable, Identifiable {
     static let defaultIcon = "puzzlepiece.extension"
 
     var id: String
     var name: String
+    var version: String?
     var icon: String
     var description: String
     var keywords: [String]
@@ -294,30 +499,50 @@ struct PluginManifest: Codable, Equatable, Identifiable {
     var state: [String: PluginValue]
     var agent: PluginAgent?
     var views: PluginViews
+    /// Target application binding (Spec 2026-11-05 §3.1). When `bundleId` matches an app,
+    /// installing the pack binds its capabilities, UTCP endpoints, and skills directly to
+    /// that app's `AppAdapter` and `ScopeInventory`. When nil or "global", binds to Global Context.
+    var targetApp: PluginTargetApp?
+    var capabilities: [PluginPackCapability]?
+    var utcpEndpoints: [PluginPackUTCPEndpoint]?
+    var skills: [PluginPackSkill]?
 
-    init(id: String, name: String, icon: String = PluginManifest.defaultIcon, description: String = "",
+    init(id: String, name: String, version: String? = nil, icon: String = PluginManifest.defaultIcon, description: String = "",
          keywords: [String] = [], inputs: [String] = ["query"], scope: Bool = true,
          data: PluginDataSource? = nil, actions: [String: PluginAction] = [:], primaryAction: String? = nil,
          permissions: [String] = [], sample: [String: PluginValue] = [:],
          state: [String: PluginValue] = [:], agent: PluginAgent? = nil,
-         views: PluginViews = PluginViews()) {
-        self.id = id; self.name = name; self.icon = icon
+         views: PluginViews = PluginViews(),
+         targetApp: PluginTargetApp? = nil,
+         capabilities: [PluginPackCapability]? = nil,
+         utcpEndpoints: [PluginPackUTCPEndpoint]? = nil,
+         skills: [PluginPackSkill]? = nil) {
+        self.id = id; self.name = name; self.version = version; self.icon = icon
         self.description = description.isEmpty ? name : description
         self.keywords = keywords; self.inputs = inputs; self.scope = scope
         self.data = data; self.actions = actions; self.primaryAction = primaryAction
         self.permissions = permissions; self.sample = sample; self.state = state
         self.agent = agent; self.views = views
+        self.targetApp = targetApp
+        self.capabilities = capabilities
+        self.utcpEndpoints = utcpEndpoints
+        self.skills = skills
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, icon, description, keywords, inputs, scope, data, actions, primaryAction
+        case id, name, version, icon, description, keywords, inputs, scope, data, actions, primaryAction
         case permissions, sample, state, agent, views
+        case targetApp = "target_app"
+        case capabilities
+        case utcpEndpoints = "utcp_endpoints"
+        case skills
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
+        version = try c.decodeIfPresent(String.self, forKey: .version)
         icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? PluginManifest.defaultIcon
         let desc = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
         description = desc.isEmpty ? name : desc
@@ -332,6 +557,15 @@ struct PluginManifest: Codable, Equatable, Identifiable {
         state = try c.decodeIfPresent([String: PluginValue].self, forKey: .state) ?? [:]
         agent = try c.decodeIfPresent(PluginAgent.self, forKey: .agent)
         views = try c.decodeIfPresent(PluginViews.self, forKey: .views) ?? PluginViews()
+        targetApp = try c.decodeIfPresent(PluginTargetApp.self, forKey: .targetApp)
+        capabilities = try c.decodeIfPresent([PluginPackCapability].self, forKey: .capabilities)
+        utcpEndpoints = try c.decodeIfPresent([PluginPackUTCPEndpoint].self, forKey: .utcpEndpoints)
+        skills = try c.decodeIfPresent([PluginPackSkill].self, forKey: .skills)
+    }
+
+    /// True when this manifest carries app or global pack payload (capabilities, UTCP endpoints, or skills).
+    var hasPackPayload: Bool {
+        !(capabilities ?? []).isEmpty || !(utcpEndpoints ?? []).isEmpty || !(skills ?? []).isEmpty
     }
 
     /// The presentations this plugin can be shown in, in canonical order.

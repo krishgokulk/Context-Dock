@@ -6,6 +6,22 @@ enum IntegrationScope: String, CaseIterable, Identifiable, Codable {
     var id: Self { self }
 }
 
+enum AppDetailTab: String, CaseIterable, Identifiable, Codable, Equatable {
+    case capabilities
+    case agent
+    case access
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .capabilities: return "Capabilities & Skills"
+        case .agent: return "Agent (AGENT.md)"
+        case .access: return "Access & Permissions"
+        }
+    }
+}
+
 enum IntegrationDetailTab: String, CaseIterable, Identifiable, Codable {
     /// `agent` is the app's AGENT.md — how it behaves, written as a file it owns. It sits
     /// between what the app *can* do (actions, resources) and what it is *allowed* to do
@@ -14,6 +30,28 @@ enum IntegrationDetailTab: String, CaseIterable, Identifiable, Codable {
 
     var id: Self { self }
     var title: String { rawValue.capitalized }
+
+    var appTab: AppDetailTab {
+        switch self {
+        case .overview, .actions, .resources:
+            return .capabilities
+        case .agent:
+            return .agent
+        case .access:
+            return .access
+        }
+    }
+
+    init(appTab: AppDetailTab) {
+        switch appTab {
+        case .capabilities:
+            self = .actions
+        case .agent:
+            self = .agent
+        case .access:
+            self = .access
+        }
+    }
 }
 
 enum IntegrationFocus: String, Codable, Equatable {
@@ -50,6 +88,11 @@ struct IntegrationResourceCounts: Equatable {
 
     var resources: Int {
         skills + cliTools + mcpServers + apiConnections + shortcuts + contextReaders
+    }
+
+    /// Unified user-facing capability count (all executable/connected tools, excluding prompt-only skills).
+    var capabilities: Int {
+        actions + cliTools + mcpServers + apiConnections + shortcuts + contextReaders
     }
 }
 
@@ -247,7 +290,7 @@ enum SettingsRouteResolver {
 
     static func destination(for page: SettingsPage) -> IntegrationDestination? {
         switch page {
-        case .frontmostAppAdapters:
+        case .frontmostAppAdapters, .appPacks:
             return .init(scope: .apps)
         case .extensionsGlobalWithoutSelection:
             return .init(scope: .global, tab: .actions, focus: .commands)

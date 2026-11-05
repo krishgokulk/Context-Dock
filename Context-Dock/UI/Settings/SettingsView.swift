@@ -36,6 +36,11 @@ struct SettingsView: View {
             guard let raw = note.userInfo?["page"] as? String,
                 let page = SettingsPage(rawValue: raw)
             else { return }
+            if page == .extensionImport {
+                selectedPage = .plugins
+                GeneralChatWindowController.shared.showCreator()
+                return
+            }
             selectedPage = page
         }
     }
