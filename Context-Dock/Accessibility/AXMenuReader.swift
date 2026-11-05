@@ -668,9 +668,13 @@ final class AXMenuReader {
     func isMenuItemEnabledReliably(path: [String], in pid: pid_t) -> Bool {
         if let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.processIdentifier == pid && !$0.isTerminated
-        }), let appName = app.localizedName, !appName.isEmpty {
-            if let enabled = isMenuItemEnabledViaSystemEvents(path: path, appName: appName) {
-                return enabled
+        }) {
+            _ = app.activate(options: [.activateIgnoringOtherApps])
+            Thread.sleep(forTimeInterval: 0.05)
+            if let appName = app.localizedName, !appName.isEmpty {
+                if let enabled = isMenuItemEnabledViaSystemEvents(path: path, appName: appName) {
+                    return enabled
+                }
             }
         }
         if let item = menuItem(path: path, in: pid) {
@@ -972,6 +976,8 @@ final class AXMenuReader {
         tell application "System Events"
             try
                 tell process \(appNameLiteral)
+                    set frontmost to true
+                    delay 0.05
                     set pathParts to {\(pathList)}
                     set topName to item 1 of pathParts
                     set currentMenu to menu 1 of menu bar item topName of menu bar 1
