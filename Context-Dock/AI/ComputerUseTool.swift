@@ -166,6 +166,12 @@ enum ComputerUseRunner {
         }
         let appName = app.localizedName ?? bundleID
 
+        // Bring the app forward before reading or operating menus. A menu command in macOS
+        // validates on the responder chain only when the app is active; background apps have
+        // document actions (Export as PDF, Save, Print...) disabled by AppKit.
+        _ = app.activate(options: [.activateIgnoringOtherApps])
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
         let store = ComputerUseConsentStore.shared
         let mode = store.effectiveMode(for: bundleID)
 
