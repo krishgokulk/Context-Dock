@@ -178,6 +178,23 @@ final class ComputerUseAcceptance3AppTypesTests: XCTestCase {
         XCTAssertEqual(matched?.path, ["File", "Export as PDF…"])
     }
 
+    func testTier2MenuLazyValidationRecovery() {
+        // Statically unvalidated menu item where isEnabled was false due to closed menu
+        let lazyMenuItem = item(["File", "Export as PDF…"], enabled: false)
+        let resolution = ComputerUseTargetResolver.resolve(
+            phrase: "Export as PDF",
+            among: [lazyMenuItem]
+        )
+
+        // Resolver reports .disabled based purely on static candidate
+        XCTAssertEqual(resolution, .disabled(lazyMenuItem))
+
+        // Dynamic recovery creates an enabled target
+        let recovered = ComputerUseTarget(path: lazyMenuItem.path, isEnabled: true)
+        XCTAssertTrue(recovered.isEnabled)
+        XCTAssertEqual(recovered.path, ["File", "Export as PDF…"])
+    }
+
     func testTier2AXSnapshotElementsAndRendering() {
         let elements = [
             AXSnapshotElement(

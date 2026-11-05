@@ -197,7 +197,15 @@ enum ComputerUseRunner {
         // A refusal that says which kind of refusal it is. "Not found", "greyed out" and
         // "two things match equally" are three different facts about the app, and reporting
         // all of them as absence is how an assistant looks like it understood nothing.
-        let resolution = ComputerUseTargetResolver.resolve(phrase: target, among: candidates)
+        var resolution = ComputerUseTargetResolver.resolve(phrase: target, among: candidates)
+        if case .disabled(let item) = resolution {
+            // macOS AppKit lazy validation: menu items inside closed menus (File, Edit, etc.)
+            // report kAXEnabledAttribute == false until dynamic validation runs on the responder chain.
+            // Verify via System Events / live responder chain before returning a greyed-out refusal.
+            if AXMenuReader.shared.isMenuItemEnabledReliably(path: item.path, in: app.processIdentifier) {
+                resolution = .resolved(ComputerUseTarget(path: item.path, isEnabled: true))
+            }
+        }
         let chosen: ComputerUseTarget
         switch resolution {
         case .resolved(let target):
