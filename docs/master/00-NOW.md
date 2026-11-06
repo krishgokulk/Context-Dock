@@ -10,14 +10,9 @@
 
 ## In progress
 
-**#151: E3 Prompt order: stable sections first, a second cache mark, volatile last:**
-- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E3) and Issue #151.
-- Reorder `ScopedPromptSection` in `Context-Dock/AI/ScopedPromptAssembler.swift`: stable sections first (source rule, identity, profile, capabilities, MCP, skills, reference, CLI), then volatile sections (resolved context, selection, page, folder, attachments, live data, memory) closest to the question.
-- Preserve budget drop order (unchanged; only the reading/assembly order changes).
-- Add second cache mark breakpoint in `Context-Dock/AI/AnthropicPromptCache.swift` to cache the stable prefix and volatile suffix within Anthropic's 4-breakpoint limit.
-- Unit tests in `Context-DockTests/` verifying assembled section order, byte-identical stable prefix on selection change, and cache breakpoint generation.
+_None — ready for next queued task._
 
-Coordinator: Antigravity Planner — since 2026-11-06 15:38 UTC
+Coordinator: Antigravity Planner — since 2026-11-06 15:52 UTC
 
 ## Queued (next)
 
@@ -25,6 +20,15 @@ Coordinator: Antigravity Planner — since 2026-11-06 15:38 UTC
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**#151: E3 Prompt order: stable sections first, a second cache mark, volatile last:**
+- Completed on branch `claude/issue-151-prompt-order` (PR #382, Issue #151).
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E3) and Issue #151.
+- Reordered `ScopedPromptSection` declaration cases in `Context-Dock/AI/ScopedPromptAssembler.swift`: stable sections first (`sourceRule`, `userProfile`, `identity`, `petMode`, `capabilities`, `liveMenu`, `mcp`, `skills`, `reference`, `cli`), followed by volatile sections closest to the user's question (`workspace`, `resolvedContext`, `selection`, `browserPage`, `folder`, `attachments`, `liveAppData`, `memory`).
+- Preserved budget drop order unchanged (`dropOrder` and `isEssential`).
+- Added dual-block prompt caching in `Context-Dock/AI/AnthropicPromptCache.swift` with `cacheBoundaryMarker` (`<!-- cache:breakpoint -->`): emits stable prefix block (cached across turns) and volatile suffix block, each with ephemeral cache breakpoints, staying within Anthropic's 4-breakpoint limit (at most 2 in system + 1 in history = 3 <= 4).
+- Verified that changing user selection leaves the stable prefix 100% byte-identical.
+- Added comprehensive unit tests in `Context-DockTests/PromptOrderCacheTests.swift` (5/5 passing) and verified regressions in `ScopedPromptAssemblyEvalTests` (9/9 passing) and `FrontmostAppAgentPhase1Tests` (6/6 passing). Gate `./scripts/check.sh` clean pass. Relaunched via `./scripts/dev-run.sh`.
 
 **Task: Autonomous App Discovery & CLI Linker (Follow-up to #373):**
 - Completed on branch `feat/autonomous-app-discovery-cli-linker` (PR #381).
