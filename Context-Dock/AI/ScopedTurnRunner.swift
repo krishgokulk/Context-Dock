@@ -216,6 +216,16 @@ enum ScopedTurnRunner {
             log.notice("evidence insufficient; retrying with \(executed.count, privacy: .public) receipts")
             // The retry prompt carries the model's own words and the tools it ran; only what the
             // user typed may name a host the outbound gate lets through (see TurnUserText).
+            //
+            // Write tools that already ran successfully are stripped from the retry's allowed set:
+            // the retry is for reading new evidence, not re-executing side-effectful actions.
+            // Without this guard a model that says "cannot confirm paste happened" triggers
+            // evidence_sufficiency and runs the same menu command a second time.
+            let alreadyRanWrites = Set(executed.filter(\.success).map(\.command))
+                .intersection(OutboundGate.outboundTools)
+            let retryAllowedTools = alreadyRanWrites.isEmpty
+                ? scope.taskPlan.allowedToolNames
+                : scope.taskPlan.allowedToolNames.subtracting(alreadyRanWrites)
             if let (retried, extra) = try? await TurnUserText.bind(history: history, query: query, {
                 try await AIProviderService.shared.sendWithTools(
                     EvidenceSufficiency.retryPrompt(
@@ -225,7 +235,7 @@ enum ScopedTurnRunner {
                     maxIterations: complexity.maxToolIterations,
                     additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
                     chatScope: scope.chatScope, grantedApps: grantedApps,
-                    allowedToolNames: scope.taskPlan.allowedToolNames,
+                    allowedToolNames: retryAllowedTools,
                     onStream: onStream)
             }) {
                 // Kept only if the second look actually did something. A retry that also
