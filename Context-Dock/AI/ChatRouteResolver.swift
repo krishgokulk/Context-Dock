@@ -149,6 +149,8 @@ struct ChatRoute: Identifiable, Equatable {
             let executionRoute = kind.executionRoute
         else { return nil }
 
+        let resolvedCapID: String? = (kind == .adapterAction && CapabilityRegistry.shared.capability(id: payload) != nil) ? payload : nil
+
         var candidate = DoraXActionCandidate(
             id: id,
             title: title,
@@ -156,7 +158,7 @@ struct ChatRoute: Identifiable, Equatable {
             bundleID: bundleId,
             source: kind == .mcpTool ? .mcp : (kind == .menuCommand ? .cachedMenu : .appAdapter),
             route: executionRoute,
-            capabilityID: nil,
+            capabilityID: resolvedCapID,
             requiredInputs: [],
             // A route that changes something is not low risk because a chat asked for it.
             // Risk is what the approval card reads from and what the hard .critical block
@@ -178,7 +180,9 @@ struct ChatRoute: Identifiable, Equatable {
             // executor, which knows nothing about per-app operate consent.
             return nil
         case .adapterAction:
-            candidate.adapterActionID = payload
+            if resolvedCapID == nil {
+                candidate.adapterActionID = payload
+            }
         case .menuCommand:
             candidate.menuPath = payload.split(separator: "\u{1}").map(String.init)
             candidate.caveat =
@@ -290,6 +294,9 @@ enum ChatRouteResolver {
             "minimize", "minimise", "maximize", "maximise", "hide", "unhide", "zoom",
             "resize", "fullscreen", "collapse", "expand", "focus", "activate", "arrange",
             "tile", "split", "dock", "undock",
+            // Settings and controls: imperatives that name an option in the app's UI.
+            "turn on", "turn off", "switch on", "switch off", "enable", "disable",
+            "uncheck", "untick", "click", "press",
         ]
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }
@@ -441,6 +448,24 @@ enum ChatRouteResolver {
                         bundleId: bundleId,
                         isReadOnly: isReadOnly(action)))
             }
+        }
+
+        // Built-in first-party capabilities (EventKit Calendar, Reminders, Contacts,
+        // Music, Photos, Messages, Notes, Finder, Safari, Mail).
+        let registeredCaps = CapabilityRegistry.shared.capabilities(for: bundleId)
+        for cap in registeredCaps
+        where (cap.appBundleID?.caseInsensitiveCompare(bundleId) == .orderedSame
+               || (cap.appBundleID == nil && cap.id.lowercased().hasPrefix(appName.lowercased())))
+            && (matches(cap.title) || matches(cap.id) || matches(AppAdapterCapabilityCatalog.verbSynonyms(for: cap.id))) {
+            routes.append(
+                ChatRoute(
+                    id: "capability:\(cap.id)",
+                    kind: .adapterAction,
+                    title: cap.title,
+                    payload: cap.id,
+                    appName: appName,
+                    bundleId: bundleId,
+                    isReadOnly: cap.riskLevel == .low))
         }
 
         let menuItems = AppMenuCapabilityCache.shared.menuItems(

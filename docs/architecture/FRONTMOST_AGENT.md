@@ -282,3 +282,57 @@ Not "it feels smarter". The eval suite already has the shape (`AgentRoutingEvalT
 - a two-step instruction → a visible plan, one approval, both steps verified
 
 Each of those was a real report. A fix without one of these is a fix that will regress.
+
+---
+
+## 7. The Autonomous Provider Execution Model & Scoped Tooling (UTCP, Scripts, Computer Use)
+
+### 7.1 DoraX as the Governor & Sandbox; The AI Provider as the Engine
+Users configure their preferred model engine in **Settings → AI Providers** (Claude Code CLI, Anthropic API, OpenAI Codex, Google Gemini, Local Ollama). 
+
+Inside DoraX:
+- **The Provider is an autonomous reasoning engine, not a separate terminal or desktop app.** It does not run wild on macOS. DoraX hosts the turn lifecycle, supplies the context, intercepts every tool/action request, and executes it inside Swift.
+- **Target App Pinning:** When the user interacts with an App Pet (e.g. Safari `com.apple.Safari`), DoraX explicitly pins the turn to that single target `bundleId`. The prompt context, system instructions, and execution boundaries are strictly scoped to that frontmost app. The AI cannot accidentally trigger actions on other apps (e.g. Mail, Notes, Terminal) unless the user explicitly expands scope into Combined Chat.
+
+### 7.2 Why We Do NOT Need Pre-Written Scripts For Every App Feature
+The legacy approach of writing hand-coded scripts, plugins, and CLI wrappers for every macOS app feature led to bloated catalogs and brittle "install brew tool" dead ends. 
+
+Instead, modern frontier models possess sufficient reasoning to **find their own path** via the **3-Tier Escalation Ladder**:
+1. **Tier 1: Built-in & Direct UTCP (Instant, Zero Latency):** If a fast local framework, SQLite reader, or direct UTCP API exists, DoraX executes it directly headlessly.
+2. **Tier 2: Agentic Script Synthesis ("Code Mode"):** If no pre-built tool exists, DoraX provides the frontmost app's scripting dictionary (`sdef` / JXA / AppleScript). Claude/Codex/Gemini writes on-the-fly code to accomplish the task. DoraX validates and executes the script inside a sandboxed runner.
+3. **Tier 3: Autonomous Computer Use (UI Fallback):** For proprietary, web, or non-scriptable canvas apps (e.g., Figma, WhatsApp), the AI operates the app's interface directly using live `NSMenu` hierarchies and Accessibility (`ax_snapshot`, `press_menu`, `ax_click`, `ax_type`).
+4. **Skill Auto-Capture (Phase 5):** When the AI succeeds at a multi-step Tier 2 or Tier 3 task, DoraX automatically captures the recipe into `SkillStore.shared.skills(for: bundleId)`. The next time the user asks the same thing, DoraX executes the learned recipe instantly without repeating the exploratory loop.
+
+### 7.3 Why UTCP Replaces Heavy MCP Background Daemons
+- **The MCP Problem:** Model Context Protocol servers run as independent Node.js or Python background daemons. Running 5–10 MCP daemons consumes hundreds of megabytes of RAM, drains battery, and introduces IPC failure points.
+- **The UTCP Solution:** The Universal Tool Calling Protocol (`utcp.io` / OpenAPI 3.x, Task #363) eliminates external wrapper daemons. DoraX's native `UTCPDirectExecutor` parses tool manifests and executes HTTP endpoints directly via `URLSession` and CLI binaries via native `Process`. Tools are lightweight, daemon-free, and execute with zero background overhead.
+
+### 7.4 Safety & Control Boundaries
+- **Approval Gating:** Read actions run automatically without user friction. Destructive write actions (sending emails, deleting files, purchasing, submitting forms) present a one-click approval card before running.
+- **Outbound Privacy Gate:** Prevents sensitive local context (e.g., private notes, messages) from being transmitted over external networks without explicit consent.
+- **Computer Use Esc Kill Switch:** Any autonomous UI execution displays a visible "DoraX is operating [App]" status pill with a Stop button and an immediate `Esc` key kill switch.
+
+### 7.5 The Two-Sided Bus: App Envelope & Normalized Execution
+To prevent a fragmented sprawl of disconnected scripts, MCP servers, shortcuts, and APIs, DoraX acts as a Two-Sided Normalized Adapter between the Frontmost App and the AI Provider:
+
+```
+┌─────────────────────────┐          ┌───────────────────────────┐          ┌──────────────────────────┐
+│   FRONTMOST MAC APP     │          │       DORAX ENGINE        │          │       AI PROVIDER        │
+│ (Safari, Pages, Xcode)  │◄────────►│ (Host, Governor & Sandbox)│◄────────►│ (Claude, Codex, Gemini)  │
+└─────────────────────────┘          └───────────────────────────┘          └──────────────────────────┘
+      macOS Layer                         Normalized Middleman                   Reasoning Brain
+```
+
+1. **Downwards to macOS (Sense & Act):**
+   - **Sense:** DoraX inspects the frontmost app to read window titles, URLs, selections, and live `NSMenu` items.
+   - **Act:** Dispatches actions via the cleanest channel available (native UTCP HTTP → AppleScript/JXA → Accessibility `AXUIElement`).
+2. **Upwards to the AI Provider (The Context Envelope):**
+   - DoraX bundles the app's identity, `AGENT.md` rules, learned `SKILL.md` workflows, live menu items, and available UTCP direct tools into a single normalized prompt context.
+   - The AI never deals with macOS-specific IPC intricacies; it only sees clean tool definitions and markdown context.
+3. **Execution Normalization:**
+   - When the AI returns a decision, DoraX maps it into one of three execution lanes:
+     - **Tool Call:** Dispatched headlessly via native `URLSession` (UTCP) or `Process`.
+     - **Synthesized Script:** Executed via `osascript` in a governed sandbox.
+     - **UI Command:** Dispatched via `AXUIElementPerformAction` on live menu items or buttons.
+
+

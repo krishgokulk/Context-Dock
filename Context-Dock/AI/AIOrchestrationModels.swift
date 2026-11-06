@@ -41,6 +41,10 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case menuAction
     /// Press what the app's LIVE menu bar has, when the cached map does not have it.
     case operateApp
+    /// Read the front window as element ids (ComputerUseAXTools).
+    case axSnapshot
+    /// Click / type / focus one element id from the latest snapshot.
+    case axAct
     /// Run a script the app's own AGENT.md declares.
     case appScript
     /// Run an on-the-fly synthesized AppleScript or JXA script.
@@ -293,6 +297,30 @@ enum AITypedInvocationResolver {
                         kind: .operateApp, capabilityID: "computerUse.pressMenuItem",
                         arguments: args, requiresApproval: true)
                 }
+            }
+
+            // Window-level Computer Use for providers with no tools of their own:
+            // {"ax_snapshot":{"reason":"…"}} then {"ax_act":{"action":"click","id":"e7"}}.
+            if let call = root["ax_snapshot"] as? [String: Any] {
+                var args: [String: String] = [:]
+                if let reason = call["reason"] as? String, !reason.isEmpty { args["reason"] = reason }
+                if let mode = call["mode"] as? String { args["mode"] = mode }
+                return AITypedInvocation(
+                    kind: .axSnapshot, capabilityID: "computerUse.axSnapshot",
+                    arguments: args, requiresApproval: true)
+            }
+            if let call = root["ax_act"] as? [String: Any],
+                let action = (call["action"] as? String)?.lowercased(),
+                ["click", "type", "focus"].contains(action),
+                let id = (call["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !id.isEmpty
+            {
+                var args: [String: String] = ["action": action, "id": id]
+                if let text = call["text"] as? String { args["text"] = text }
+                if let reason = call["reason"] as? String, !reason.isEmpty { args["reason"] = reason }
+                return AITypedInvocation(
+                    kind: .axAct, capabilityID: "computerUse.axAct",
+                    arguments: args, requiresApproval: true)
             }
 
             // A script the app's profile declares: {"app_script": {"name": "tabs-to-md.sh"}}.

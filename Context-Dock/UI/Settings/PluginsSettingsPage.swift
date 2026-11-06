@@ -13,9 +13,14 @@ struct PluginsSettingsPage: View {
     @ObservedObject private var registry = PluginRegistry.shared
     @ObservedObject private var globalExtensions = UserGlobalExtensionStore.shared
     @ObservedObject private var pins = DockPinStore.shared
-    @State private var showsMigrated = true
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var commandsObserver = SystemCommandsRegistryObserver.shared
+    @ObservedObject private var skillStore = SkillStore.shared
+    @ObservedObject private var mcpManager = MCPServerManager.shared
+    @State private var showsMigrated = false
     @State private var installMessage: String?
     @State private var removeMessage: String?
+    @State private var boundBanner: StorePackBindResult?
 
     /// Everything previewable, in one list: the shipped examples, anything actually installed,
     /// and every Global Command and Global Extension as it would arrive after migration.
@@ -26,16 +31,249 @@ struct PluginsSettingsPage: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                installed
-                Divider()
-                examples
-                Divider()
-                legacy
+        VStack(spacing: 0) {
+            headerBar
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let banner = boundBanner {
+                        bindingConfirmationBanner(banner)
+                    }
+                    storeCatalogSection
+                    Divider()
+                    appAndSystemPacksSection
+                    Divider()
+                    installed
+                    Divider()
+                    examples
+                    Divider()
+                    legacy
+                }
+                .padding(24)
+                .frame(maxWidth: 780, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    // MARK: Header
+
+    private var headerBar: some View {
+        HStack(spacing: 12) {
+            SettingsPageHeader(page: .plugins)
+            Spacer(minLength: 0)
+            Button {
+                GeneralChatWindowController.shared.showCreator()
+            } label: {
+                Label("+ Create Pack", systemImage: "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .padding(.trailing, 24)
+            .help("Synthesize a pack with AI using local sdef, menu hierarchy, and OpenAPI/UTCP specs")
+            .accessibilityLabel("Create Pack")
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private func bindingConfirmationBanner(_ result: StorePackBindResult) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.isGlobal
+                    ? "Installed to Global Context"
+                    : "Installed & automatically bound to \(result.appName)")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("\(result.registeredCapabilityIDs.count) capabilities · \(result.registeredUTCPConnectionIDs.count) UTCP endpoints · \(result.registeredSkillIDs.count) skills")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let bundleID = result.boundBundleID {
+                Button("Open in Apps →") {
+                    let dest = IntegrationDestination(scope: .apps, bundleID: bundleID, tab: .actions)
+                    NotificationCenter.default.post(
+                        name: .openSettingsPage,
+                        object: nil,
+                        userInfo: SettingsRouteResolver.notificationPayload(for: dest))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            Button {
+                boundBanner = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.green.opacity(0.10)))
+    }
+
+    // MARK: Store / Community Packs
+
+    private var storeCatalogSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Store Packs", systemImage: "bag.fill")
+                    .font(.headline)
+                Spacer()
+                Text("Automatic app binding on install")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Installing an app pack binds its capabilities, UTCP endpoints, and skills directly to the matching app in Extensions › Apps.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 0) {
+                ForEach(Array(StorePackCatalog.all.enumerated()), id: \.element.id) { index, pack in
+                    if index > 0 { Divider() }
+                    storePackRow(pack)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor)))
+        }
+    }
+
+    private func storePackRow(_ pack: PluginManifest) -> some View {
+        let isInstalled: Bool = {
+            if registry.plugins.contains(where: { $0.id == pack.id }) { return true }
+            if let bundleID = pack.targetApp?.bundleId,
+               let adapter = adapterManager.adapters.first(where: { $0.bundleId == bundleID }) {
+                let prefix = "pack.\(pack.id)."
+                return adapter.actions.contains { $0.id.hasPrefix(prefix) }
+            }
+            return false
+        }()
+        let capCount = (pack.capabilities ?? []).count
+        let utcpCount = (pack.utcpEndpoints ?? []).count
+        let skillCount = (pack.skills ?? []).count
+        let scopeBadge = pack.targetApp.map { "App: \($0.name)" } ?? "Global Context"
+
+        return HStack(spacing: 12) {
+            Image(systemName: pack.icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(pack.name).font(.system(size: 13, weight: .semibold))
+                    Text(scopeBadge)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(pack.targetApp != nil ? .teal : .indigo)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(
+                            (pack.targetApp != nil ? Color.teal : Color.indigo).opacity(0.14),
+                            in: Capsule())
+                }
+                Text(pack.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text("\(capCount) capabilit\(capCount == 1 ? "y" : "ies") · \(utcpCount) UTCP endpoint\(utcpCount == 1 ? "" : "s") · \(skillCount) skill\(skillCount == 1 ? "" : "s")")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Edit in Creator") {
+                GeneralChatWindowController.shared.showCreator(editing: pack)
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+
+            if isInstalled, let bundleID = pack.targetApp?.bundleId {
+                Button("View in Apps") {
+                    let dest = IntegrationDestination(scope: .apps, bundleID: bundleID, tab: .actions)
+                    NotificationCenter.default.post(
+                        name: .openSettingsPage,
+                        object: nil,
+                        userInfo: SettingsRouteResolver.notificationPayload(for: dest))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button(isInstalled ? "Reinstall" : "Install") {
+                    if let result = try? StorePackInstaller.install(pack) {
+                        boundBanner = result
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: App & System Packs
+
+    private var appAndSystemPacksSection: some View {
+        let _ = commandsObserver.revision
+        let packs = AppPacks.all(
+            adapters: adapterManager.adapters,
+            commands: SystemCommandsRegistry.shared.commands,
+            resources: AppPackLiveResources.resources(for:))
+        return VStack(alignment: .leading, spacing: 10) {
+            Label("Installed App & System Packs", systemImage: "shippingbox.fill")
+                .font(.headline)
+            Text("Toggle an entire app pack or system command group on or off.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if packs.isEmpty {
+                Text("No packs configured yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(packs.enumerated()), id: \.element.id) { index, pack in
+                        if index > 0 { Divider().padding(.leading, 44) }
+                        HStack(spacing: 12) {
+                            AppPackIcon(pack: pack, size: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(pack.name).font(.system(size: 12.5, weight: .medium))
+                                    if pack.sendsDataOut { AppPackSendsDataOutLabel() }
+                                }
+                                Text(pack.counts.summary)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button("Configure") {
+                                AppPackLiveResources.openEditor(for: pack)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                            Toggle("", isOn: Binding(
+                                get: { pack.isEnabled },
+                                set: { AppPackLiveResources.setEnabled($0, pack: pack) }))
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
+                                .labelsHidden()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor)))
+            }
         }
     }
 

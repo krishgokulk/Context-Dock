@@ -1080,6 +1080,68 @@ final class AppAdapterManager: ObservableObject {
         }
     }
 
+    /// Binds capabilities from a Store Pack directly to the target `bundleId` adapter in memory
+    /// and (when not running under the offline test host) persists the merged adapter to disk.
+    @discardableResult
+    func bindPackActions(
+        bundleId: String,
+        appName: String,
+        icon: String,
+        actions: [AdapterAction],
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) -> AppAdapter {
+        let trimmedBundleId = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAppName = appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? trimmedBundleId
+            : appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedIcon = icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "shippingbox.fill"
+            : icon.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let incomingIDs = Set(actions.map(\.id))
+        let updated: AppAdapter
+        if let idx = adapters.firstIndex(where: { $0.bundleId == trimmedBundleId }) {
+            var existing = adapters[idx]
+            var merged = existing.actions.filter { !incomingIDs.contains($0.id) }
+            merged.append(contentsOf: actions)
+            existing.actions = merged
+            existing.isEnabled = true
+            if existing.appName.isEmpty || existing.appName == trimmedBundleId {
+                existing.appName = trimmedAppName
+            }
+            adapters[idx] = existing
+            updated = existing
+        } else {
+            let created = AppAdapter(
+                id: trimmedBundleId,
+                appName: trimmedAppName,
+                bundleId: trimmedBundleId,
+                icon: resolvedIcon,
+                isEnabled: true,
+                isBuiltIn: false,
+                actions: actions)
+            adapters.append(created)
+            updated = created
+        }
+
+        for action in actions {
+            syncCLIToolPackageIfNeeded(for: action)
+        }
+
+        if persistToDisk {
+            try? FileManager.default.createDirectory(
+                at: adaptersDirectory, withIntermediateDirectories: true)
+            let fileURL = updated.sourceFileURL ?? adapterFileURL(for: updated)
+            persistAdapter(updated, to: fileURL)
+        }
+        return updated
+    }
+
+    /// Removes an in-memory adapter for a bundleID (used for test cleanup or pack unbinding).
+    func removeInMemoryAdapter(bundleId: String) {
+        adapters.removeAll { $0.bundleId == bundleId }
+    }
+
     /// Duplicate an adapter under a new bundle id + name.
     func duplicateAdapter(bundleId: String) async {
         guard let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }

@@ -8,6 +8,7 @@ enum AppleMessagesMCPCapabilities {
         registerRecent(registry)
         registerSearch(registry)
         registerCompose(registry)
+        registerSend(registry)
         registerTopCorrespondents(registry)
     }
 
@@ -143,6 +144,31 @@ enum AppleMessagesMCPCapabilities {
                 let output = await MessagesAutomation.composeMessage(
                     to: recipient, body: request.input["body"] ?? "")
                 return .init(success: !output.hasPrefix("❌"), output: output)
+            }
+        )
+    }
+
+    private static func registerSend(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "messages.send",
+                title: "Send Message (with approval)",
+                appBundleID: "com.apple.MobileSMS",
+                inputSchema: .init(fields: [
+                    .init(name: "recipient", description: "Contact name, phone number, or Apple ID", required: true),
+                    .init(name: "body", description: "The message text to send", required: true),
+                ]),
+                riskLevel: .high
+            ) { request in
+                try ensureEnabled()
+                guard let recipient = request.input["recipient"], !recipient.isEmpty else {
+                    throw AICapabilityError.missingInput("recipient")
+                }
+                guard let body = request.input["body"], !body.isEmpty else {
+                    throw AICapabilityError.missingInput("body")
+                }
+                let res = await MessagesAutomation.sendMessage(to: recipient, body: body)
+                return .init(success: res.success, output: res.message)
             }
         )
     }

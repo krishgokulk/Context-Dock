@@ -1107,6 +1107,7 @@ class AppSettings: ObservableObject {
     @AppStorage("mailMCPEnabled") var mailMCPEnabled: Bool = true
     @AppStorage("musicMCPEnabled") var musicMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") var messagesMCPEnabled: Bool = true
+    @AppStorage("safariMCPEnabled") var safariMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 
     // UI Feature Toggles
@@ -2723,15 +2724,20 @@ class AppSettings: ObservableObject {
         return pinnedApps.contains(where: { $0.path == path })
     }
 
+    func hotkeyKeycaps(keyCode: UInt32, modifiers: UInt32) -> [String] {
+        guard keyCode != 0 else { return [] }
+        var caps: [String] = []
+        if modifiers & UInt32(cmdKey) != 0 { caps.append("⌘") }
+        if modifiers & UInt32(optionKey) != 0 { caps.append("⌥") }
+        if modifiers & UInt32(controlKey) != 0 { caps.append("⌃") }
+        if modifiers & UInt32(shiftKey) != 0 { caps.append("⇧") }
+        caps.append(keyCodeToString(keyCode))
+        return caps
+    }
+
     func hotkeyDisplayString(keyCode: UInt32, modifiers: UInt32) -> String {
-        guard keyCode != 0 else { return "Not Set" }
-        var result = ""
-        if modifiers & UInt32(cmdKey) != 0 { result += "⌘" }
-        if modifiers & UInt32(optionKey) != 0 { result += "⌥" }
-        if modifiers & UInt32(controlKey) != 0 { result += "⌃" }
-        if modifiers & UInt32(shiftKey) != 0 { result += "⇧" }
-        result += keyCodeToString(keyCode)
-        return result
+        let caps = hotkeyKeycaps(keyCode: keyCode, modifiers: modifiers)
+        return caps.isEmpty ? "Not Set" : caps.joined()
     }
     var contextDockHotkeyDisplayString: String {
         hotkeyDisplayString(

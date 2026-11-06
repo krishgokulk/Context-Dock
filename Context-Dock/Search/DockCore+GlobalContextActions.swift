@@ -3922,9 +3922,10 @@ extension DockCore {
                 ) = doc.action
             else { return nil }
             let normalizedPath = path.map(normalizedDockPillText)
-            guard normalizedPath.first != "window",
-                !WindowManagementService.shared.handlesMenuPath(path)
-            else { return nil }
+            // Only filter paths that WindowManagementService handles natively (Minimize,
+            // Zoom, Fill, …). The old broad "normalizedPath.first != window" check also
+            // dropped "Minimise All" which WindowManagementService does NOT cover.
+            guard !WindowManagementService.shared.handlesMenuPath(path) else { return nil }
             let key = "\(bundleId):\(path.joined(separator: ">"))"
             guard seen.insert(key).inserted else { return nil }
             let descriptor = GlobalMenuDescriptor(

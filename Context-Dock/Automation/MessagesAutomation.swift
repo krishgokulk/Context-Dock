@@ -182,6 +182,130 @@ enum MessagesAutomation {
         return "❌ Couldn't open Messages compose window."
     }
 
+    // MARK: - Contact Resolution
+
+    struct ResolvedContact: Equatable {
+        let name: String
+        let handle: String
+    }
+
+    enum ContactResolutionResult {
+        case resolved(ResolvedContact)
+        case ambiguous([ResolvedContact])
+        case notFound
+    }
+
+    static func resolveRecipient(_ query: String) -> ContactResolutionResult {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .notFound }
+
+        // If it looks like a direct phone number or email address, return immediately
+        if trimmed.contains("@") || (trimmed.rangeOfCharacter(from: CharacterSet.decimalDigits) != nil && trimmed.count >= 7 && !trimmed.contains(" ")) {
+            return .resolved(ResolvedContact(name: trimmed, handle: trimmed))
+        }
+
+        let matches = AppleAppsAPI.shared.searchContacts(query: trimmed)
+        var contactsWithHandles: [ResolvedContact] = []
+
+        for match in matches {
+            let fullName = match["fullName"] as? String ?? trimmed
+            if let phone = match["phone"] as? String, !phone.isEmpty {
+                contactsWithHandles.append(ResolvedContact(name: fullName, handle: phone))
+            } else if let email = match["email"] as? String, !email.isEmpty {
+                contactsWithHandles.append(ResolvedContact(name: fullName, handle: email))
+            }
+        }
+
+        if contactsWithHandles.count == 1 {
+            return .resolved(contactsWithHandles[0])
+        } else if contactsWithHandles.count > 1 {
+            return .ambiguous(contactsWithHandles)
+        }
+
+        return .notFound
+    }
+
+    // MARK: - Send Message (Rung 3 AppleScript -> Rung 4 UI Fallback + Verified Read-Back)
+
+    static func sendMessage(to recipient: String, body: String) async -> (success: Bool, message: String, verified: Bool) {
+        let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRecipient.isEmpty else {
+            return (false, "No recipient provided.", false)
+        }
+        guard !trimmedBody.isEmpty else {
+            return (false, "No message body provided.", false)
+        }
+
+        // 1. Resolve contact handle
+        let targetHandle: String
+        let displayName: String
+        switch resolveRecipient(trimmedRecipient) {
+        case .resolved(let contact):
+            targetHandle = contact.handle
+            displayName = contact.name
+        case .ambiguous(let contacts):
+            let options = contacts.prefix(4).map { "\($0.name) (\($0.handle))" }.joined(separator: ", ")
+            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which one to message.", false)
+        case .notFound:
+            targetHandle = trimmedRecipient
+            displayName = trimmedRecipient
+        }
+
+        // 2. Try headless AppleScript dispatch
+        let escapedRecipient = escapeAppleScriptLiteral(targetHandle)
+        let escapedBody = escapeAppleScriptLiteral(trimmedBody)
+        let script = """
+            tell application "Messages"
+                try
+                    set targetService to 1st service whose service type = iMessage
+                    set targetBuddy to participant "\(escapedRecipient)" of targetService
+                    send "\(escapedBody)" to targetBuddy
+                    return "SENT_IMESSAGE"
+                on error
+                    try
+                        set targetBuddy to participant "\(escapedRecipient)"
+                        send "\(escapedBody)" to targetBuddy
+                        return "SENT_BUDDY"
+                    on error errMsg
+                        return "ERROR: " & errMsg
+                    end try
+                end try
+            end tell
+            """
+        let scriptResult = AppleAppsAPI.shared.handleAppleScript(script) ?? ""
+        if scriptResult.hasPrefix("SENT_") {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            let verified = MessagesChatDBReader.verifySentMessage(to: targetHandle, textSnippet: trimmedBody)
+            let readback = verified ? " (Verified in Messages history)" : ""
+            return (true, "Sent message to \(displayName)\(readback).", verified)
+        }
+
+        // 3. Fallback to native UI automation (imessage:// URL + text entry + Enter)
+        guard let app = await activateOrLaunchMessages() else {
+            return (false, "Could not launch Messages.", false)
+        }
+
+        let encoded = targetHandle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? targetHandle
+        if let url = URL(string: "imessage://\(encoded)") {
+            NSWorkspace.shared.open(url)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+
+            let focusRes = AXUIFocusHelper.focusSearchOrTextField(in: app.processIdentifier, text: trimmedBody)
+            if focusRes.success {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                postEnter(to: app.processIdentifier)
+
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                let verified = MessagesChatDBReader.verifySentMessage(to: targetHandle, textSnippet: trimmedBody)
+                let readback = verified ? " (Verified via chat.db)" : ""
+                return (true, "Sent message to \(displayName)\(readback).", verified)
+            }
+        }
+
+        return (false, "Could not send message to \(displayName).", false)
+    }
+
     // MARK: - AX Helpers
 
     private static func findSearchField(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {

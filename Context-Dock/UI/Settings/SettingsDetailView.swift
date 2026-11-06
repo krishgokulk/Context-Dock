@@ -19,7 +19,7 @@ struct SettingsDetailView: View {
     }
 
     private var rendersOwnHeader: Bool {
-        page == .integrations || SettingsRouteResolver.destination(for: page) != nil
+        page == .integrations || page == .plugins || SettingsRouteResolver.destination(for: page) != nil
     }
 
     @ViewBuilder
@@ -31,11 +31,10 @@ struct SettingsDetailView: View {
             AIProvidersSettingsPage()
         case .integrations:
             IntegrationsSettingsPage(destination: integrationDestination)
-        case .plugins:
+        case .plugins, .extensionImport:
             PluginsSettingsPage()
-        case .appPacks:
-            AppPacksSettingsPage()
-        case .extensionsGlobalWithSelection,
+        case .appPacks,
+             .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,
              .frontmostAppAdapters,
@@ -45,8 +44,6 @@ struct SettingsDetailView: View {
             // this is only reached if a page is set directly; it lands in the same scope
             // rather than reviving a page with no sidebar row.
             IntegrationsSettingsPage(destination: SettingsRouteResolver.destination(for: page))
-        case .extensionImport:
-            PluginCreatorDoor()
         case .mediaActions:
             MediaActionsSettingsPage()
         case .permissions:

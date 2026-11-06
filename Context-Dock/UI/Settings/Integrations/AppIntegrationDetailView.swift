@@ -32,8 +32,11 @@ struct IntegrationAppIcon: View {
     }
 }
 
-/// One app integration: its identity, its enabled state, and the four sections everything
-/// it can do is filed under.
+/// One app integration: its identity, its enabled state, and the three user-facing sections
+/// everything it can do is filed under:
+/// 1. Capabilities & Skills
+/// 2. Agent (AGENT.md)
+/// 3. Access & Permissions
 struct AppIntegrationDetailView: View {
     let summary: AppIntegrationSummary
     @Binding var selectedTab: IntegrationDetailTab
@@ -48,12 +51,19 @@ struct AppIntegrationDetailView: View {
         self._selectedTab = selectedTab
     }
 
+    private var appTabBinding: Binding<AppDetailTab> {
+        Binding(
+            get: { selectedTab.appTab },
+            set: { selectedTab = IntegrationDetailTab(appTab: $0) }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            Picker("Section", selection: $selectedTab) {
-                ForEach(IntegrationDetailTab.allCases) { tab in
+            Picker("Section", selection: appTabBinding) {
+                ForEach(AppDetailTab.allCases) { tab in
                     Text(tab.title).tag(tab)
                 }
             }
@@ -79,14 +89,14 @@ struct AppIntegrationDetailView: View {
                 set: { if !$0 { pendingRemoval = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Remove Action", role: .destructive) {
+            Button("Remove Capability", role: .destructive) {
                 guard let action = pendingRemoval else { return }
                 pendingRemoval = nil
                 Task { await adapterManager.deleteAction(id: action.id, from: summary.bundleID) }
             }
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
         } message: {
-            Text("This deletes the action from \(summary.appName). It cannot be undone.")
+            Text("This deletes the capability from \(summary.appName). It cannot be undone.")
         }
     }
 
@@ -118,7 +128,7 @@ struct AppIntegrationDetailView: View {
                     editingAction = nil
                     showActionEditor = true
                 } label: {
-                    Label("Add Action", systemImage: "plus")
+                    Label("Add Capability", systemImage: "plus")
                 }
             }
         }
@@ -128,25 +138,21 @@ struct AppIntegrationDetailView: View {
 
     @ViewBuilder
     private var tabContent: some View {
-        switch selectedTab {
-        case .overview:
-            AppIntegrationOverviewView(summary: summary)
-        case .actions:
-            AppIntegrationActionsView(
-                bundleID: summary.bundleID,
-                appActions: summary.appActions,
-                browserActions: summary.browserActions,
-                onAdd: {
+        switch selectedTab.appTab {
+        case .capabilities:
+            AppIntegrationCapabilitiesView(
+                summary: summary,
+                onAddCapability: {
                     editingAction = nil
                     showActionEditor = true
                 },
-                onEdit: { action in
+                onEditCapability: { action in
                     editingAction = action
                     showActionEditor = true
                 },
-                onRemove: { action in pendingRemoval = action })
-        case .resources:
-            AppIntegrationResourcesView(summary: summary)
+                onRemoveCapability: { action in
+                    pendingRemoval = action
+                })
         case .agent:
             AppIntegrationAgentView(summary: summary)
         case .access:

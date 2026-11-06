@@ -44,6 +44,9 @@ enum AgentToolNarration {
                 $0.components(separatedBy: " > ")
             }
             return "Route: \(parts.filter { !$0.isEmpty }.joined(separator: " ▸ ")) · menu command"
+        case "ax_snapshot": return "Route: window elements · read"
+        case "ax_act":
+            return text("id").map { "Route: window element · \($0)" }
         case "operate_app":
             return text("target").map { "Route: live menu bar · \($0)" }
         case "run_adapter_action":
@@ -54,6 +57,10 @@ enum AgentToolNarration {
             return text("name").map { "Route: Shortcuts · \($0)" }
         case "run_command":
             return "Route: command line"
+        case "send_message":
+            return text("recipient").map { "Route: Messages · \($0)" }
+        case "send_mail":
+            return text("to").map { "Route: Mail · \($0)" }
         default:
             return nil
         }
@@ -97,11 +104,19 @@ enum AgentToolNarration {
         case "run_command": return "Running"
         case "run_menu_command": return "Pressing"
         case "operate_app": return "Looking in the live menu bar for"
+        case "ax_snapshot": return "Reading the window"
+        case "ax_act": return "Operating the window"
         case "run_adapter_action": return "Running app action"
         case "run_capability", "run_mcp_tool", "run_route": return "Running"
         case "send_keys": return "Typing"
         case "window_control": return "Moving the window"
         case "compose_message": return "Drafting a message"
+        case "send_message": return "Sending message"
+        case "send_mail": return "Sending email"
+        case "read_unread_mail", "search_mail": return "Checking Mail"
+        case "create_reminder": return "Creating reminder"
+        case "list_reminders": return "Checking Reminders"
+        case "get_today_events": return "Checking Calendar"
         case "verify_outcome": return "Checking the result"
         case "spawn_worker": return "Handing this to a worker"
         default: return "Running \(tool)"

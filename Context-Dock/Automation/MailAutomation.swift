@@ -700,4 +700,129 @@ enum MailAutomation {
 
         return MailAutomationMailboxSnapshot(mailboxName: mailboxName, messages: messages)
     }
+
+    // MARK: - Recipient Resolution & Outbound Send
+
+    enum ContactResolutionResult {
+        case resolved(MessagesAutomation.ResolvedContact)
+        case ambiguous([MessagesAutomation.ResolvedContact])
+        case notFound
+    }
+
+    static func resolveRecipient(_ query: String) -> ContactResolutionResult {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .notFound }
+
+        // Direct email address check
+        if trimmed.contains("@") && trimmed.contains(".") {
+            return .resolved(MessagesAutomation.ResolvedContact(name: trimmed, handle: trimmed))
+        }
+
+        let matches = AppleAppsAPI.shared.searchContacts(query: trimmed)
+        var contactsWithEmails: [MessagesAutomation.ResolvedContact] = []
+
+        for match in matches {
+            let fullName = match["fullName"] as? String ?? trimmed
+            if let email = match["email"] as? String, !email.isEmpty {
+                contactsWithEmails.append(MessagesAutomation.ResolvedContact(name: fullName, handle: email))
+            }
+        }
+
+        if contactsWithEmails.count == 1 {
+            return .resolved(contactsWithEmails[0])
+        } else if contactsWithEmails.count > 1 {
+            return .ambiguous(contactsWithEmails)
+        }
+
+        return .notFound
+    }
+
+    /// Sends an email through Apple Mail with AppleScript dispatch and verified read-back against Sent history.
+    static func sendMail(
+        to recipient: String,
+        subject: String,
+        body: String
+    ) async -> (success: Bool, message: String, verified: Bool) {
+        let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedRecipient.isEmpty else {
+            return (false, "No recipient provided.", false)
+        }
+        guard !trimmedSubject.isEmpty else {
+            return (false, "No subject provided.", false)
+        }
+
+        // 1. Resolve contact handle
+        let targetEmail: String
+        let displayName: String
+        switch resolveRecipient(trimmedRecipient) {
+        case .resolved(let contact):
+            targetEmail = contact.handle
+            displayName = contact.name
+        case .ambiguous(let contacts):
+            let options = contacts.prefix(4).map { "\($0.name) <\($0.handle)>" }.joined(separator: ", ")
+            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which email address to use.", false)
+        case .notFound:
+            targetEmail = trimmedRecipient
+            displayName = trimmedRecipient
+        }
+
+        let escapedRecipient = escapeAppleScriptLiteral(targetEmail)
+        let escapedSubject = escapeAppleScriptLiteral(trimmedSubject)
+        let escapedBody = escapeAppleScriptLiteral(trimmedBody)
+
+        // 2. Headless AppleScript dispatch
+        let script = """
+            tell application "Mail"
+                try
+                    set newMsg to make new outgoing message with properties {subject:"\(escapedSubject)", content:"\(escapedBody)" & return, visible:false}
+                    tell newMsg
+                        make new to recipient at end of to recipients with properties {address:"\(escapedRecipient)"}
+                        send
+                    end tell
+                    return "SENT_MAIL"
+                on error errMsg
+                    return "ERROR: " & errMsg
+                end try
+            end tell
+            """
+
+        let scriptResult = AppleAppsAPI.shared.handleAppleScript(script) ?? ""
+        if scriptResult.hasPrefix("SENT_MAIL") {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            let verified = verifySentMail(subject: trimmedSubject, recipient: targetEmail)
+            let readback = verified ? " (Verified in Sent mailbox)" : ""
+            return (true, "Sent email to \(displayName) (\(targetEmail)) with subject \"\(trimmedSubject)\"\(readback).", verified)
+        }
+
+        if scriptResult.hasPrefix("ERROR:") {
+            return (false, "Could not send email: \(scriptResult)", false)
+        }
+
+        return (false, "Could not send email via Apple Mail.", false)
+    }
+
+    /// Verifies if an email with the given subject exists in the Sent mailbox.
+    nonisolated static func verifySentMail(subject: String, recipient: String = "") -> Bool {
+        let escapedSubject = escapeAppleScriptLiteral(subject)
+        let script = """
+            tell application "Mail"
+                try
+                    set sentBox to sent mailbox
+                    set foundMsgs to (messages of sentBox whose subject contains "\(escapedSubject)")
+                    if (count of foundMsgs) > 0 then
+                        return "VERIFIED"
+                    else
+                        return "UNVERIFIED"
+                    end if
+                on error
+                    return "ERROR"
+                end try
+            end tell
+            """
+        let res = AppleAppsAPI.shared.handleAppleScript(script) ?? ""
+        return res.contains("VERIFIED")
+    }
 }

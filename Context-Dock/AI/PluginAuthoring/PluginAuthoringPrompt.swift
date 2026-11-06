@@ -52,6 +52,14 @@ enum PluginAuthoringPrompt {
         - `actions`: named things a tap can do (below).
         - `primaryAction`: the action choosing the plugin runs when it has no views (a one-shot).
         - `views`: any of `icon`, `widget`, `panel`, `window` (below).
+        - `target_app`: optional `{ "bundle_id": "<bundleId>", "name": "<AppName>" }`. When present, \
+        installing the pack automatically binds its `capabilities`, `utcp_endpoints`, and `skills` \
+        directly to that app (`AppAdapter` and `ScopeInventory`).
+        - `capabilities`: optional array of app-scoped tools `{ "id", "name", "intent", "triggers", \
+        "type": "applescript"|"menubar"|"aiPrompt"|"bash", "script"?, "menu_path"?, "safety": "read"|"write" }`.
+        - `utcp_endpoints`: optional array of direct HTTP endpoints `{ "id", "name", "base_url", \
+        "method", "path", "description", "requires_auth" }`.
+        - `skills`: optional array of learned skills `{ "id", "name", "summary", "instructions" }`.
 
         ## Actions
 
@@ -131,9 +139,10 @@ enum PluginAuthoringPrompt {
 
     /// The whole thing for another AI: the reference, the instruction and the request, so
     /// what comes back pastes into the Creator and validates the same.
-    static func exportable(request: String) -> String {
-        """
-        \(system)
+    static func exportable(request: String, introspection: AppIntrospectionReport? = nil) -> String {
+        let contextSection = introspection.map { "\n\n\($0.promptContextBlock)" } ?? ""
+        return """
+        \(system)\(contextSection)
 
         ---
 
@@ -145,9 +154,14 @@ enum PluginAuthoringPrompt {
 
     /// The user turn for a draft: the description, and the manifest it edits when there is
     /// one — an edit is "change this", not "start again".
-    static func userTurn(request: String, current: String?) -> String {
+    static func userTurn(
+        request: String,
+        current: String?,
+        introspection: AppIntrospectionReport? = nil
+    ) -> String {
+        let contextSection = introspection.map { "\n\n\($0.promptContextBlock)\n\nSynthesize a complete App Pack including `target_app`, `capabilities`, `utcp_endpoints` (when applicable), `skills`, and `agent` instructions." } ?? ""
         guard let current, !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return "Write a plugin: \(request)" }
+        else { return "Write a plugin: \(request)\(contextSection)" }
         return """
             Here is the current manifest:
 
@@ -155,7 +169,7 @@ enum PluginAuthoringPrompt {
             \(current)
             ```
 
-            Change it: \(request)
+            Change it: \(request)\(contextSection)
 
             Reply with the whole manifest after the change.
             """

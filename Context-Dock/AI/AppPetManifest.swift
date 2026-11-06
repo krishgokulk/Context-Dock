@@ -407,7 +407,12 @@ final class AppPetManifestRegistry: @unchecked Sendable {
             messagesManifest,
             terminalManifest,
             notesManifest,
-            mailManifest
+            mailManifest,
+            calendarManifest,
+            remindersManifest,
+            contactsManifest,
+            musicManifest,
+            photosManifest
         ]
     }
 
@@ -676,6 +681,160 @@ final class AppPetManifestRegistry: @unchecked Sendable {
                 preferredCapabilities: ["mail.send"],
                 planDetail: .stepByStep,
                 verificationEmphasis: .strictReceipt
+            )
+        ]
+    )
+
+    // 7. Calendar
+    static let calendarManifest = AppPetManifest(
+        id: "com.apple.iCal",
+        appName: "Calendar",
+        bundleID: "com.apple.iCal",
+        summary: "Calendar companion for inspecting schedules, reviewing agenda, and booking events.",
+        defaultMode: "agenda",
+        modes: [
+            AppPetModeManifest(
+                id: "agenda",
+                name: "Agenda",
+                summary: "Read today's schedule, upcoming events, and agenda in read-only mode.",
+                icon: "calendar",
+                systemPromptOverlay: "Calendar Agenda mode: check today's events and upcoming meetings in read-only mode.",
+                preferredCapabilities: ["calendar.today", "calendar.next", "calendar.list"],
+                capabilityFilter: .readOnly,
+                planDetail: .concise
+            ),
+            AppPetModeManifest(
+                id: "schedule",
+                name: "Schedule",
+                summary: "Schedule meetings and create new calendar events.",
+                icon: "calendar.badge.plus",
+                systemPromptOverlay: "Calendar Schedule mode: propose and schedule calendar events with user approval.",
+                preferredCapabilities: ["calendar.create"],
+                planDetail: .stepByStep,
+                verificationEmphasis: .strictReceipt
+            ),
+            AppPetModeManifest(
+                id: "manage",
+                name: "Manage",
+                summary: "Update, reschedule, or remove existing calendar events.",
+                icon: "calendar.badge.clock",
+                systemPromptOverlay: "Calendar Manage mode: update or cancel calendar events with explicit confirmation.",
+                preferredCapabilities: ["calendar.update", "calendar.delete"],
+                planDetail: .stepByStep,
+                verificationEmphasis: .strictReceipt
+            )
+        ]
+    )
+
+    // 8. Reminders
+    static let remindersManifest = AppPetManifest(
+        id: "com.apple.reminders",
+        appName: "Reminders",
+        bundleID: "com.apple.reminders",
+        summary: "Reminders companion for tracking todos, overdue items, and checklist tasks.",
+        defaultMode: "tasks",
+        modes: [
+            AppPetModeManifest(
+                id: "tasks",
+                name: "Tasks",
+                summary: "Inspect open reminders, overdue tasks, and lists in read-only mode.",
+                icon: "checklist",
+                systemPromptOverlay: "Reminders Tasks mode: review active tasks, due today, and overdue items in read-only mode.",
+                preferredCapabilities: ["reminders.today", "reminders.overdue", "reminders.list"],
+                capabilityFilter: .readOnly,
+                planDetail: .concise
+            ),
+            AppPetModeManifest(
+                id: "create",
+                name: "Create",
+                summary: "Add new reminders and tasks.",
+                icon: "plus.circle",
+                systemPromptOverlay: "Reminders Create mode: add structured tasks and reminders.",
+                preferredCapabilities: ["reminders.create"],
+                planDetail: .normal
+            ),
+            AppPetModeManifest(
+                id: "complete",
+                name: "Complete",
+                summary: "Mark tasks completed or clean up finished items.",
+                icon: "checkmark.circle",
+                systemPromptOverlay: "Reminders Complete mode: mark tasks done with explicit verification.",
+                preferredCapabilities: ["reminders.complete", "reminders.delete"],
+                planDetail: .stepByStep,
+                verificationEmphasis: .strictReceipt
+            )
+        ]
+    )
+
+    // 9. Contacts
+    static let contactsManifest = AppPetManifest(
+        id: "com.apple.AddressBook",
+        appName: "Contacts",
+        bundleID: "com.apple.AddressBook",
+        summary: "Contacts companion for searching address cards, finding details, and adding contacts.",
+        defaultMode: "search",
+        modes: [
+            AppPetModeManifest(
+                id: "search",
+                name: "Search",
+                summary: "Search contacts, phone numbers, and email addresses in read-only mode.",
+                icon: "person.crop.circle",
+                systemPromptOverlay: "Contacts Search mode: find contact info, phone numbers, and addresses in read-only mode.",
+                preferredCapabilities: ["contacts.search", "contacts.details"],
+                capabilityFilter: .readOnly,
+                planDetail: .concise
+            ),
+            AppPetModeManifest(
+                id: "create",
+                name: "Create",
+                summary: "Create and save new contacts.",
+                icon: "person.badge.plus",
+                systemPromptOverlay: "Contacts Create mode: create new contacts with user approval.",
+                preferredCapabilities: ["contacts.create"],
+                planDetail: .stepByStep,
+                verificationEmphasis: .strictReceipt
+            )
+        ]
+    )
+
+    // 10. Music
+    static let musicManifest = AppPetManifest(
+        id: "com.apple.Music",
+        appName: "Music",
+        bundleID: "com.apple.Music",
+        summary: "Music companion for reading Now Playing track info, album details, and volume.",
+        defaultMode: "nowPlaying",
+        modes: [
+            AppPetModeManifest(
+                id: "nowPlaying",
+                name: "Now Playing",
+                summary: "Inspect currently playing track, artist, album, and volume.",
+                icon: "music.note",
+                systemPromptOverlay: "Music Now Playing mode: check currently playing audio and player status in read-only mode.",
+                preferredCapabilities: ["music.nowPlaying", "music.volume"],
+                capabilityFilter: .readOnly,
+                planDetail: .concise
+            )
+        ]
+    )
+
+    // 11. Photos
+    static let photosManifest = AppPetManifest(
+        id: "com.apple.Photos",
+        appName: "Photos",
+        bundleID: "com.apple.Photos",
+        summary: "Photos companion for browsing recent photos, camera roll, and search library.",
+        defaultMode: "browse",
+        modes: [
+            AppPetModeManifest(
+                id: "browse",
+                name: "Browse",
+                summary: "Browse recent photos and inspect photo library metadata.",
+                icon: "photo",
+                systemPromptOverlay: "Photos Browse mode: inspect recent photos and search photos by keyword in read-only mode.",
+                preferredCapabilities: ["photos.recent", "photos.search"],
+                capabilityFilter: .readOnly,
+                planDetail: .concise
             )
         ]
     )

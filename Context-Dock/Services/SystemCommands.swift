@@ -596,6 +596,15 @@ final class SystemCommandsRegistry {
             description: "Search and paste what you copied"
         ),
         SystemCommand(
+            name: "Past Conversations",
+            icon: "bubble.left.and.bubble.right",
+            keywords: ["conversations", "conversation", "chats", "chat", "history", "threads", "past", "provider:conversations"],
+            scriptType: "applescript",
+            // Enter opens the conversations board; there is no single action.
+            script: #"return"#,
+            description: "Browse and reopen past conversations across all scopes"
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],

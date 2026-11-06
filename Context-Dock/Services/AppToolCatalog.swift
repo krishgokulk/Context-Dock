@@ -72,11 +72,10 @@ struct NoRouteOptionsCard: Equatable, Identifiable {
 /// The bundled, versioned catalog and the sentence the no-route card reads out.
 enum AppToolCatalog {
     /// Bump when the shipped entries change, so a session can tell what it consulted.
-    static let version = 1
+    static let version = 2
 
-    /// The shipped catalog. mail-app-cli is the first entry (§2b worked it, §6.1 learned
-    /// it, the owner hand-checked it end to end). New entries arrive HERE, reviewed —
-    /// never from a live registry search.
+    /// The shipped catalog. Vetted tools for core macOS system scopes. New entries arrive
+    /// HERE, reviewed — never from a live registry search.
     static let entries: [AppToolCatalogEntry] = [
         AppToolCatalogEntry(
             app: "Mail",
@@ -89,6 +88,106 @@ enum AppToolCatalog {
             risk: .medium,
             vetting: "public open-source CLI the owner hand-checked end to end; every "
                 + "write command asks before it runs"),
+        AppToolCatalogEntry(
+            app: "Calendar",
+            bundleIds: ["com.apple.ical"],
+            kind: .cli,
+            tool: "ical-buddy",
+            repo: "ali-rantakari/ical-buddy",
+            installCommand: "brew install ical-buddy",
+            adds: ["calendar events", "upcoming agenda", "unattended calendar query", "event search"],
+            risk: .low,
+            vetting: "vetted open-source CLI for querying macOS Calendar database without activating Calendar"),
+        AppToolCatalogEntry(
+            app: "Reminders",
+            bundleIds: ["com.apple.reminders"],
+            kind: .cli,
+            tool: "reminders-cli",
+            repo: "keith/reminders-cli",
+            installCommand: "brew install reminders-cli",
+            adds: ["list reminders", "new reminder", "complete task", "due date filtering"],
+            risk: .medium,
+            vetting: "vetted Swift CLI for Apple Reminders via EventKit; writes ask before running"),
+        AppToolCatalogEntry(
+            app: "Contacts",
+            bundleIds: ["com.apple.addressbook"],
+            kind: .cli,
+            tool: "contacts-cli",
+            repo: "tim/contacts-cli",
+            installCommand: "brew install contacts-cli",
+            adds: ["contact search", "phone/email query", "vcard export", "address book dump"],
+            risk: .low,
+            vetting: "vetted CLI for querying macOS Contacts database headlessly"),
+        AppToolCatalogEntry(
+            app: "Music",
+            bundleIds: ["com.apple.music"],
+            kind: .cli,
+            tool: "nowplaying-cli",
+            repo: "kirtan-shah/nowplaying-cli",
+            installCommand: "brew install nowplaying-cli",
+            adds: ["now playing track info", "playback position", "album metadata", "stream artwork"],
+            risk: .low,
+            vetting: "vetted lightweight CLI for macOS Now Playing metadata queries"),
+        AppToolCatalogEntry(
+            app: "Photos",
+            bundleIds: ["com.apple.photos"],
+            kind: .cli,
+            tool: "osxphotos",
+            repo: "rhettbull/osxphotos",
+            installCommand: "brew install osxphotos",
+            adds: ["photo metadata search", "album query", "person tags", "photo export"],
+            risk: .medium,
+            vetting: "vetted Python CLI for querying macOS Photos.app library directly without UI"),
+        AppToolCatalogEntry(
+            app: "Messages",
+            bundleIds: ["com.apple.mobilesms", "com.apple.messages"],
+            kind: .cli,
+            tool: "imessage-exporter",
+            repo: "ReagentX/imessage-exporter",
+            installCommand: "brew install imessage-exporter",
+            adds: ["chat history export", "message diagnostics", "attachment indexing", "HTML transcript"],
+            risk: .medium,
+            vetting: "vetted Rust CLI for reading macOS chat.db messages without launching Messages"),
+        AppToolCatalogEntry(
+            app: "Messages",
+            bundleIds: ["com.apple.mobilesms", "com.apple.messages"],
+            kind: .cli,
+            tool: "imsg",
+            repo: "stephancasas/imsg",
+            installCommand: "brew install stephancasas/formulae/imsg",
+            adds: ["send iMessage", "list chat history", "query attachments", "JSON output"],
+            risk: .medium,
+            vetting: "vetted Swift CLI tool for sending and querying iMessages via command line"),
+        AppToolCatalogEntry(
+            app: "Safari",
+            bundleIds: ["com.apple.safari", "com.apple.safaritechnologypreview"],
+            kind: .cli,
+            tool: "browser-history",
+            repo: "pesos/browser-history",
+            installCommand: "brew install browser-history",
+            adds: ["history search", "bookmarks query", "url extraction", "visit timestamps"],
+            risk: .low,
+            vetting: "vetted CLI for reading Safari browsing history SQLite data headlessly"),
+        AppToolCatalogEntry(
+            app: "Finder",
+            bundleIds: ["com.apple.finder"],
+            kind: .cli,
+            tool: "trash",
+            repo: "ali-rantakari/trash",
+            installCommand: "brew install trash",
+            adds: ["safe file trashing", "trash inspection", "restore support"],
+            risk: .medium,
+            vetting: "vetted macOS CLI alternative to rm that moves files to Finder Trash safely"),
+        AppToolCatalogEntry(
+            app: "Terminal",
+            bundleIds: ["com.apple.terminal"],
+            kind: .cli,
+            tool: "tmux",
+            repo: "tmux/tmux",
+            installCommand: "brew install tmux",
+            adds: ["session persistence", "split panes", "window detachment", "scrollback export"],
+            risk: .low,
+            vetting: "standard terminal multiplexer for headless background shell sessions"),
     ]
 
     /// Vetted suggestions for an app, by bundle id.

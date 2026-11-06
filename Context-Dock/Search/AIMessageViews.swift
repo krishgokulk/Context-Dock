@@ -721,9 +721,24 @@ struct AIChatMessageView: View {
     /// The finished record, when the surface keeps it beside the message rather than on it
     /// (the dock). Empty means `message.activity`.
     var activity: [ActivityStep] = []
+    /// Detail mode for live answer rendering: Summary / Normal / Verbose (#331).
+    var initialDetailMode: LivePanelDetailMode = .normal
+    @State private var detailMode: LivePanelDetailMode = .normal
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
+
+    private var isEvidenceActuallyExpanded: Bool {
+        detailMode == .verbose || isEvidenceExpanded
+    }
+
+    private var isEvaluationActuallyExpanded: Bool {
+        detailMode == .verbose || isEvaluationExpanded
+    }
+
+    private var isRunOutputActuallyExpanded: Bool {
+        detailMode == .verbose || isRunOutputExpanded
+    }
     /// Files the finished answer named (`TurnFileCards`), loaded off the main thread.
     @State private var turnFiles: CapabilityResultTable?
     @ObservedObject private var settings = AppSettings.shared
@@ -1428,10 +1443,17 @@ struct AIChatMessageView: View {
     private var evidenceReceiptView: some View {
         VStack(alignment: .leading, spacing: 5) {
             Button {
-                withAnimation(.dockSoft) { isEvidenceExpanded.toggle() }
+                withAnimation(.dockSoft) {
+                    if detailMode == .verbose {
+                        isEvidenceExpanded = false
+                        detailMode = .normal
+                    } else {
+                        isEvidenceExpanded.toggle()
+                    }
+                }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: isEvidenceExpanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: isEvidenceActuallyExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8, weight: .bold))
                     Image(systemName: "checkmark.seal")
                     Text("Evidence · \(message.evidenceReceipts.count) receipt\(message.evidenceReceipts.count == 1 ? "" : "s")")
@@ -1442,7 +1464,7 @@ struct AIChatMessageView: View {
             }
             .buttonStyle(.plain)
 
-            if isEvidenceExpanded {
+            if isEvidenceActuallyExpanded {
                 ForEach(message.evidenceReceipts) { receipt in
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: receipt.success ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -1451,10 +1473,12 @@ struct AIChatMessageView: View {
                             Text(receipt.isVerification ? "Verification" : "Action")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.secondary)
-                            Text(receipt.command)
+                            let cleanCommand = LivePanelDetailMode.stripLeakedOutput(receipt.command)
+                            Text(cleanCommand.isEmpty ? receipt.command : cleanCommand)
                                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                                 .textSelection(.enabled)
-                            Text(receipt.observation)
+                            let cleanObservation = LivePanelDetailMode.stripLeakedOutput(receipt.observation)
+                            Text(cleanObservation.isEmpty ? receipt.observation : cleanObservation)
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -1473,10 +1497,17 @@ struct AIChatMessageView: View {
         if let evaluation = message.subjectiveEvaluation {
             VStack(alignment: .leading, spacing: 5) {
                 Button {
-                    withAnimation(.dockSoft) { isEvaluationExpanded.toggle() }
+                    withAnimation(.dockSoft) {
+                        if detailMode == .verbose {
+                            isEvaluationExpanded = false
+                            detailMode = .normal
+                        } else {
+                            isEvaluationExpanded.toggle()
+                        }
+                    }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: isEvaluationExpanded ? "chevron.down" : "chevron.right")
+                        Image(systemName: isEvaluationActuallyExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                         Image(systemName: evaluation.verdict == .pass
                             ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
@@ -1488,7 +1519,7 @@ struct AIChatMessageView: View {
                     .foregroundStyle(evaluation.verdict == .pass ? .green : .orange)
                 }
                 .buttonStyle(.plain)
-                if isEvaluationExpanded {
+                if isEvaluationActuallyExpanded {
                     Text(evaluation.summary)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
@@ -1585,11 +1616,16 @@ struct AIChatMessageView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.dockSoft) {
-                    isRunOutputExpanded.toggle()
+                    if detailMode == .verbose {
+                        isRunOutputExpanded = false
+                        detailMode = .normal
+                    } else {
+                        isRunOutputExpanded.toggle()
+                    }
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: isRunOutputExpanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: isRunOutputActuallyExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8, weight: .bold))
                     Image(systemName: "terminal")
                         .font(.system(size: 9, weight: .semibold))
@@ -1603,7 +1639,7 @@ struct AIChatMessageView: View {
             }
             .buttonStyle(.plain)
 
-            if isRunOutputExpanded {
+            if isRunOutputActuallyExpanded {
                 ScrollView {
                     Text(output)
                         .font(.system(size: 11, design: .monospaced))
@@ -1664,18 +1700,38 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                // Live activity, in the place the answer is about to occupy.
-                if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
-                    LiveAgentProgressView(steps: liveSteps, activity: liveActivity)
-                } else if message.role == .assistant,
-                    !finishedActivity.isEmpty || !durableStepLines.isEmpty
-                {
-                    // Completed activity stays behind one disclosure — the same work the live
-                    // view showed while it ran, in the same position, so finishing collapses
-                    // the block instead of moving it. One row per step; narration only when
-                    // nothing ran as a step, and never the filler.
-                    ActivityRows(steps: finishedActivity, fallbackLines: durableStepLines)
-                }
+                if message.role == .assistant, !message.isError, !isStreaming, detailMode == .summary {
+                    let verdict = LivePanelDetailMode.verdict(
+                        evaluation: message.subjectiveEvaluation,
+                        receipts: message.evidenceReceipts,
+                        isError: message.isError
+                    )
+                    LivePanelSummaryCard(
+                        headline: LivePanelDetailMode.headline(from: message.content),
+                        verdictText: verdict.text,
+                        isSuccess: verdict.isSuccess,
+                        verdictSymbol: verdict.symbol,
+                        evaluationNote: message.subjectiveEvaluation?.summary,
+                        receiptCount: message.evidenceReceipts.count,
+                        detailMode: $detailMode
+                    )
+                } else {
+                    // Live activity, in the place the answer is about to occupy.
+                    if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
+                        LiveAgentProgressView(steps: liveSteps, activity: liveActivity)
+                    } else if message.role == .assistant,
+                        !finishedActivity.isEmpty || !durableStepLines.isEmpty
+                    {
+                        // Completed activity stays behind one disclosure — the same work the live
+                        // view showed while it ran, in the same position, so finishing collapses
+                        // the block instead of moving it. One row per step; narration only when
+                        // nothing ran as a step, and never the filler.
+                        ActivityRows(
+                            steps: finishedActivity,
+                            fallbackLines: durableStepLines,
+                            isInitiallyExpanded: detailMode == .verbose
+                        )
+                    }
                 // Script/terminal output — collapsed. A conversion log is hundreds of lines of
                 // ffmpeg banner the user did not ask to read; it belongs one tap away, not
                 // dumped between two chat bubbles.
@@ -1785,7 +1841,28 @@ struct AIChatMessageView: View {
                     actionChoiceButtons
                 }
 
-                if let mode = message.activeMode {
+                if message.role == .assistant, !message.isError, !isStreaming {
+                    HStack(spacing: 6) {
+                        if let mode = message.activeMode {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(message.modeProvenance ?? mode)
+                                    .font(.system(size: 9.5, weight: .medium))
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Color.secondary.opacity(0.1), in: Capsule())
+                            .help("Turn executed in \(message.modeProvenance ?? mode) mode")
+                        }
+
+                        Spacer(minLength: 4)
+
+                        LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                    }
+                    .padding(.top, 2)
+                } else if let mode = message.activeMode {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 8, weight: .bold))
@@ -1837,6 +1914,7 @@ struct AIChatMessageView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                }
             }
 
             if message.role == .user, let symbol = userAvatarSymbol {
@@ -1861,6 +1939,11 @@ struct AIChatMessageView: View {
             let table = await TurnFileCards.table(for: source)
             guard !Task.isCancelled else { return }
             turnFiles = table
+        }
+        .onAppear {
+            if initialDetailMode != .normal {
+                detailMode = initialDetailMode
+            }
         }
     }
 

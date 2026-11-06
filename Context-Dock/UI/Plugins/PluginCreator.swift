@@ -27,6 +27,9 @@ final class PluginCreatorModel: ObservableObject {
     /// the editor is the one place the manifest lives, so the model writes where the person
     /// writes and the preview follows either.
     @Published var request = ""
+    @Published var selectedTargetBundleID: String = ""
+    @Published var openAPISpecText: String = ""
+    @Published private(set) var lastIntrospection: AppIntrospectionReport?
     @Published private(set) var isDrafting = false
     /// The model's one line about what it built, shown until the next draft or edit.
     @Published private(set) var note: String?
@@ -34,6 +37,8 @@ final class PluginCreatorModel: ObservableObject {
 
     /// Injected so a test can drive the round without a provider; the pane passes the live one.
     var makeEngine: (() -> PluginAuthoringEngine)?
+    /// Optional sdef XML override for offline unit testing of AI Pack Synthesis introspection.
+    var sdefXMLOverrideForTesting: String?
 
     /// Run test: the plugin's DATA script, run for real, and what it returned drawn in the
     /// preview in place of `sample`. Data only — actions stay refused here, because routing
@@ -108,9 +113,62 @@ final class PluginCreatorModel: ObservableObject {
         isDrafting = true
         draftError = nil
         defer { isDrafting = false }
+
+        // AI Pack Synthesis: combine local app introspection (`sdef` + live menu tree)
+        // and OpenAPI / UTCP specification parsing before invoking the AI provider.
+        let resolvedApp = AIPackIntrospector.resolveTargetApp(
+            from: request,
+            explicitBundleID: selectedTargetBundleID.isEmpty ? nil : selectedTargetBundleID)
+        let hasOpenAPISpec = !openAPISpecText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if let resolvedApp {
+            lastIntrospection = await AIPackIntrospector.introspect(
+                bundleID: resolvedApp.bundleID,
+                appName: resolvedApp.appName,
+                sdefXMLOverride: sdefXMLOverrideForTesting,
+                openAPISpecText: openAPISpecText)
+        } else if hasOpenAPISpec {
+            lastIntrospection = await AIPackIntrospector.introspect(
+                bundleID: "global",
+                appName: "Global",
+                sdefXMLOverride: sdefXMLOverrideForTesting,
+                openAPISpecText: openAPISpecText)
+        } else {
+            lastIntrospection = nil
+        }
+
         do {
-            let draft = try await engine.draft(request, current: current)
-            text = draft.text
+            let draft = try await engine.draft(
+                request,
+                current: current,
+                introspection: lastIntrospection)
+            var finalText = draft.text
+            if var decoded = draft.manifest, let introspection = lastIntrospection {
+                var didEnrich = false
+                if decoded.targetApp == nil, introspection.bundleID != "global" {
+                    decoded.targetApp = PluginTargetApp(
+                        bundleId: introspection.bundleID,
+                        name: introspection.appName)
+                    didEnrich = true
+                }
+                if (decoded.utcpEndpoints ?? []).isEmpty, !introspection.openAPITools.isEmpty {
+                    let endpoints = AIPackIntrospector.synthesizeUTCPEndpoints(
+                        from: introspection.openAPITools,
+                        baseURL: introspection.openAPIBaseURL)
+                    if !endpoints.isEmpty {
+                        decoded.utcpEndpoints = endpoints
+                        didEnrich = true
+                    }
+                }
+                if didEnrich {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    if let encoded = try? encoder.encode(decoded),
+                       let str = String(data: encoded, encoding: .utf8) {
+                        finalText = str
+                    }
+                }
+            }
+            text = finalText
             note = draft.note.isEmpty ? nil : draft.note
             self.request = ""
         } catch {
@@ -123,7 +181,8 @@ final class PluginCreatorModel: ObservableObject {
     func promptForAnotherAI() -> String {
         let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
         return PluginAuthoringPrompt.exportable(
-            request: request.isEmpty ? "<describe the plugin here>" : request)
+            request: request.isEmpty ? "<describe the plugin here>" : request,
+            introspection: lastIntrospection)
     }
 
     convenience init(editing manifest: PluginManifest) {
@@ -181,6 +240,9 @@ final class PluginCreatorModel: ObservableObject {
             [manifest], into: PluginInstaller.userRoot,
             packID: PluginEssentials.packID, packName: PluginEssentials.packName)
         PluginRegistry.shared.reload()
+        if manifest.targetApp != nil || manifest.hasPackPayload {
+            _ = try? StorePackInstaller.install(manifest, into: nil)
+        }
         return true
     }
 }

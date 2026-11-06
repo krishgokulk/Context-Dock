@@ -41,6 +41,7 @@ enum AppleNotesMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerSearch(registry)
+        registerRecent(registry)
         registerCount(registry)
         registerRead(registry)
         registerCreate(registry)
@@ -51,6 +52,49 @@ enum AppleNotesMCPCapabilities {
         registerSummarize(registry)
         registerExport(registry)
         registerDelete(registry)
+    }
+
+    // MARK: - notes.recent
+
+    private static func registerRecent(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "notes.recent",
+                title: "List Recent Apple Notes",
+                appBundleID: "com.apple.Notes",
+                inputSchema: .init(fields: [
+                    .init(name: "limit", description: "Maximum notes to return, 1–30 (default 10)", required: false),
+                ]),
+                riskLevel: .low
+            ) { request in
+                guard AppSettings.shared.noteMCPEnabled else {
+                    throw AppleNotesError.notEnabled
+                }
+                let limit = max(1, min(Int(request.input["limit"] ?? "10") ?? 10, 30))
+                let results = try await AppleNotesMCPServer.shared.recentNotes(limit: limit)
+                guard !results.isEmpty else {
+                    return .init(success: true, output: "No notes found in Apple Notes.")
+                }
+                ChatResultRowCollector.shared.add(
+                    results.map { note in
+                        ChatResultRow(
+                            kind: .note, id: note.id,
+                            title: NotePreviewRedaction.redact(note.title),
+                            subtitle: note.folder,
+                            detail: NotePreviewRedaction.redact(note.snippet),
+                            bundleID: "com.apple.Notes", date: note.modifiedDate)
+                    },
+                    scope: request.chatScope)
+
+                let df = DateFormatter()
+                df.dateStyle = .short
+                df.timeStyle = .short
+                let lines = results.enumerated().map { i, n in
+                    "[\(i + 1)] ID: \(n.id) | Title: “\(NotePreviewRedaction.redact(n.title))” | Folder: \(n.folder.isEmpty ? "Notes" : n.folder) | Modified: \(df.string(from: n.modifiedDate))\n    \(NotePreviewRedaction.redact(n.snippet))"
+                }
+                return .init(success: true, output: lines.joined(separator: "\n\n"))
+            }
+        )
     }
 
     // MARK: - notes.search
@@ -237,9 +281,9 @@ enum AppleNotesMCPCapabilities {
                 let newID = try await AppleNotesMCPServer.shared.createNote(
                     title: title, body: body, folder: folder, providerName: "local"
                 )
-                // The note that was just made, as a card. A write is a result too: the owner
-                // read "Note created." with nothing to open, while a note found by search —
-                // which changed nothing — came back with a row.
+                // Verified read-back: confirm note was actually written and is readable
+                let verifiedNote = try? await AppleNotesMCPServer.shared.readNote(id: newID, providerName: "local")
+                let verified = verifiedNote != nil
                 ChatResultRowCollector.shared.add(
                     [
                         ChatResultRow(
@@ -249,7 +293,8 @@ enum AppleNotesMCPCapabilities {
                             bundleID: "com.apple.Notes", date: Date())
                     ],
                     scope: request.chatScope)
-                return .init(success: true, output: "Created note '\(title)' with ID: \(newID)")
+                let statusSuffix = verified ? " ✓ (Verified read-back)" : ""
+                return .init(success: true, output: "Created note '\(title)' with ID: \(newID)\(statusSuffix)")
             }
         )
     }
@@ -278,6 +323,9 @@ enum AppleNotesMCPCapabilities {
                     throw AppleNotesError.notEnabled
                 }
                 try await AppleNotesMCPServer.shared.appendToNote(id: noteID, text: text, providerName: "local")
+                // Verified read-back: confirm note body contains appended text
+                let verifiedNote = try? await AppleNotesMCPServer.shared.readNote(id: noteID, providerName: "local")
+                let verified = verifiedNote?.body.contains(text.trimmingCharacters(in: .whitespacesAndNewlines)) == true
                 ChatResultRowCollector.shared.add(
                     [
                         ChatResultRow(
@@ -287,7 +335,8 @@ enum AppleNotesMCPCapabilities {
                             bundleID: "com.apple.Notes", date: Date())
                     ],
                     scope: request.chatScope)
-                return .init(success: true, output: "Appended text to note \(noteID).")
+                let statusSuffix = verified ? " ✓ (Verified read-back)" : ""
+                return .init(success: true, output: "Appended text to note \(noteID).\(statusSuffix)")
             }
         )
     }

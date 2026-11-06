@@ -13,6 +13,7 @@ enum AppleCalendarMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerToday(registry)
+        registerTodayEvents(registry)
         registerNext(registry)
         registerList(registry)
         registerSearch(registry)
@@ -142,6 +143,46 @@ enum AppleCalendarMCPCapabilities {
         registry.register(
             AICapability(
                 id: "calendar.today",
+                title: "Get Today's Calendar Events",
+                appBundleID: "com.apple.iCal",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                guard AppSettings.shared.calendarMCPEnabled else {
+                    throw AICapabilityError.blocked("Calendar access is disabled in Settings.")
+                }
+                let events = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(returning: AppleAppsAPI.shared.getTodayEvents())
+                    }
+                }
+                if events.isEmpty {
+                    return .init(success: true, output: "No events scheduled for today.")
+                }
+                let df = DateFormatter()
+                df.dateStyle = .none
+                df.timeStyle = .short
+                let lines = events.map { ev -> String in
+                    let title = ev["title"] as? String ?? "Untitled"
+                    let allDay = ev["isAllDay"] as? Bool ?? false
+                    if allDay { return "• \(title) (all day)" }
+                    let start = (ev["startDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let end = (ev["endDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let startStr = start.map { df.string(from: $0) } ?? "?"
+                    let endStr = end.map { df.string(from: $0) } ?? "?"
+                    return "• \(title) (\(startStr)–\(endStr))"
+                }
+                return .init(success: true, output: "Today's events (\(events.count)):\n\(lines.joined(separator: "\n"))")
+            }
+        )
+    }
+
+    // MARK: - calendar.todayEvents
+
+    private static func registerTodayEvents(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "calendar.todayEvents",
                 title: "Get Today's Calendar Events",
                 appBundleID: "com.apple.iCal",
                 inputSchema: .init(fields: []),

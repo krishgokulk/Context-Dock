@@ -201,6 +201,47 @@ enum ClipboardBoardKey: Equatable {
         default: return nil
         }
     }
+
+    /// Canonical key bindings exposed by `ClipboardBoardKey` for the Keys reference overlay (#332).
+    static var canonicalBindings: [DockKeyBinding] {
+        [
+            DockKeyBinding(
+                id: "clipboard.paste",
+                surface: .chatAndClipboard,
+                keys: [DockKey.returnKey.symbol],
+                title: "Paste Selected Clip",
+                subtitle: "Paste into the frontmost app"
+            ),
+            DockKeyBinding(
+                id: "clipboard.copy",
+                surface: .chatAndClipboard,
+                keys: ["⌘", DockKey.returnKey.symbol],
+                title: "Copy Clip / Paste to…",
+                subtitle: "Copy to pasteboard or pick target app when multiple selected"
+            ),
+            DockKeyBinding(
+                id: "clipboard.filterKind",
+                surface: .chatAndClipboard,
+                keys: [DockKey.tab.symbol],
+                title: "Cycle Clipboard Type Filter",
+                subtitle: "All Types, Text, Images, Files, Links (⇧⇥ reverses)"
+            ),
+            DockKeyBinding(
+                id: "clipboard.quickLook",
+                surface: .chatAndClipboard,
+                keys: ["⌘", "Y"],
+                title: "Quick Look Clip",
+                subtitle: "Preview the highlighted clip in full"
+            ),
+            DockKeyBinding(
+                id: "clipboard.delete",
+                surface: .chatAndClipboard,
+                keys: ["⌘", DockKey.backspace.symbol],
+                title: "Delete Clip",
+                subtitle: "Remove the highlighted clip from history"
+            ),
+        ]
+    }
 }
 
 // MARK: - Sections
@@ -580,15 +621,23 @@ enum BoardFooter {
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
     }
 
-    /// The shell's pin (⌘P) and Settings (⌘,), as every board's foot ends.
+    /// The shell's pin (⌘P), Shortcuts reference (⌘/), and Settings (⌘,), as every board's foot ends.
     @MainActor
     static func pinAndSettings(prompt: AppChatPromptModel) -> some View {
-        HStack(spacing: 10) {
+        let keysShown = CornerDockController.shared.chatPresentation.isShowingKeysOverlay
+        return HStack(spacing: 10) {
             button(
                 prompt.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
                 help: prompt.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)",
                 tinted: prompt.isPinned
             ) { prompt.togglePin() }
+            button(
+                "keyboard", keys: DockKeyRules.keysOverlayKeycaps,
+                help: "Keyboard shortcuts (⌘/)",
+                tinted: keysShown
+            ) {
+                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+            }
             button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
                 AppDelegate.shared?.showSettings()
             }
