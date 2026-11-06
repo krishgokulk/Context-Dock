@@ -602,6 +602,10 @@ struct AppChatPromptPill: View {
         if model.phase != .chat {
             return CornerDockController.shared.splitFieldLayoutWidth
         }
+        // Panel hidden: lay out at the transcript-only width so the chat card is compact.
+        if !model.showsLivePanel {
+            return compactChatWidth
+        }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
         // conversation's alike.
         return size(for: .prompt).width
@@ -629,8 +633,17 @@ struct AppChatPromptPill: View {
     /// its full width (`globalInputWidth`, `legacyInputWidth`) and is only revealed less of,
     /// exactly as the dock → field morph does — no inner width moves, so the field's focus
     /// subtree is never re-laid out (the hang `globalBody` describes).
+    /// Chat-card width with the sidebar hidden: just the transcript column, matching
+    /// what the transcript already occupies when the panel is open.
+    private var compactChatWidth: CGFloat {
+        let full = DockShellWidth.current
+        return full - CornerLivePanelLayout.panelWidth(card: full)
+    }
+
     private var drawnWidth: CGFloat {
-        splitsShell ? CornerDockController.shared.splitWidths.field : size.width
+        if splitsShell { return CornerDockController.shared.splitWidths.field }
+        if model.phase == .chat && !model.showsLivePanel { return compactChatWidth }
+        return size.width
     }
 
     /// Global's field and strip share their trailing edge: they are one width. An app bar's
@@ -825,8 +838,10 @@ struct AppChatPromptPill: View {
     /// so its stack is laid out at the field's own width and its trailing controls stay in
     /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
     private var legacyInputWidth: CGFloat {
-        model.phase == .chat
-            ? size(for: .prompt).width : CornerDockController.shared.splitFieldLayoutWidth
+        if model.phase == .chat {
+            return model.showsLivePanel ? size(for: .prompt).width : compactChatWidth
+        }
+        return CornerDockController.shared.splitFieldLayoutWidth
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
@@ -1099,6 +1114,16 @@ struct AppChatPromptPill: View {
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
 
+            // Past conversations browser (#334).
+            Button {
+                model.openConversationsBoard()
+            } label: {
+                headerGlyph("clock.arrow.circlepath", tinted: false)
+            }
+            .buttonStyle(.plain)
+            .help("Browse past conversations (⌥H)")
+            .accessibilityLabel("Browse past conversations")
+
             // The app's panel beside the conversation, shown or hidden (#191) — Claude's
             // sidebar toggle, in the same place.
             if !model.isGlobalScope {
@@ -1133,6 +1158,16 @@ struct AppChatPromptPill: View {
                 .disabled(expand == .disabled)
                 .help("Open this conversation in the full window")
             }
+
+            Button {
+                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+            } label: {
+                headerGlyph(
+                    "keyboard",
+                    tinted: CornerDockController.shared.chatPresentation.isShowingKeysOverlay)
+            }
+            .buttonStyle(.plain)
+            .help("Keyboard shortcuts (⌘/)")
 
             Button { model.newConversation() } label: {
                 headerGlyph("trash")
@@ -1369,6 +1404,12 @@ struct AppChatPromptPill: View {
                     .onKeyPress(keys: ["k"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
                         model.newConversation()
+                        return .handled
+                    }
+                    .onKeyPress(keys: ["/", "?"]) { press in
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        CornerDockController.shared.chatPresentation.toggleKeysOverlay()
                         return .handled
                     }
                     .simultaneousGesture(TapGesture().onEnded {

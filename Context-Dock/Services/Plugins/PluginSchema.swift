@@ -54,7 +54,7 @@ enum PluginSchema {
         }
 
         // 6. something to show or run
-        if m.declaredPresentations.isEmpty && m.primaryAction == nil && m.agent == nil {
+        if m.declaredPresentations.isEmpty && m.primaryAction == nil && m.agent == nil && !m.hasPackPayload {
             error("views", "nothing to show or run: declare a view, a primaryAction, or an agent")
         }
         if let primary = m.primaryAction, m.actions[primary] == nil {
@@ -62,7 +62,8 @@ enum PluginSchema {
         }
 
         // 5. agent.tools
-        for tool in m.agent?.tools ?? [] where m.actions[tool] == nil {
+        let capabilityIDs = Set((m.capabilities ?? []).map(\.id))
+        for tool in m.agent?.tools ?? [] where m.actions[tool] == nil && !capabilityIDs.contains(tool) {
             error("agent.tools", "tool \"\(tool)\" is not a declared action")
         }
 

@@ -379,6 +379,13 @@ final class CornerDockController: NSObject {
                 self.refresh()
             }
         }.store(in: &sinks)
+        chatPresentation.$isShowingKeysOverlay.sink { [weak self] shown in
+            Task { @MainActor in
+                guard let self else { return }
+                if shown { self.armKeyboard() }
+                self.refresh()
+            }
+        }.store(in: &sinks)
         // The scoped app quit: the dock follows the app that is in front now, as the old
         // launcher did, rather than keep a scope with nothing behind it (owner 2026-10-12).
         // Quitting from the corner leaves Context-Dock active, so no activation arrives to
@@ -402,11 +409,16 @@ final class CornerDockController: NSObject {
             }
         }
         // Centred, it behaves like Spotlight: clicking into another app puts it away.
+        // An open Keys overlay also dismisses when clicking outside to another app (#332).
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.chatPresentation.isCentred, self.chatPresentation.isVisible
+                guard let self else { return }
+                if self.chatPresentation.isShowingKeysOverlay {
+                    self.chatPresentation.dismissKeysOverlay()
+                }
+                guard self.chatPresentation.isCentred, self.chatPresentation.isVisible
                 else { return }
                 self.chatPresentation.dismiss()
             }
@@ -688,6 +700,7 @@ final class CornerDockController: NSObject {
     private var restsForAutoHide: Bool {
         if AppSettings.shared.launcherPresentationMode == .centerScreen || chatPresentation.isCentred { return false }
         if anchor == .notch { return false }
+        if chatPresentation.isShowingKeysOverlay { return false }
         return CornerDockAutoHide.canHide(
             enabled: AppSettings.shared.cornerDockAutoHide,
             stripShowing: chatPresentation.isVisible && chatPresentation.mode != .general
@@ -930,6 +943,9 @@ final class CornerDockController: NSObject {
                 x: dock.minX - 48, y: dock.maxY, width: dock.width + 96,
                 height: DockMagnification.headroom))
         }
+        if let overlayRect = keysOverlayRect {
+            rects.append(overlayRect)
+        }
 
         // Nothing moved, nothing to do. The models this follows republish on every
         // keystroke — the draft is `@Published` — and without this the corner recomputed
@@ -978,6 +994,16 @@ final class CornerDockController: NSObject {
             panel.orderOut(nil)
             stopHoverWatch()
         }
+    }
+
+    /// Hit-test rect for the on-demand Keys reference overlay (#332), or nil when hidden.
+    var keysOverlayRect: CGRect? {
+        guard chatPresentation.isVisible, chatPresentation.isShowingKeysOverlay,
+              let width = panel?.frame.width
+        else { return nil }
+        return mirroredIfTopDown(
+            KeysOverlayMetrics.bottomSlotRect(anchor: anchor, panelWidth: width)
+        )
     }
 
     /// Sizes come from each surface's own phase; the placement comes from the shared
@@ -1578,6 +1604,17 @@ final class CornerDockController: NSObject {
         {
             hoverMonitors.append(flags)
         }
+        // Clicking outside the Corner window while the Keys overlay is shown dismisses the
+        // overlay and returns to the exact prior state (#332).
+        if let outsideClick = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown],
+            handler: { [weak self] _ in
+                guard let self, self.chatPresentation.isShowingKeysOverlay else { return }
+                self.chatPresentation.dismissKeysOverlay()
+            })
+        {
+            hoverMonitors.append(outsideClick)
+        }
     }
 
     /// Left arrow, but only when the chat is the surface the key was meant for.
@@ -1664,6 +1701,33 @@ final class CornerDockController: NSObject {
         commandTapStarted = nil
         pendingCommandSwitch?.cancel()
         pendingCommandSwitch = nil
+
+        // ⌘/ or ⇧⌘/ (⌘?) — and bare ? when the dock is at rest or the overlay is open —
+        // toggles the on-demand Keys reference overlay (#332) without changing dock state.
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            DockKeyRules.isKeysOverlayKey(
+                keyCode: event.keyCode,
+                command: event.modifierFlags.contains(.command),
+                control: event.modifierFlags.contains(.control),
+                option: event.modifierFlags.contains(.option),
+                shift: event.modifierFlags.contains(.shift),
+                allowsBareQuestionMark: chatPresentation.isShowingKeysOverlay
+                    || (chatPresentation.mode != .general && prompt.phase == .dock))
+        {
+            chatPresentation.toggleKeysOverlay()
+            return nil
+        }
+
+        // Esc while the Keys overlay is open dismisses only the overlay and returns to the
+        // exact prior state (#332).
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            chatPresentation.isShowingKeysOverlay,
+            event.keyCode == 53,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        {
+            chatPresentation.dismissKeysOverlay()
+            return nil
+        }
 
         // The app row's card keys (owner 2026-10-11): ⌘⌫ quits a running app, ⇧↩ hands a
         // closed one the Finder selection. Plain ⌫ stays the field's (rule C6).
@@ -2133,7 +2197,7 @@ final class CornerDockController: NSObject {
         let slots = currentSlots()
         let overShelf = contains(slots.shelf)
         let overClipboard = contains(slots.clipboard)
-        let overPrompt = contains(slots.prompt)
+        let overPrompt = contains(slots.prompt) || contains(keysOverlayRect)
         foldWhenRestingOnApps(prompt: slots.prompt, origin: origin, mouse: mouse)
 
         // The shelf opens by click, not by hover: a pointer passing over its card is not a
@@ -2243,6 +2307,17 @@ struct CornerDockSurface: View {
                 column
             }
         }
+        .overlay(alignment: isTopDown ? .top : anchor.frameAlignment) {
+            if chatPresentation.isVisible, chatPresentation.isShowingKeysOverlay {
+                KeysOverlayCard()
+                    .padding(isTopDown ? .top : .bottom, KeysOverlayMetrics.barClearance)
+                    .padding(CornerDockLayout.pad)
+                    .transition(boardTransition)
+            }
+        }
+        .animation(
+            .spring(response: 0.32, dampingFraction: 0.85),
+            value: chatPresentation.isShowingKeysOverlay)
     }
 
     /// Raycast and Spotlight parity: in top-down mode (centred launcher), boards and results
@@ -2308,6 +2383,12 @@ struct CornerDockSurface: View {
             {
                 // Quick Note (D11): the notes beside the open note's editor; the field asks.
                 QuickNoteBoardCard(prompt: prompt)
+                    .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isConversationsBoard == true
+            {
+                // Conversations Board (#334): browse and reopen past conversations across all scopes.
+                ConversationsBoardCard(prompt: prompt)
                     .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(

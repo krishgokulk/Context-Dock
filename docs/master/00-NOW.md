@@ -10,9 +10,94 @@
 
 ## In progress
 
-None — Task #368 completed, PR #368 opened against `general-chat-agent`. Awaiting owner review or next task order.
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation)** — PR #376 open in review (`claude/task-333-side-thread`), awaiting owner hand-check.
+
+Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
+
+## Queued (next)
+
+**Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
+- Issue #335. Browse and inspect available capabilities and learned skills in the surface.
+
+**AI Engine Plan Backlog:**
+- **#151: E3 Prompt order: stable sections first** (`ready`).
+- **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
+- Completed on branch `claude/task-334-conversations-board` (Issue #334).
+- Implemented `ConversationsBoardCard` and `ConversationsBoard` (`Context-Dock/UI/ConversationsBoardCard.swift`) reading directly from `GeneralChatSessionStore` without duplicating transcripts or introducing a second store.
+- Built split two-column board layout in the Corner Dock shell: left column lists past conversations across scopes (App Pets, CLI, General Chat, Combined Chat) with relative timestamps and message count badges; right column provides a live preview of the real stored messages for the focused thread.
+- Added scope filter tabs (`All`, `App Pets`, `General & Combined`) and live search filter within history by title, app name, bundle ID, or message content.
+- Wired reopening of conversations into their proper scope views (App Pet, CLI, General Chat, Combined Chat) with full keyboard navigation (arrows, Return to open, ⌘⌫ to clear history, Esc back).
+- Registered pre-seeded `Past Conversations` built-in system command (`provider:conversations`), slash commands `/conversations` and `/history`, header history button (`clock.arrow.circlepath`), and `chat.conversationsBoard` (`⌥H`) shortcut in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/ConversationsBoardTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
+
+**Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
+- Completed on branch `claude/task-332-keys-overlay` (Issue #332).
+- Implemented `DockKeyMap` (`Context-Dock/UI/KeysOverlay.swift`) as the single canonical source of truth for active keyboard shortcuts across 4 surface groups (`Launch & Global`, `Scope & Navigation`, `Global Context & App Pet`, `Chat & Clipboard`), reading live from `AppSettings`, `DockKey`, `DockKeyRules`, `CornerNavigation`, and `ClipboardBoardKey` (plus dynamic `DockKeyMap.register(_:)`).
+- Implemented `KeysOverlayCard` over `CornerDockSurface` (`CornerDockWindow.swift`), triggered by `⌘/`, `⌘?` (`⇧⌘/`), bare `?` when the dock is at rest, or the `keyboard` button in board footers (`BoardFooter.pinAndSettings`, `AppChatListCard.footer`) and chat headers (`AppChatPromptPill.header`, `CornerGeneralChatView.header`).
+- Dismissing via `⎋` (Esc), `⌘/`, close `✕`, or clicking outside returns to the exact prior surface state without recreating the window or changing dock size/state.
+- Updated `HotkeysSettingsPage.swift` so Settings → Hotkeys and the Keys overlay render from the same `DockKeyMap` source of truth.
+- Verified with unit tests in `Context-DockTests/KeysOverlayTests.swift` (5 tests). Gate `./scripts/check.sh` clean.
+
+**Task #373: Streamline Settings & Extensions Architecture (Packs, Apps, Store):**
+- Completed and merged via PR #374 (`91e18360`).
+- Consolidated fragmented sidebar items (`App Packs`, `Integrations`, `Plugins`, `Plugin Creator`) into unified `Extensions` (`Apps` and `Store / Packs`), simplified per-app detail tabs (`Capabilities & Skills`, `Agent (AGENT.md)`, `Access & Permissions`), automatic app binding by `bundleId`, and AI Pack Creator.
+
+**Task UI/UX 1/5 (#331): Live-panel detail modes (Summary / Normal / Verbose):**
+- Completed and merged via PR #373 (`909a4937`).
+- Implemented per-answer density control in answer views and live panel:
+  1. Summary: Headline + core verdict.
+  2. Normal: Current standard view.
+  3. Verbose: Expanded user-facing steps, receipts, and verified evidence (never leaks raw model/internal tool output, per #316).
+- Toggling density updates existing rendered answers dynamically without re-running turns.
+- View-level state only; does not change routing, approvals, or engine execution.
+- Verified with unit tests in `Context-DockTests/LivePanelDetailModeTests.swift` (12 tests). Gate `./scripts/check.sh` clean. Relaunched via `./scripts/dev-run.sh`.
+
+**Fix: Activate Target App Before Reading and Operating Menus in Computer Use:**
+- Completed and merged via PR #372 (`3e6a525`).
+- Solved false "greyed out" refusal in App Pet (e.g., TextEdit `export this as pdf`). macOS Cocoa/AppKit validates document menu items (`validateMenuItem:`) lazily on the responder chain only when the target app is frontmost/active. When DoraX was active, TextEdit was in the background with document commands reporting disabled.
+- Fix:
+  1. In `ComputerUseRunner.run` (`Context-Dock/AI/ComputerUseTool.swift`), activate the target app (`app.activate(options: [.activateIgnoringOtherApps])`) and sleep 120ms before querying menus.
+  2. In `AXMenuReader.swift` (`isMenuItemEnabledReliably` and `isMenuItemEnabledViaSystemEvents`), activate the app and set `frontmost to true` in AppleScript before inspecting `enabled of menu item`.
+- Verified 17/17 tests passing in `ComputerUseAcceptance3AppTypesTests.swift`. Gate `./scripts/check.sh` clean. Relaunched via `./scripts/dev-run.sh`.
+
+**Task #368 Part 5: Autonomous Computer Use Acceptance Across 3 App Types (Scriptable, Menu-Only, Canvas):**
+- Completed and merged via PR #370.
+- Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md` (§8 Computer Use Perfection Addendum).
+- End-to-end verification of observe → act → verify loop across 3 application tiers:
+  1. Scriptable App (sdef inspection + synthesized scripting execution with verified read-back and AGENT.md safety rules enforcement).
+  2. Menu-Only App (hierarchical menu resolution with `>`, `▸`, `›`, `/`, `|` delimiters, sheet AX snapshotting, loop guard with stall detection and 25-step budget, outbound destructive command forbidden protection).
+  3. Canvas App (Vision/OCR fallback target detection with `t`-prefix IDs, global screen point mapping with top-left origin, per-step approval gating).
+- Verified `ComputerUseSkillRecorder` multi-step workflow recording into per-app skills (`SkillScope.app(bundleId)`), stripping user-typed text, OCR coordinates, and dynamic data rows.
+- Verified Safety HUD lifecycle (`ComputerUseSession.shared.began`), emergency Stop (Esc key monitor), and 30-second stop cooldown.
+- 16/16 tests passing in `Context-DockTests/ComputerUseAcceptance3AppTypesTests.swift`. Clean gate build `./scripts/check.sh` passed.
+
+## Done (most recent first)
+
+**Task #369 Part 2: Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5) + Native MCP Server Dogfooding:**
+- Completed and merged via PR #369 (`2ca630e`).
+- Apple Mail: Headless reads (`mail.unread`, `mail.search` with query support), drafted send (`mail.send`, `send_mail`) with `AICapabilityApprovalCenter` outbound confirmation card, automatic contact resolution (`resolveRecipient`), headless AppleScript dispatch, and verified read-back against Sent mailbox history (`verifySentMail`).
+- Apple Reminders & Calendar: EventKit headless access (`reminders.list`, `reminders.create` with verified read-back, `calendar.todayEvents`, `calendar.today`).
+- Universal 5-Tool Engine: Registered `read_unread_mail`, `search_mail`, `send_mail`, `list_reminders`, `create_reminder`, and `get_today_events` in `AgentToolRegistry`. Classified tools in `OutboundGate` and added step narrations.
+- Native MCP Server Bridge: Verified end-to-end execution of `initialize`, `tools/list`, `read_data` (Calendar events, Reminders list, Mail unread, Mail search), and `look` (menu hierarchy) via `http://127.0.0.1:8213/mcp`. Added `context-dock` to Claude CLI configuration (`✔ Connected`).
+- Verified with `MailAndCalendarRemindersEngineTests` (7/7 pass), `NotesAndSafariCapabilityTests` (2/2 pass), and `MessagesSendWorkflowTests` (4/4 pass). Clean gate build `./scripts/check.sh` passed.
+
+**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
+- Completed and merged via PR #367 (`8f02fa9`).
+- Curated tool catalog, parameter schemas, and route discovery for all 11 core macOS system scopes.
+
+**Task #369: Universal 5-Tool Engine & Messages Gold Standard Pipeline (Milestones 1-5):**
+- Completed and landed on `general-chat-agent` (`5b86f59`).
+- Spec: `docs/superpowers/specs/2026-11-04-one-app-perfect-flow-messages.md`.
+- Principle: The AI Model is the Brain, Context-Dock is the Safe Native Body.
+- Milestone 1 (Zero-Withholding Tool Surface): Removed keyword-based tool withholding in `FrontmostAppTaskPlan.swift`; App Pets always receive full sensory and execution tools. Fixed Settings › Integrations display for native apps (shows "Messages" and 4 built-in actions).
+- Milestone 2 (Messages Send Pipeline): Implemented `send_message` / `messages.send` with automatic Contact resolution (`CNContactStore`), explicit outbound draft card confirmation (`AICapabilityApprovalCenter`), headless AppleScript execution with UI automation fallback (`imessage://` + `AXUIFocusHelper`), and verified read-back against `chat.db` (`MessagesChatDBReader.verifySentMessage`). Verified by `MessagesSendWorkflowTests` (4/4 pass). All 12 unit tests pass.
+- Milestone 3 (Action Creator Simplification): Restructured `AdapterActionEditorSheet` from 10 technical items down to 3 clean choices (🌟 AI Goal [Recommended], ⚡️ Shortcut or Link, 💻 Custom Script). AI Goal directly defaults to `aiPrompt` and lets the model act as the brain.
+- Milestone 4 (Notes & Safari Capabilities Expansion): Implemented `notes.recent` and verified read-back for `notes.create` / `notes.append`. Built `AppleSafariMCPCapabilities` (`safari.currentTab`, `safari.pageContent`, `safari.listTabs`, `safari.switchTab`) with verified read-back and tab switching. Verified by `NotesAndSafariCapabilityTests`. Clean `./scripts/check.sh` build passed.
+- Milestone 5 (Native MCP Server Bridge): Exposed the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`) over Context-Dock's native MCP server (`context-dock`). External agents and CLIs (e.g. Claude Code) can invoke Mac capabilities natively over standard JSON-RPC HTTP transport (`127.0.0.1:8213/mcp`). Updated registration command and added one-click copy buttons in Settings › AI Providers. Verified by `DoraXMCPCapabilityToolTests`.
 
 **Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phases 1-4):**
 - Completed, PR #368 open into `general-chat-agent` awaiting owner review and merge.
@@ -90,8 +175,6 @@ architecture truth for one Dock, Global Context, App Pets, Combined Chat, memory
 No product code starts from this document until the owner verifies the final decision card and an
 implementation plan is approved. Canonical spec:
 `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`.
-
-Coordinator: Planner `Context-Dock planner — land #312` (Opus) — since 2026-10-26 (fresh session took over to save tokens). On takeover rewrite this line.
 
 **Fresh planner, start here (2026-10-26):** **#318 MERGED** — PR **#320** (`fab61e8e`) unified Global Context + frontmost Context Dock into one surface (`SurfaceFocus` + pure `SurfaceFocusRules.decide` + tests; lanes/`DockEngine`/`DockCore` untouched; "never merge layers" reworded in AGENTS.md/CLAUDE.md/blueprint). Owner hand-checked "320 passed"; issue #318 closed. Planner review posted a swipe-up-in-General finding then **retracted it as a false positive** (`destination()` early-returns for `.general` before the layer branch; read the diff hunk without the unchanged top block — lesson: review the whole function). Also merged: **#310** (opencode.json, `6f920942`), **#322** (planner handoff docs). **Local worktree `issue-318-unify-dock-surface-561302` not removed** (held the owner's running hand-check app). Cleanup is the owner's, once the app is quit and after checking the tree — `git -C <wt> status` shows one **untracked** `docs/screenshots/318/frontmost-focus.png` (an extra not in the merged PR; the numbered shots 1–3 are committed and in `fab61e8e`). Preserve that file if wanted, then remove (the squash-merge leaves the branch reading "3 commits ahead" though its content is merged): `git worktree remove --force .claude/worktrees/issue-318-unify-dock-surface-561302` then `git branch -D claude/issue-318-unify-dock-surface-561302`. `--force` only after confirming nothing untracked there matters (AGENTS.md cleanup rule). **#208 P13 / PR #312 MERGED** (`42c0b70e`, owner "312 passed" 2026-10-26) — dictionary rung + tool-less-provider live property read; frontier moves to #204. **#204 P10 held** by the owner (re-label `ready` to resume — ~14 shortcuts left). Queue candidate not yet `ready`: **#316** (refusal-text-as-answer). Builder sessions the planner spawns must be set to **Sonnet**; cross-session send can't reach a builder a *previous* planner spawned (memory `fresh-planner-cannot-reach-prior-builder`). Queue fed: `ready` = **#323** (Corner UI size/expand/side-rail — new, verify scope), **#205**. New: **#321** docs-only design proposal (owner's own cloud session) — owner's, not planner queue.
 
@@ -210,7 +293,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · ~~#208 P13~~ (#312, merged 2026-10-26) · ~~#205 P11~~ (#367 in review) · **#368 Unified Frontmost App Agent & Autonomous Computer Use** (subsumes #204 & #206; eliminates manual tool install requirements and hardcoded keyword routers via 3-tier escalation: Headless → AI Scripting → Computer Use).
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
@@ -374,6 +457,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-27 | #327 architecture confirmed after clarification: headless means structured adapter/API/MCP/CLI/Shortcut work, not Computer Use; Computer Use is the visible-UI last resort. Clicking a running-app icon changes the active Pet inside the same Dock and does not foreground the underlying app or create a window; dragging detaches it. |
 | 2026-10-28 | **General Chat and App Pet Chat are separate identities.** General Chat is Dora's Mac-wide conversation and may use an app ability only for the current turn; this does not rename it, load Pet memory or restrict later turns. **Open in App Pet** explicitly creates the anchored, remembered app conversation. Combined Chat requires persistent connected Pets, not merely multiple tool routes. |
 | 2026-10-28 | **Pet presentation & expansion lifecycle:** clicking/double-clicking the floating desktop mascot jumps directly to Tier 3 (Expanded Window); action receipt bubbles stay pinned until explicitly closed with ✕; micro-bar ✏️ expands into inline input `[+] [Start new chat] [↑]` without opening a window (spec: `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md`). |
+| 2026-11-05 | **Two-Sided Normalized Adapter Architecture & Settings Consolidation:** Documented in `FRONTMOST_AGENT.md` (§7) and `CAPABILITY_LAYER.md`. DoraX acts as the governor and sandbox between frontmost apps and AI providers (Claude Code / Codex / Gemini), replacing fragmented manual scripts with the 3-Tier Escalation Ladder (built-in/UTCP → synthesized scripting → Computer Use UI automation). Settings UI consolidated via Task #373 (`docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`). |
 
 ## Open decisions (owner)
 

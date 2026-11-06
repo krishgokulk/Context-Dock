@@ -338,6 +338,17 @@ struct AppChatListCard: View {
                 .help(model.focusedRow != nil
                     ? "Pin the chosen row (⌘P)"
                     : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"))
+                Button {
+                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+                } label: {
+                    let keysShown = CornerDockController.shared.chatPresentation.isShowingKeysOverlay
+                    Image(systemName: "keyboard")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(keysShown ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Keyboard shortcuts (⌘/)")
                 Button { AppDelegate.shared?.showSettings() } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 11, weight: .semibold))

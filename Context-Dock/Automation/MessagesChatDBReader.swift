@@ -200,4 +200,46 @@ enum MessagesChatDBReader {
             }
         return (count, recipients)
     }
+
+    /// Verifies whether an outbound message was recently recorded in chat.db.
+    static func verifySentMessage(
+        to recipient: String,
+        textSnippet: String,
+        withinSeconds: TimeInterval = 30
+    ) -> Bool {
+        guard isAccessible else { return false }
+        let nowAppleSeconds = Date().timeIntervalSince1970 - appleEpochOffset
+        let minDateAppleSeconds = nowAppleSeconds - withinSeconds
+        let filterSnippet = textSnippet.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(60)
+            .lowercased()
+        let filterRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "'", with: "''")
+            .lowercased()
+
+        let sql = """
+            SELECT m.is_from_me, HEX(COALESCE(CAST(m.text AS BLOB),X'')), m.date,
+                   COALESCE(h.id,''), HEX(COALESCE(m.attributedBody,X''))
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+            WHERE m.is_from_me = 1
+              AND (CASE WHEN m.date > 1000000000000 THEN m.date/1000000000 ELSE m.date END) >= \(Int(minDateAppleSeconds))
+            ORDER BY m.date DESC
+            LIMIT 15;
+            """
+        guard let rows = query(sql) else { return false }
+        for cols in rows {
+            guard cols.count >= 5 else { continue }
+            let body = visibleText(textHex: cols[1], attributedHex: cols[4]).lowercased()
+            let handle = cols[3].lowercased()
+
+            let bodyMatches = filterSnippet.isEmpty || body.contains(filterSnippet)
+            let recipientMatches = filterRecipient.isEmpty || handle.contains(filterRecipient) || filterRecipient.contains(handle)
+
+            if bodyMatches && (filterRecipient.isEmpty || recipientMatches) {
+                return true
+            }
+        }
+        return false
+    }
 }

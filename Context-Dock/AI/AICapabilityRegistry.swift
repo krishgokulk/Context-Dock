@@ -333,6 +333,8 @@ final class CapabilityRegistry {
                 { AppleMusicMCPCapabilities.register(in: self) }),
             ("messages.", AppSettings.shared.messagesMCPEnabled,
                 { AppleMessagesMCPCapabilities.register(in: self) }),
+            ("safari.", AppSettings.shared.safariMCPEnabled,
+                { AppleSafariMCPCapabilities.register(in: self) }),
             ("github.", AppSettings.shared.githubMCPEnabled,
                 { GitHubMCPCapabilities.register(in: self) }),
         ]
@@ -400,6 +402,9 @@ final class CapabilityRegistry {
         }
         if AppSettings.shared.messagesMCPEnabled {
             AppleMessagesMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.safariMCPEnabled {
+            AppleSafariMCPCapabilities.register(in: self)
         }
         if AppSettings.shared.githubMCPEnabled {
             GitHubMCPCapabilities.register(in: self)

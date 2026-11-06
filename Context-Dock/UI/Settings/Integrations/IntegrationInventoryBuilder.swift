@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum IntegrationInventoryBuilder {
@@ -76,7 +77,7 @@ enum IntegrationInventoryBuilder {
         // Matches the grouping the App Adapters page already uses: linked Shortcuts are a
         // resource the user manages under Resources, never a row in the actions list.
         let visibleActions = adapter?.visibleActions ?? []
-        let appActions = visibleActions.filter { $0.type != .pageJS && $0.type != .shortcut }
+        var appActions = visibleActions.filter { $0.type != .pageJS && $0.type != .shortcut }
         let browserActions = visibleActions.filter { $0.type == .pageJS }
         let shortcuts = visibleActions.filter { $0.type == .shortcut }
         let skills = snapshot.skills.filter { $0.adapterBundleId == bundleID }
@@ -88,6 +89,66 @@ enum IntegrationInventoryBuilder {
         let mcpServers = snapshot.mcpServers.filter { $0.bundleIds.contains(bundleID) }
         let apiConnections = snapshot.apiConnections.filter { $0.adapterBundleId == bundleID }
         let contextReaders = adapter?.contextReaders ?? []
+
+        // If no custom adapter actions exist, surface first-party native capabilities
+        // (e.g. Messages: messages.recent, messages.compose, messages.search, messages.topContacts).
+        if appActions.isEmpty {
+            let nativeCaps = CapabilityRegistry.shared.all.filter { $0.appBundleID == bundleID }
+            if !nativeCaps.isEmpty {
+                appActions = nativeCaps.map { cap in
+                    AdapterAction(
+                        id: cap.id,
+                        name: cap.title,
+                        icon: "sparkles",
+                        description: "Built-in capability",
+                        triggers: [cap.id],
+                        type: .aiPrompt
+                    )
+                }
+            }
+        }
+
+        let resolvedName: String = {
+            if let custom = adapter?.appName, !custom.isEmpty, custom != bundleID { return custom }
+            if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+               let name = running.localizedName, !name.isEmpty {
+                return name
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                return url.deletingPathExtension().lastPathComponent
+            }
+            switch bundleID {
+            case "com.apple.MobileSMS": return "Messages"
+            case "com.apple.Notes": return "Notes"
+            case "com.apple.mail": return "Mail"
+            case "com.apple.Safari": return "Safari"
+            case "com.apple.finder": return "Finder"
+            case "com.apple.TextEdit": return "TextEdit"
+            case "com.apple.iCal": return "Calendar"
+            case "com.apple.reminders": return "Reminders"
+            case "com.apple.Preview": return "Preview"
+            case "com.apple.Terminal": return "Terminal"
+            default: return bundleID
+            }
+        }()
+
+        let resolvedIcon: String = {
+            if let icon = adapter?.icon, !icon.isEmpty, icon != "app.badge" { return icon }
+            switch bundleID {
+            case "com.apple.MobileSMS": return "message.fill"
+            case "com.apple.Notes": return "note.text"
+            case "com.apple.mail": return "envelope.fill"
+            case "com.apple.Safari": return "safari"
+            case "com.apple.finder": return "macwindow"
+            case "com.apple.TextEdit": return "doc.text"
+            case "com.apple.iCal": return "calendar"
+            case "com.apple.reminders": return "checklist"
+            case "com.apple.Preview": return "eye"
+            case "com.apple.Terminal": return "terminal"
+            default: return "app.badge"
+            }
+        }()
+
         let counts = IntegrationResourceCounts(
             actions: appActions.count + browserActions.count,
             skills: skills.count,
@@ -99,8 +160,8 @@ enum IntegrationInventoryBuilder {
 
         return AppIntegrationSummary(
             bundleID: bundleID,
-            appName: adapter?.appName ?? bundleID,
-            icon: adapter?.icon ?? "app.badge",
+            appName: resolvedName,
+            icon: resolvedIcon,
             adapter: adapter,
             appActions: sorted(appActions, by: \.name),
             browserActions: sorted(browserActions, by: \.name),

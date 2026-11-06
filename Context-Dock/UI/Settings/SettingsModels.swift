@@ -28,8 +28,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .aiProviders: return "AI Providers"
-        case .integrations: return "Integrations"
-        case .plugins: return "Plugins"
+        case .integrations: return "Apps"
+        case .plugins: return "Store / Packs"
         case .appPacks: return "App Packs"
         case .extensionsGlobalWithSelection: return "With Selection"
         case .extensionsGlobalWithoutSelection: return "Commands"
@@ -53,8 +53,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "Launch, layers, clipboard, and app behavior."
         case .aiProviders: return "Choose provider and verify model access."
-        case .integrations: return "Apps and global capabilities."
-        case .plugins: return "Global Context plugins, and what they draw."
+        case .integrations: return "Installed macOS applications & per-app capabilities."
+        case .plugins: return "Browse, discover, and install community packs & plugins."
         case .appPacks: return "Every app's actions, skills and tools, and the System packs — each on or off."
         case .extensionsGlobalWithSelection: return "Actions shown for selected text, files, URLs, and media."
         case .extensionsGlobalWithoutSelection: return "Always-available global commands."
@@ -172,16 +172,12 @@ extension SettingsSidebarSection {
             id: "extensions",
             title: "Extensions",
             rows: [
-                // One row for every capability. The pages it replaced keep their enum raw
-                // values so old deep links still resolve, but they no longer have their own
-                // destinations. The Create Extension importer is retired: the Creator drafts
-                // a plugin from a description and its prompt can be pasted into any AI, which
-                // is what the importer's copy-a-template flow was for. Its row keeps the
-                // page's raw value so a deep link lands on the Creator's door.
-                SettingsSidebarRow(SettingsPage.appPacks.title, page: .appPacks),
+                // Unified Extensions section (Spec 2026-11-05 §2.1): Apps and Store / Packs.
+                // Plugin Creator is accessible inside Store / Packs via the [+ Create Pack]
+                // header action. Legacy page cases keep their enum rawValues for deep-link
+                // compatibility.
                 SettingsSidebarRow(SettingsPage.integrations.title, page: .integrations),
-                SettingsSidebarRow(SettingsPage.plugins.title, page: .plugins),
-                SettingsSidebarRow("Plugin Creator", page: .extensionImport)
+                SettingsSidebarRow(SettingsPage.plugins.title, page: .plugins)
             ]
         ),
         SettingsSidebarSection(

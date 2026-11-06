@@ -189,47 +189,59 @@ struct AppIntegrationAccessView: View {
 
     private var credentials: some View {
         let connections = apiStore.connections(for: summary.bundleID)
+        let sendsNetworkData = !connections.isEmpty || summary.counts.mcpServers > 0
         return section(
-            title: "Stored Credentials",
-            caption: "API keys live in your Keychain, not in Context Dock's settings files."
+            title: "Outbound Network & Keychain Credentials",
+            caption: "Outbound requests are gated by OutboundGate. API keys live in your macOS Keychain, not in Context Dock's settings files."
         ) {
-            if connections.isEmpty {
-                Text("No stored credentials for this integration.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(connections.enumerated()), id: \.element.id) { index, connection in
-                        if index > 0 { Divider() }
-                        HStack(spacing: 10) {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.yellow)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(connection.name)
-                                    .font(.system(size: 12, weight: .medium))
-                                Text(connection.permissions.isEmpty
-                                    ? connection.baseURL
-                                    : connection.permissions)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Button("Disconnect", role: .destructive) {
-                                apiStore.disconnect(id: connection.id)
-                            }
-                            .controlSize(.small)
-                            .accessibilityLabel("Disconnect \(connection.name)")
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                    }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: sendsNetworkData ? "network" : "lock.shield")
+                        .font(.system(size: 12))
+                        .foregroundStyle(sendsNetworkData ? .blue : .green)
+                    Text(sendsNetworkData
+                        ? "Outbound network requests enabled for \(connections.count) UTCP/API connection(s) and \(summary.counts.mcpServers) MCP server(s)."
+                        : "Local-only — no outbound network endpoints configured for \(summary.appName).")
+                        .font(.system(size: 12))
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(NSColor.controlBackgroundColor)))
+                if connections.isEmpty {
+                    Text("No stored Keychain credentials for this integration.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(connections.enumerated()), id: \.element.id) { index, connection in
+                            if index > 0 { Divider() }
+                            HStack(spacing: 10) {
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.yellow)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(connection.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(connection.permissions.isEmpty
+                                        ? connection.baseURL
+                                        : connection.permissions)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Button("Disconnect", role: .destructive) {
+                                    apiStore.disconnect(id: connection.id)
+                                }
+                                .controlSize(.small)
+                                .accessibilityLabel("Disconnect \(connection.name)")
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(NSColor.controlBackgroundColor)))
+                }
             }
         }
     }

@@ -62,8 +62,11 @@ extension SystemCommand {
     /// The Global Command the Quick Note board stands for.
     var isQuickNoteBoard: Bool { provider == QuickNoteAI.provider }
 
+    /// The Global Command the Conversations board stands for (#334).
+    var isConversationsBoard: Bool { provider == ConversationsBoard.provider }
+
     /// A command the Corner draws as a board of its own rather than as its list panel.
-    var hasOwnCornerBoard: Bool { isNotificationsBoard || isQuickNoteBoard }
+    var hasOwnCornerBoard: Bool { isNotificationsBoard || isQuickNoteBoard || isConversationsBoard }
 }
 
 // MARK: - The board's state

@@ -166,6 +166,12 @@ enum ComputerUseRunner {
         }
         let appName = app.localizedName ?? bundleID
 
+        // Bring the app forward before reading or operating menus. A menu command in macOS
+        // validates on the responder chain only when the app is active; background apps have
+        // document actions (Export as PDF, Save, Print...) disabled by AppKit.
+        _ = app.activate(options: [.activateIgnoringOtherApps])
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
         let store = ComputerUseConsentStore.shared
         let mode = store.effectiveMode(for: bundleID)
 
@@ -173,8 +179,14 @@ enum ComputerUseRunner {
         // is what said the item did not exist.
         let items = AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
             for: app.processIdentifier)
-        let candidates = flatten(items).map {
-            ComputerUseTarget(path: $0.path, isEnabled: $0.isEnabled)
+        // The same menu item can be read more than once (a lazy menu opened twice, a submenu
+        // reachable from two parents), and two entries with an identical path are one item,
+        // not an ambiguity. TextEdit reported "Check Spelling While Typing" three times and
+        // the resolver, finding three equal best matches, refused to press any of them.
+        var seenPaths = Set<[String]>()
+        let candidates = flatten(items).compactMap { item -> ComputerUseTarget? in
+            guard seenPaths.insert(item.path).inserted else { return nil }
+            return ComputerUseTarget(path: item.path, isEnabled: item.isEnabled)
         }
         guard !candidates.isEmpty else {
             return AgentToolResult(
@@ -191,7 +203,15 @@ enum ComputerUseRunner {
         // A refusal that says which kind of refusal it is. "Not found", "greyed out" and
         // "two things match equally" are three different facts about the app, and reporting
         // all of them as absence is how an assistant looks like it understood nothing.
-        let resolution = ComputerUseTargetResolver.resolve(phrase: target, among: candidates)
+        var resolution = ComputerUseTargetResolver.resolve(phrase: target, among: candidates)
+        if case .disabled(let item) = resolution {
+            // macOS AppKit lazy validation: menu items inside closed menus (File, Edit, etc.)
+            // report kAXEnabledAttribute == false until dynamic validation runs on the responder chain.
+            // Verify via System Events / live responder chain before returning a greyed-out refusal.
+            if AXMenuReader.shared.isMenuItemEnabledReliably(path: item.path, in: app.processIdentifier) {
+                resolution = .resolved(ComputerUseTarget(path: item.path, isEnabled: true))
+            }
+        }
         let chosen: ComputerUseTarget
         switch resolution {
         case .resolved(let target):
@@ -316,15 +336,31 @@ enum ComputerUseRunner {
             }
         }
 
+        // Stop may have been pressed while the approval card was open; show the pill otherwise.
+        if ComputerUseSession.shared.isStopped {
+            return AgentToolResult(
+                success: false,
+                output: "The user pressed Stop. Do not take any more steps in \(appName). Say what "
+                    + "was done and ask whether to continue.",
+                displayCommand: "operate_app(\(appName)) · stopped by user"
+            ).withUserSummary("Stopped. DoraX won't take more steps in \(appName) unless you ask again.")
+        }
+        ComputerUseSession.shared.began(appName: appName, bundleID: bundleID)
+
         let pressed = AXMenuReader.shared.clickMenuItemReliably(
             path: chosen.path, in: app.processIdentifier)
         guard pressed else {
+            ComputerUseSkillRecorder.shared.failed(bundleID: bundleID)
             return AgentToolResult(
                 success: false,
                 output: "\(chosen.display) could not be pressed, so nothing happened.",
                 displayCommand: "operate_app(\(appName): \(chosen.display)) · failed")
                 .withUserSummary("\(chosen.display) couldn't be pressed, so nothing happened.")
         }
+
+        ComputerUseSkillRecorder.shared.succeeded(
+            bundleID: bundleID, appName: appName, goal: reason,
+            step: ComputerUseSkillRecorder.describeMenu(path: chosen.display))
 
         // Let the app respond before reading it back; a window that has not appeared yet
         // reads as an unchanged app, and "nothing happened" is the one wrong answer here.

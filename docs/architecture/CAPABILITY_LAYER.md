@@ -78,3 +78,21 @@ remembered per app and per kind of request.
   host capabilities. Pet profiles reference them; they do not copy or privately reimplement them.
 - **Headless first.** A route that can run without visible UI wins. Starting/activating an app is
   a route requirement to disclose, not the definition of an App Pet.
+
+---
+
+## The Two-Sided Normalized Adapter
+
+DoraX sits directly between the Frontmost Application and the AI Provider. It normalizes all external complexities so neither side needs custom, messy code:
+
+```
+┌──────────────────┐          ┌───────────────────────────┐          ┌──────────────────┐
+│  Frontmost App   │◄────────►│       DORAX ENGINE        │◄────────►│   AI Provider    │
+│ (macOS Process)  │          │ (Sense, Act, Filter, Gate)│          │ (Claude / Gemini)│
+└──────────────────┘          └───────────────────────────┘          └──────────────────┘
+```
+
+1. **Downwards (macOS):** DoraX abstracts whether an app uses AppleScript, UTCP HTTP APIs, or Accessibility menus into a unified Sense & Act interface.
+2. **Upwards (AI):** DoraX provides a single **App Envelope** (app identity, `AGENT.md` rules, live menus, and JSON tools) to the model.
+3. **Control:** DoraX enforces target app pinning, read-vs-write approval gating, and outbound data protection.
+

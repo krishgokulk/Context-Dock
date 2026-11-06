@@ -44,6 +44,7 @@ enum AppAccessPolicy {
     static func level(for bundleId: String, chatGranted: Set<String> = []) -> AppAccessLevel {
         guard !bundleId.isEmpty else { return .awareness }
         if AppAdapterManager.shared.adapter(for: bundleId) != nil { return .adapter }
+        if !CapabilityRegistry.shared.capabilities(for: bundleId).isEmpty { return .adapter }
         if chatGranted.contains(bundleId) { return .menuOnly }
         if AppMenuCapabilityCache.shared.summary(bundleIdentifier: bundleId) != nil {
             return .menuOnly
