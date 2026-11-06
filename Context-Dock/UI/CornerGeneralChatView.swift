@@ -351,6 +351,20 @@ struct CornerGeneralChatView: View {
 
             Spacer(minLength: 6)
 
+            // Past conversations browser (#334).
+            Button {
+                CornerChatPresentation.shared.appChat.openConversationsBoard()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Browse past conversations (⌥H)")
+            .accessibilityLabel("Browse past conversations")
+
             // Expand opens General Chat in the full window on its Chat tab, seeded with this
             // transcript (#323). Inert while a turn is running — it waits for the answer
             // (owner 2026-10-26); General is always a chat scope, so it is never hidden here.
