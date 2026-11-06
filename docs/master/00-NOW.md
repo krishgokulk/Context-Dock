@@ -10,18 +10,15 @@
 
 ## In progress
 
-_None — ready for next queued task._
-
-Coordinator: Antigravity Planner — since 2026-11-06 15:08 UTC
-
-## Queued (next)
-
 **Task: Autonomous App Discovery & CLI Linker (Follow-up to #373):**
 - Spec: `docs/architecture/APP_KNOWLEDGE_SKILLS.md` (§3) and `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
 - 1. Expand `+ Add Capability` button in `AppIntegrationCapabilitiesView` into a menu: `🌟 AI Action / Goal`, `💻 Link Installed CLI Tool...` (using `AppCLIToolPickerSheet`), and `⚡️ Connect UTCP API...`.
 - 2. Implement PATH auto-discovery for frontmost apps (detecting `agy`, `code`, `git`, `gh` in `/opt/homebrew/bin`, `~/.local/bin`, `/usr/local/bin`).
 - 3. Add `[ 🌐 Enrich Knowledge ]` action to fetch official documentation/README once per app version and update `<App> — what this app is` skill and `AGENT.md`.
 
+Coordinator: Antigravity Planner — since 2026-11-06 15:13 UTC
+
+## Queued (next)
 
 **AI Engine Plan Backlog:**
 - **#151: E3 Prompt order: stable sections first** (`ready`).
