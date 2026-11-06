@@ -1350,6 +1350,23 @@ final class AppChatPromptModel: ObservableObject {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAnswering else { return false }
 
+        // Handle /side command (#333).
+        if question.lowercased().hasPrefix("/side") {
+            let sideQuery = String(question.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            AppChatConversation.shared.branchSideThread(from: AppChatConversation.shared.messages.last)
+            focusedMenuIndex = nil
+            query = ""
+            attachments = []
+            hasPresentedConversation = true
+            isConversationHidden = false
+            set(.chat)
+            touch()
+            if !sideQuery.isEmpty {
+                AppChatConversation.shared.sendSideThread(query: sideQuery)
+            }
+            return true
+        }
+
         // Open Conversations Board via slash command (#334).
         if question.lowercased() == "/conversations" || question.lowercased() == "/history" {
             openConversationsBoard()

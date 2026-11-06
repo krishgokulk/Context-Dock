@@ -34,6 +34,14 @@ Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 - Registered pre-seeded `Past Conversations` built-in system command (`provider:conversations`), slash commands `/conversations` and `/history`, header history button (`clock.arrow.circlepath`), and `chat.conversationsBoard` (`⌥H`) shortcut in `DockKeyMap` / `KeysOverlay`.
 - Verified with unit tests in `Context-DockTests/ConversationsBoardTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
+- Completed on branch `claude/task-333-side-thread` (Issue #333).
+- Implemented `SideThreadState` and `SideThreadSummarizer` (`Context-Dock/AI/SideThread.swift`) allowing temporary side tangent conversations branched off an active App Pet, Combined Chat, or General Chat turn without polluting the main conversation transcript or Pet memory.
+- Implemented `SideThreadChildView` (`Context-Dock/UI/SideThreadChildView.swift`) as a child view within the existing surface shell (Corner Dock, Corner General Chat, and Standalone General Chat window), preserving active scope and grounding.
+- Added explicit Fold Back summary action (synthesizing side findings into a single structured summary turn in the main thread) and Discard action (dismissing without modifying main messages).
+- Added `Side thread` action button to `AIChatMessageView` assistant turn footers, `/side [query]` slash command support in `AppChatPromptModel` and `GeneralChatWindowModel`, and registered `chat.sideThread` (`⌥S`) in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/SideThreadTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
+
 **Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
 - Completed on branch `claude/task-332-keys-overlay` (Issue #332).
 - Implemented `DockKeyMap` (`Context-Dock/UI/KeysOverlay.swift`) as the single canonical source of truth for active keyboard shortcuts across 4 surface groups (`Launch & Global`, `Scope & Navigation`, `Global Context & App Pet`, `Chat & Clipboard`), reading live from `AppSettings`, `DockKey`, `DockKeyRules`, `CornerNavigation`, and `ClipboardBoardKey` (plus dynamic `DockKeyMap.register(_:)`).

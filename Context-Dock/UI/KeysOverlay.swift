@@ -439,6 +439,13 @@ enum DockKeyMap {
                 subtitle: "Switch App Pet modes (/mods) or borrow an app ability in General Chat"
             ),
             DockKeyBinding(
+                id: "chat.sideThread",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "S"],
+                title: "Branch Side Thread",
+                subtitle: "Branch a temporary tangent from the current turn (/side)"
+            ),
+            DockKeyBinding(
                 id: "chat.conversationsBoard",
                 surface: .chatAndClipboard,
                 keys: ["⌥", "H"],
