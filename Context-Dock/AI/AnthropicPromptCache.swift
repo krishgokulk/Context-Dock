@@ -22,17 +22,73 @@ enum AnthropicPromptCache {
     private static let log = Logger(
         subsystem: "com.krishgokul.ContextDock", category: "AnthropicCache")
 
-    /// The `system` field as a cacheable block array. Returns `nil` for an empty prompt
-    /// so the caller can omit the field rather than send an empty breakpoint.
+    /// Marker separating the stable prefix from the volatile suffix in an assembled prompt.
+    static let cacheBoundaryMarker = "<!-- cache:breakpoint -->"
+
+    /// The `system` field as a cacheable block array with up to two blocks:
+    /// 1. Stable prefix (rules, identity, capabilities, skills, CLI) with an ephemeral cache breakpoint
+    /// 2. Volatile suffix (context, selection, page, attachments, memory) with an ephemeral cache breakpoint
+    ///
+    /// This ensures volatile changes (e.g. clicking a different file / changed selection)
+    /// do not invalidate the cached stable prefix across turns (Spec #151 E3).
     static func systemBlocks(_ prompt: String) -> [[String: Any]]? {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.contains(cacheBoundaryMarker) {
+            let parts = trimmed.components(separatedBy: cacheBoundaryMarker)
+            let stable = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            let volatile = parts.dropFirst().joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            return systemBlocks(stable: stable, volatile: volatile.isEmpty ? nil : volatile)
+        }
+
         return [
             [
                 "type": "text",
-                "text": prompt,
+                "text": trimmed,
                 "cache_control": ["type": "ephemeral"],
             ]
+        ]
+    }
+
+    /// Explicit two-block system prompt generator for stable prefix and volatile suffix.
+    static func systemBlocks(stable: String, volatile: String? = nil) -> [[String: Any]]? {
+        let trimmedStable = stable.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVolatile = volatile?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if trimmedStable.isEmpty && trimmedVolatile.isEmpty {
+            return nil
+        }
+        if trimmedStable.isEmpty {
+            return [
+                [
+                    "type": "text",
+                    "text": trimmedVolatile,
+                    "cache_control": ["type": "ephemeral"],
+                ]
+            ]
+        }
+        if trimmedVolatile.isEmpty {
+            return [
+                [
+                    "type": "text",
+                    "text": trimmedStable,
+                    "cache_control": ["type": "ephemeral"],
+                ]
+            ]
+        }
+
+        return [
+            [
+                "type": "text",
+                "text": trimmedStable,
+                "cache_control": ["type": "ephemeral"],
+            ],
+            [
+                "type": "text",
+                "text": trimmedVolatile,
+                "cache_control": ["type": "ephemeral"],
+            ],
         ]
     }
 
