@@ -19,12 +19,17 @@ struct AppIntegrationCapabilitiesView: View {
 
     @State private var editingSkill: AdapterSkill?
     @State private var showLiveMenus = false
+    @State private var showCLIPicker = false
+    @State private var showUTCPConnect = false
+    @State private var isEnriching = false
+    @State private var enrichmentStatus: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 statusAndHealthHeader
                 capabilitiesSection
+                discoveredCLIsSection
                 liveMenuSection
                 skillsSection
             }
@@ -36,6 +41,19 @@ struct AppIntegrationCapabilitiesView: View {
             SkillEditorSheet(skill: skill) { saved in
                 if let saved { skillStore.upsert(saved) }
                 editingSkill = nil
+            }
+        }
+        .sheet(isPresented: $showCLIPicker) {
+            AppCLIToolPickerSheet(
+                appName: summary.appName,
+                bundleId: summary.bundleID,
+                alreadyLinked: Set(summary.cliTools.map(\.id)))
+        }
+        .sheet(isPresented: $showUTCPConnect) {
+            IntegrationAPIConnectSheet(
+                appName: summary.appName,
+                bundleID: summary.bundleID) {
+                showUTCPConnect = false
             }
         }
     }
@@ -246,8 +264,50 @@ struct AppIntegrationCapabilitiesView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+
                 Button {
-                    onAddCapability()
+                    Task {
+                        isEnriching = true
+                        enrichmentStatus = nil
+                        let result = await AutonomousAppDiscoveryEngine.enrich(
+                            bundleId: summary.bundleID,
+                            appName: summary.appName)
+                        isEnriching = false
+                        enrichmentStatus = "Enriched (v\(result.version))"
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        enrichmentStatus = nil
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if isEnriching {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "globe")
+                        }
+                        Text(enrichmentStatus ?? "Enrich Knowledge")
+                    }
+                }
+                .controlSize(.small)
+                .disabled(isEnriching)
+                .help("Offline enrichment: extracts URL schemes, CLI tools, and documentation once per version into AGENT.md and skills")
+
+                Menu {
+                    Button {
+                        onAddCapability()
+                    } label: {
+                        Label("🌟 AI Action / Goal", systemImage: "sparkles")
+                    }
+                    Button {
+                        showCLIPicker = true
+                    } label: {
+                        Label("💻 Link Installed CLI Tool…", systemImage: "terminal")
+                    }
+                    Button {
+                        showUTCPConnect = true
+                    } label: {
+                        Label("⚡️ Connect UTCP API…", systemImage: "bolt.horizontal")
+                    }
                 } label: {
                     Label("Add Capability", systemImage: "plus")
                 }
@@ -272,6 +332,83 @@ struct AppIntegrationCapabilitiesView: View {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if index > 0 { Divider() }
                         capabilityRow(item)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor)))
+            }
+        }
+    }
+
+    // MARK: - Recommended Discovered CLI Accelerators
+
+    private var unlinkedDiscoveredCLIs: [DiscoveredCLITool] {
+        let discovered = AutonomousAppDiscoveryEngine.discoverCLITools(
+            bundleId: summary.bundleID,
+            appName: summary.appName)
+        let linkedCommands = Set(summary.cliTools.map { $0.command.lowercased() })
+        return discovered.filter { !linkedCommands.contains($0.command.lowercased()) }
+    }
+
+    @ViewBuilder
+    private var discoveredCLIsSection: some View {
+        let unlinked = unlinkedDiscoveredCLIs
+        if !unlinked.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.blue)
+                    Text("Discovered Local CLI Accelerators · \(unlinked.count)")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Detected on PATH for \(summary.appName)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(Array(unlinked.enumerated()), id: \.element.id) { index, cli in
+                        if index > 0 { Divider() }
+                        HStack(spacing: 10) {
+                            Image(systemName: "terminal.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.blue)
+                                .frame(width: 22)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(cli.command)
+                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    Text("Detected")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .foregroundStyle(.blue)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(Color.blue.opacity(0.14), in: Capsule())
+                                }
+                                Text(cli.path)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Button {
+                                AutonomousAppDiscoveryEngine.linkCLITool(
+                                    cli,
+                                    toBundleId: summary.bundleID,
+                                    appName: summary.appName)
+                            } label: {
+                                Label("Link Accelerator", systemImage: "plus")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .help("Link \(cli.command) as an accelerated tool for \(summary.appName)")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                     }
                 }
                 .background(

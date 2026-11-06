@@ -2894,16 +2894,25 @@ struct AppCLIToolPickerSheet: View {
 
             Divider()
 
+            let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             if availableTools.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "terminal").font(.system(size: 28)).foregroundStyle(.tertiary)
-                    Text(pkgMgr.packages.isEmpty ? "No CLI tools yet. Add tools in the CLI Tools section." : "All tools are already linked.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                VStack(spacing: 12) {
+                    if !trimmedSearch.isEmpty {
+                        customBinaryOption(trimmedSearch)
+                            .padding(.horizontal, 16)
+                    } else {
+                        Image(systemName: "terminal").font(.system(size: 28)).foregroundStyle(.tertiary)
+                        Text(pkgMgr.packages.isEmpty ? "No CLI tools yet. Add tools in the CLI Tools section." : "All tools are already linked.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(24)
             } else {
                 List {
+                    if !trimmedSearch.isEmpty && availableTools.allSatisfy({ $0.command.caseInsensitiveCompare(trimmedSearch) != .orderedSame }) {
+                        customBinaryOption(trimmedSearch)
+                    }
                     ForEach(availableTools, id: \.id) { pkg in
                         Button {
                             var updated = pkg
@@ -2941,6 +2950,58 @@ struct AppCLIToolPickerSheet: View {
             }
         }
         .frame(width: 420, height: 480)
+    }
+
+    private func customBinaryOption(_ binary: String) -> some View {
+        Button {
+            let toolName = URL(fileURLWithPath: binary).lastPathComponent
+            let isPath = binary.contains("/")
+            let pkg = TerminalPackage(
+                id: UUID(),
+                name: toolName,
+                command: binary,
+                description: "Command-line tool for \(appName)",
+                installedPath: isPath ? binary : nil,
+                keywords: [binary, toolName, appName],
+                usageExamples: [],
+                readmeContent: nil,
+                isEnabled: true,
+                customNotes: "",
+                helpText: nil,
+                subcommands: [],
+                usagePattern: nil,
+                taskCategories: [],
+                contextAppBundleIds: [bundleId],
+                contextualExamples: []
+            )
+            pkgMgr.addPackage(pkg)
+            pkgMgr.ensureHelpScanned(command: binary)
+            dismiss()
+        } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.blue.opacity(0.12))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.blue)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Link custom binary “\(binary)”")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Adds tool and links to \(appName)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "plus.circle")
+                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 14))
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 }
 
