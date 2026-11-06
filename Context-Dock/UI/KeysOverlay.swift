@@ -452,6 +452,13 @@ enum DockKeyMap {
                 title: "Past Conversations Board",
                 subtitle: "Browse and reopen past conversations across all scopes (/conversations)"
             ),
+            DockKeyBinding(
+                id: "chat.capabilitiesSkillsBoard",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "K"],
+                title: "Capabilities & Skills Browser",
+                subtitle: "Browse and inspect available capabilities and learned skills (/skills)"
+            ),
         ]
         list.append(contentsOf: ClipboardBoardKey.canonicalBindings)
         return list

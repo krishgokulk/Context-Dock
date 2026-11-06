@@ -1124,6 +1124,16 @@ struct AppChatPromptPill: View {
             .help("Browse past conversations (⌥H)")
             .accessibilityLabel("Browse past conversations")
 
+            // Capabilities & Skills browser (#335).
+            Button {
+                model.openCapabilitiesSkillsBrowser()
+            } label: {
+                headerGlyph("sparkles", tinted: false)
+            }
+            .buttonStyle(.plain)
+            .help("Browse capabilities & skills (⌥K)")
+            .accessibilityLabel("Browse capabilities and skills")
+
             // The app's panel beside the conversation, shown or hidden (#191) — Claude's
             // sidebar toggle, in the same place.
             if !model.isGlobalScope {
