@@ -2384,6 +2384,12 @@ struct CornerDockSurface: View {
                 // Quick Note (D11): the notes beside the open note's editor; the field asks.
                 QuickNoteBoardCard(prompt: prompt)
                     .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isConversationsBoard == true
+            {
+                // Conversations Board (#334): browse and reopen past conversations across all scopes.
+                ConversationsBoardCard(prompt: prompt)
+                    .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(
                     model: prompt, ext: prompt.scopedExtension,

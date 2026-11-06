@@ -16,12 +16,6 @@ Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 
 ## Queued (next)
 
-**Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
-- Issue #334. A board to browse and reopen past conversations across scopes (per-app and general), reading existing conversation storage without copying transcripts.
-
-**Task UI/UX 4/5 (#334): Auto Context Mode (bounded workspace pre-gathering):**
-- Issue #334. Bounded pre-gathering of focused app context before the model turn.
-
 **Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
 - Issue #335. Browse and inspect available capabilities and learned skills in the surface.
 
@@ -30,6 +24,15 @@ Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
+- Completed on branch `claude/task-334-conversations-board` (Issue #334).
+- Implemented `ConversationsBoardCard` and `ConversationsBoard` (`Context-Dock/UI/ConversationsBoardCard.swift`) reading directly from `GeneralChatSessionStore` without duplicating transcripts or introducing a second store.
+- Built split two-column board layout in the Corner Dock shell: left column lists past conversations across scopes (App Pets, CLI, General Chat, Combined Chat) with relative timestamps and message count badges; right column provides a live preview of the real stored messages for the focused thread.
+- Added scope filter tabs (`All`, `App Pets`, `General & Combined`) and live search filter within history by title, app name, bundle ID, or message content.
+- Wired reopening of conversations into their proper scope views (App Pet, CLI, General Chat, Combined Chat) with full keyboard navigation (arrows, Return to open, ⌘⌫ to clear history, Esc back).
+- Registered pre-seeded `Past Conversations` built-in system command (`provider:conversations`), slash commands `/conversations` and `/history`, header history button (`clock.arrow.circlepath`), and `chat.conversationsBoard` (`⌥H`) shortcut in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/ConversationsBoardTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
 - Completed on branch `claude/task-332-keys-overlay` (Issue #332).

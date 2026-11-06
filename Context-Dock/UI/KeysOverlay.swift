@@ -438,6 +438,13 @@ enum DockKeyMap {
                 title: "Slash Commands & Modes",
                 subtitle: "Switch App Pet modes (/mods) or borrow an app ability in General Chat"
             ),
+            DockKeyBinding(
+                id: "chat.conversationsBoard",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "H"],
+                title: "Past Conversations Board",
+                subtitle: "Browse and reopen past conversations across all scopes (/conversations)"
+            ),
         ]
         list.append(contentsOf: ClipboardBoardKey.canonicalBindings)
         return list
