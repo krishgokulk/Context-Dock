@@ -1112,6 +1112,13 @@ final class GeneralChatWindowModel: ObservableObject {
             return
         }
 
+        // Handle /conversations or /history command (#334).
+        if query.lowercased() == "/conversations" || query.lowercased() == "/history" {
+            input = ""
+            sessions = GeneralChatSessionStore.index()
+            return
+        }
+
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let turnScope = resolveTurnScope(for: query)

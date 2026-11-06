@@ -445,6 +445,13 @@ enum DockKeyMap {
                 title: "Branch Side Thread",
                 subtitle: "Branch a temporary tangent from the current turn (/side)"
             ),
+            DockKeyBinding(
+                id: "chat.conversationsBoard",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "H"],
+                title: "Past Conversations Board",
+                subtitle: "Browse and reopen past conversations across all scopes (/conversations)"
+            ),
         ]
         list.append(contentsOf: ClipboardBoardKey.canonicalBindings)
         return list

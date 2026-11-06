@@ -1114,6 +1114,16 @@ struct AppChatPromptPill: View {
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
 
+            // Past conversations browser (#334).
+            Button {
+                model.openConversationsBoard()
+            } label: {
+                headerGlyph("clock.arrow.circlepath", tinted: false)
+            }
+            .buttonStyle(.plain)
+            .help("Browse past conversations (⌥H)")
+            .accessibilityLabel("Browse past conversations")
+
             // The app's panel beside the conversation, shown or hidden (#191) — Claude's
             // sidebar toggle, in the same place.
             if !model.isGlobalScope {

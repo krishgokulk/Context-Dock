@@ -10,14 +10,11 @@
 
 ## In progress
 
-_None — ready for next queued task._
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation)** — PR #376 open in review (`claude/task-333-side-thread`), awaiting owner hand-check.
 
-Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
+Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 
 ## Queued (next)
-
-**Task UI/UX 4/5 (#334): Auto Context Mode (bounded workspace pre-gathering):**
-- Issue #334. Bounded pre-gathering of focused app context before the model turn.
 
 **Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
 - Issue #335. Browse and inspect available capabilities and learned skills in the surface.
@@ -27,6 +24,15 @@ Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
+- Completed on branch `claude/task-334-conversations-board` (Issue #334).
+- Implemented `ConversationsBoardCard` and `ConversationsBoard` (`Context-Dock/UI/ConversationsBoardCard.swift`) reading directly from `GeneralChatSessionStore` without duplicating transcripts or introducing a second store.
+- Built split two-column board layout in the Corner Dock shell: left column lists past conversations across scopes (App Pets, CLI, General Chat, Combined Chat) with relative timestamps and message count badges; right column provides a live preview of the real stored messages for the focused thread.
+- Added scope filter tabs (`All`, `App Pets`, `General & Combined`) and live search filter within history by title, app name, bundle ID, or message content.
+- Wired reopening of conversations into their proper scope views (App Pet, CLI, General Chat, Combined Chat) with full keyboard navigation (arrows, Return to open, ⌘⌫ to clear history, Esc back).
+- Registered pre-seeded `Past Conversations` built-in system command (`provider:conversations`), slash commands `/conversations` and `/history`, header history button (`clock.arrow.circlepath`), and `chat.conversationsBoard` (`⌥H`) shortcut in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/ConversationsBoardTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
 - Completed on branch `claude/task-333-side-thread` (Issue #333).

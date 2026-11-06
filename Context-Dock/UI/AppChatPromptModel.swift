@@ -1367,6 +1367,13 @@ final class AppChatPromptModel: ObservableObject {
             return true
         }
 
+        // Open Conversations Board via slash command (#334).
+        if question.lowercased() == "/conversations" || question.lowercased() == "/history" {
+            openConversationsBoard()
+            query = ""
+            return true
+        }
+
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
         // The question was asked from the list, not into it.
@@ -1414,6 +1421,19 @@ final class AppChatPromptModel: ObservableObject {
             name: .appChatPromptScopeChanged,
             object: nil,
             userInfo: ["appName": app, "bundleId": bundleID])
+    }
+
+    /// Opens the Conversations Board to browse past conversations across all scopes (#334).
+    func openConversationsBoard() {
+        if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isConversationsBoard }) {
+            scopedCommand = cmd
+            scopedExtension = nil
+            scopedPlugin = nil
+            isShowingScopeCard = false
+            query = ""
+            set(.suggesting)
+            touch()
+        }
     }
 
     // MARK: - Timer
