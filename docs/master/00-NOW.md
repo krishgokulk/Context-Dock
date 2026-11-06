@@ -10,14 +10,14 @@
 
 ## In progress
 
-_None — ready for next queued task._
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation)** — PR #376 open in review (`claude/task-333-side-thread`), awaiting owner hand-check.
 
-Coordinator: Antigravity Planner — since 2026-11-05 17:00 UTC
+Coordinator: Antigravity Planner — since 2026-11-06 00:20 UTC
 
 ## Queued (next)
 
-**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
-- Issue #333. Branch a temporary side question from an active App Pet, Combined Chat, or General Chat without polluting the main conversation or Pet memory; supports explicit fold-back summary or discard.
+**Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
+- Issue #334. A board to browse and reopen past conversations across scopes (per-app and general), reading existing conversation storage without copying transcripts.
 
 **Task UI/UX 4/5 (#334): Auto Context Mode (bounded workspace pre-gathering):**
 - Issue #334. Bounded pre-gathering of focused app context before the model turn.
