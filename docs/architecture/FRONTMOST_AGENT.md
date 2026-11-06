@@ -335,4 +335,32 @@ To prevent a fragmented sprawl of disconnected scripts, MCP servers, shortcuts, 
      - **Synthesized Script:** Executed via `osascript` in a governed sandbox.
      - **UI Command:** Dispatched via `AXUIElementPerformAction` on live menu items or buttons.
 
+### 7.6 Fresh Chat Presentation over Frontmost App
+When a user summons DoraX over a frontmost app (e.g., Safari) via hotkey (`⌘⌘` or `⌥⌥`), the shell opens in a focused, zero-clutter state:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🧭 Safari  ·  GitHub: PR #368 · [3 other tabs]              │
+├─────────────────────────────────────────────────────────────┤
+│ Ask anything about this page, or tell Safari what to do...  │
+│ [ ⚡️ Bookmark ]  [ 📄 Markdown ]  [ 🔍 Summarize ]          │
+└─────────────────────────────────────────────────────────────┘
+```
+- **Context Pill:** Shows the active app name, frontmost document/URL title, and open tab counts.
+- **Action Strip:** Quick-action pills dynamically populated for that specific app (Bookmark, Summarize, Export).
+- **Zero-Friction Prompt:** Scoped to the frontmost app immediately without requiring explicit app naming.
+
+### 7.7 App Pet Modes (`/mods`)
+Modes are bounded behavioral presets tailored to each application, similar to specialized roles in frontier AI tools:
+- **Safari Modes:** `Browse` (default, quick reads), `Research` (multi-tab synthesis, citations), `Compare` (comparative tables), `Automate` (form assistance, UI clicks).
+- **Finder Modes:** `Find`, `Organize`, `Batch`, `Inspect`.
+- **Terminal Modes:** `Explain`, `Diagnose`, `Run`.
+
+**How users interact with `/mods`:**
+1. **Slash Command:** Typing `/mods` lists supported modes for the current Pet; typing `/mods research` switches the mode in the current thread without clearing conversation history.
+2. **UI Mode Pill & Side Panel:** The App Pet header displays an interactive mode pill `[ 🧭 Safari · Research ▾ ]`. Clicking it opens a side-panel mode picker.
+3. **Custom Modes in AGENT.md:** Users can define custom modes for any app in `Settings → Extensions → Apps → Agent (AGENT.md)` under YAML frontmatter (`modes: [...]`).
+4. **Safety Rule:** *A mode narrows; it cannot widen.* A mode alters persona, prompt overlays, and tool ranking, but never bypasses user approval gates or security permissions.
+
+
 

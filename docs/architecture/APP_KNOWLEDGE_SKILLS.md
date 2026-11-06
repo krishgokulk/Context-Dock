@@ -104,3 +104,47 @@ is the largest.
 
 Steps 1 and 2 need no network and no new authority. Step 3 does. Step 4 is a resolver
 change and wants its own tests before anything moves.
+
+---
+
+## 3. The 2-Stage Autonomous Discovery Engine (CLI, Deep Links, Web Docs & GitHub)
+
+When a user installs a new third-party app (e.g. `Antigravity`, `Ghostty`, `HandBrake`), DoraX must not require manual entry of CLI tools, deep links, or documentation. It runs a 2-stage discovery pipeline that permanently enriches the app's `AGENT.md` and `SKILL.md`.
+
+```
+                         NEW APP DETECTED (e.g. Antigravity)
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 1: Instant Local Introspection (0ms, 100% Offline & Private)                    │
+│ 1. PATH & Homebrew Scanner: Look for matching binaries (`agy`, `antigravity`).        │
+│ 2. Info.plist Reader: Extract bundle URL schemes & deep links (`antigravity://...`).   │
+│ 3. Scripting Dictionary: Extract AppleScript/JXA dictionary (sdef) classes and verbs. │
+│ 4. Menu Bar: Extract all menu items (File, Edit, Help ▸ Documentation).               │
+└───────────────────────────────────────┬────────────────────────────────────────────────┘
+                                        │
+                                        ▼ (If app lacks deep knowledge or CLI documentation)
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 2: AI Autonomous Enrichment (Runs ONCE per App Version, Saved Permanently)       │
+│ 1. CLI Inspection: Runs `agy --help` or `agy --version` headlessly.                    │
+│ 2. Docs Ingestion: Fetches official documentation, GitHub README, and release notes.   │
+│ 3. Manifest Update: Writes extracted knowledge permanently into:                      │
+│    • AGENT.md  → App rules, URL schemes, and preferred CLI routes.                     │
+│    • SKILL.md  → "<App> — what this app is" (complete reference guide & commands).   │
+└───────────────────────────────────────┬────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ RESULT: Instant 0ms Answers on Every Subsequent Chat                                  │
+│ • No repeated web queries or token waste.                                              │
+│ • Full command awareness (flags, subcommands, syntax).                                │
+│ • Automatically refreshes whenever CFBundleShortVersionString updates.                │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why Live Web Searches on Every Turn Are Banned
+1. **Latency:** Live searching adds 5–10 seconds of delay to every single user query.
+2. **Cost:** Repeatedly burns LLM tokens querying the same documentation.
+3. **Privacy:** DoraX enforces an Outbound Privacy Gate; background apps must not trigger unprompted external network requests.
+4. **Reliability:** By persisting learned knowledge into local `AGENT.md` and `SKILL.md` files, the App Pet works completely offline.
+

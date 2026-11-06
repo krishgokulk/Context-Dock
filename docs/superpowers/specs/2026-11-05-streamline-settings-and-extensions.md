@@ -45,6 +45,11 @@ Replace the 5 tabs and 8 resource buckets with 3 purposeful tabs:
 1. **Capabilities & Skills:**
    - Unified list of all tools available to this app (Native tools, direct UTCP endpoints, live menus, and learned skills).
    - Each capability displays its intent, trigger, and safety classification (Read / Write).
+   - **`[ + Add Capability ▾ ]` Dropdown:**
+     - 🌟 **AI Action / Goal:** Natural language user intent.
+     - 💻 **Link Installed CLI Tool:** Pick or enter an installed binary (`agy`, `code`, `git`, `gh`) from `PATH` or `/opt/homebrew/bin`.
+     - ⚡️ **Connect UTCP API:** Direct zero-daemon OpenAPI or UTCP endpoint.
+   - **`[ 🌐 Enrich Knowledge ]` Action:** Runs the 2-stage discovery engine (PATH scanner, `Info.plist` deep links, official docs & GitHub README) to generate/update the app's `<App> — what this app is` skill.
 2. **Agent (`AGENT.md`):**
    - Editable markdown constitution defining how DoraX operates this specific app.
    - Declares tool priorities, personas, and operating boundaries.
