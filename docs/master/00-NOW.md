@@ -10,14 +10,18 @@
 
 ## In progress
 
-_None — ready for next queued task._
+**#151: E3 Prompt order: stable sections first, a second cache mark, volatile last:**
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E3) and Issue #151.
+- Reorder `ScopedPromptSection` in `Context-Dock/AI/ScopedPromptAssembler.swift`: stable sections first (source rule, identity, profile, capabilities, MCP, skills, reference, CLI), then volatile sections (resolved context, selection, page, folder, attachments, live data, memory) closest to the question.
+- Preserve budget drop order (unchanged; only the reading/assembly order changes).
+- Add second cache mark breakpoint in `Context-Dock/AI/AnthropicPromptCache.swift` to cache the stable prefix and volatile suffix within Anthropic's 4-breakpoint limit.
+- Unit tests in `Context-DockTests/` verifying assembled section order, byte-identical stable prefix on selection change, and cache breakpoint generation.
 
-Coordinator: Antigravity Planner — since 2026-11-06 15:31 UTC
+Coordinator: Antigravity Planner — since 2026-11-06 15:38 UTC
 
 ## Queued (next)
 
 **AI Engine Plan Backlog:**
-- **#151: E3 Prompt order: stable sections first** (`ready`).
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
