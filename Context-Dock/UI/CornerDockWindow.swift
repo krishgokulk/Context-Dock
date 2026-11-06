@@ -1729,6 +1729,24 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // ⌥H opens the Conversations board (#334).
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            event.keyCode == 4,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .option
+        {
+            prompt.openConversationsBoard()
+            return nil
+        }
+
+        // ⌥K opens the Capabilities & Skills browser (#335).
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            event.keyCode == 40,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .option
+        {
+            prompt.openCapabilitiesSkillsBrowser()
+            return nil
+        }
+
         // The app row's card keys (owner 2026-10-11): ⌘⌫ quits a running app, ⇧↩ hands a
         // closed one the Finder selection. Plain ⌫ stays the field's (rule C6).
         if let panel, event.window === panel, chatPresentation.isVisible,
@@ -2389,6 +2407,12 @@ struct CornerDockSurface: View {
             {
                 // Conversations Board (#334): browse and reopen past conversations across all scopes.
                 ConversationsBoardCard(prompt: prompt)
+                    .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isCapabilitiesSkillsBoard == true
+            {
+                // Capabilities & Skills Browser (#335): browse and inspect available capabilities and learned skills.
+                CapabilitiesSkillsBoardCard(prompt: prompt)
                     .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(

@@ -65,8 +65,13 @@ extension SystemCommand {
     /// The Global Command the Conversations board stands for (#334).
     var isConversationsBoard: Bool { provider == ConversationsBoard.provider }
 
+    /// The Global Command the Capabilities & Skills browser stands for (#335).
+    var isCapabilitiesSkillsBoard: Bool { provider == CapabilitiesSkillsBrowser.provider }
+
     /// A command the Corner draws as a board of its own rather than as its list panel.
-    var hasOwnCornerBoard: Bool { isNotificationsBoard || isQuickNoteBoard || isConversationsBoard }
+    var hasOwnCornerBoard: Bool {
+        isNotificationsBoard || isQuickNoteBoard || isConversationsBoard || isCapabilitiesSkillsBoard
+    }
 }
 
 // MARK: - The board's state

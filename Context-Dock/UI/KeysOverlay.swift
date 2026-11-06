@@ -439,11 +439,25 @@ enum DockKeyMap {
                 subtitle: "Switch App Pet modes (/mods) or borrow an app ability in General Chat"
             ),
             DockKeyBinding(
+                id: "chat.sideThread",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "S"],
+                title: "Branch Side Thread",
+                subtitle: "Branch a temporary tangent from the current turn (/side)"
+            ),
+            DockKeyBinding(
                 id: "chat.conversationsBoard",
                 surface: .chatAndClipboard,
                 keys: ["⌥", "H"],
                 title: "Past Conversations Board",
                 subtitle: "Browse and reopen past conversations across all scopes (/conversations)"
+            ),
+            DockKeyBinding(
+                id: "chat.capabilitiesSkillsBoard",
+                surface: .chatAndClipboard,
+                keys: ["⌥", "K"],
+                title: "Capabilities & Skills Browser",
+                subtitle: "Browse and inspect available capabilities and learned skills (/skills)"
             ),
         ]
         list.append(contentsOf: ClipboardBoardKey.canonicalBindings)
