@@ -148,6 +148,20 @@ struct AppearanceSettingsPage: View {
                     .padding(.vertical, 10)
                 }
 
+                CardSection(title: "Dock Content", systemImage: "square.grid.3x1.fill.below.line.grid.1x2") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle(isOn: $settings.showRunningApps) {
+                            Text("Show running app icons")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text("Display running app icons beside the input bar in Global Context. When off, only the input bar is shown.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 10)
+                }
+
                 CardSection(title: "Liquid Glass", systemImage: "circle.lefthalf.filled") {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

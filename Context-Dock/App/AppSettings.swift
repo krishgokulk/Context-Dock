@@ -1118,6 +1118,9 @@ class AppSettings: ObservableObject {
     @AppStorage("singleCommandTogglesContextScope") var singleCommandTogglesContextScope: Bool =
         true
     @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = false
+    /// Show running app icons in the Global Context dock strip.
+    /// When false, only the input bar is shown with no app icons or pets.
+    @AppStorage("showRunningApps") var showRunningApps: Bool = true
 
     // The "Always on Bottom" / taskbar dock mode was removed — the dock always anchors at the top
     // and grows downward. Kept as a constant so existing call sites compile without a 54-site rewrite.
