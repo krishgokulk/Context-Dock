@@ -1123,8 +1123,10 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// The strip's running section: the dock's own running pills, minus the removed ones.
+    /// Returns empty when the user has disabled running app visibility in settings.
     var stripIcons: [MatchDockIcon] {
-        allRunningIcons.filter { icon in
+        guard AppSettings.shared.showRunningApps else { return [] }
+        return allRunningIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)
         }
