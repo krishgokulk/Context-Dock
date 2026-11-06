@@ -49,12 +49,14 @@ enum AppKnowledgeSkill {
         version: String,
         helpTitles: [String],
         capabilities: Capabilities,
-        websiteKnowledge: String? = nil
+        websiteKnowledge: String? = nil,
+        urlSchemes: [String] = [],
+        discoveredCLIs: [String] = []
     ) -> AdapterSkill? {
         let topics = cleanedTopics(helpTitles)
         // Nothing learned and nothing granted: a skill of empty headings is worse than no
         // skill, because it takes room in the prompt and says nothing.
-        guard !topics.isEmpty || capabilities.total > 0 else { return nil }
+        guard !topics.isEmpty || capabilities.total > 0 || !urlSchemes.isEmpty || !discoveredCLIs.isEmpty else { return nil }
 
         var body = """
             You are working inside \(appName)\(version.isEmpty ? "" : " (version \(version))").
@@ -75,6 +77,24 @@ enum AppKnowledgeSkill {
             for (count, label) in lines where count > 0 {
                 body += "- \(count) \(label)\n"
             }
+        }
+
+        if !urlSchemes.isEmpty {
+            body += """
+
+                Deep links and URL schemes this app responds to:
+                """
+            for scheme in urlSchemes { body += "\n- \(scheme)://" }
+            body += "\n"
+        }
+
+        if !discoveredCLIs.isEmpty {
+            body += """
+
+                Command-line accelerators available on PATH:
+                """
+            for cli in discoveredCLIs { body += "\n- \(cli)" }
+            body += "\n"
         }
 
         if !topics.isEmpty {

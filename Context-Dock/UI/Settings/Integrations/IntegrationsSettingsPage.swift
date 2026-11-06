@@ -463,7 +463,7 @@ private struct IntegrationCreationSheets: ViewModifier {
 
 /// Connects an API to one app integration. The key never lands in Context Dock's settings
 /// files — `APIConnectionStore` writes it to the Keychain.
-private struct IntegrationAPIConnectSheet: View {
+struct IntegrationAPIConnectSheet: View {
     let appName: String
     let bundleID: String
     let onDone: () -> Void

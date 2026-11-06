@@ -10,13 +10,9 @@
 
 ## In progress
 
-**Task: Autonomous App Discovery & CLI Linker (Follow-up to #373):**
-- Spec: `docs/architecture/APP_KNOWLEDGE_SKILLS.md` (§3) and `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
-- 1. Expand `+ Add Capability` button in `AppIntegrationCapabilitiesView` into a menu: `🌟 AI Action / Goal`, `💻 Link Installed CLI Tool...` (using `AppCLIToolPickerSheet`), and `⚡️ Connect UTCP API...`.
-- 2. Implement PATH auto-discovery for frontmost apps (detecting `agy`, `code`, `git`, `gh` in `/opt/homebrew/bin`, `~/.local/bin`, `/usr/local/bin`).
-- 3. Add `[ 🌐 Enrich Knowledge ]` action to fetch official documentation/README once per app version and update `<App> — what this app is` skill and `AGENT.md`.
+_None — ready for next queued task._
 
-Coordinator: Antigravity Planner — since 2026-11-06 15:13 UTC
+Coordinator: Antigravity Planner — since 2026-11-06 15:31 UTC
 
 ## Queued (next)
 
@@ -25,6 +21,14 @@ Coordinator: Antigravity Planner — since 2026-11-06 15:13 UTC
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task: Autonomous App Discovery & CLI Linker (Follow-up to #373):**
+- Completed on branch `feat/autonomous-app-discovery-cli-linker` (PR #381).
+- Spec: `docs/architecture/APP_KNOWLEDGE_SKILLS.md` (§3) and `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
+- 1. Multi-Choice `+ Add Capability` Dropdown: Transformed button in `AppIntegrationCapabilitiesView` into a Menu with `🌟 AI Action / Goal`, `💻 Link Installed CLI Tool…` (with support for choosing or entering custom binaries in `AppCLIToolPickerSheet`), and `⚡️ Connect UTCP API…` (opening `IntegrationAPIConnectSheet`).
+- 2. PATH Auto-Discovery for Frontmost Apps: Implemented `AutonomousAppDiscoveryEngine` scanning `/opt/homebrew/bin`, `~/.local/bin`, and `/usr/local/bin` to auto-detect matching CLI tools for apps (`agy` for Antigravity, `code` for VS Code, `git` / `gh` for GitHub Desktop, `ghostty`, etc.) and surfaced discovered local tools directly as recommended one-click accelerators (`Link Accelerator`).
+- 3. Offline `[ 🌐 Enrich Knowledge ]` Action: Added one-click action to run 2-stage discovery (PATH scanner, `Info.plist` URL deep links, and official docs/README fetched once per app version), updating `<App> — what this app is` in `SkillStore` and `AGENT.md` in `AppAgentProfileStore` while adhering to the Outbound Privacy Gate.
+- 4. Verified with unit test suite in `Context-DockTests/AutonomousAppDiscoveryTests.swift` (5/5 passing) and regression tests (`StreamlineSettingsAndExtensionsTests`, `AppKnowledgeSkillTests`). Gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
 - Completed on branch `claude/task-335-skills-browser` (Issue #335).
