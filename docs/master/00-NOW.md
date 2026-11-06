@@ -16,14 +16,25 @@ Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 
 ## Queued (next)
 
-**Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
-- Issue #335. Browse and inspect available capabilities and learned skills in the surface.
+**Task: Autonomous App Discovery & CLI Linker (Follow-up to #373):**
+- Spec: `docs/architecture/APP_KNOWLEDGE_SKILLS.md` (§3) and `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
+- 1. Expand `+ Add Capability` button in `AppIntegrationCapabilitiesView` into a menu: `🌟 AI Action / Goal`, `💻 Link Installed CLI Tool...` (using `AppCLIToolPickerSheet`), and `⚡️ Connect UTCP API...`.
+- 2. Implement PATH auto-discovery for frontmost apps (detecting `agy`, `code`, `git`, `gh` in `/opt/homebrew/bin`, `~/.local/bin`, `/usr/local/bin`).
+- 3. Add `[ 🌐 Enrich Knowledge ]` action to fetch official documentation/README once per app version and update `<App> — what this app is` skill and `AGENT.md`.
 
 **AI Engine Plan Backlog:**
 - **#151: E3 Prompt order: stable sections first** (`ready`).
 - **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
 
 ## Done (most recent first)
+
+**Task UI/UX 5/5 (#335): Capabilities & Skills Browser:**
+- Completed on branch `claude/task-335-skills-browser` (Issue #335).
+- Implemented `CapabilitiesSkillsBoardCard` and `CapabilitiesSkillsBrowser` (`Context-Dock/UI/CapabilitiesSkillsBoardCard.swift`) reading directly from `SystemCommandsRegistry`, `CapabilityRegistry`, `AppAdapterManager`, `SkillStore`, and `SolvedSkillStore`.
+- Built split two-column board in Corner Dock shell: left column lists capabilities & skills with search query filtering, filter tabs (`All`, `Capabilities`, `Skills`, `Learned`), kind tags, and `Read` / `Write` / `Guidance` safety classifications; right column provides a deep inspection panel with description, trigger keywords, steering instructions, learned tool-call execution sequences, and technical specifications.
+- Added direct activation into App Pet or General Chat (`↵ Ask in Pet` / `Use Skill`) and clipboard copy (`doc.on.doc` / `⌘C`).
+- Registered built-in `Capabilities & Skills` system command (`provider:skills`), slash commands `/skills` & `/capabilities`, header sparkles button (`sparkles`), and `chat.capabilitiesSkillsBoard` (`⌥K`) in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/CapabilitiesSkillsBrowserTests.swift` (5/5 passing) and regression suites (`ConversationsBoardTests`, `KeysOverlayTests`). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 4/5 (#334): Conversations board (browse past conversations):**
 - Completed on branch `claude/task-334-conversations-board` (Issue #334).
@@ -33,6 +44,14 @@ Coordinator: Antigravity Planner — since 2026-11-06 08:55 UTC
 - Wired reopening of conversations into their proper scope views (App Pet, CLI, General Chat, Combined Chat) with full keyboard navigation (arrows, Return to open, ⌘⌫ to clear history, Esc back).
 - Registered pre-seeded `Past Conversations` built-in system command (`provider:conversations`), slash commands `/conversations` and `/history`, header history button (`clock.arrow.circlepath`), and `chat.conversationsBoard` (`⌥H`) shortcut in `DockKeyMap` / `KeysOverlay`.
 - Verified with unit tests in `Context-DockTests/ConversationsBoardTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
+
+**Task UI/UX 3/5 (#333): Side Thread (branch a sub-conversation):**
+- Completed on branch `claude/task-333-side-thread` (Issue #333).
+- Implemented `SideThreadState` and `SideThreadSummarizer` (`Context-Dock/AI/SideThread.swift`) allowing temporary side tangent conversations branched off an active App Pet, Combined Chat, or General Chat turn without polluting the main conversation transcript or Pet memory.
+- Implemented `SideThreadChildView` (`Context-Dock/UI/SideThreadChildView.swift`) as a child view within the existing surface shell (Corner Dock, Corner General Chat, and Standalone General Chat window), preserving active scope and grounding.
+- Added explicit Fold Back summary action (synthesizing side findings into a single structured summary turn in the main thread) and Discard action (dismissing without modifying main messages).
+- Added `Side thread` action button to `AIChatMessageView` assistant turn footers, `/side [query]` slash command support in `AppChatPromptModel` and `GeneralChatWindowModel`, and registered `chat.sideThread` (`⌥S`) in `DockKeyMap` / `KeysOverlay`.
+- Verified with unit tests in `Context-DockTests/SideThreadTests.swift` (5 tests passing). Clean gate `./scripts/check.sh` passed. Relaunched via `./scripts/dev-run.sh`.
 
 **Task UI/UX 2/5 (#332): Keys overlay (shortcuts reference):**
 - Completed on branch `claude/task-332-keys-overlay` (Issue #332).

@@ -1352,9 +1352,33 @@ final class AppChatPromptModel: ObservableObject {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAnswering else { return false }
 
+        // Handle /side command (#333).
+        if question.lowercased().hasPrefix("/side") {
+            let sideQuery = String(question.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            AppChatConversation.shared.branchSideThread(from: AppChatConversation.shared.messages.last)
+            focusedMenuIndex = nil
+            query = ""
+            attachments = []
+            hasPresentedConversation = true
+            isConversationHidden = false
+            set(.chat)
+            touch()
+            if !sideQuery.isEmpty {
+                AppChatConversation.shared.sendSideThread(query: sideQuery)
+            }
+            return true
+        }
+
         // Open Conversations Board via slash command (#334).
         if question.lowercased() == "/conversations" || question.lowercased() == "/history" {
             openConversationsBoard()
+            query = ""
+            return true
+        }
+
+        // Open Capabilities & Skills Browser via slash command (#335).
+        if question.lowercased() == "/skills" || question.lowercased() == "/capabilities" {
+            openCapabilitiesSkillsBrowser()
             query = ""
             return true
         }
@@ -1411,6 +1435,19 @@ final class AppChatPromptModel: ObservableObject {
     /// Opens the Conversations Board to browse past conversations across all scopes (#334).
     func openConversationsBoard() {
         if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isConversationsBoard }) {
+            scopedCommand = cmd
+            scopedExtension = nil
+            scopedPlugin = nil
+            isShowingScopeCard = false
+            query = ""
+            set(.suggesting)
+            touch()
+        }
+    }
+
+    /// Opens the Capabilities & Skills Browser in the surface (#335).
+    func openCapabilitiesSkillsBrowser() {
+        if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isCapabilitiesSkillsBoard }) {
             scopedCommand = cmd
             scopedExtension = nil
             scopedPlugin = nil

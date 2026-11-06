@@ -67,6 +67,8 @@ final class AppChatConversation: ObservableObject {
     /// dock appends its answer from fifty-odd places, and every one of them would have to
     /// remember to copy the steps across.
     @Published private(set) var activityByMessageID: [UUID: [ActivityStep]] = [:]
+    /// Active temporary side thread branched off the current conversation (#333).
+    @Published var activeSideThread: SideThreadState? = nil
 
     private var recorder: ActivityRecorder?
     private var messageCountAtStart = 0
@@ -169,6 +171,95 @@ final class AppChatConversation: ObservableObject {
         }
         for index in messages.indices where messages[index].enableAppRequest == request {
             messages[index].enableAppRequest = nil
+        }
+    }
+
+    // MARK: - Side Thread (sub-conversation branch) (#333)
+
+    func branchSideThread(from message: AIChatMessage? = nil, snippet: String? = nil) {
+        let parentMsg = message ?? messages.last
+        let derivedSnippet = snippet ?? SideThreadSummarizer.extractTurnSnippet(from: parentMsg)
+        let scopeKey = scopeBundleId.isEmpty ? "general" : "app:\(scopeBundleId)"
+        activeSideThread = SideThreadState(
+            parentMessageID: parentMsg?.id,
+            parentTurnSnippet: derivedSnippet,
+            parentScopeKey: scopeKey
+        )
+    }
+
+    func foldBackSideThread() {
+        guard let side = activeSideThread else { return }
+        let summary = SideThreadSummarizer.generateFoldBackSummary(
+            parentSnippet: side.parentTurnSnippet,
+            messages: side.messages
+        )
+        let summaryMessage = AIChatMessage(role: .assistant, content: summary)
+        messages.append(summaryMessage)
+        if !scopeBundleId.isEmpty {
+            let key = "dock_app_\(scopeBundleId)"
+            AppPanelChatStore.shared.save(messages, for: key)
+        }
+        activeSideThread = nil
+    }
+
+    func discardSideThread() {
+        activeSideThread = nil
+    }
+
+    func sendSideThread(query: String) {
+        guard var side = activeSideThread else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !side.isSending else { return }
+
+        let userMsg = AIChatMessage(role: .user, content: trimmed)
+        side.messages.append(userMsg)
+        side.isSending = true
+        side.liveSteps = ["Researching side question…"]
+        activeSideThread = side
+
+        let parentSnippet = side.parentTurnSnippet
+        let history: [ChatMessage] = [
+            ChatMessage(role: .assistant, content: "Context from main thread: \(parentSnippet)")
+        ] + side.messages.dropLast().compactMap { msg in
+            switch msg.role {
+            case .user: return ChatMessage(role: .user, content: msg.content)
+            case .assistant: return ChatMessage(role: .assistant, content: msg.content)
+            case .tool, .approval: return nil
+            }
+        }
+
+        let bundleID = scopeBundleId
+        let appName = scopeAppName
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let activeScope: GeneralChatScope = bundleID.isEmpty ? .general : .app(bundleId: bundleID)
+                let resolvedAppName = appName.isEmpty ? "Context Dock" : appName
+
+                let answer = try await AppScopedChatService.send(
+                    scope: activeScope,
+                    appName: resolvedAppName,
+                    query: trimmed,
+                    history: history
+                )
+
+                if var currentSide = self.activeSideThread, currentSide.id == side.id {
+                    let assistantMsg = AIChatMessage(role: .assistant, content: answer.text)
+                    currentSide.messages.append(assistantMsg)
+                    currentSide.isSending = false
+                    currentSide.liveSteps = []
+                    self.activeSideThread = currentSide
+                }
+            } catch {
+                if var currentSide = self.activeSideThread, currentSide.id == side.id {
+                    let errorMsg = AIChatMessage(role: .assistant, content: "Error: \(error.localizedDescription)", isError: true)
+                    currentSide.messages.append(errorMsg)
+                    currentSide.isSending = false
+                    currentSide.liveSteps = []
+                    self.activeSideThread = currentSide
+                }
+            }
         }
     }
 

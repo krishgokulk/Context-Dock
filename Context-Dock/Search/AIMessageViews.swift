@@ -703,6 +703,8 @@ struct AIChatMessageView: View {
     var onPreviewFile: ((URL) -> Void)? = nil
     var onPickAction: ((ActionChoice) -> Void)? = nil
     var onReminderAction: ((ReminderResultAction, String) -> Void)? = nil
+    /// Branch a temporary side question from this turn without polluting main thread (#333).
+    var onBranchSideThread: ((AIChatMessage) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
@@ -1855,6 +1857,25 @@ struct AIChatMessageView: View {
                             .padding(.vertical, 2.5)
                             .background(Color.secondary.opacity(0.1), in: Capsule())
                             .help("Turn executed in \(message.modeProvenance ?? mode) mode")
+                        }
+
+                        if let onBranchSideThread {
+                            Button {
+                                onBranchSideThread(message)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.triangle.branch")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                    Text("Side thread")
+                                        .font(.system(size: 10, weight: .medium))
+                                }
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2.5)
+                                .background(Color.primary.opacity(0.06), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Branch a side question from this turn without polluting main thread")
                         }
 
                         Spacer(minLength: 4)

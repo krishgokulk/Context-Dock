@@ -605,6 +605,15 @@ final class SystemCommandsRegistry {
             description: "Browse and reopen past conversations across all scopes"
         ),
         SystemCommand(
+            name: "Capabilities & Skills",
+            icon: "sparkles",
+            keywords: ["capabilities", "capability", "skills", "skill", "tools", "actions", "learned", "recipes", "provider:skills"],
+            scriptType: "applescript",
+            // Enter opens the capabilities & skills board; there is no single action.
+            script: #"return"#,
+            description: "Browse and inspect available capabilities and learned skills in the surface"
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],

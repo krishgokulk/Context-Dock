@@ -687,7 +687,16 @@ struct GeneralChatWindowView: View {
 
     private var chatPane: some View {
         VStack(spacing: 0) {
-            if model.isEmpty {
+            if let sideThread = model.activeSideThread {
+                SideThreadChildView(
+                    sideThread: sideThread,
+                    scopeTitle: model.conversationHeaderTitle,
+                    onSend: { query in model.sendSideThread(query: query) },
+                    onFoldBack: { model.foldBackSideThread() },
+                    onDiscard: { model.discardSideThread() },
+                    onBack: { model.discardSideThread() }
+                )
+            } else if model.isEmpty {
                 emptyState
             } else {
                 transcript
@@ -807,6 +816,7 @@ struct GeneralChatWindowView: View {
                                 onEnableApp: { model.enableApp($0) },
                                 onDeclineEnableApp: { model.declineEnableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
+                                onBranchSideThread: { msg in model.branchSideThread(from: msg) },
                                 liveSteps: liveSteps(for: message),
                                 liveActivity: liveSteps(for: message).isEmpty
                                     ? [] : model.activeActivity)
