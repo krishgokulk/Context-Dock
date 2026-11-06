@@ -22,6 +22,22 @@ struct CornerTranscript: View {
     @ObservedObject private var conversation = AppChatConversation.shared
 
     var body: some View {
+        if let sideThread = conversation.activeSideThread {
+            SideThreadChildView(
+                sideThread: sideThread,
+                scopeTitle: appName.isEmpty ? "App Pet" : appName,
+                scopeIcon: appIcon,
+                onSend: { query in conversation.sendSideThread(query: query) },
+                onFoldBack: { conversation.foldBackSideThread() },
+                onDiscard: { conversation.discardSideThread() },
+                onBack: { conversation.discardSideThread() }
+            )
+        } else {
+            mainTranscript
+        }
+    }
+
+    private var mainTranscript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -42,6 +58,9 @@ struct CornerTranscript: View {
                             onDeclineEnableApp: { request in
                                 NotificationCenter.default.post(
                                     name: .appChatPromptDeclineEnableApp, object: request)
+                            },
+                            onBranchSideThread: { msg in
+                                conversation.branchSideThread(from: msg)
                             },
                             assistantAvatarImage: appIcon,
                             liveSteps: isAnswering && index == messages.count - 1 ? liveSteps : [],
