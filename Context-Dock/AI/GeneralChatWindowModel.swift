@@ -1103,6 +1103,13 @@ final class GeneralChatWindowModel: ObservableObject {
             return
         }
 
+        // Handle /skills or /capabilities command (#335).
+        if query.lowercased() == "/skills" || query.lowercased() == "/capabilities" {
+            input = ""
+            CornerChatPresentation.shared.appChat.openCapabilitiesSkillsBrowser()
+            return
+        }
+
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let turnScope = resolveTurnScope(for: query)

@@ -1357,6 +1357,13 @@ final class AppChatPromptModel: ObservableObject {
             return true
         }
 
+        // Open Capabilities & Skills Browser via slash command (#335).
+        if question.lowercased() == "/skills" || question.lowercased() == "/capabilities" {
+            openCapabilitiesSkillsBrowser()
+            query = ""
+            return true
+        }
+
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
         // The question was asked from the list, not into it.
@@ -1409,6 +1416,19 @@ final class AppChatPromptModel: ObservableObject {
     /// Opens the Conversations Board to browse past conversations across all scopes (#334).
     func openConversationsBoard() {
         if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isConversationsBoard }) {
+            scopedCommand = cmd
+            scopedExtension = nil
+            scopedPlugin = nil
+            isShowingScopeCard = false
+            query = ""
+            set(.suggesting)
+            touch()
+        }
+    }
+
+    /// Opens the Capabilities & Skills Browser in the surface (#335).
+    func openCapabilitiesSkillsBrowser() {
+        if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isCapabilitiesSkillsBoard }) {
             scopedCommand = cmd
             scopedExtension = nil
             scopedPlugin = nil

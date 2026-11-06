@@ -365,6 +365,20 @@ struct CornerGeneralChatView: View {
             .help("Browse past conversations (⌥H)")
             .accessibilityLabel("Browse past conversations")
 
+            // Capabilities & Skills browser (#335).
+            Button {
+                CornerChatPresentation.shared.appChat.openCapabilitiesSkillsBrowser()
+            } label: {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Browse capabilities & skills (⌥K)")
+            .accessibilityLabel("Browse capabilities and skills")
+
             // Expand opens General Chat in the full window on its Chat tab, seeded with this
             // transcript (#323). Inert while a turn is running — it waits for the answer
             // (owner 2026-10-26); General is always a chat scope, so it is never hidden here.
