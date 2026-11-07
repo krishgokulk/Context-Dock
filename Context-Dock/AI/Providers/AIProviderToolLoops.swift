@@ -110,6 +110,172 @@ extension AIProviderService {
         return (success, output)
     }
 
+    // MARK: - Unified Tool Loop
+
+    private func runToolLoop<A: ToolLoopAdapter>(
+        adapter: A,
+        message: String,
+        contextPrompt: String,
+        history: [ChatMessage],
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
+        customTools: [[String: Any]],
+        maxIterations: Int,
+        imageAttachments: [URL],
+        userContext: UserContext,
+        chatScope: GeneralChatScope?,
+        grantedApps: [String: String],
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)?,
+        onStatus: ((String) -> Void)?
+    ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+
+        let turn = await AgentToolRegistry.shared.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
+        defer { AgentToolRegistry.shared.endTurn(turn) }
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
+
+        var executedCommands: [ExecutedCommand] = []
+        var streamingUnavailable = false
+
+        var messages = adapter.buildMessages(
+            contextPrompt: contextPrompt, message: message,
+            history: history, imageAttachments: imageAttachments, recorder: recorder)
+
+        let allTools = await AgentToolRegistry.shared.schemas(format: adapter.toolFormat) + customTools
+        onStatus?("Found \(allTools.count) available tools; choosing the best route…")
+        recorder?.noteModel(adapter.model)
+        recorder?.noteToolsSent(TurnRecorder.toolNames(in: allTools))
+        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(allTools))
+
+        var roundsUsed = 0
+        var toolCallsSeen = 0
+        var progressTracker = ToolLoopProgressTracker()
+        defer {
+            AgentTurnDiagnostics.record(
+                model: adapter.model, toolsOffered: allTools.count,
+                rounds: roundsUsed, toolCalls: toolCallsSeen)
+        }
+
+        for _ in 0..<maxIterations {
+            if Task.isCancelled {
+                recorder?.noteStopReason("cancelled")
+                return ("Stopped.", executedCommands)
+            }
+            roundsUsed += 1
+            let body = adapter.buildBody(messages: messages, tools: allTools, contextPrompt: contextPrompt)
+            let roundStarted = ContinuousClock.now
+
+            var roundOutput: ToolRoundOutput?
+            if let onStream, !streamingUnavailable {
+                do {
+                    roundOutput = try await adapter.streamRound(body: body, onEvent: onStream)
+                } catch let error as AIServiceError {
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                    recorder?.noteFallback("stream_to_buffered")
+                }
+            }
+            if roundOutput == nil {
+                roundOutput = try await adapter.sendRound(body: body)
+            }
+            let result = roundOutput!
+
+            adapter.recordUsage(round: result)
+            adapter.noteRound(recorder, round: result, roundStarted: roundStarted)
+
+            switch result.outcome {
+            case .refusal(let partial):
+                recorder?.noteStopReason("refusal")
+                return (
+                    partial.isEmpty
+                        ? "The provider declined this request."
+                        : "The provider declined this request partway through:\n\n\(partial)",
+                    executedCommands
+                )
+
+            case .finalText(let text):
+                onStatus?("Preparing the final response…")
+                return (text.isEmpty ? "(no response)" : text, executedCommands)
+
+            case .toolCalls(let calls):
+                toolCallsSeen += calls.count
+                messages.append(result.assistantTurnDict)
+
+                var roundResults: [(success: Bool, output: String, exitCode: Int32?)] = []
+                for call in calls {
+                    var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
+                    if let route = AgentToolNarration.route(tool: call.name, arguments: call.arguments) {
+                        onStatus?(route)
+                    }
+                    onStatus?(AgentToolNarration.start(tool: call.name, arguments: call.arguments))
+                    if simulateAllTools {
+                        success = true
+                        output = "Simulated \(call.name) tool call"
+                        executedCommands.append(ExecutedCommand(command: call.name, output: output, success: true))
+                    } else if let dispatched = await AgentToolRegistry.shared.dispatch(
+                        name: call.name,
+                        arguments: call.arguments,
+                        context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
+                    ) {
+                        success = dispatched.success
+                        output = dispatched.output
+                        exitCode = dispatched.exitCode
+                        executedCommands.append(ExecutedCommand(
+                            command: dispatched.displayCommand,
+                            output: output,
+                            success: success,
+                            isVerification: call.name == "verify_outcome"))
+                        onStatus?(AgentToolNarration.finish(
+                            displayCommand: dispatched.displayCommand, success: success, output: output))
+                    } else {
+                        (success, output) = await dispatchCustomTool(
+                            name: call.name, arguments: call.arguments, turn: turn, chatScope: chatScope)
+                        executedCommands.append(ExecutedCommand(
+                            command: "\(call.name)(\(call.arguments))", output: output, success: success))
+                    }
+                    roundResults.append((success: success, output: output, exitCode: exitCode))
+                }
+
+                messages = adapter.appendToolResults(
+                    to: messages,
+                    calls: calls,
+                    results: roundResults.map { (success: $0.success, output: $0.output, exitCode: $0.exitCode) })
+
+                if progressTracker.recordRound(results: roundResults.map { (success: $0.success, output: $0.output) }) {
+                    recorder?.noteStopReason("no_progress")
+                    onStatus?("No progress after repeated attempts; answering with what is known…")
+                    return (
+                        executedCommands.isEmpty
+                            ? "I could not find what was requested after multiple attempts."
+                            : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
+                        executedCommands
+                    )
+                }
+                onStatus?("Understanding the returned tool data…")
+            }
+        }
+        recorder?.noteStopReason("step_limit")
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
+    }
+
     // MARK: - OpenAI / Ollama Tool Loop
 
     func sendOpenAIWithTools(
@@ -133,250 +299,15 @@ extension AIProviderService {
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
-
-        // A repeated call is only pointless *within* one turn. Asking the same question in
-        // the next message is the user asking again, and deserves a fresh reading.
-        //
-        // The turn also learns what the USER typed (their messages, never the model's) so the
-        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
-        // already in the prompt.
-        let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: TurnUserText.resolve(history: history, message: message),
-            promptBlocks: [contextPrompt, message],
-            startsPrivate: OutboundGate.isPrivateDataApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
-            startsUntrusted: OutboundGate.isThirdPartyContentApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
-        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
-        // record goes with it rather than sitting in the registry until age evicts it.
-        defer { AgentToolRegistry.shared.endTurn(turn) }
-        // This turn's record, if the turn log is on. Read once: it is a task-local.
-        let recorder = TurnRecorder.current
-        recorder?.notePass()
-
-        var executedCommands: [ExecutedCommand] = []
-        /// Set when a streaming attempt fails on an endpoint that turned out not to speak
-        /// SSE. Custom endpoints and subscription bridges vary; one buffered round is the
-        /// right answer to that, and asking again every round is not.
-        var streamingUnavailable = false
-
-        // Subscription bridges serve a coding agent with its own sandboxed tools; without this
-        // it "checks" the wrong filesystem instead of using the tools we hand it below.
-        var messages: [[String: Any]] = [
-            ["role": "system", "content": contextPrompt + OpenAICompatibleProviderAdapter.hostRuntimeNote]
-        ]
-        // Budgeted by size, not by a fixed count of turns, and told when something was
-        // left out — see ChatHistoryBudget.
-        let fittedHistory = ChatHistoryBudget.fit(history, provider: .openAI)
-        recorder?.notePromptSections([
-            "system": contextPrompt.count,
-            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
-            "message": message.count,
-        ])
-        for msg in fittedHistory {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-        // Vision: when the user attached/captured images, send the first user turn as a
-        // text+image content array so the model actually sees them (not just OCR text).
-        let openAIImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
-        if openAIImageBlocks.isEmpty {
-            messages.append(["role": "user", "content": message])
-        } else {
-            var content: [[String: Any]] = [["type": "text", "text": message]]
-            for block in openAIImageBlocks {
-                content.append([
-                    "type": "image_url",
-                    "image_url": ["url": "data:\(block.mediaType);base64,\(block.data)"],
-                ])
-            }
-            messages.append(["role": "user", "content": content])
-        }
-
-        let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
-        onStatus?("Found \(allTools.count) available tools; choosing the best route…")
-        recorder?.noteModel(model)
-        recorder?.noteToolsSent(TurnRecorder.toolNames(in: allTools))
-        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(allTools))
-        // Whether the endpoint even engages with tools is otherwise unknowable from the
-        // outside: a proxy that drops the `tools` field answers in one round with prose, and
-        // looks exactly like a model that chose not to call anything. One line per turn says
-        // which it was.
-        var roundsUsed = 0
-        var toolCallsSeen = 0
-        var progressTracker = ToolLoopProgressTracker()
-        defer {
-            AgentTurnDiagnostics.record(
-                model: model, toolsOffered: allTools.count,
-                rounds: roundsUsed, toolCalls: toolCallsSeen)
-        }
-
-        for _ in 0..<maxIterations {
-            // Stop is a decision the user already made. Without this check the loop kept
-            // going after Stop was pressed — running more tools, spending more tokens, and
-            // in a scoped chat still driving the app — because cancellation was only read
-            // once the whole loop had returned.
-            if Task.isCancelled {
-                recorder?.noteStopReason("cancelled")
-                return ("Stopped.", executedCommands)
-            }
-            roundsUsed += 1
-            var body: [String: Any] = [
-                "model": model,
-                "messages": messages,
-                "tools": allTools,
-                "tool_choice": "auto",
-                // No temperature: newer Claude models served through OpenAI-compatible
-                // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": ToolLoopBudget.maxTokens(for: transport.ledgerProvider)
-            ]
-            if apiKey == nil { body.removeValue(forKey: "max_tokens") }
-            let mayStream = onStream != nil && !streamingUnavailable
-            // A buffered round must say so explicitly: Ollama defaults `stream` to true and
-            // would otherwise answer a buffered request with an event stream the transport
-            // cannot decode.
-            if !mayStream { body["stream"] = false }
-            let roundStarted = ContinuousClock.now
-            var streamed: OpenAIToolResponse?
-            if mayStream, let onStream {
-                do {
-                    streamed = try await AIProviderStreaming.openAI(
-                        endpoint: endpoint,
-                        apiKey: apiKey,
-                        body: body,
-                        timeout: timeout,
-                        extraHeaders: extraHeaders,
-                        onEvent: onStream)
-                } catch let error as AIServiceError {
-                    // An authentication failure is the endpoint's real answer and is not
-                    // improved by asking again without streaming.
-                    if case .authenticationFailed = error { throw error }
-                    streamingUnavailable = true
-                    recorder?.noteFallback("stream_to_buffered")
-                }
-            }
-            let decoded: OpenAIToolResponse
-            if let streamed {
-                decoded = streamed
-            } else {
-                decoded = try await transport.send(
-                    endpoint: endpoint,
-                    apiKey: apiKey,
-                    body: body,
-                    timeout: timeout,
-                    extraHeaders: extraHeaders
-                )
-            }
-            // What the round cost, from the provider's own counters. Streamed rounds report
-            // nothing, and that is filed as nothing rather than as zero.
-            if let usage = decoded.usage {
-                AITokenLedger.shared.record(
-                    provider: transport.ledgerProvider, model: model,
-                    inputTokens: usage.prompt_tokens ?? 0,
-                    outputTokens: usage.completion_tokens ?? 0)
-            }
-            // prompt_tokens already includes the cached part, which is what the record means
-            // by input. A streamed round reports no usage and is recorded without counts.
-            recorder?.noteRound(
-                TurnTrace.Round(
-                    inputTokens: decoded.usage?.prompt_tokens,
-                    cacheReadTokens: decoded.usage?.prompt_tokens_details?.cached_tokens,
-                    outputTokens: decoded.usage?.completion_tokens,
-                    toolCalls: decoded.choices.first?.message.tool_calls?.map(\.function.name) ?? [],
-                    finishReasons: decoded.choices.first?.finish_reason.map { [$0] },
-                    streamed: streamed != nil,
-                    duration: TurnRecorder.seconds(since: roundStarted)))
-            guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
-
-            toolCallsSeen += choice.message.tool_calls?.count ?? 0
-            if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
-                var assistantMsg: [String: Any] = ["role": "assistant"]
-                if let content = choice.message.content { assistantMsg["content"] = content }
-                assistantMsg["tool_calls"] = toolCalls.map { tc -> [String: Any] in
-                    ["id": tc.id, "type": tc.type, "function": ["name": tc.function.name, "arguments": tc.function.arguments]]
-                }
-                messages.append(assistantMsg)
-
-                var roundResults: [(success: Bool, output: String)] = []
-                for tc in toolCalls {
-                    guard let argsData = tc.function.arguments.data(using: .utf8),
-                          let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                    else {
-                        roundResults.append((success: false, output: "Malformed arguments"))
-                        continue
-                    }
-
-                    var (success, output): (Bool, String) = (false, "")
-                    var exitCode: Int32?
-                    // Say what is about to run, before it runs. Everything needed for this
-                    // was already here and none of it was published — see AgentToolNarration.
-                    if let route = AgentToolNarration.route(tool: tc.function.name, arguments: args) { onStatus?(route) }
-                    onStatus?(AgentToolNarration.start(tool: tc.function.name, arguments: args))
-                    if simulateAllTools {
-                        success = true
-                        output = "Simulated \(tc.function.name) tool call"
-                        executedCommands.append(ExecutedCommand(command: tc.function.name, output: output, success: true))
-                    } else if let result = await AgentToolRegistry.shared.dispatch(
-                        name: tc.function.name,
-                        arguments: args,
-                        context: AgentToolContext(
-                            commandExecutor: commandExecutor, userContext: userContext,
-                            userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
-                    ) {
-                        success = result.success
-                        output = result.output
-                        exitCode = result.exitCode
-                        executedCommands.append(ExecutedCommand(
-                            command: result.displayCommand,
-                            output: output,
-                            success: success,
-                            isVerification: tc.function.name == "verify_outcome"))
-                        onStatus?(
-                            AgentToolNarration.finish(
-                                displayCommand: result.displayCommand, success: success,
-                                output: output))
-                    } else {
-                        // Not a registered tool — an L2 extension, resolved by name at run time.
-                        (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args, turn: turn, chatScope: chatScope)
-                        executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
-                    }
-                    roundResults.append((success: success, output: output))
-                    messages.append([
-                        "role": "tool", "tool_call_id": tc.id,
-                        "content": AgentToolTranscript.payload(
-                            success: success, output: output, exitCode: exitCode),
-                    ])
-                }
-                if progressTracker.recordRound(results: roundResults) {
-                    recorder?.noteStopReason("no_progress")
-                    onStatus?("No progress after repeated attempts; answering with what is known…")
-                    return (
-                        executedCommands.isEmpty
-                            ? "I could not find what was requested after multiple attempts."
-                            : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
-                        executedCommands
-                    )
-                }
-                onStatus?("Understanding the returned tool data…")
-            } else {
-                onStatus?("Preparing the final response…")
-                return (choice.message.content ?? "(no response)", executedCommands)
-            }
-        }
-        // The loop ran out of steps with the model still calling tools. "Commands completed"
-        // read as success and hid that: the user was told the work was done when the turn had
-        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
-        // actually ran.
-        recorder?.noteStopReason("step_limit")
-        return (
-            executedCommands.isEmpty
-                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
-                    + "again with a narrower request."
-                : "I hit this turn's step limit before finishing. What ran so far is listed "
-                    + "below — ask me to continue if that is not enough.",
-            executedCommands
-        )
+        let adapter = OpenAILoopAdapter(
+            apiKey: apiKey, endpoint: endpoint, timeout: timeout,
+            extraHeaders: extraHeaders, transport: transport, modelName: model)
+        return try await runToolLoop(
+            adapter: adapter, message: message, contextPrompt: contextPrompt,
+            history: history, commandExecutor: commandExecutor, customTools: customTools,
+            maxIterations: maxIterations, imageAttachments: imageAttachments,
+            userContext: userContext, chatScope: chatScope, grantedApps: grantedApps,
+            simulateAllTools: simulateAllTools, onStream: onStream, onStatus: onStatus)
     }
 
     // MARK: - Anthropic Tool Loop
@@ -398,266 +329,13 @@ extension AIProviderService {
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
-
-        // A repeated call is only pointless *within* one turn. Asking the same question in
-        // the next message is the user asking again, and deserves a fresh reading.
-        //
-        // The turn also learns what the USER typed (their messages, never the model's) so the
-        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
-        // already in the prompt.
-        let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: TurnUserText.resolve(history: history, message: message),
-            promptBlocks: [contextPrompt, message],
-            startsPrivate: OutboundGate.isPrivateDataApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
-            startsUntrusted: OutboundGate.isThirdPartyContentApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
-        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
-        // record goes with it rather than sitting in the registry until age evicts it.
-        defer { AgentToolRegistry.shared.endTurn(turn) }
-        // This turn's record, if the turn log is on. Read once: it is a task-local.
-        let recorder = TurnRecorder.current
-        recorder?.notePass()
-
-        var executedCommands: [ExecutedCommand] = []
-        var streamingUnavailable = false
-
-        var messages: [[String: Any]] = []
-        let fittedHistory = ChatHistoryBudget.fit(history, provider: .anthropic)
-        recorder?.notePromptSections([
-            "system": contextPrompt.count,
-            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
-            "message": message.count,
-        ])
-        for msg in fittedHistory {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-        // Vision: attach captured/uploaded images as image blocks before the text so the
-        // model sees them, not just their OCR text.
-        let anthropicImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
-        if anthropicImageBlocks.isEmpty {
-            messages.append(["role": "user", "content": message])
-        } else {
-            var content: [[String: Any]] = anthropicImageBlocks.map { block in
-                [
-                    "type": "image",
-                    "source": [
-                        "type": "base64", "media_type": block.mediaType, "data": block.data,
-                    ],
-                ]
-            }
-            content.append(["type": "text", "text": message])
-            messages.append(["role": "user", "content": content])
-        }
-
-        let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
-
-        let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
-        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
-        recorder?.noteModel(model)
-        recorder?.noteToolsSent(TurnRecorder.toolNames(in: registryTools + customTools))
-        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
-        var roundsUsed = 0
-        var toolCallsSeen = 0
-        var progressTracker = ToolLoopProgressTracker()
-        defer {
-            AgentTurnDiagnostics.record(
-                model: model, toolsOffered: registryTools.count + customTools.count,
-                rounds: roundsUsed, toolCalls: toolCallsSeen)
-        }
-
-        for _ in 0..<maxIterations {
-            // Stop is a decision the user already made. Without this check the loop kept
-            // going after Stop was pressed — running more tools, spending more tokens, and
-            // in a scoped chat still driving the app — because cancellation was only read
-            // once the whole loop had returned.
-            if Task.isCancelled {
-                recorder?.noteStopReason("cancelled")
-                return ("Stopped.", executedCommands)
-            }
-            // Prompt caching. Every iteration re-sends the same system prompt and tool set
-            // plus the whole conversation so far; the breakpoint on the last system block
-            // covers tools + system (they render first), and the one on the newest message
-            // extends the cached span over the history. Markers go on this copy only —
-            // writing them back into `messages` would add one per iteration and blow the
-            // 4-breakpoint limit.
-            var body: [String: Any] = [
-                "model": model,
-                "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
-                "messages": AnthropicPromptCache.markingLastBlock(messages),
-                "tools": registryTools + customTools,
-                // 1024 was far too small for an agentic loop: on models that think by default
-                // it caps thinking AND the reply together, so answers were cut mid-sentence
-                // and a truncated tool_use block ended the loop with no error.
-                "max_tokens": ToolLoopBudget.maxTokens(for: .anthropic),
-            ]
-            if usesAdaptiveThinking {
-                // Claude decides how much to think per step. `effort` is the depth/spend dial;
-                // high is the right floor for tool-driven work.
-                body["thinking"] = ["type": "adaptive"]
-                body["output_config"] = ["effort": "high"]
-            }
-            let roundStarted = ContinuousClock.now
-            var streamed: AnthropicToolResponse?
-            if onStream != nil, !streamingUnavailable, let onStream {
-                do {
-                    streamed = try await AIProviderStreaming.anthropic(
-                        apiKey: apiKey, body: body, onEvent: onStream)
-                } catch let error as AIServiceError {
-                    if case .authenticationFailed = error { throw error }
-                    streamingUnavailable = true
-                    recorder?.noteFallback("stream_to_buffered")
-                }
-            }
-            let decoded: AnthropicToolResponse
-            if let streamed {
-                decoded = streamed
-            } else {
-                decoded = try await AnthropicToolProviderAdapter().send(
-                    apiKey: apiKey, body: body)
-            }
-            AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
-            if let usage = decoded.usage {
-                AITokenLedger.shared.record(
-                    provider: .anthropic, model: model,
-                    inputTokens: usage.input_tokens ?? 0,
-                    cachedInputTokens: (usage.cache_read_input_tokens ?? 0)
-                        + (usage.cache_creation_input_tokens ?? 0),
-                    outputTokens: usage.output_tokens ?? 0)
-            }
-            roundsUsed += 1
-            let textBlocks   = decoded.content.filter { $0.type == "text" }
-            let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
-            toolCallsSeen += toolUseBlocks.count
-            recorder?.noteRound(
-                .anthropicShaped(
-                    uncachedInput: decoded.usage?.input_tokens,
-                    cacheRead: decoded.usage?.cache_read_input_tokens,
-                    cacheWrite: decoded.usage?.cache_creation_input_tokens,
-                    output: decoded.usage?.output_tokens,
-                    toolCalls: toolUseBlocks.compactMap(\.name),
-                    finishReason: decoded.stop_reason,
-                    streamed: streamed != nil,
-                    duration: TurnRecorder.seconds(since: roundStarted)))
-
-            // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
-            // empty or partial, so reading it as an answer produces a blank or half reply.
-            if decoded.stop_reason == "refusal" {
-                recorder?.noteStopReason("refusal")
-                let partial = textBlocks.compactMap { $0.text }.joined(separator: "\n")
-                return (
-                    partial.isEmpty
-                        ? "The provider declined this request."
-                        : "The provider declined this request partway through:\n\n\(partial)",
-                    executedCommands
-                )
-            }
-
-            if toolUseBlocks.isEmpty {
-                let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
-                onStatus?("Preparing the final response…")
-                return (text.isEmpty ? "(no response)" : text, executedCommands)
-            }
-
-            // Echo the full assistant content array back. Thinking blocks must round-trip
-            // unchanged (signature included) or the next turn is rejected — dropping them is
-            // what makes adaptive thinking break a tool loop instead of improving it.
-            let assistantBlocks: [[String: Any]] = decoded.content.map { block in
-                var d: [String: Any] = ["type": block.type]
-                if let t = block.text  { d["text"] = t }
-                if let id = block.id   { d["id"] = id }
-                if let n = block.name  { d["name"] = n }
-                if let input = block.input { d["input"] = input.mapValues { $0.value } }
-                if let thinking = block.thinking { d["thinking"] = thinking }
-                if let signature = block.signature { d["signature"] = signature }
-                if let data = block.data { d["data"] = data }
-                return d
-            }
-            messages.append(["role": "assistant", "content": assistantBlocks])
-
-            var roundResults: [(success: Bool, output: String)] = []
-            var resultBlocks: [[String: Any]] = []
-            for block in toolUseBlocks {
-                guard let toolId = block.id,
-                      let toolName = block.name,
-                      let inputDict = block.input
-                else {
-                    roundResults.append((success: false, output: "Malformed tool block"))
-                    continue
-                }
-
-                let args = inputDict.mapValues { $0.value }
-                var (success, output): (Bool, String) = (false, "")
-                    var exitCode: Int32?
-
-                if let route = AgentToolNarration.route(tool: toolName, arguments: args) { onStatus?(route) }
-                    onStatus?(AgentToolNarration.start(tool: toolName, arguments: args))
-                if simulateAllTools {
-                    success = true
-                    output = "Simulated \(toolName) tool call"
-                    executedCommands.append(ExecutedCommand(command: toolName, output: output, success: true))
-                } else if let result = await AgentToolRegistry.shared.dispatch(
-                    name: toolName,
-                    arguments: args,
-                        context: AgentToolContext(
-                            commandExecutor: commandExecutor, userContext: userContext,
-                            userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
-                ) {
-                    success = result.success
-                    output = result.output
-                    exitCode = result.exitCode
-                    executedCommands.append(ExecutedCommand(
-                        command: result.displayCommand,
-                        output: output,
-                        success: success,
-                        isVerification: toolName == "verify_outcome"))
-                    onStatus?(
-                        AgentToolNarration.finish(
-                            displayCommand: result.displayCommand, success: success,
-                            output: output))
-                } else {
-                    // Not a registered tool — an L2 extension, resolved by name at run time.
-                    (success, output) = await dispatchCustomTool(name: toolName, arguments: args, turn: turn, chatScope: chatScope)
-                    executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
-                }
-
-                roundResults.append((success: success, output: output))
-                resultBlocks.append([
-                    "type": "tool_result",
-                    "tool_use_id": toolId,
-                    "is_error": !success,
-                    "content": AgentToolTranscript.payload(
-                        success: success, output: output, exitCode: exitCode),
-                ])
-            }
-            messages.append(["role": "user", "content": resultBlocks])
-            if progressTracker.recordRound(results: roundResults) {
-                recorder?.noteStopReason("no_progress")
-                onStatus?("No progress after repeated attempts; answering with what is known…")
-                return (
-                    executedCommands.isEmpty
-                        ? "I could not find what was requested after multiple attempts."
-                        : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
-                    executedCommands
-                )
-            }
-            onStatus?("Understanding the returned tool data…")
-        }
-        // The loop ran out of steps with the model still calling tools. "Commands completed"
-        // read as success and hid that: the user was told the work was done when the turn had
-        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
-        // actually ran.
-        recorder?.noteStopReason("step_limit")
-        return (
-            executedCommands.isEmpty
-                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
-                    + "again with a narrower request."
-                : "I hit this turn's step limit before finishing. What ran so far is listed "
-                    + "below — ask me to continue if that is not enough.",
-            executedCommands
-        )
+        let adapter = AnthropicLoopAdapter(apiKey: apiKey, modelName: model)
+        return try await runToolLoop(
+            adapter: adapter, message: message, contextPrompt: contextPrompt,
+            history: history, commandExecutor: commandExecutor, customTools: customTools,
+            maxIterations: maxIterations, imageAttachments: imageAttachments,
+            userContext: userContext, chatScope: chatScope, grantedApps: grantedApps,
+            simulateAllTools: simulateAllTools, onStream: onStream, onStatus: onStatus)
     }
 
     // MARK: - Gemini Tool Loop
@@ -678,30 +356,370 @@ extension AIProviderService {
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+        let adapter = GeminiLoopAdapter(apiKey: apiKey)
+        return try await runToolLoop(
+            adapter: adapter, message: message, contextPrompt: contextPrompt,
+            history: history, commandExecutor: commandExecutor, customTools: customTools,
+            maxIterations: maxIterations, imageAttachments: imageAttachments,
+            userContext: userContext, chatScope: chatScope, grantedApps: grantedApps,
+            simulateAllTools: simulateAllTools, onStream: onStream, onStatus: onStatus)
+    }
+}
 
-        // A repeated call is only pointless *within* one turn. Asking the same question in
-        // the next message is the user asking again, and deserves a fresh reading.
-        //
-        // The turn also learns what the USER typed (their messages, never the model's) so the
-        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
-        // already in the prompt.
-        let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: TurnUserText.resolve(history: history, message: message),
-            promptBlocks: [contextPrompt, message],
-            startsPrivate: OutboundGate.isPrivateDataApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
-            startsUntrusted: OutboundGate.isThirdPartyContentApp(
-                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
-        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
-        // record goes with it rather than sitting in the registry until age evicts it.
-        defer { AgentToolRegistry.shared.endTurn(turn) }
-        // This turn's record, if the turn log is on. Read once: it is a task-local.
-        let recorder = TurnRecorder.current
-        recorder?.notePass()
+// MARK: - OpenAI Adapter
 
-        var executedCommands: [ExecutedCommand] = []
-        var streamingUnavailable = false
+struct OpenAILoopAdapter: ToolLoopAdapter {
+    let apiKey: String?
+    let endpoint: String
+    let timeout: TimeInterval
+    let extraHeaders: [String: String]
+    let transport: any OpenAIToolTransport
+    let modelName: String
 
+    var toolFormat: AgentToolRegistry.SchemaFormat { .openAI }
+    var provider: AIProvider { transport.ledgerProvider }
+    var model: String { modelName }
+
+    func buildMessages(
+        contextPrompt: String, message: String, history: [ChatMessage],
+        imageAttachments: [URL], recorder: TurnRecorder?
+    ) -> [[String: Any]] {
+        // Subscription bridges serve a coding agent with its own sandboxed tools; without this
+        // it "checks" the wrong filesystem instead of using the tools we hand it below.
+        var messages: [[String: Any]] = [
+            ["role": "system", "content": contextPrompt + OpenAICompatibleProviderAdapter.hostRuntimeNote]
+        ]
+        let fittedHistory = ChatHistoryBudget.fit(history, provider: .openAI)
+        recorder?.notePromptSections([
+            "system": contextPrompt.count,
+            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
+            "message": message.count,
+        ])
+        for msg in fittedHistory {
+            messages.append(["role": msg.role.rawValue, "content": msg.content])
+        }
+        // Vision: when the user attached/captured images, send the first user turn as a
+        // text+image content array so the model actually sees them (not just OCR text).
+        let imageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if imageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = [["type": "text", "text": message]]
+            for block in imageBlocks {
+                content.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:\(block.mediaType);base64,\(block.data)"],
+                ])
+            }
+            messages.append(["role": "user", "content": content])
+        }
+        return messages
+    }
+
+    func buildBody(messages: [[String: Any]], tools: [[String: Any]], contextPrompt: String) -> [String: Any] {
+        var body: [String: Any] = [
+            "model": modelName,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            // No temperature: newer Claude models served through OpenAI-compatible
+            // proxies reject sampling parameters with HTTP 400.
+            "max_tokens": ToolLoopBudget.maxTokens(for: transport.ledgerProvider),
+        ]
+        if apiKey == nil { body.removeValue(forKey: "max_tokens") }
+        return body
+    }
+
+    func sendRound(body: [String: Any]) async throws -> ToolRoundOutput {
+        // A buffered round must say so explicitly: Ollama defaults `stream` to true and
+        // would otherwise answer a buffered request with an event stream the transport
+        // cannot decode.
+        var body = body
+        body["stream"] = false
+        let decoded = try await transport.send(
+            endpoint: endpoint, apiKey: apiKey, body: body,
+            timeout: timeout, extraHeaders: extraHeaders)
+        return try normalize(decoded, streamed: false)
+    }
+
+    func streamRound(
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
+    ) async throws -> ToolRoundOutput {
+        let decoded = try await AIProviderStreaming.openAI(
+            endpoint: endpoint, apiKey: apiKey, body: body,
+            timeout: timeout, extraHeaders: extraHeaders, onEvent: onEvent)
+        return try normalize(decoded, streamed: true)
+    }
+
+    private func normalize(_ decoded: OpenAIToolResponse, streamed: Bool) throws -> ToolRoundOutput {
+        guard let choice = decoded.choices.first else {
+            throw AIServiceError.emptyResponse("No response")
+        }
+        // What the round cost, from the provider's own counters. Streamed rounds report
+        // nothing, and that is filed as nothing rather than as zero.
+        let usage = decoded.usage.map { u in
+            ToolRoundUsage(
+                inputTokens: u.prompt_tokens,
+                cacheReadTokens: u.prompt_tokens_details?.cached_tokens,
+                cacheWriteTokens: nil,
+                outputTokens: u.completion_tokens)
+        }
+        let finishReasons = choice.finish_reason.map { [$0] }
+        if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
+            var assistantMsg: [String: Any] = ["role": "assistant"]
+            if let content = choice.message.content { assistantMsg["content"] = content }
+            assistantMsg["tool_calls"] = toolCalls.map { tc -> [String: Any] in
+                ["id": tc.id, "type": tc.type,
+                 "function": ["name": tc.function.name, "arguments": tc.function.arguments]]
+            }
+            // Malformed calls (unparseable JSON args) are dropped from dispatch;
+            // the assistant turn dict still carries the raw call so the loop history is intact.
+            let calls: [NormalizedToolCall] = toolCalls.compactMap { tc in
+                guard let argsData = tc.function.arguments.data(using: .utf8),
+                      let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+                else { return nil }
+                return NormalizedToolCall(id: tc.id, name: tc.function.name, arguments: args)
+            }
+            return ToolRoundOutput(
+                outcome: .toolCalls(calls), usage: usage,
+                finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantMsg)
+        }
+        return ToolRoundOutput(
+            outcome: .finalText(choice.message.content ?? ""), usage: usage,
+            finishReasons: finishReasons, streamed: streamed, assistantTurnDict: [:])
+    }
+
+    func appendToolResults(
+        to messages: [[String: Any]], calls: [NormalizedToolCall],
+        results: [(success: Bool, output: String, exitCode: Int32?)]
+    ) -> [[String: Any]] {
+        // assistantTurnDict already appended by runToolLoop before this call.
+        var messages = messages
+        for (call, result) in zip(calls, results) {
+            messages.append([
+                "role": "tool", "tool_call_id": call.id,
+                "content": AgentToolTranscript.payload(
+                    success: result.success, output: result.output, exitCode: result.exitCode),
+            ])
+        }
+        return messages
+    }
+
+    func recordUsage(round: ToolRoundOutput) {
+        guard let usage = round.usage else { return }
+        // prompt_tokens already includes the cached part, which is what the record means by input.
+        // A streamed round reports no usage and is recorded without counts.
+        AITokenLedger.shared.record(
+            provider: transport.ledgerProvider, model: modelName,
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0)
+    }
+
+    func noteRound(_ recorder: TurnRecorder?, round: ToolRoundOutput, roundStarted: ContinuousClock.Instant) {
+        recorder?.noteRound(TurnTrace.Round(
+            inputTokens: round.usage?.inputTokens,
+            cacheReadTokens: round.usage?.cacheReadTokens,
+            outputTokens: round.usage?.outputTokens,
+            toolCalls: round.outcome.toolCallNames,
+            finishReasons: round.finishReasons,
+            streamed: round.streamed,
+            duration: TurnRecorder.seconds(since: roundStarted)))
+    }
+}
+
+// MARK: - Anthropic Adapter
+
+struct AnthropicLoopAdapter: ToolLoopAdapter {
+    let apiKey: String
+    let modelName: String
+
+    var toolFormat: AgentToolRegistry.SchemaFormat { .anthropic }
+    var provider: AIProvider { .anthropic }
+    var model: String { modelName }
+
+    func buildMessages(
+        contextPrompt: String, message: String, history: [ChatMessage],
+        imageAttachments: [URL], recorder: TurnRecorder?
+    ) -> [[String: Any]] {
+        // System prompt goes in the body, not messages, for Anthropic.
+        var messages: [[String: Any]] = []
+        let fittedHistory = ChatHistoryBudget.fit(history, provider: .anthropic)
+        recorder?.notePromptSections([
+            "system": contextPrompt.count,
+            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
+            "message": message.count,
+        ])
+        for msg in fittedHistory {
+            messages.append(["role": msg.role.rawValue, "content": msg.content])
+        }
+        // Vision: attach captured/uploaded images as image blocks before the text so the
+        // model sees them, not just their OCR text.
+        let imageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if imageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = imageBlocks.map { block in
+                ["type": "image",
+                 "source": ["type": "base64", "media_type": block.mediaType, "data": block.data]]
+            }
+            content.append(["type": "text", "text": message])
+            messages.append(["role": "user", "content": content])
+        }
+        return messages
+    }
+
+    func buildBody(messages: [[String: Any]], tools: [[String: Any]], contextPrompt: String) -> [String: Any] {
+        // Prompt caching. Every iteration re-sends the same system prompt and tool set
+        // plus the whole conversation so far; the breakpoint on the last system block
+        // covers tools + system (they render first), and the one on the newest message
+        // extends the cached span over the history. Markers go on this copy only —
+        // writing them back into `messages` would add one per iteration and blow the
+        // 4-breakpoint limit.
+        var body: [String: Any] = [
+            "model": modelName,
+            "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
+            "messages": AnthropicPromptCache.markingLastBlock(messages),
+            "tools": tools,
+            // 1024 was far too small for an agentic loop: on models that think by default
+            // it caps thinking AND the reply together, so answers were cut mid-sentence
+            // and a truncated tool_use block ended the loop with no error.
+            "max_tokens": ToolLoopBudget.maxTokens(for: .anthropic),
+        ]
+        if AnthropicModelCatalog.supportsAdaptiveThinking(modelName) {
+            // Claude decides how much to think per step. `effort` is the depth/spend dial;
+            // high is the right floor for tool-driven work.
+            body["thinking"] = ["type": "adaptive"]
+            body["output_config"] = ["effort": "high"]
+        }
+        return body
+    }
+
+    func sendRound(body: [String: Any]) async throws -> ToolRoundOutput {
+        let decoded = try await AnthropicToolProviderAdapter().send(apiKey: apiKey, body: body)
+        AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
+        return normalize(decoded, streamed: false)
+    }
+
+    func streamRound(
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
+    ) async throws -> ToolRoundOutput {
+        let decoded = try await AIProviderStreaming.anthropic(
+            apiKey: apiKey, body: body, onEvent: onEvent)
+        AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
+        return normalize(decoded, streamed: true)
+    }
+
+    private func normalize(_ decoded: AnthropicToolResponse, streamed: Bool) -> ToolRoundOutput {
+        let usage = decoded.usage.map { u in
+            ToolRoundUsage(
+                inputTokens: u.input_tokens,
+                cacheReadTokens: u.cache_read_input_tokens,
+                cacheWriteTokens: u.cache_creation_input_tokens,
+                outputTokens: u.output_tokens)
+        }
+        let textBlocks = decoded.content.filter { $0.type == "text" }
+        let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
+
+        // Echo the full assistant content array back. Thinking blocks must round-trip
+        // unchanged (signature included) or the next turn is rejected — dropping them is
+        // what makes adaptive thinking break a tool loop instead of improving it.
+        let assistantBlocks: [[String: Any]] = decoded.content.map { block in
+            var d: [String: Any] = ["type": block.type]
+            if let t = block.text { d["text"] = t }
+            if let id = block.id { d["id"] = id }
+            if let n = block.name { d["name"] = n }
+            if let input = block.input { d["input"] = input.mapValues { $0.value } }
+            if let thinking = block.thinking { d["thinking"] = thinking }
+            if let signature = block.signature { d["signature"] = signature }
+            if let data = block.data { d["data"] = data }
+            return d
+        }
+        let assistantTurnDict: [String: Any] = ["role": "assistant", "content": assistantBlocks]
+        let finishReasons = decoded.stop_reason.map { [$0] }
+
+        // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
+        // empty or partial, so reading it as an answer produces a blank or half reply.
+        if decoded.stop_reason == "refusal" {
+            let partial = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+            return ToolRoundOutput(
+                outcome: .refusal(partial), usage: usage,
+                finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantTurnDict)
+        }
+
+        if toolUseBlocks.isEmpty {
+            let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+            return ToolRoundOutput(
+                outcome: .finalText(text), usage: usage,
+                finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantTurnDict)
+        }
+
+        // Malformed tool blocks (missing id/name/input) are dropped from dispatch.
+        let calls: [NormalizedToolCall] = toolUseBlocks.compactMap { block in
+            guard let id = block.id, let name = block.name, let inputDict = block.input else {
+                return nil
+            }
+            return NormalizedToolCall(id: id, name: name, arguments: inputDict.mapValues { $0.value })
+        }
+        return ToolRoundOutput(
+            outcome: .toolCalls(calls), usage: usage,
+            finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantTurnDict)
+    }
+
+    func appendToolResults(
+        to messages: [[String: Any]], calls: [NormalizedToolCall],
+        results: [(success: Bool, output: String, exitCode: Int32?)]
+    ) -> [[String: Any]] {
+        // assistantTurnDict (with thinking blocks) already appended by runToolLoop.
+        var messages = messages
+        var resultBlocks: [[String: Any]] = []
+        for (call, result) in zip(calls, results) {
+            resultBlocks.append([
+                "type": "tool_result",
+                "tool_use_id": call.id,
+                "is_error": !result.success,
+                "content": AgentToolTranscript.payload(
+                    success: result.success, output: result.output, exitCode: result.exitCode),
+            ])
+        }
+        messages.append(["role": "user", "content": resultBlocks])
+        return messages
+    }
+
+    func recordUsage(round: ToolRoundOutput) {
+        guard let usage = round.usage else { return }
+        AITokenLedger.shared.record(
+            provider: .anthropic, model: modelName,
+            inputTokens: usage.inputTokens ?? 0,
+            cachedInputTokens: (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
+            outputTokens: usage.outputTokens ?? 0)
+    }
+
+    func noteRound(_ recorder: TurnRecorder?, round: ToolRoundOutput, roundStarted: ContinuousClock.Instant) {
+        recorder?.noteRound(.anthropicShaped(
+            uncachedInput: round.usage?.inputTokens,
+            cacheRead: round.usage?.cacheReadTokens,
+            cacheWrite: round.usage?.cacheWriteTokens,
+            output: round.usage?.outputTokens,
+            toolCalls: round.outcome.toolCallNames,
+            finishReason: round.finishReasons?.first,
+            streamed: round.streamed,
+            duration: TurnRecorder.seconds(since: roundStarted)))
+    }
+}
+
+// MARK: - Gemini Adapter
+
+struct GeminiLoopAdapter: ToolLoopAdapter {
+    let apiKey: String
+
+    var toolFormat: AgentToolRegistry.SchemaFormat { .gemini }
+    var provider: AIProvider { .googleGemini }
+    var model: String { AppSettings.shared.selectedGeminiModel }
+
+    func buildMessages(
+        contextPrompt: String, message: String, history: [ChatMessage],
+        imageAttachments: [URL], recorder: TurnRecorder?
+    ) -> [[String: Any]] {
         var contents: [[String: Any]] = [
             ["role": "user",  "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood. I'll help with the context provided."]]]
@@ -717,173 +735,123 @@ extension AIProviderService {
             contents.append(["role": role, "parts": [["text": msg.content]]])
         }
         // Vision: add inline image parts alongside the text so Gemini sees the captures.
-        let geminiImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        let imageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
         var userParts: [[String: Any]] = [["text": message]]
-        for block in geminiImageBlocks {
+        for block in imageBlocks {
             userParts.append(["inline_data": ["mime_type": block.mediaType, "data": block.data]])
         }
         contents.append(["role": "user", "parts": userParts])
+        return contents
+    }
 
-        let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
-        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
-        recorder?.noteModel(AppSettings.shared.selectedGeminiModel)
-        recorder?.noteToolsSent(TurnRecorder.toolNames(in: registryTools + customTools))
-        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
-        var progressTracker = ToolLoopProgressTracker()
+    func buildBody(messages: [[String: Any]], tools: [[String: Any]], contextPrompt: String) -> [String: Any] {
+        [
+            "contents": messages,
+            "tools": [["function_declarations": tools]],
+            "generationConfig": [
+                "temperature": 0.7,
+                "maxOutputTokens": ToolLoopBudget.maxTokens(for: .googleGemini),
+            ],
+        ]
+    }
 
-        for _ in 0..<maxIterations {
-            // Stop is a decision the user already made. Without this check the loop kept
-            // going after Stop was pressed — running more tools, spending more tokens, and
-            // in a scoped chat still driving the app — because cancellation was only read
-            // once the whole loop had returned.
-            if Task.isCancelled {
-                recorder?.noteStopReason("cancelled")
-                return ("Stopped.", executedCommands)
-            }
-            let body: [String: Any] = [
-                "contents": contents,
-                "tools": [["function_declarations": registryTools]]
-                    + customTools.map { ["function_declarations": [$0]] },
-                "generationConfig": [
-                    "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens(for: .googleGemini),
-                ],
-            ]
-            let geminiModel = AppSettings.shared.selectedGeminiModel
-            let roundStarted = ContinuousClock.now
-            var streamed: GeminiToolResponse?
-            if onStream != nil, !streamingUnavailable, let onStream {
-                do {
-                    streamed = try await AIProviderStreaming.gemini(
-                        apiKey: apiKey, body: body, model: geminiModel, onEvent: onStream)
-                } catch let error as AIServiceError {
-                    if case .authenticationFailed = error { throw error }
-                    streamingUnavailable = true
-                    recorder?.noteFallback("stream_to_buffered")
-                }
-            }
-            let decoded: GeminiToolResponse
-            if let streamed {
-                decoded = streamed
-            } else {
-                decoded = try await GeminiToolProviderAdapter().send(
-                    apiKey: apiKey, body: body, model: geminiModel)
-            }
-            if let usage = decoded.usageMetadata {
-                AITokenLedger.shared.record(
-                    provider: .googleGemini,
-                    model: AppSettings.shared.selectedGeminiModel,
-                    inputTokens: usage.promptTokenCount ?? 0,
-                    cachedInputTokens: usage.cachedContentTokenCount ?? 0,
-                    outputTokens: usage.candidatesTokenCount ?? 0)
-            }
-            // promptTokenCount already includes the cached part.
-            recorder?.noteRound(
-                TurnTrace.Round(
-                    inputTokens: decoded.usageMetadata?.promptTokenCount,
-                    cacheReadTokens: decoded.usageMetadata?.cachedContentTokenCount,
-                    outputTokens: decoded.usageMetadata?.candidatesTokenCount,
-                    toolCalls: decoded.candidates.first?.content.parts
-                        .compactMap { $0.functionCall?.name } ?? [],
-                    finishReasons: decoded.candidates.first?.finishReason.map { [$0] },
-                    streamed: streamed != nil,
-                    duration: TurnRecorder.seconds(since: roundStarted)))
-            guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
+    func sendRound(body: [String: Any]) async throws -> ToolRoundOutput {
+        let geminiModel = AppSettings.shared.selectedGeminiModel
+        let decoded = try await GeminiToolProviderAdapter().send(
+            apiKey: apiKey, body: body, model: geminiModel)
+        return try normalize(decoded, streamed: false)
+    }
 
-            let textParts     = candidate.content.parts.filter { $0.text != nil }
-            let functionParts = candidate.content.parts.filter { $0.functionCall != nil }
+    func streamRound(
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
+    ) async throws -> ToolRoundOutput {
+        let geminiModel = AppSettings.shared.selectedGeminiModel
+        let decoded = try await AIProviderStreaming.gemini(
+            apiKey: apiKey, body: body, model: geminiModel, onEvent: onEvent)
+        return try normalize(decoded, streamed: true)
+    }
 
-            if functionParts.isEmpty {
-                let text = textParts.compactMap { $0.text }.joined(separator: "\n")
-                onStatus?("Preparing the final response…")
-                return (text.isEmpty ? "(no response)" : text, executedCommands)
-            }
-
-            // Echo model turn
-            let modelParts: [[String: Any]] = candidate.content.parts.map { part in
-                if let fc = part.functionCall {
-                    return ["functionCall": ["name": fc.name, "args": fc.args.mapValues { $0.value }]]
-                }
-                return ["text": part.text ?? ""]
-            }
-            contents.append(["role": "model", "parts": modelParts])
-
-            var roundResults: [(success: Bool, output: String)] = []
-            var functionResultParts: [[String: Any]] = []
-            for part in functionParts {
-                guard let fc = part.functionCall else { continue }
-                let args = fc.args.mapValues { $0.value }
-
-                var (success, output): (Bool, String) = (false, "")
-                    var exitCode: Int32?
-                if let route = AgentToolNarration.route(tool: fc.name, arguments: args) { onStatus?(route) }
-                    onStatus?(AgentToolNarration.start(tool: fc.name, arguments: args))
-                if simulateAllTools {
-                    success = true
-                    output = "Simulated \(fc.name) tool call"
-                    executedCommands.append(ExecutedCommand(command: fc.name, output: output, success: true))
-                } else if let result = await AgentToolRegistry.shared.dispatch(
-                    name: fc.name,
-                    arguments: args,
-                        context: AgentToolContext(
-                            commandExecutor: commandExecutor, userContext: userContext,
-                            userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
-                ) {
-                    success = result.success
-                    output = result.output
-                    exitCode = result.exitCode
-                    executedCommands.append(ExecutedCommand(
-                        command: result.displayCommand,
-                        output: output,
-                        success: success,
-                        isVerification: fc.name == "verify_outcome"))
-                    onStatus?(
-                        AgentToolNarration.finish(
-                            displayCommand: result.displayCommand, success: success,
-                            output: output))
-                } else {
-                    // Not a registered tool — an L2 extension, resolved by name at run time.
-                    (success, output) = await dispatchCustomTool(name: fc.name, arguments: args, turn: turn, chatScope: chatScope)
-                    executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
-                }
-
-                roundResults.append((success: success, output: output))
-                functionResultParts.append([
-                    "functionResponse": [
-                        "name": fc.name,
-                        "response": [
-                            "content": AgentToolTranscript.payload(
-                                success: success, output: output, exitCode: exitCode)
-                        ],
-                    ]
-                ])
-            }
-            contents.append(["role": "function", "parts": functionResultParts])
-            if progressTracker.recordRound(results: roundResults) {
-                recorder?.noteStopReason("no_progress")
-                onStatus?("No progress after repeated attempts; answering with what is known…")
-                return (
-                    executedCommands.isEmpty
-                        ? "I could not find what was requested after multiple attempts."
-                        : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
-                    executedCommands
-                )
-            }
-            onStatus?("Understanding the returned tool data…")
+    private func normalize(_ decoded: GeminiToolResponse, streamed: Bool) throws -> ToolRoundOutput {
+        guard let candidate = decoded.candidates.first else {
+            throw AIServiceError.emptyResponse("No response")
         }
-        // The loop ran out of steps with the model still calling tools. "Commands completed"
-        // read as success and hid that: the user was told the work was done when the turn had
-        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
-        // actually ran.
-        recorder?.noteStopReason("step_limit")
-        return (
-            executedCommands.isEmpty
-                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
-                    + "again with a narrower request."
-                : "I hit this turn's step limit before finishing. What ran so far is listed "
-                    + "below — ask me to continue if that is not enough.",
-            executedCommands
-        )
+        let usage = decoded.usageMetadata.map { u in
+            ToolRoundUsage(
+                inputTokens: u.promptTokenCount,
+                cacheReadTokens: u.cachedContentTokenCount,
+                cacheWriteTokens: nil,
+                outputTokens: u.candidatesTokenCount)
+        }
+        let finishReasons = candidate.finishReason.map { [$0] }
+        let textParts = candidate.content.parts.filter { $0.text != nil }
+        let functionParts = candidate.content.parts.filter { $0.functionCall != nil }
+
+        // Echo model turn (text + function call parts)
+        let modelParts: [[String: Any]] = candidate.content.parts.map { part in
+            if let fc = part.functionCall {
+                return ["functionCall": ["name": fc.name, "args": fc.args.mapValues { $0.value }]]
+            }
+            return ["text": part.text ?? ""]
+        }
+        let assistantTurnDict: [String: Any] = ["role": "model", "parts": modelParts]
+
+        if functionParts.isEmpty {
+            let text = textParts.compactMap { $0.text }.joined(separator: "\n")
+            return ToolRoundOutput(
+                outcome: .finalText(text), usage: usage,
+                finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantTurnDict)
+        }
+
+        let calls: [NormalizedToolCall] = functionParts.compactMap { part in
+            guard let fc = part.functionCall else { return nil }
+            return NormalizedToolCall(id: fc.name, name: fc.name, arguments: fc.args.mapValues { $0.value })
+        }
+        return ToolRoundOutput(
+            outcome: .toolCalls(calls), usage: usage,
+            finishReasons: finishReasons, streamed: streamed, assistantTurnDict: assistantTurnDict)
+    }
+
+    func appendToolResults(
+        to messages: [[String: Any]], calls: [NormalizedToolCall],
+        results: [(success: Bool, output: String, exitCode: Int32?)]
+    ) -> [[String: Any]] {
+        // assistantTurnDict (model turn) already appended by runToolLoop.
+        var messages = messages
+        var functionResultParts: [[String: Any]] = []
+        for (call, result) in zip(calls, results) {
+            functionResultParts.append([
+                "functionResponse": [
+                    "name": call.name,
+                    "response": [
+                        "content": AgentToolTranscript.payload(
+                            success: result.success, output: result.output, exitCode: result.exitCode)
+                    ],
+                ]
+            ])
+        }
+        messages.append(["role": "function", "parts": functionResultParts])
+        return messages
+    }
+
+    func recordUsage(round: ToolRoundOutput) {
+        guard let usage = round.usage else { return }
+        // promptTokenCount already includes the cached part.
+        AITokenLedger.shared.record(
+            provider: .googleGemini,
+            model: AppSettings.shared.selectedGeminiModel,
+            inputTokens: usage.inputTokens ?? 0,
+            cachedInputTokens: usage.cacheReadTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0)
+    }
+
+    func noteRound(_ recorder: TurnRecorder?, round: ToolRoundOutput, roundStarted: ContinuousClock.Instant) {
+        recorder?.noteRound(TurnTrace.Round(
+            inputTokens: round.usage?.inputTokens,
+            cacheReadTokens: round.usage?.cacheReadTokens,
+            outputTokens: round.usage?.outputTokens,
+            toolCalls: round.outcome.toolCallNames,
+            finishReasons: round.finishReasons,
+            streamed: round.streamed,
+            duration: TurnRecorder.seconds(since: roundStarted)))
     }
 }
