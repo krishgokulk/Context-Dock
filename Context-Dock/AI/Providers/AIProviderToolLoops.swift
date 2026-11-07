@@ -443,7 +443,7 @@ struct OpenAILoopAdapter: ToolLoopAdapter {
     }
 
     func streamRound(
-        body: [String: Any], onEvent: @Sendable (AIProviderStreamEvent) -> Void
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
     ) async throws -> ToolRoundOutput {
         let decoded = try await AIProviderStreaming.openAI(
             endpoint: endpoint, apiKey: apiKey, body: body,
@@ -601,7 +601,7 @@ struct AnthropicLoopAdapter: ToolLoopAdapter {
     }
 
     func streamRound(
-        body: [String: Any], onEvent: @Sendable (AIProviderStreamEvent) -> Void
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
     ) async throws -> ToolRoundOutput {
         let decoded = try await AIProviderStreaming.anthropic(
             apiKey: apiKey, body: body, onEvent: onEvent)
@@ -763,7 +763,7 @@ struct GeminiLoopAdapter: ToolLoopAdapter {
     }
 
     func streamRound(
-        body: [String: Any], onEvent: @Sendable (AIProviderStreamEvent) -> Void
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
     ) async throws -> ToolRoundOutput {
         let geminiModel = AppSettings.shared.selectedGeminiModel
         let decoded = try await AIProviderStreaming.gemini(

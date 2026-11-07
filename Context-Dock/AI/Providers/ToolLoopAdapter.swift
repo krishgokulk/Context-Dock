@@ -70,7 +70,7 @@ protocol ToolLoopAdapter {
     /// Stream one round; returns a normalized result.
     func streamRound(
         body: [String: Any],
-        onEvent: @Sendable (AIProviderStreamEvent) -> Void
+        onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
     ) async throws -> ToolRoundOutput
 
     /// Append tool results to the message history (called after the loop dispatches tools).

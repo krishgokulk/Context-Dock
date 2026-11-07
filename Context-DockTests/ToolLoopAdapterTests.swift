@@ -61,7 +61,7 @@ private struct MockLoopAdapter: ToolLoopAdapter {
     }
 
     func streamRound(
-        body: [String: Any], onEvent: @Sendable (AIProviderStreamEvent) -> Void
+        body: [String: Any], onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
     ) async throws -> ToolRoundOutput {
         fatalError("Mock adapter does not support streaming")
     }
@@ -119,7 +119,7 @@ struct ToolLoopAdapterTests {
     private final class ScriptedTransport: OpenAIToolTransport, @unchecked Sendable {
         let ledgerProvider: AIProvider = .openAI
         var responses: [OpenAIToolResponse]
-        private var callIndex = 0
+        var callIndex = 0
 
         init(responses: [OpenAIToolResponse]) {
             self.responses = responses
