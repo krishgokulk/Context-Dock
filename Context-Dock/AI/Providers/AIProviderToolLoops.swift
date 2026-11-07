@@ -86,6 +86,41 @@ struct ToolLoopProgressTracker: Sendable {
     }
 }
 
+// MARK: - E7a: Per-round focus tracker
+
+/// Decides which tool category to show each round — by rule, not model call.
+///
+/// State machine:
+///   first round:  pure question → answer (zero tools); action request → inspect
+///   after inspect with calls → act
+///   after act with calls → verify
+private struct RoundFocusTracker {
+    private let isPureQuestion: Bool
+    private var hasInspectedWithCalls = false
+    private var hasActedWithCalls = false
+
+    init(message: String) {
+        isPureQuestion = !message.isEmpty
+            && GeneralAIActionResolver.shared.asksOnly(message)
+            && !ChatRouteResolver.isActionRequest(message)
+    }
+
+    mutating func nextFocus() -> TurnFocus {
+        if hasActedWithCalls { return .verify }
+        if hasInspectedWithCalls { return .act }
+        return isPureQuestion ? .answer : .inspect
+    }
+
+    mutating func record(focus: TurnFocus, toolCallCount: Int) {
+        guard toolCallCount > 0 else { return }
+        switch focus {
+        case .inspect: hasInspectedWithCalls = true
+        case .act:     hasActedWithCalls = true
+        default: break
+        }
+    }
+}
+
 extension AIProviderService {
     // MARK: - Tool Definitions
 
@@ -150,12 +185,14 @@ extension AIProviderService {
         let allTools = await AgentToolRegistry.shared.schemas(format: adapter.toolFormat) + customTools
         onStatus?("Found \(allTools.count) available tools; choosing the best route…")
         recorder?.noteModel(adapter.model)
-        recorder?.noteToolsSent(TurnRecorder.toolNames(in: allTools))
+        // noteToolsSent is called per-round after focus filtering (E7a); prompt section size
+        // is recorded once against the full set since that is the per-round schema budget.
         recorder?.notePromptSections(TurnRecorder.toolSchemaSection(allTools))
 
         var roundsUsed = 0
         var toolCallsSeen = 0
         var progressTracker = ToolLoopProgressTracker()
+        var focusTracker = RoundFocusTracker(message: message)
         defer {
             AgentTurnDiagnostics.record(
                 model: adapter.model, toolsOffered: allTools.count,
@@ -168,7 +205,20 @@ extension AIProviderService {
                 return ("Stopped.", executedCommands)
             }
             roundsUsed += 1
-            let body = adapter.buildBody(messages: messages, tools: allTools, contextPrompt: contextPrompt)
+
+            // E7a: pick focus for this round and trim the tool set.
+            let focus = focusTracker.nextFocus()
+            let roundTools = AIToolBudget.apply(focus: focus, to: allTools)
+            recorder?.noteToolsSent(TurnRecorder.toolNames(in: roundTools))
+
+            var body = adapter.buildBody(messages: messages, tools: roundTools, contextPrompt: contextPrompt)
+            // OpenAI-compatible providers error on an empty tools array; Anthropic silently
+            // accepts it but the spec says omit the key. Remove both keys for .answer so the
+            // model answers from context and no provider is surprised by [].
+            if focus == .answer {
+                body.removeValue(forKey: "tools")
+                body.removeValue(forKey: "tool_choice")
+            }
             let roundStarted = ContinuousClock.now
 
             var roundOutput: ToolRoundOutput?
@@ -188,6 +238,7 @@ extension AIProviderService {
 
             adapter.recordUsage(round: result)
             adapter.noteRound(recorder, round: result, roundStarted: roundStarted)
+            recorder?.noteRoundFocus(focus)
 
             switch result.outcome {
             case .refusal(let partial):
@@ -204,6 +255,7 @@ extension AIProviderService {
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
 
             case .toolCalls(let calls):
+                focusTracker.record(focus: focus, toolCallCount: calls.count)
                 toolCallsSeen += calls.count
                 messages.append(result.assistantTurnDict)
 

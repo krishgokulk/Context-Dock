@@ -42,6 +42,8 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         var streamed = false
         /// Seconds from sending the request to holding the whole response.
         var duration: Double?
+        /// The tool category this round was narrowed to, when E7a focus filtering was active.
+        var focus: TurnFocus?
 
         enum CodingKeys: String, CodingKey {
             case inputTokens = "gen_ai.usage.input_tokens"
@@ -52,12 +54,13 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
             case finishReasons = "gen_ai.response.finish_reasons"
             case streamed = "dorax.round.streamed"
             case duration = "dorax.round.duration"
+            case focus = "dorax.round.focus"
         }
 
         init(
             inputTokens: Int? = nil, cacheReadTokens: Int? = nil, cacheWriteTokens: Int? = nil,
             outputTokens: Int? = nil, toolCalls: [String] = [], finishReasons: [String]? = nil,
-            streamed: Bool = false, duration: Double? = nil
+            streamed: Bool = false, duration: Double? = nil, focus: TurnFocus? = nil
         ) {
             self.inputTokens = inputTokens
             self.cacheReadTokens = cacheReadTokens
@@ -67,6 +70,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
             self.finishReasons = finishReasons
             self.streamed = streamed
             self.duration = duration
+            self.focus = focus
         }
 
         /// A round from a provider whose `input_tokens` leaves the cached part out — the
@@ -115,6 +119,8 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
     /// (e.g. "no_progress", "step_limit", "cancelled", "refusal").
     var stopReason: String?
     var cancelled = false
+    /// The first focus chosen this turn, when E7a focus filtering was active.
+    var focus: TurnFocus?
 
     var inputTokens: Int? { Self.sum(rounds.map(\.inputTokens)) }
     var cacheReadTokens: Int? { Self.sum(rounds.map(\.cacheReadTokens)) }
@@ -148,6 +154,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         case errorType = "error.type"
         case stopReason = "dorax.stop_reason"
         case cancelled = "dorax.cancelled"
+        case focus = "dorax.focus"
         // Totals are written for a person reading the log; reading it back recomputes them.
         case inputTokens = "gen_ai.usage.input_tokens"
         case cacheReadTokens = "gen_ai.usage.cache_read.input_tokens"
@@ -172,6 +179,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         errorType = try c.decodeIfPresent(String.self, forKey: .errorType)
         stopReason = try c.decodeIfPresent(String.self, forKey: .stopReason)
         cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled) ?? false
+        focus = try c.decodeIfPresent(TurnFocus.self, forKey: .focus)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -191,6 +199,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         try c.encodeIfPresent(errorType, forKey: .errorType)
         try c.encodeIfPresent(stopReason, forKey: .stopReason)
         if cancelled { try c.encode(cancelled, forKey: .cancelled) }
+        try c.encodeIfPresent(focus, forKey: .focus)
         try c.encodeIfPresent(inputTokens, forKey: .inputTokens)
         try c.encodeIfPresent(cacheReadTokens, forKey: .cacheReadTokens)
         try c.encodeIfPresent(cacheWriteTokens, forKey: .cacheWriteTokens)
@@ -307,6 +316,18 @@ nonisolated final class TurnRecorder: Sendable {
         let elapsed = Self.seconds(since: started)
         state.withLock { trace in
             if trace.timeToFirstToken == nil { trace.timeToFirstToken = elapsed }
+        }
+    }
+
+    /// Records the focus chosen for the current (last-added) round.
+    ///
+    /// Also sets `TurnTrace.focus` from the first round focus seen, so the per-turn field
+    /// records the dominant focus for the whole turn.
+    func noteRoundFocus(_ focus: TurnFocus) {
+        state.withLock { trace in
+            if trace.focus == nil { trace.focus = focus }
+            guard !trace.rounds.isEmpty else { return }
+            trace.rounds[trace.rounds.count - 1].focus = focus
         }
     }
 
