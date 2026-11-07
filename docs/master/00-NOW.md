@@ -21,6 +21,17 @@ Coordinator: Antigravity Planner — since 2026-11-07 16:58 UTC
 
 ## Done (most recent first)
 
+**Task: Unified Dynamic Pet Resolution Between Corner and General Chat Window:**
+- Completed on branch `fix/general-chat-window-connected-pet-parity` (PR #388).
+- Spec: Unified Dock Surface rule (`AGENTS.md`), `docs/architecture/FRONTMOST_AGENT.md`, and Claude Code / Codex sidepanel parity.
+- Unified Dynamic Pet Identity on `GeneralChatWindowModel`:
+  - Moved `resolvedConnectedPet` onto `GeneralChatWindowModel` to provide a single, shared source of truth for both compact Corner and full window General Chat.
+  - Resolves active Pet identity (Finder, connected app, borrowed turn participant, or frontmost App Pet) with icon and bundle ID.
+- Parity in `GeneralChatWindowView`:
+  - Bound `CornerLivePanel(density: .full)` on the Scope rail to `model.resolvedConnectedPet`, eliminating the empty "Details" fallback and rendering the full 51 tools, skills, and native connectors.
+  - Updated `scopePill` to display the connected Pet icon and name (e.g. `[  Finder ]`).
+- Verified visually in the running app via AXUIElement scripting and screen capture (`general_chat_scope_verified.png`). Check gate passed. Squash-merged into `general-chat-agent`.
+
 **Task: Sidepanel Connected Pet Identity, Tools & Skills Parity (Claude Code / Codex):**
 - Completed on branch `claude/sidepanel-connected-pet-tools-parity` (PR #387).
 - Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/architecture/FRONTMOST_AGENT.md`, and Claude Code / Codex sidepanel parity.
