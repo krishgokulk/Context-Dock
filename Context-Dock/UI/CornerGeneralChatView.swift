@@ -267,10 +267,11 @@ struct CornerGeneralChatView: View {
                     transcript
                         .frame(maxWidth: .infinity)
                     if showsLivePanel {
+                        let pet = activePetInfo
                         CornerLivePanel(
-                            appName: model.activeScopeAppName ?? model.activeScopeTitle,
-                            appBundleID: model.activeScopeBundleId ?? "",
-                            appIcon: GeneralChatSessionStore.icon(for: model.activeScope),
+                            appName: pet.name,
+                            appBundleID: pet.bundleID,
+                            appIcon: pet.icon,
                             messages: model.messages,
                             isAnswering: model.isSending,
                             liveSteps: model.isSending
@@ -501,6 +502,52 @@ struct CornerGeneralChatView: View {
         }
         .padding(.horizontal, 15)
         .frame(height: 48)
+    }
+
+    /// Dynamic Pet identity resolution for the live panel (#387).
+    /// Binds the panel to the conversation's active Pet (Finder, connected app, borrowed turn
+    /// participant, or frontmost App Pet) so tools, skills, and connectors populate accurately.
+    private var activePetInfo: (name: String, bundleID: String, icon: NSImage?) {
+        // 1. Participant set (explicitly attached / combined Pet)
+        if let participant = model.participantSet.first {
+            let icon = AppContextPicker.icon(forAppNamed: participant.displayName)
+                ?? Self.appIcon(for: participant.petID.dockBundleID)
+            return (participant.displayName, participant.petID.dockBundleID, icon)
+        }
+        // 2. Active turn borrowed participant
+        if let borrowed = model.activeTurnScope.borrowedParticipants.first {
+            let icon = AppContextPicker.icon(forAppNamed: borrowed.displayName)
+                ?? Self.appIcon(for: borrowed.petID.dockBundleID)
+            return (borrowed.displayName, borrowed.petID.dockBundleID, icon)
+        }
+        // 3. Scoped app
+        if case .app(let bundleId) = model.activeScope {
+            let name = model.activeScopeAppName ?? "App"
+            let icon = AppContextPicker.icon(forAppNamed: name)
+                ?? Self.appIcon(for: bundleId)
+            return (name, bundleId, icon)
+        }
+        // 4. File / folder inquiries ground Finder Pet
+        if let lastQuery = model.messages.last(where: { $0.role == .user })?.content,
+           FinderContextGrounder.wantsFileGrounding(lastQuery) {
+            let icon = Self.appIcon(for: "com.apple.finder")
+            return ("Finder", "com.apple.finder", icon)
+        }
+        // 5. Frontmost App Pet from Corner promptModel
+        if !promptModel.appBundleID.isEmpty {
+            let icon = Self.appIcon(for: promptModel.appBundleID)
+            return (promptModel.appName, promptModel.appBundleID, icon)
+        }
+        // 6. Default Mac-wide Finder / System
+        let finderIcon = Self.appIcon(for: "com.apple.finder")
+        return ("Finder", "com.apple.finder", finderIcon)
+    }
+
+    private static func appIcon(for bundleID: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     /// The app this thread is about, if it is about one.
