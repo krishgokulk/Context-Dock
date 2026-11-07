@@ -887,8 +887,6 @@ struct SearchDirectoryRow: View {
 // MARK: - AI Provider Settings Tab
 struct AIProviderSettingsView: View {
     @ObservedObject var settings = AppSettings.shared
-    @State private var isTestingConnection = false
-    @State private var connectionTestResult: ConnectionTestResult? = nil
     @State private var isFetchingModels = false
     @State private var fetchedOllamaModels: [OllamaModel] = []
     @State private var isDiscoveringCompatibleModels = false
@@ -898,22 +896,13 @@ struct AIProviderSettingsView: View {
     @State private var discoveredFirstPartyProvider: AIProvider?
     @State private var firstPartyModelDiscoveryError: String?
     @State private var isDiscoveringFirstPartyModels = false
-    /// Typed rather than numeric: an empty field means "not priced", which a Double cannot
-    /// express, and a half-typed "3." must not be read as a rate mid-keystroke.
-    @State private var rateInput = ""
-    @State private var rateOutput = ""
-    @State private var rateCached = ""
     @State private var modelDiscoveryTask: Task<Void, Never>?
-    @State private var isTestingAppleScriptModel = false
-    @State private var appleScriptModelTestMessage: String?
-    @State private var appleScriptModelTestOK = false
-    @State private var isRunningProviderQA = false
-    
-    enum ConnectionTestResult {
-        case success(String)
-        case failure(String)
-    }
-    
+
+    /// Off by default. Continuing the editor's session puts quick questions into the middle
+    /// of a long coding conversation, and points two live clients at one session file — worth
+    /// having, not worth assuming. Shown only under the Claude Code provider now.
+    @AppStorage(ClaudeCodeBridge.continueEditorSessionKey) private var continueEditorSession = false
+
     /// One prompt that steers every AI surface. Lives here rather than per-surface so
     /// tone, language and standing rules are set once — the router folds it into whatever
     /// system prompt General Chat, Context Dock chat or an extension panel builds.
@@ -968,68 +957,60 @@ struct AIProviderSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                // Header
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("AI Provider")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    Text("Select and configure your preferred AI provider for the AI mode.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
+            VStack(alignment: .leading, spacing: 22) {
                 globalContextPromptSection
 
                 // Provider Selection
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Select Provider")
                         .font(.headline)
-                    
-                    ForEach(AIProviderSupportTier.allCases) { tier in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(tier.rawValue)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
 
-                            ForEach(AIProvider.allCases.filter { $0.supportTier == tier }) { provider in
+                    ForEach(AIProviderSupportTier.allCases) { tier in
+                        let tierProviders = AIProvider.allCases.filter {
+                            $0.supportTier == tier && $0.isSelectable
+                        }
+                        if !tierProviders.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(tier.rawValue)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+
+                                ForEach(tierProviders) { provider in
                                 AIProviderRow(
                                     provider: provider,
                                     isSelected: settings.selectedAIProvider == provider,
                                     isConfigured: settings.isProviderConfigured(provider)
                                 ) {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    // A short cross-fade, not a spring: the spring re-laid out
+                                    // the whole configuration panel below and read as a flicker.
+                                    withAnimation(.easeInOut(duration: 0.15)) {
                                         settings.selectedAIProvider = provider
                                     }
+                                }
                                 }
                             }
                         }
                     }
                 }
-                
+
                 Divider()
-                
+
                 // Configuration Section
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         Text("Configuration")
                             .font(.headline)
-                        
+
                         Spacer()
-                        
+
                         if settings.isProviderConfigured(settings.selectedAIProvider) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text("Configured")
-                                    .foregroundStyle(.green)
-                            }
-                            .font(.caption)
+                            Label("Configured", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
                         }
                     }
-                    
+
                     providerConfigurationView
                 }
 
@@ -1041,75 +1022,26 @@ struct AIProviderSettingsView: View {
 
                 Divider()
 
-                DiagnosticsPanel()
-
-                Divider()
-
-                modelRateCardView
-
-                Divider()
-
-                appleScriptAutomationModelView
-
-                // Test Connection Button
-                if settings.selectedAIProvider != .onDevice && settings.selectedAIProvider != .shortcuts {
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Button(action: testConnection) {
-                                HStack(spacing: 8) {
-                                    if isTestingConnection {
-                                        ProgressView()
-                                            .scaleEffect(0.7)
-                                    } else {
-                                        Image(systemName: "network")
-                                    }
-                                    Text("Test Connection")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isTestingConnection || !settings.isProviderConfigured(settings.selectedAIProvider))
-
-                            if let result = connectionTestResult {
-                                connectionResultView(result)
-                            }
-                        }
-                        Text("Diagnostics")
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Test Text") { testProviderText() }
-                            Button("Test Vision") { testProviderVision() }
-                            Button("Test Tool Calls") { testProviderToolCalls() }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(
-                            isRunningProviderQA
-                                || !settings.isProviderConfigured(settings.selectedAIProvider)
-                        )
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Privacy")
-                        .font(.headline)
-                    Toggle(
-                        "Allow selected text to be sent to cloud AI providers",
-                        isOn: $settings.allowSelectedTextCloudSharing
-                    )
-                    Text("Local and on-device providers can always use selected text. Cloud requests still require the existing private-data approval.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Cloud providers never receive a continuous screen feed. They receive your prompt plus context used for that request: explicit attachments, approved selected text or browser content, and—in app-scoped Context Dock chat—a textual summary of the active app. Screenshots are sent only when explicitly attached or captured with approval.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
+                privacySection
             }
             .padding(24)
+        }
+    }
+
+    private var privacySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Privacy")
+                .font(.headline)
+            Toggle(
+                "Allow selected text to be sent to cloud AI providers",
+                isOn: $settings.allowSelectedTextCloudSharing
+            )
+            Text("Local and on-device providers can always use selected text. Cloud requests still require the existing private-data approval.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Cloud providers never receive a continuous screen feed. They receive your prompt plus context used for that request: explicit attachments, approved selected text or browser content, and—in app-scoped Context Dock chat—a textual summary of the active app. Screenshots are sent only when explicitly attached or captured with approval.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
     
@@ -1176,7 +1108,25 @@ struct AIProviderSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         case .claudeCode:
-            ClaudeSubscriptionConfigView()
+            VStack(alignment: .leading, spacing: 12) {
+                ClaudeSubscriptionConfigView()
+                if ClaudeCodeBridge.isAvailable {
+                    Divider()
+                    Toggle(isOn: $continueEditorSession) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Continue My Editor's Session")
+                                .font(.subheadline).fontWeight(.medium)
+                            Text("Ask Claude in a chat and it picks up the Claude Code conversation "
+                                 + "already open for that project, instead of keeping its own. Off "
+                                 + "means this chat keeps a separate thread.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+            }
         case .chatGPTSubscription:
             ChatGPTSubscriptionConfigView()
         case .claudeBridge:
@@ -1328,109 +1278,6 @@ struct AIProviderSettingsView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-    }
-
-    /// What this model costs, entered by the user.
-    ///
-    /// DoraX counts tokens exactly — the providers report them — but it does not ship a price
-    /// table: one is wrong the day a provider changes its pricing page, and someone would
-    /// pick a cheaper model on a number the app made up two releases ago. Enter the figures
-    /// from the provider's own page and the usage rows show money; leave them empty and they
-    /// show tokens and nothing else.
-    @ViewBuilder
-    private var modelRateCardView: some View {
-        let model = currentRateModelID
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Cost per million tokens")
-                .font(.subheadline)
-                .fontWeight(.medium)
-            if model.isEmpty {
-                Text("Choose a model above to record what it costs.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 8) {
-                    rateField("Input $", value: $rateInput)
-                    rateField("Output $", value: $rateOutput)
-                    rateField("Cached $", value: $rateCached)
-                }
-                Text(
-                    "From \(settings.selectedAIProvider.displayName)'s pricing page, for "
-                    + "\(model). Leave blank to show tokens only. Cached input is billed at "
-                    + "the input rate when left empty."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                let spend = AIModelRateCard.shared.todaySpend()
-                if spend.amount > 0 {
-                    Text(
-                        "Today: \(spend.amount.compactUSD)"
-                        + (spend.hasUnpriced ? " (plus models with no rate entered)" : ""))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .onAppear { loadRate(for: model) }
-        .onChange(of: currentRateModelID) { _, newModel in loadRate(for: newModel) }
-    }
-
-    private func rateField(_ label: String, value: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-            TextField("—", text: value)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 90)
-                .onSubmit { saveRate() }
-        }
-    }
-
-    /// The model the rate applies to: whichever one this provider is set to use.
-    private var currentRateModelID: String {
-        switch settings.selectedAIProvider {
-        case .openAI: return settings.selectedOpenAIModel
-        case .anthropic: return settings.selectedAnthropicModel
-        case .googleGemini: return settings.selectedGeminiModel
-        case .ollama: return settings.selectedOllamaModel
-        case .openAICompatible: return settings.openAICompatibleModelID
-        case .kimi: return settings.selectedKimiModel
-        case .claudeBridge: return settings.claudeBridgeModelID
-        case .chatGPTBridge: return settings.chatGPTBridgeModelID
-        // Claude Code bills nothing per token — the subscription already paid. A rate
-        // card for it would invite a number that is not a cost.
-        case .onDevice, .shortcuts, .claudeCode, .chatGPTSubscription: return ""
-        }
-    }
-
-    private func loadRate(for model: String) {
-        guard !model.isEmpty, let rate = AIModelRateCard.shared.rate(forModel: model) else {
-            rateInput = ""
-            rateOutput = ""
-            rateCached = ""
-            return
-        }
-        rateInput = String(rate.inputPerMillion)
-        rateOutput = String(rate.outputPerMillion)
-        rateCached = rate.cachedInputPerMillion.map { String($0) } ?? ""
-    }
-
-    private func saveRate() {
-        let model = currentRateModelID
-        guard !model.isEmpty else { return }
-        let input = Double(rateInput.trimmingCharacters(in: .whitespaces))
-        let output = Double(rateOutput.trimmingCharacters(in: .whitespaces))
-        // Both halves or neither: a rate with only one side priced would report a cost that
-        // is wrong in a direction the user cannot see.
-        guard let input, let output else {
-            AIModelRateCard.shared.set(nil, forModel: model)
-            return
-        }
-        AIModelRateCard.shared.set(
-            AIModelRate(
-                inputPerMillion: input,
-                outputPerMillion: output,
-                cachedInputPerMillion: Double(rateCached.trimmingCharacters(in: .whitespaces))),
-            forModel: model)
     }
 
     private func firstPartyModelPicker(
@@ -1596,95 +1443,6 @@ struct AIProviderSettingsView: View {
                 placeholder: "Optional",
                 helpURL: "https://platform.openai.com/docs/api-reference"
             )
-        }
-    }
-
-    // Optional specialist backend: a model fine-tuned for NL→AppleScript (e.g. Osaurus
-    // AppleScript-8B/16B). Independent of the chat provider above — used only by the
-    // action/execution layer when no deterministic route exists. Chat stays on whatever
-    // provider is selected.
-    private var appleScriptAutomationModelView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "applescript")
-                    .foregroundStyle(.orange)
-                Text("AppleScript Automation Model")
-                    .font(.headline)
-                Spacer()
-                Toggle("", isOn: $settings.appleScriptModelEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-            Text("Optional specialist that turns automation requests into AppleScript in the action layer — your chat provider above is unchanged. Great with Osaurus AppleScript-8B/16B; it does NOT chat, so don't set it as your main model.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if settings.appleScriptModelEnabled {
-                Button("Osaurus Preset") {
-                    settings.appleScriptModelEndpoint = "http://127.0.0.1:1337/v1"
-                    if settings.appleScriptModelID.isEmpty {
-                        settings.appleScriptModelID = "AppleScript-8B"
-                    }
-                }
-                .buttonStyle(.bordered)
-
-                Text("Endpoint")
-                    .font(.subheadline).fontWeight(.medium)
-                TextField("http://127.0.0.1:1337/v1", text: $settings.appleScriptModelEndpoint)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Model ID")
-                    .font(.subheadline).fontWeight(.medium)
-                TextField("AppleScript-8B", text: $settings.appleScriptModelID)
-                    .textFieldStyle(.roundedBorder)
-
-                HStack {
-                    Button(action: testAppleScriptModel) {
-                        HStack(spacing: 6) {
-                            if isTestingAppleScriptModel {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "network")
-                            }
-                            Text("Test AppleScript Model")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(
-                        isTestingAppleScriptModel
-                        || settings.appleScriptModelEndpoint.isEmpty
-                        || settings.appleScriptModelID.isEmpty)
-                    if let appleScriptModelTestMessage {
-                        Label(
-                            appleScriptModelTestMessage,
-                            systemImage: appleScriptModelTestOK
-                                ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(appleScriptModelTestOK ? .green : .red)
-                        .lineLimit(2)
-                    }
-                }
-            }
-        }
-    }
-
-    private func testAppleScriptModel() {
-        isTestingAppleScriptModel = true
-        appleScriptModelTestMessage = nil
-        Task {
-            let result = await AppleScriptModelService.shared.testConnection()
-            await MainActor.run {
-                isTestingAppleScriptModel = false
-                switch result {
-                case let .success(message):
-                    appleScriptModelTestOK = true
-                    appleScriptModelTestMessage = message
-                case let .failure(error):
-                    appleScriptModelTestOK = false
-                    appleScriptModelTestMessage = error.localizedDescription
-                }
-            }
         }
     }
 
@@ -1868,99 +1626,6 @@ struct AIProviderSettingsView: View {
         }
     }
     
-    @ViewBuilder
-    private func connectionResultView(_ result: ConnectionTestResult) -> some View {
-        switch result {
-        case .success(let message):
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text(message)
-                    .foregroundStyle(.green)
-            }
-            .font(.caption)
-        case .failure(let message):
-            HStack(spacing: 4) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.red)
-                Text(message)
-                    .foregroundStyle(.red)
-            }
-            .font(.caption)
-        }
-    }
-    
-    private func testConnection() {
-        isTestingConnection = true
-        connectionTestResult = nil
-        
-        Task {
-            do {
-                try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate network delay
-                
-                switch settings.selectedAIProvider {
-                case .ollama:
-                    // Test Ollama connection
-                    let endpoint = settings.ollamaEndpoint.trimmingCharacters(in: .whitespaces)
-                    guard let url = URL(string: "\(endpoint)/api/tags") else {
-                        throw NSError(domain: "Invalid URL", code: -1)
-                    }
-                    
-                    let (_, response) = try await URLSession.shared.data(from: url)
-                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                        await MainActor.run {
-                            connectionTestResult = .success("Connected to Ollama")
-                        }
-                    } else {
-                        throw NSError(domain: "Connection failed", code: -1)
-                    }
-                    
-                case .openAI, .googleGemini, .anthropic:
-                    // For API-based providers, we just verify the key format
-                    let key = settings.getAPIKey(for: settings.selectedAIProvider)
-                    if key.count > 10 {
-                        await MainActor.run {
-                            connectionTestResult = .success("API key looks valid")
-                        }
-                    } else {
-                        throw NSError(domain: "API key too short", code: -1)
-                    }
-
-                case .openAICompatible:
-                    guard settings.isProviderConfigured(.openAICompatible) else {
-                        throw NSError(domain: "Endpoint and model are required", code: -1)
-                    }
-                    let response = try await AIProviderRouter.shared.send(
-                        AIRequest(
-                            text: "Reply with OK.",
-                            context: .none,
-                            source: .aiChat,
-                            additionalContextPrompt: "Connection test. Return only OK."
-                        ),
-                        provider: .openAICompatible
-                    )
-                    guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        throw NSError(domain: "Compatible endpoint returned an empty response", code: -1)
-                    }
-                    await MainActor.run {
-                        connectionTestResult = .success("OpenAI-compatible endpoint responded")
-                    }
-                    
-                default:
-                    break
-                }
-            } catch {
-                await MainActor.run {
-                    connectionTestResult = .failure("Connection failed: \(error.localizedDescription)")
-                }
-            }
-            
-            await MainActor.run {
-                isTestingConnection = false
-            }
-        }
-    }
-    
     private func fetchOllamaModels() {
         isFetchingModels = true
         
@@ -2008,117 +1673,6 @@ struct AIProviderSettingsView: View {
         }
     }
 
-    private func testProviderText() {
-        runProviderQA {
-            let response = try await AIProviderRouter.shared.send(
-                AIRequest(text: "Reply with TEXT_OK only.", context: .none, source: .aiChat),
-                provider: settings.selectedAIProvider
-            )
-            guard response.uppercased().contains("TEXT_OK") else {
-                throw AIServiceError.emptyResponse("Text test returned unexpected response")
-            }
-            return "Text test passed"
-        }
-    }
-
-    private func testProviderVision() {
-        runProviderQA {
-            guard AIProviderRouter.shared.capabilities(for: settings.selectedAIProvider)
-                .supportsImages
-            else {
-                throw AIServiceError.unsupportedProvider(
-                    "The selected provider or model does not support image input")
-            }
-            guard let data = visionTestImageData() else {
-                throw AIServiceError.networkError("Could not create vision test image")
-            }
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("context-dock-vision-test.png")
-            try data.write(to: url, options: .atomic)
-            defer { try? FileManager.default.removeItem(at: url) }
-            let response = try await AIProviderRouter.shared.send(
-                AIRequest(
-                    text: "What is the dominant color of this image? Reply briefly.",
-                    context: .none,
-                    attachments: [.init(kind: .image, url: url)],
-                    source: .aiChat
-                ),
-                provider: settings.selectedAIProvider
-            )
-            guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw AIServiceError.emptyResponse("Vision test returned empty response")
-            }
-            return "Vision test passed"
-        }
-    }
-
-    /// A provider-safe fixture. The previous 1×1 PNG was valid but below the practical
-    /// minimum accepted by several vision APIs, which made every provider look broken.
-    private func visionTestImageData() -> Data? {
-        let width = 128
-        let height = 128
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: width * 4,
-            bitsPerPixel: 32
-        ), let pixels = bitmap.bitmapData else { return nil }
-
-        for index in stride(from: 0, to: width * height * 4, by: 4) {
-            pixels[index] = 45
-            pixels[index + 1] = 115
-            pixels[index + 2] = 230
-            pixels[index + 3] = 255
-        }
-        return bitmap.representation(using: .png, properties: [:])
-    }
-
-    private func testProviderToolCalls() {
-        runProviderQA {
-            let provider = settings.selectedAIProvider
-            guard provider != .onDevice, provider != .shortcuts else {
-                throw AIServiceError.unsupportedProvider("Selected provider does not support tool-call QA")
-            }
-            let key = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : nil
-            let result = try await AIProviderService.shared.sendWithTools(
-                "Call run_command once with command `echo TOOL_OK` and purpose `Provider tool-call QA`.",
-                context: .none,
-                provider: provider,
-                apiKey: key,
-                conversationHistory: [],
-                commandExecutor: { command, _, _ in
-                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output", 0)
-                },
-                maxIterations: 2,
-                systemPromptOverride: "You are running provider QA. Call requested tool exactly once.",
-                simulateAllTools: true
-            )
-            guard !result.executedCommands.isEmpty else {
-                throw AIServiceError.emptyResponse("Provider did not produce a tool call")
-            }
-            return "Tool-call test passed"
-        }
-    }
-
-    private func runProviderQA(_ operation: @escaping @MainActor () async throws -> String) {
-        isRunningProviderQA = true
-        connectionTestResult = nil
-        Task {
-            do {
-                let message = try await operation()
-                connectionTestResult = .success(message)
-            } catch {
-                connectionTestResult = .failure("QA failed: \(error.localizedDescription)")
-            }
-            isRunningProviderQA = false
-        }
-    }
 }
 
 /// MARK: - App Adapters Settings
@@ -7851,11 +7405,6 @@ struct PermissionsSettingsView: View {
     @State private var isTestingAutomation = false
     @State private var automationTestMessage: String? = nil
     
-    @State private var commandInput: String = ""
-    @State private var commandOutput: String = ""
-    @State private var isRunningCommand: Bool = false
-    @State private var recentCommands: [String] = []
-    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -8080,67 +7629,6 @@ struct PermissionsSettingsView: View {
         }
     }
     
-    func runCommand() {
-        let cmd = commandInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cmd.isEmpty else { return }
-
-        isRunningCommand = true
-        commandOutput = ""
-
-        // Keep a short history
-        if recentCommands.last != cmd {
-            recentCommands.append(cmd)
-            if recentCommands.count > 20 { recentCommands.removeFirst(recentCommands.count - 20) }
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", cmd]
-
-            let pipe = Pipe()
-            let errPipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = errPipe
-
-            do {
-                process.standardInput = FileHandle.nullDevice
-                try process.run()
-            } catch {
-                DispatchQueue.main.async {
-                    self.commandOutput = "Failed to start process: \(error.localizedDescription)"
-                    self.isRunningCommand = false
-                }
-                return
-            }
-
-            // Drain both pipes in parallel before waiting — prevents 64KB pipe-buffer deadlock.
-            var outData = Data()
-            var errData = Data()
-            let drainGroup = DispatchGroup()
-            drainGroup.enter()
-            Thread.detachNewThread { outData = pipe.fileHandleForReading.readDataToEndOfFile(); drainGroup.leave() }
-            drainGroup.enter()
-            Thread.detachNewThread { errData = errPipe.fileHandleForReading.readDataToEndOfFile(); drainGroup.leave() }
-            process.waitUntilExit()
-            drainGroup.wait()
-            let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
-            let stderrStr = String(data: errData, encoding: .utf8) ?? ""
-            let status = process.terminationStatus
-
-            DispatchQueue.main.async {
-                var combined = ""
-                if !stdoutStr.isEmpty { combined += stdoutStr }
-                if !stderrStr.isEmpty {
-                    if !combined.isEmpty { combined += "\n" }
-                    combined += stderrStr
-                }
-                combined += "\n(exit status: \(status))"
-                self.commandOutput = combined
-                self.isRunningCommand = false
-            }
-        }
-    }
 }
 
 // MARK: - Shortcut Picker View

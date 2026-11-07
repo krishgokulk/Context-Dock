@@ -14,7 +14,7 @@ struct GeneralSettingsPage: View {
                         title: "Context-Dock Beta",
                         subtitle: "Open-source beta for testing Global Context, Context Dock, media, General Chat, and selection actions."
                     ) {
-                        Text("1.1 beta")
+                        Text(AppVersionInfo.badge)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 10)

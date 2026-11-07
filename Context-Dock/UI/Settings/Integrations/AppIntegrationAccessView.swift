@@ -92,7 +92,7 @@ struct AppIntegrationAccessView: View {
             title: "Computer Use",
             caption: master
                 ? "Operating \(summary.appName) the way you would, when nothing it publishes can do the job."
-                : "Turned off for every app in Settings → AI → Computer Use."
+                : "Turned off for every app — the master switch is at the top of Settings → Apps."
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 Picker(

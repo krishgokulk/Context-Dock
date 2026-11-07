@@ -5,15 +5,52 @@ extension Notification.Name {
 }
 
 struct AdvancedSettingsPage: View {
+    @State private var showingAIDiagnostics = false
+
     var body: some View {
         VStack(spacing: 0) {
-            GlobalSearchIndexSettingsPanel()
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
+            VStack(alignment: .leading, spacing: 14) {
+                GlobalSearchIndexSettingsPanel()
+
+                RetrievalEvaluationCard()
+
+                DoraXMCPServerCard()
+
+                // A compact row that opens the full, scrollable diagnostics in a sheet, so the
+                // long test/rate/QA surface does not crowd the automation split view below.
+                Button {
+                    showingAIDiagnostics = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "stethoscope")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI Provider Diagnostics")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Connection & QA tests, per-model pricing, and the AppleScript specialist model.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(12)
+                    .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 14)
 
             Divider()
 
             AutomationSettingsView(settingsPage: .advanced)
+        }
+        .sheet(isPresented: $showingAIDiagnostics) {
+            AIProviderDiagnosticsSheet(isPresented: $showingAIDiagnostics)
         }
     }
 }

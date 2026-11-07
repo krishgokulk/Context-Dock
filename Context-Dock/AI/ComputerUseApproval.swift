@@ -76,7 +76,7 @@ enum ComputerUseApproval {
         if !reason.isEmpty { explanation += "\n\n" + reason }
         explanation += "\n\nIt also turns Computer Use on for \(appName) at its most cautious "
             + "setting, so you are asked before every later step. Change or revoke it in "
-            + "Settings → AI → Computer Use, or on this app's Access page."
+            + "Settings → Apps, or on this app's Access page."
 
         let plan = AIActionPlan(
             capability: capabilityID, input: input, explanation: explanation)

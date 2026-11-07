@@ -237,7 +237,10 @@ struct AutomationSettingsView: View {
         .onAppear {
             applySettingsPage(settingsPage)
             seedSelectionScopeBuiltInsIfNeeded()
-            pkgMgr.loadPackages()
+            // The manager loads packages in its init, so re-decoding + re-parsing every CLI
+            // tool's subcommands on each visit to this page only blocks the main thread — the
+            // cause of the Advanced page freezing. Load here only if it never ran.
+            if pkgMgr.packages.isEmpty { pkgMgr.loadPackages() }
             Task { await l2Mgr.loadExtensions() }
         }
         .onChange(of: settingsPage) { _, newValue in
