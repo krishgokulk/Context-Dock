@@ -17,9 +17,18 @@ Coordinator: Antigravity Planner — since 2026-11-07 16:58 UTC
 ## Queued (next)
 
 **AI Engine Plan Backlog:**
-- **#155: E6b Tool loop: three loops become one** (`ready`).
+- **#156: E7a Focus: inspect / act / verify / answer each send their own tool set** (`ready`).
 
 ## Done (most recent first)
+
+**#155: E6b Tool loop: three loops become one:**
+- Completed on branch `claude/issue-155-one-tool-loop` (PR #389, Issue #155).
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E6b) and Issue #155.
+- Unified three nearly identical async tool loops (`sendOpenAIWithTools`, `sendAnthropicWithTools`, `sendGeminiWithTools`) into a single generic `runToolLoop<A: ToolLoopAdapter>`.
+- Added `ToolLoopAdapter.swift` with `ToolLoopAdapter` protocol, normalized types (`NormalizedToolCall`, `ToolRoundUsage`, `ToolRoundOutput`), and three conforming adapters (`OpenAILoopAdapter`, `AnthropicLoopAdapter`, `GeminiLoopAdapter`).
+- Preserved all provider-specific behaviors: Anthropic thinking blocks echoed verbatim, prompt cache markers per-round, OpenAI non-stream buffered requests, and Gemini model resolution.
+- Public API preserved: existing callers and signatures remain identical thin wrappers.
+- Added unit tests in `ToolLoopAdapterTests` (3/3 pass) and verified regressions in `ToolLoopProgressStopTests` (9/9 pass). Gate `./scripts/check.sh` clean pass. Squash-merged into `general-chat-agent`.
 
 **Task: Unified Dynamic Pet Resolution Between Corner and General Chat Window:**
 - Completed on branch `fix/general-chat-window-connected-pet-parity` (PR #388).
