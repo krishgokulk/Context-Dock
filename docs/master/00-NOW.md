@@ -10,15 +10,19 @@
 
 ## In progress
 
-_None — ready for next queued task._
+**#154: E6a Tool loop: no-progress stop and backoff (one max_tokens table):**
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E6a) and Issue #154.
+- Stop tool loops that spin: two rounds whose tool results add nothing new (same outputs as earlier rounds, or only failures) stop the loop and answer with what is known.
+- Single provider max output tokens table in `ToolLoopBudget`, used by all three tool loops (OpenAI, Anthropic, Gemini).
+- Record loop stops in the turn trace with their reason.
+- Unit tests verifying two no-progress rounds stop the loop, progress resets the count, provider limits read from the table, and turn trace logs the stop reason.
 
-Coordinator: Antigravity Planner — since 2026-11-06 15:31 UTC
+Coordinator: Antigravity Planner — since 2026-11-07 12:40 UTC
 
 ## Queued (next)
 
 **AI Engine Plan Backlog:**
-- **#151: E3 Prompt order: stable sections first** (`ready`).
-- **#154: E6a Tool loop: no-progress stop and backoff** (`ready`).
+- **#155: E6b Tool loop: three loops become one** (`ready`).
 
 ## Done (most recent first)
 
