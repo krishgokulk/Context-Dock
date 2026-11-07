@@ -10,19 +10,9 @@
 
 ## In progress
 
-**Task: Sidepanel Connected Pet Identity, Tools & Skills Parity (Claude Code / Codex):**
-- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/architecture/FRONTMOST_AGENT.md`, and Claude Code / Codex sidepanel parity.
-- Dynamic Pet Identity Resolution in Corner General Chat (`CornerGeneralChatView`):
-  - Resolve active Pet info (`activePetInfo`: name, bundleID, icon) from conversation participants (`participantSet`), borrowed turn scope (`activeTurnScope`), grounded filesystem context (`FinderContextGrounder.wantsFileGrounding`), or frontmost App Pet (`promptModel`).
-  - Pass resolved Pet identity to `CornerLivePanel` so the panel binds to the actual Pet (e.g. Finder, `com.apple.finder`) rather than generic empty "Details".
-- Full Tools, Skills & Connectors in `CornerLivePanel`:
-  - Include both `canDoGroups` (native tools, capabilities, menu commands) and `knowsGroups` (skills: e.g. "Finder Assistant Basics", "Non-Destructive File Organization").
-  - Render full tool and skill rows in `.normal` and `.verbose` detail modes matching Claude Code and Codex sidepanel layout.
-  - Fix progress trace row fallback so completed reasoning steps (e.g. `2 steps`) are visible without getting filtered out.
-  - Display built-in app adapters, environment, and connected MCP servers in Connectors.
-- Tests & check gate `./scripts/check.sh` clean pass. Relaunch via `./scripts/dev-run.sh`.
+None — standing by for owner direction or next backlog item.
 
-Coordinator: Antigravity Planner — since 2026-11-07 16:48 UTC
+Coordinator: Antigravity Planner — since 2026-11-07 16:58 UTC
 
 ## Queued (next)
 
@@ -30,6 +20,19 @@ Coordinator: Antigravity Planner — since 2026-11-07 16:48 UTC
 - **#155: E6b Tool loop: three loops become one** (`ready`).
 
 ## Done (most recent first)
+
+**Task: Sidepanel Connected Pet Identity, Tools & Skills Parity (Claude Code / Codex):**
+- Completed on branch `claude/sidepanel-connected-pet-tools-parity` (PR #387).
+- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/architecture/FRONTMOST_AGENT.md`, and Claude Code / Codex sidepanel parity.
+- Dynamic Pet Identity Resolution in Corner General Chat (`CornerGeneralChatView`):
+  - Resolved active Pet info (`activePetInfo`: name, bundleID, icon) from conversation participants (`participantSet`), borrowed turn scope (`activeTurnScope`), grounded filesystem context (`FinderContextGrounder.wantsFileGrounding`), or frontmost App Pet (`promptModel`).
+  - Passed resolved Pet identity to `CornerLivePanel` so the panel binds to the actual Pet (e.g. Finder, `com.apple.finder`) rather than generic empty "Details".
+- Full Tools, Skills & Connectors in `CornerLivePanel`:
+  - Included both `canDoGroups` (native tools, capabilities, menu commands) and `knowsGroups` (skills: e.g. "Finder Assistant Basics", "Non-Destructive File Organization").
+  - Rendered full tool and skill rows in `.normal` and `.verbose` detail modes matching Claude Code and Codex sidepanel layout.
+  - Fixed progress trace row fallback so completed reasoning steps (e.g. `2 steps`) are visible without getting filtered out.
+  - Displayed built-in app adapters, environment, and connected MCP servers in Connectors.
+- Tests & check gate `./scripts/check.sh` clean pass. Relaunched via `./scripts/dev-run.sh`.
 
 **Task: Inherent Directory Total Size Grounding & General Chat Live Sidepanel Parity:**
 - Completed on branch `claude/grounding-folder-size-and-general-sidepanel` (PR #386).
