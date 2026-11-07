@@ -127,16 +127,9 @@ struct UpdatesSettingsPage: View {
         }
     }
 
-    private var bundleVersion: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "1.1"
-        let build = info?["CFBundleVersion"] as? String ?? "1"
-        return "Version \(version) (Build \(build))"
-    }
+    private var bundleVersion: String { AppVersionInfo.full }
 
-    private var shortVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1"
-    }
+    private var shortVersion: String { AppVersionInfo.shortVersion }
 
 }
 

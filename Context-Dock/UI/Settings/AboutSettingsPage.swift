@@ -64,7 +64,7 @@ struct AboutSettingsPage: View {
                             icon: "checkmark.shield.fill",
                             iconColor: .green,
                             title: "Privacy",
-                            subtitle: "All processing happens on-device. No data is sent to external servers without explicit consent."
+                            subtitle: "On-device providers keep everything local. Cloud providers receive only the prompt and context you approve for that request — never a continuous screen feed."
                         ) { EmptyView() }
                     }
                 }
@@ -74,10 +74,5 @@ struct AboutSettingsPage: View {
         }
     }
 
-    private var bundleVersion: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "Unknown"
-        let build = info?["CFBundleVersion"] as? String ?? "Unknown"
-        return "Version \(version) (\(build))"
-    }
+    private var bundleVersion: String { AppVersionInfo.full }
 }

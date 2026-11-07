@@ -844,6 +844,15 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
             return .experimental
         }
     }
+
+    /// Retired from the Settings picker (owner 2026-11-07): the two "via Bridge" vibe-proxy
+    /// routes and the OpenAI-Compatible endpoint. The enum cases stay so the router, saved
+    /// selections and migration keep compiling — they are simply never offered or configured
+    /// in the UI, and a saved selection on one falls back (see `selectedAIProvider`).
+    static let retired: Set<AIProvider> = [.claudeBridge, .chatGPTBridge, .openAICompatible]
+
+    /// Whether this provider is offered in the Settings picker.
+    var isSelectable: Bool { !AIProvider.retired.contains(self) }
 }
 
 // MARK: - Ollama Model
@@ -1836,7 +1845,12 @@ class AppSettings: ObservableObject {
     let permissionCenter = ILAppPermissionCenter.shared
 
     var selectedAIProvider: AIProvider {
-        get { AIProvider(rawValue: _selectedAIProvider) ?? .onDevice }
+        get {
+            let stored = AIProvider(rawValue: _selectedAIProvider) ?? .onDevice
+            // A provider retired from the picker falls back, so the UI never lands on one it
+            // no longer configures and the router is never asked for a retired route.
+            return stored.isSelectable ? stored : .onDevice
+        }
         set {
             objectWillChange.send()
             _selectedAIProvider = newValue.rawValue
