@@ -24,6 +24,7 @@ struct IntegrationsSettingsPage: View {
     @State private var query = ""
     @State private var showBrowserInNarrowLayout = false
     @State private var pendingRemoval: AppIntegrationSummary?
+    @State private var showComputerUseGrants = false
 
     // Creation flows, each presenting the editor that already owns that capability.
     @State private var showAdapterSheet = false
@@ -178,10 +179,73 @@ struct IntegrationsSettingsPage: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .help("Let DoraX press an app's own menus when nothing it publishes can do the job. Each app's tier is set on its Access page.")
+
+            // Every standing grant with its own Remove — including "Always for …" chosen in the
+            // corner's Selection card, whose app may have no adapter and so no Access page of its
+            // own to revoke it from. The master toggle only suspends grants; this revokes them.
+            let granted = computerUse.grantedBundleIDs()
+            if !granted.isEmpty {
+                Button {
+                    showComputerUseGrants = true
+                } label: {
+                    Text("\(granted.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.16), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("\(granted.count) app\(granted.count == 1 ? "" : "s") granted — view and revoke")
+                .popover(isPresented: $showComputerUseGrants, arrowEdge: .bottom) {
+                    computerUseGrantsPopover(granted)
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.primary.opacity(0.04), in: Capsule())
+    }
+
+    private func computerUseGrantsPopover(_ granted: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Apps Granted Computer Use")
+                .font(.system(size: 13, weight: .semibold))
+            Text("Each app may also be set on its own Access page; apps granted from Selection Scope appear only here.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ForEach(granted, id: \.self) { bundleID in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.computerUseAppName(bundleID))
+                            .font(.system(size: 12, weight: .medium))
+                        Text(computerUse.mode(for: bundleID).title)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 16)
+                    Button("Remove") { computerUse.revoke(for: bundleID) }
+                        .controlSize(.small)
+                }
+            }
+            if granted.count > 1 {
+                Divider()
+                Button("Turn All Off", role: .destructive) {
+                    for bundleID in granted { computerUse.revoke(for: bundleID) }
+                    showComputerUseGrants = false
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+
+    private static func computerUseAppName(_ bundleID: String) -> String {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { FileManager.default.displayName(atPath: $0.path) }?
+            .replacingOccurrences(of: ".app", with: "") ?? bundleID
     }
 
     // MARK: - Composition
