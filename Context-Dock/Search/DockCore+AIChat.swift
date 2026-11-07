@@ -3655,11 +3655,33 @@ extension DockCore {
                 // resolves that explicitly rather than inferring it from whatever readers
                 // happened to fire.
                 let resolvedContextBlock = await MainActor.run { () -> String in
-                    ContextResolver.resolve(
-                        scope: .app(bundleId: scopedBundleId),
+                    let isFinder = scopedBundleId.caseInsensitiveCompare("com.apple.finder") == .orderedSame
+                    let targetScope: GeneralChatScope =
+                        scopedBundleId.isEmpty ? .general : .app(bundleId: scopedBundleId)
+                    let resolved = ContextResolver.resolve(
+                        scope: targetScope,
                         appName: scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName
-                    ).promptBlock()
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        query: query
+                    )
+                    var block = resolved.promptBlock()
+
+                    // If in General Chat or Finder, ground live filesystem context when asking about files/folders (#384):
+                    if (scopedBundleId.isEmpty || isFinder), FinderContextGrounder.wantsFileGrounding(query) {
+                        let outcome = FinderContextGrounder.resolveFinderContext(query: query)
+                        let fileBlock = FinderContextGrounder.promptBlock(for: outcome)
+                        if !fileBlock.isEmpty {
+                            block = block.isEmpty ? fileBlock : (block + "\n\n" + fileBlock)
+                        }
+                        self.dockTraceStep("Grounded target: \(outcome.targetPath) (\(outcome.targetSource.rawValue))")
+                        if !outcome.matchingFiles.isEmpty {
+                            let matchNames = outcome.matchingFiles.prefix(3).map(\.name).joined(separator: ", ")
+                            self.dockTraceStep("Located \(outcome.matchingFiles.count) matching file(s): \(matchNames)")
+                        } else if !outcome.recentFiles.isEmpty {
+                            self.dockTraceStep("Read \(outcome.recentFiles.count) recent items in \(outcome.targetPath)")
+                        }
+                    }
+                    return block
                 }
                 let identityBlock = await MainActor.run {
                     self.scopedAppIdentityBlock(

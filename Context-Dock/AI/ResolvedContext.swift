@@ -116,7 +116,7 @@ enum ContextResolver {
     /// Readers are asked in order of authority: the app's own accessibility element first,
     /// because it is live and specific; the shared AX snapshot second, and only when it
     /// belongs to this app; caches last, labelled as caches.
-    static func resolve(scope: GeneralChatScope, appName: String) -> ResolvedContext {
+    static func resolve(scope: GeneralChatScope, appName: String, query: String? = nil) -> ResolvedContext {
         switch scope {
         case .general, .thread:
             return ResolvedContext(scope: scope, appName: appName, bundleId: "")
@@ -132,12 +132,12 @@ enum ContextResolver {
                 .init(name: "folder", value: path, source: "user-attached"))
             return context
         case .app(let bundleId):
-            return resolveApp(scope: scope, bundleId: bundleId, appName: appName)
+            return resolveApp(scope: scope, bundleId: bundleId, appName: appName, query: query)
         }
     }
 
     private static func resolveApp(
-        scope: GeneralChatScope, bundleId: String, appName: String
+        scope: GeneralChatScope, bundleId: String, appName: String, query: String? = nil
     ) -> ResolvedContext {
         var context = ResolvedContext(scope: scope, appName: appName, bundleId: bundleId)
 
@@ -191,16 +191,31 @@ enum ContextResolver {
             } else {
                 context.gaps.append(.init(name: "window", reason: "no window title exposed"))
             }
-            if let document = axString(window, kAXDocumentAttribute as String) {
-                let path = URL(string: document)?.path ?? document
-                context.slots.append(.init(name: "document", value: path, source: "AX"))
+            if bundleId != "com.apple.finder" {
+                if let document = axString(window, kAXDocumentAttribute as String) {
+                    let path = URL(string: document)?.path ?? document
+                    context.slots.append(.init(name: "document", value: path, source: "AX"))
+                } else {
+                    context.gaps.append(
+                        .init(name: "document", reason: "app exposes no open document"))
+                }
             } else {
-                context.gaps.append(
-                    .init(name: "document", reason: "app exposes no open document"))
+                if let document = axString(window, kAXDocumentAttribute as String) {
+                    let path = URL(string: document)?.path ?? document
+                    context.slots.append(.init(name: "open folder", value: path, source: "AX"))
+                }
             }
         } else {
-            context.gaps.append(.init(name: "window", reason: "no focused window"))
-            context.gaps.append(.init(name: "document", reason: "no focused window"))
+            if bundleId != "com.apple.finder" {
+                context.gaps.append(.init(name: "window", reason: "no focused window"))
+                context.gaps.append(.init(name: "document", reason: "no focused window"))
+            } else {
+                context.slots.append(
+                    .init(
+                        name: "window state",
+                        value: "running in background (no open windows)",
+                        source: "NSWorkspace"))
+            }
         }
 
         if let titles = otherWindowTitles(of: element), titles.count > 1 {
@@ -236,6 +251,37 @@ enum ContextResolver {
                 .init(
                     name: "selection",
                     reason: "the accessibility snapshot belongs to \(snapshot.appName.isEmpty ? "another app" : snapshot.appName)"))
+        }
+
+        // Finder autonomous context grounding (#384):
+        // Cascades through selection -> query-named folder -> front window -> default roots.
+        if bundleId == "com.apple.finder" {
+            let activeSelection = (snapshot.bundleId == bundleId) ? snapshot.selectedFilePaths : []
+            let outcome = FinderContextGrounder.resolveFinderContext(
+                query: query, finderSelection: activeSelection)
+
+            context.slots.append(
+                .init(
+                    name: "finder target",
+                    value: "\(outcome.targetPath) (\(outcome.targetSource.rawValue))",
+                    source: "Finder"))
+
+            if !outcome.matchingFiles.isEmpty {
+                let matchSummary = outcome.matchingFiles.prefix(5).map { match in
+                    "\(match.name) (\(match.isDirectory ? "folder" : match.formattedSize), modified \(match.formattedDate), path: \(match.path))"
+                }.joined(separator: "; ")
+                context.slots.append(
+                    .init(name: "matching files", value: matchSummary, source: "Finder scan"))
+            }
+
+            if !outcome.recentFiles.isEmpty {
+                let recents = outcome.recentFiles.prefix(12).map(\.name).joined(separator: ", ")
+                context.slots.append(
+                    .init(
+                        name: "folder items",
+                        value: "\(outcome.recentFiles.count) items: \(recents)",
+                        source: "Finder scan"))
+            }
         }
 
         if ScopedAppPromptBuilder.isBrowserBundle(bundleId) {
