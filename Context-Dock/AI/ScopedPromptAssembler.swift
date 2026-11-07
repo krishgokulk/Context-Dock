@@ -16,27 +16,38 @@
 import Foundation
 
 /// A slot in the prompt. Declaration order is reading order: the model sees these top to
-/// bottom, identity before evidence, evidence before reference material.
+/// bottom, with stable sections first (prefix-cached across turns) followed by volatile
+/// sections closest to the user's question (Spec #151 E3).
 enum ScopedPromptSection: Int, CaseIterable, Comparable {
+    // --- Stable Sections (Prefix: cached across turns) ---
     /// Which source this question must be answered from.
     case sourceRule
-    /// The resolved context — window, document, selection, page — with its gaps named.
-    case resolvedContext
     /// Who the user is — their own written profile, the same in every conversation.
-    ///
-    /// Its own slot rather than a line of memory. Memory is replaced wholesale by the
-    /// query-ranked block, so a profile appended into it was overwritten on every turn
-    /// that was allowed to use memory at all; and memory is droppable under budget, which
-    /// identity must not be.
     case userProfile
     /// Which app this conversation is, and what may be driven in it.
     case identity
     /// Active App Pet behavior mode (/mods) and prompt overlay instructions (#341).
     case petMode
-    /// What the user is pointing at right now.
-    case selection
+    /// The cross-app capability catalogue.
+    case capabilities
+    /// Live menu commands snapshot for the frontmost or scoped app.
+    case liveMenu
+    /// The app's MCP tools.
+    case mcp
+    /// The user's own written workflows for this app.
+    case skills
+    /// The vendor's documentation.
+    case reference
+    /// Linked CLI tools and their help.
+    case cli
+
+    // --- Volatile Sections (Suffix: closest to the question) ---
     /// The project the app has open: branch, changes, running agents.
     case workspace
+    /// The resolved context — window, document, selection, page — with its gaps named.
+    case resolvedContext
+    /// What the user is pointing at right now.
+    case selection
     /// The page a browser scope is on.
     case browserPage
     /// The folder a folder thread is about.
@@ -45,22 +56,21 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     case attachments
     /// Live Calendar / Reminders / Notes / Contacts data for a question that needs it.
     case liveAppData
-    /// The app's MCP tools.
-    case mcp
-    /// The cross-app capability catalogue.
-    case capabilities
-    /// Live menu commands snapshot for the frontmost or scoped app.
-    case liveMenu
-    /// The user's own written workflows for this app.
-    case skills
     /// What DoraX has durably learned.
     case memory
-    /// The vendor's documentation.
-    case reference
-    /// Linked CLI tools and their help.
-    case cli
 
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    /// Whether this section is stable across turns for an app scope.
+    /// Stable sections come first so Anthropic prompt prefix caching hits across turns.
+    var isStable: Bool {
+        switch self {
+        case .sourceRule, .userProfile, .identity, .petMode, .capabilities, .liveMenu, .mcp, .skills, .reference, .cli:
+            return true
+        case .workspace, .resolvedContext, .selection, .browserPage, .folder, .attachments, .liveAppData, .memory:
+            return false
+        }
+    }
 
     /// What is never dropped, however tight the budget.
     ///
@@ -139,19 +149,44 @@ struct ScopedPromptAssembler {
         }
     }
 
+    /// Returns the stable prefix and volatile suffix separately for prompt caching.
+    func assembleSections(
+        for provider: AIProvider,
+        preserving sourceSections: Set<ScopedPromptSection> = []
+    ) -> (stable: String, volatile: String) {
+        let kept = keptSections(for: provider, preserving: sourceSections)
+        let stableText = ScopedPromptSection.allCases
+            .filter(\.isStable)
+            .compactMap { kept[$0] }
+            .joined(separator: "\n\n")
+        let volatileText = ScopedPromptSection.allCases
+            .filter { !$0.isStable }
+            .compactMap { kept[$0] }
+            .joined(separator: "\n\n")
+        return (stableText, volatileText)
+    }
+
     /// The prompt, in reading order, trimmed to what this provider can hold.
     ///
     /// Sections are dropped whole. Half a menu list or a truncated JSON block is worse than
     /// its absence: the model reads a cut-off flag as a real one, and a list that stops
     /// mid-way reads as a complete list of fewer things.
+    ///
+    /// Stable sections come first. For Anthropic, a cache boundary marker is placed between
+    /// the stable prefix and volatile suffix to enable dual-block prompt caching (Spec #151 E3).
     func assemble(
         for provider: AIProvider,
         preserving sourceSections: Set<ScopedPromptSection> = []
     ) -> String {
-        let kept = keptSections(for: provider, preserving: sourceSections)
-        return ScopedPromptSection.allCases
-            .compactMap { kept[$0] }
-            .joined(separator: "\n\n")
+        let (stable, volatile) = assembleSections(for: provider, preserving: sourceSections)
+        guard !stable.isEmpty else { return volatile }
+        guard !volatile.isEmpty else { return stable }
+
+        if provider == .anthropic {
+            return stable + "\n\n" + AnthropicPromptCache.cacheBoundaryMarker + "\n\n" + volatile
+        } else {
+            return stable + "\n\n" + volatile
+        }
     }
 
     /// Characters per section of the prompt `assemble` produces, by section name — what the
