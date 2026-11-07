@@ -111,6 +111,9 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
     /// The Swift type of the error the turn ended with. The message is left out: it can quote
     /// the provider, and the provider can quote the prompt.
     var errorType: String?
+    /// Why the turn or its tool loop stopped, when it did not finish with normal prose
+    /// (e.g. "no_progress", "step_limit", "cancelled", "refusal").
+    var stopReason: String?
     var cancelled = false
 
     var inputTokens: Int? { Self.sum(rounds.map(\.inputTokens)) }
@@ -143,6 +146,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         case timeToFirstToken = "dorax.time_to_first_token"
         case duration = "gen_ai.client.operation.duration"
         case errorType = "error.type"
+        case stopReason = "dorax.stop_reason"
         case cancelled = "dorax.cancelled"
         // Totals are written for a person reading the log; reading it back recomputes them.
         case inputTokens = "gen_ai.usage.input_tokens"
@@ -166,6 +170,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         timeToFirstToken = try c.decodeIfPresent(Double.self, forKey: .timeToFirstToken)
         duration = try c.decodeIfPresent(Double.self, forKey: .duration)
         errorType = try c.decodeIfPresent(String.self, forKey: .errorType)
+        stopReason = try c.decodeIfPresent(String.self, forKey: .stopReason)
         cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled) ?? false
     }
 
@@ -184,6 +189,7 @@ nonisolated struct TurnTrace: Codable, Sendable, Equatable {
         try c.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
         try c.encodeIfPresent(duration, forKey: .duration)
         try c.encodeIfPresent(errorType, forKey: .errorType)
+        try c.encodeIfPresent(stopReason, forKey: .stopReason)
         if cancelled { try c.encode(cancelled, forKey: .cancelled) }
         try c.encodeIfPresent(inputTokens, forKey: .inputTokens)
         try c.encodeIfPresent(cacheReadTokens, forKey: .cacheReadTokens)
@@ -304,6 +310,15 @@ nonisolated final class TurnRecorder: Sendable {
         }
     }
 
+    /// Records why the turn's tool loop stopped early (e.g. "no_progress", "step_limit", "refusal").
+    func noteStopReason(_ reason: String) {
+        let reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty else { return }
+        state.withLock { trace in
+            if trace.stopReason == nil { trace.stopReason = reason }
+        }
+    }
+
     /// Closes the record and writes it. Called once, by `run`.
     @discardableResult
     func finish(error: (any Error)?) -> TurnTrace {
@@ -312,6 +327,9 @@ nonisolated final class TurnRecorder: Sendable {
         let finished = state.withLock { trace -> TurnTrace in
             trace.duration = elapsed
             trace.cancelled = cancelled
+            if cancelled && trace.stopReason == nil {
+                trace.stopReason = "cancelled"
+            }
             if let error, !(error is CancellationError) {
                 trace.errorType = String(describing: type(of: error))
             }

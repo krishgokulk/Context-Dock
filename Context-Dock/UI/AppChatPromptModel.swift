@@ -196,9 +196,18 @@ final class AppChatPromptModel: ObservableObject {
     /// How many lines the field's text takes, one to three (`DockFieldLines`, #189). Read
     /// by the shell's size, so the field grows upward and the window hit-tests the same.
     @Published var fieldLines = 1
-    /// The Context Dock's panel beside the conversation (#191): open until the header's
-    /// toggle closes it, and kept that way across turns and apps.
-    @Published var livePanelOpen = true
+    static let livePanelOpenKey = "cornerLivePanelOpen"
+
+    /// The Context Dock's panel beside the conversation (#191).
+    /// Remembers the user's toggle state across launches: if the user toggled it off,
+    /// it stays off on launch until the user explicitly toggles it back on. Defaults to false.
+    @Published var livePanelOpen: Bool = {
+        (pinStore.object(forKey: livePanelOpenKey) as? Bool) ?? false
+    }() {
+        didSet {
+            Self.pinStore.set(livePanelOpen, forKey: Self.livePanelOpenKey)
+        }
+    }
     /// The text field's frame in the corner's hosting view (top-left origin). Not published:
     /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
     var inputFrame: CGRect = .zero
