@@ -138,12 +138,34 @@ struct FinderContextResolutionTests {
             targetSource: .queryNamedFolder,
             matchingFiles: [file],
             recentFiles: [file],
-            totalItemsCount: 1
+            totalItemsCount: 1,
+            totalSizeBytes: 343_900,
+            formattedTotalSize: "344 KB"
         )
 
         let block = FinderContextGrounder.promptBlock(for: outcome)
         #expect(block.contains("Live Finder Filesystem Context"))
         #expect(block.contains("Details to give your employer – GOV.UK.png"))
         #expect(block.contains("/Users/test/Downloads"))
+        #expect(block.contains("Target Directory Total Size: 344 KB"))
+    }
+
+    @Test func calculateDirectorySizeCalculatesTotalBytesAndItemCount() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create 2 mock files
+        let file1 = tempDir.appendingPathComponent("file1.txt")
+        let file2 = tempDir.appendingPathComponent("file2.dat")
+        let data1 = Data(repeating: 65, count: 1024)
+        let data2 = Data(repeating: 66, count: 2048)
+        try data1.write(to: file1)
+        try data2.write(to: file2)
+
+        let stats = FinderContextGrounder.calculateDirectorySize(at: tempDir)
+        #expect(stats != nil)
+        #expect(stats?.itemCount == 2)
+        #expect(stats?.sizeBytes == 3072)
     }
 }

@@ -10,18 +10,19 @@
 
 ## In progress
 
-**Task: Autonomous Context Resolution & Windowless Grounding for Finder Pet and General Chat:**
-- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` (§8), `docs/architecture/FRONTMOST_AGENT.md` (§2a), and approved plan artifact `finder_flow_architecture.md`.
-- Cascading 4-tier context resolution for Finder Pet:
-  - Tier 1: User-highlighted files (`selectedFilePaths`).
-  - Tier 2: Query-named folder (`"downloads"` -> `~/Downloads`, `"documents"`, etc. via `namedFolder`).
-  - Tier 3: Open window target directory (`ContextDetector.getCurrentFinderDirectory()`).
-  - Tier 4: Windowless/background fallback to standard user roots (`~/Downloads`, `~/Documents`, `~/Desktop`).
-- Pre-turn passive grounding: Extract query-matching files (e.g. `sharecode` -> `Details to give your employer – GOV.UK.png`) and inject into `ResolvedContext` so tool-free providers (e.g. `chatGPTSubscription`) answer accurately without disclaimers.
-- Single-turn scope borrowing in General Chat: Bounded read of target folder/files when queries ask about Mac folders.
-- Comprehensive unit tests covering windowless resolution, named folder extraction, and passive grounding. Gate `./scripts/check.sh` clean pass.
+**Task: Inherent Directory Total Size Grounding & General Chat Live Sidepanel Parity:**
+- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/architecture/FRONTMOST_AGENT.md`, and user design alignment.
+- Directory Total Size Inherent Grounding:
+  - In `FinderContextGrounder`: recursively/fast-enumerate target directory to compute `totalSizeBytes` and `formattedTotalSize` (e.g. 2.52 GB across 13,000 files).
+  - Include total size directly in `FinderGroundingOutcome` and `promptBlock` as inherent baseline directory metadata without fragile keyword heuristics.
+  - Allow models (including subscription/tool-free providers) to answer directory size, capacity, and volume inquiries immediately and factually.
+- General Chat Live Sidepanel Parity:
+  - Add `sidebar.right` toggle button to `CornerGeneralChatView` header beside expand/keyboard/pin.
+  - Render `CornerLivePanel` split view beside `transcript` during active reasoning (`model.isSending`) or when toggled open (`AppChatPromptModel.shared.livePanelOpen`).
+  - Pass live reasoning trace steps (`model.activeProgress` / `model.activeActivity`), files, and connectors to the sidepanel for full parity with App Pet, Claude Code, and Codex.
+- Comprehensive unit tests verifying directory total size calculation across mock folders. Gate `./scripts/check.sh` clean pass.
 
-Coordinator: Antigravity Planner — since 2026-11-07 14:50 UTC
+Coordinator: Antigravity Planner — since 2026-11-07 16:15 UTC
 
 ## Queued (next)
 
@@ -29,6 +30,14 @@ Coordinator: Antigravity Planner — since 2026-11-07 14:50 UTC
 - **#155: E6b Tool loop: three loops become one** (`ready`).
 
 ## Done (most recent first)
+
+**Task: Autonomous Context Resolution & Windowless Grounding for Finder Pet and General Chat:**
+- Completed on branch `claude/finder-autonomous-context-grounding` (PR #384).
+- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` (§8), `docs/architecture/FRONTMOST_AGENT.md` (§2a), and approved plan artifact `finder_flow_architecture.md`.
+- Cascading 4-tier context resolution for Finder Pet (`selectedFilePaths` -> `namedFolder` -> `openWindow` -> `defaultRoots`).
+- Pre-turn passive grounding: Extract query-matching files (e.g. `sharecode` -> `Details to give your employer – GOV.UK.png`) and inject into `ResolvedContext` so tool-free providers (e.g. `chatGPTSubscription`) answer accurately without disclaimers.
+- Single-turn scope borrowing in General Chat: Bounded read of target folder/files when queries ask about Mac folders.
+- Comprehensive unit tests covering windowless resolution, named folder extraction, and passive grounding (7/7 pass). Gate `./scripts/check.sh` clean pass. Relaunched via `./scripts/dev-run.sh`.
 
 **#154: E6a Tool loop: no-progress stop and backoff (one max_tokens table):**
 - Completed on branch `claude/issue-154-loop-progress-stop` (PR #383, Issue #154).

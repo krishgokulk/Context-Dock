@@ -37,9 +37,29 @@ struct FinderGroundingOutcome: Equatable, Sendable {
     let matchingFiles: [FinderGroundedFile]
     let recentFiles: [FinderGroundedFile]
     let totalItemsCount: Int
+    let totalSizeBytes: Int64?
+    let formattedTotalSize: String?
+
+    init(
+        targetPath: String,
+        targetSource: FinderTargetSource,
+        matchingFiles: [FinderGroundedFile],
+        recentFiles: [FinderGroundedFile],
+        totalItemsCount: Int,
+        totalSizeBytes: Int64? = nil,
+        formattedTotalSize: String? = nil
+    ) {
+        self.targetPath = targetPath
+        self.targetSource = targetSource
+        self.matchingFiles = matchingFiles
+        self.recentFiles = recentFiles
+        self.totalItemsCount = totalItemsCount
+        self.totalSizeBytes = totalSizeBytes
+        self.formattedTotalSize = formattedTotalSize
+    }
 
     var summary: String {
-        "target=\(targetPath) source=\(targetSource.rawValue) matches=\(matchingFiles.count) recent=\(recentFiles.count)"
+        "target=\(targetPath) source=\(targetSource.rawValue) size=\(formattedTotalSize ?? "unknown") matches=\(matchingFiles.count) recent=\(recentFiles.count)"
     }
 }
 
@@ -154,6 +174,45 @@ enum FinderContextGrounder {
         return Array(Set(result))
     }
 
+    /// Fast directory size & count calculator. Recursively enumerates files up to `maxItems`
+    /// to avoid hanging on massive directories, skipping packages and hidden files.
+    static func calculateDirectorySize(
+        at url: URL,
+        maxItems: Int = 25_000
+    ) -> (sizeBytes: Int64, itemCount: Int)? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return nil
+        }
+
+        let resourceKeys: [URLResourceKey] = [
+            .fileSizeKey, .fileAllocatedSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey
+        ]
+
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return nil
+        }
+
+        var totalBytes: Int64 = 0
+        var count = 0
+
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(resourceKeys)) else { continue }
+            if values.isDirectory == true { continue }
+            count += 1
+            let size = Int64(values.fileSize ?? values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+            totalBytes += size
+            if count >= maxItems { break }
+        }
+
+        return (totalBytes, count)
+    }
+
     /// Resolves Finder filesystem context through the 4-tier cascading hierarchy.
     static func resolveFinderContext(
         query: String? = nil,
@@ -164,20 +223,28 @@ enum FinderContextGrounder {
         // Tier 1: User explicitly highlighted files in Finder
         let existingSelection = finderSelection.filter { fm.fileExists(atPath: $0) }
         if !existingSelection.isEmpty {
-            let files = existingSelection.compactMap { makeGroundedFile(at: URL(fileURLWithPath: $0)) }
+            let files = existingSelection.compactMap { makeGroundedFile(at: URL(fileURLWithPath: $0), computeFolderSize: true) }
             let parentDir = URL(fileURLWithPath: existingSelection[0]).deletingLastPathComponent().path
+            let totalBytes = files.reduce(0) { $0 + $1.sizeBytes }
+            let formattedTotal = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
             return FinderGroundingOutcome(
                 targetPath: parentDir,
                 targetSource: .selection,
                 matchingFiles: files,
                 recentFiles: files,
-                totalItemsCount: files.count
+                totalItemsCount: files.count,
+                totalSizeBytes: totalBytes,
+                formattedTotalSize: formattedTotal
             )
         }
 
-        // Tier 2: Query explicitly mentions a folder (e.g. "downloads", "documents")
+        // Tier 2: Query explicitly mentions a folder (e.g. "downloads", "documents", "pictures")
         if let query, let namedURL = extractNamedFolder(from: query) {
             let files = filesInDirectory(namedURL)
+            let dirStats = calculateDirectorySize(at: namedURL)
+            let totalBytes = dirStats?.sizeBytes
+            let formattedTotal = totalBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            let totalCount = dirStats?.itemCount ?? files.count
             let keywords = extractQueryKeywords(from: query)
             let matches = matchFiles(in: files, keywords: keywords, rawQuery: query)
             return FinderGroundingOutcome(
@@ -185,7 +252,9 @@ enum FinderContextGrounder {
                 targetSource: .queryNamedFolder,
                 matchingFiles: matches,
                 recentFiles: files,
-                totalItemsCount: files.count
+                totalItemsCount: totalCount,
+                totalSizeBytes: totalBytes,
+                formattedTotalSize: formattedTotal
             )
         }
 
@@ -193,6 +262,10 @@ enum FinderContextGrounder {
         if let frontDir = ContextDetector.shared.getCurrentFinderDirectory(), !frontDir.isEmpty {
             let url = URL(fileURLWithPath: frontDir)
             let files = filesInDirectory(url)
+            let dirStats = calculateDirectorySize(at: url)
+            let totalBytes = dirStats?.sizeBytes
+            let formattedTotal = totalBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            let totalCount = dirStats?.itemCount ?? files.count
             let keywords = query.map(extractQueryKeywords) ?? []
             let matches = matchFiles(in: files, keywords: keywords, rawQuery: query ?? "")
             return FinderGroundingOutcome(
@@ -200,7 +273,9 @@ enum FinderContextGrounder {
                 targetSource: .openWindow,
                 matchingFiles: matches,
                 recentFiles: files,
-                totalItemsCount: files.count
+                totalItemsCount: totalCount,
+                totalSizeBytes: totalBytes,
+                formattedTotalSize: formattedTotal
             )
         }
 
@@ -220,13 +295,17 @@ enum FinderContextGrounder {
         let keywords = query.map(extractQueryKeywords) ?? []
         let matches = matchFiles(in: allRecent, keywords: keywords, rawQuery: query ?? "")
         let rootNames = defaultRoots.map { $0.lastPathComponent }.joined(separator: ", ")
+        let totalBytes = allRecent.reduce(0) { $0 + $1.sizeBytes }
+        let formattedTotal = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
 
         return FinderGroundingOutcome(
             targetPath: "~/(\(rootNames))",
             targetSource: .windowlessRoots,
             matchingFiles: matches,
             recentFiles: Array(allRecent.prefix(20)),
-            totalItemsCount: allRecent.count
+            totalItemsCount: allRecent.count,
+            totalSizeBytes: totalBytes,
+            formattedTotalSize: formattedTotal
         )
     }
 
@@ -280,7 +359,22 @@ enum FinderContextGrounder {
             }
 
             if score > 0 {
-                scored.append((file, score))
+                var matchedFile = file
+                // If a matched item is a directory without size, calculate shallow size
+                if file.isDirectory && file.sizeBytes == 0 {
+                    if let dirStats = calculateDirectorySize(at: URL(fileURLWithPath: file.path), maxItems: 2000) {
+                        let formatted = ByteCountFormatter.string(fromByteCount: dirStats.sizeBytes, countStyle: .file)
+                        matchedFile = FinderGroundedFile(
+                            name: file.name,
+                            path: file.path,
+                            sizeBytes: dirStats.sizeBytes,
+                            formattedSize: formatted,
+                            modificationDate: file.modificationDate,
+                            isDirectory: true
+                        )
+                    }
+                }
+                scored.append((matchedFile, score))
             }
         }
 
@@ -293,7 +387,7 @@ enum FinderContextGrounder {
     }
 
     /// Formats a single file into a grounded metadata object.
-    private static func makeGroundedFile(at url: URL) -> FinderGroundedFile? {
+    private static func makeGroundedFile(at url: URL, computeFolderSize: Bool = false) -> FinderGroundedFile? {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
@@ -303,7 +397,12 @@ enum FinderContextGrounder {
 
         let name = url.lastPathComponent
         guard !name.hasPrefix(".") else { return nil }
-        let size = Int64(values.fileSize ?? 0)
+        var size = Int64(values.fileSize ?? 0)
+        if isDir.boolValue && computeFolderSize {
+            if let dirStats = calculateDirectorySize(at: url, maxItems: 2000) {
+                size = dirStats.sizeBytes
+            }
+        }
         let date = values.contentModificationDate ?? Date.distantPast
         let formattedSize = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
 
@@ -324,17 +423,25 @@ enum FinderContextGrounder {
             "- Target Directory: \(outcome.targetPath) (\(outcome.targetSource.rawValue))"
         ]
 
+        if let formattedSize = outcome.formattedTotalSize, let sizeBytes = outcome.totalSizeBytes {
+            lines.append("- Target Directory Total Size: \(formattedSize) (\(sizeBytes) bytes, \(outcome.totalItemsCount) files)")
+        } else if outcome.totalItemsCount > 0 {
+            lines.append("- Target Directory Item Count: \(outcome.totalItemsCount) items")
+        }
+
         if !outcome.matchingFiles.isEmpty {
             lines.append("- Verified Matches for your question:")
             for match in outcome.matchingFiles.prefix(5) {
-                let kind = match.isDirectory ? "folder" : match.formattedSize
+                let kind = match.isDirectory
+                    ? (match.formattedSize == "Zero KB" || match.formattedSize == "0 bytes" ? "folder" : "folder, \(match.formattedSize)")
+                    : match.formattedSize
                 lines.append("  • \(match.name) (\(kind), modified \(match.formattedDate), path: \(match.path))")
             }
         }
 
         if !outcome.recentFiles.isEmpty {
             let names = outcome.recentFiles.prefix(10).map(\.name).joined(separator: ", ")
-            lines.append("- Recent items in target directory (\(outcome.recentFiles.count) total): \(names)")
+            lines.append("- Recent items in target directory (\(outcome.recentFiles.count) top-level items): \(names)")
         }
 
         return lines.joined(separator: "\n")

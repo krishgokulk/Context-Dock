@@ -182,6 +182,7 @@ struct CornerGeneralChatView: View {
     @ObservedObject var model: GeneralChatWindowModel
     @ObservedObject private var approvals = ApprovalCenter.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
+    @ObservedObject private var promptModel = CornerChatPresentation.shared.appChat
     @FocusState private var composerFocused: Bool
     /// Which `/` match ↑/↓ has landed on. Reset whenever the filter changes, because the
     /// third row of one list is not the third row of the next.
@@ -193,6 +194,9 @@ struct CornerGeneralChatView: View {
 
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
+    private var showsLivePanel: Bool {
+        (promptModel.livePanelOpen || model.isSending) && showsTranscript
+    }
 
     /// The conversation, the start screen, or the `/` picker: a card of its own above the
     /// field, exactly as App mode puts the app's commands above its field. The two modes
@@ -259,7 +263,28 @@ struct CornerGeneralChatView: View {
             } else if showsTranscript {
                 header
                 Divider().opacity(0.18)
-                transcript
+                HStack(spacing: 0) {
+                    transcript
+                        .frame(maxWidth: .infinity)
+                    if showsLivePanel {
+                        CornerLivePanel(
+                            appName: model.activeScopeAppName ?? model.activeScopeTitle,
+                            appBundleID: model.activeScopeBundleId ?? "",
+                            appIcon: GeneralChatSessionStore.icon(for: model.activeScope),
+                            messages: model.messages,
+                            isAnswering: model.isSending,
+                            liveSteps: model.isSending
+                                ? (model.activeProgress.isEmpty ? [model.activeStatus ?? "Working…"] : model.activeProgress)
+                                : [],
+                            liveActivity: model.activeActivity,
+                            activityByMessageID: [:],
+                            density: .compact)
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: size.width))
+                            .padding(.vertical, 8)
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    }
+                }
+                .animation(.smooth(duration: 0.22), value: showsLivePanel)
             }
         }
     }
@@ -388,6 +413,23 @@ struct CornerGeneralChatView: View {
             .help("Browse capabilities & skills (⌥K)")
             .accessibilityLabel("Browse capabilities and skills")
 
+            // Live sidepanel toggle (#191 / #386 parity with App Pet).
+            Button {
+                promptModel.livePanelOpen.toggle()
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(promptModel.livePanelOpen ? Color.accentColor : .secondary)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        promptModel.livePanelOpen ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle()
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(promptModel.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
+            .accessibilityLabel(promptModel.livePanelOpen ? "Hide the panel" : "Show the panel")
+
             // Expand opens General Chat in the full window on its Chat tab, seeded with this
             // transcript (#323). Inert while a turn is running — it waits for the answer
             // (owner 2026-10-26); General is always a chat scope, so it is never hidden here.
@@ -423,6 +465,20 @@ struct CornerGeneralChatView: View {
             }
             .buttonStyle(.plain)
             .help("Keyboard shortcuts (⌘/)")
+
+            // Clear current conversation
+            Button {
+                model.clearActiveThread()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear this conversation")
+            .accessibilityLabel("Clear conversation")
 
             // Beside expand, because both are about this card rather than this question.
             Button {
