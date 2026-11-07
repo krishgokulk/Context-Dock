@@ -84,11 +84,24 @@ struct CornerLivePanel: View {
     /// "No steps recorded" (#199).
     private var progressRows: [PanelProgressRow] {
         if isAnswering {
-            return L.progressRows(
+            let filtered = L.progressRows(
                 reasoning: liveSteps, steps: ActivityStep.collapsingMCPWrappers(liveActivity))
+            if !filtered.isEmpty { return filtered }
+            return liveSteps.map(PanelProgressRow.reasoning)
         }
         guard let answer = lastTurnAnswer else { return [] }
-        return L.progressRows(reasoning: answer.trace, steps: finishedSteps)
+        let filtered = L.progressRows(reasoning: answer.trace, steps: finishedSteps)
+        if !filtered.isEmpty { return filtered }
+        let fallbackTrace = answer.trace.isEmpty ? durableStepLines(for: answer) : answer.trace
+        if !fallbackTrace.isEmpty || !finishedSteps.isEmpty {
+            return fallbackTrace.map(PanelProgressRow.reasoning) + finishedSteps.map(PanelProgressRow.step)
+        }
+        return []
+    }
+
+    private func durableStepLines(for message: AIChatMessage) -> [String] {
+        let lines = message.trace + message.mcpToolsRan
+        return ActivityNarration.durableTrace(lines)
     }
 
     var body: some View {
@@ -172,7 +185,14 @@ struct CornerLivePanel: View {
                 section("Connectors") { connectors(steps) }
             }
         case .canDoHere:
-            if detailMode != .summary, !canDo.isEmpty {
+            if detailMode != .summary, !groups.isEmpty {
+                let totalItems = groups.reduce(0) { $0 + $1.items.count }
+                section("Capabilities & Skills", count: totalItems) {
+                    ForEach(groups) { group in
+                        groupRow(group)
+                    }
+                }
+            } else if detailMode != .summary, !canDo.isEmpty {
                 section("Can do here", count: canDo.count) {
                     ForEach(canDo) { line in
                         PanelRow(symbol: line.symbol, value: line.title, trailing: "\(line.count)")
@@ -270,10 +290,12 @@ struct CornerLivePanel: View {
             let done = steps.count { $0.status != .running }
             return steps.isEmpty ? "Working…" : "Working… \(done) of \(steps.count) done"
         }
-        if steps.isEmpty { return "Ready" }
+        let totalCap = groups.reduce(0) { $0 + $1.items.count }
+        let capSummary = totalCap > 0 ? "\(totalCap) tools & skills · " : ""
+        if steps.isEmpty { return "\(capSummary)Ready" }
         let failed = steps.count { $0.status == .failed || $0.status == .denied }
         let noun = steps.count == 1 ? "step" : "steps"
-        return failed == 0 ? "Done · \(steps.count) \(noun)" : "Done · \(failed) of \(steps.count) failed"
+        return failed == 0 ? "\(capSummary)Done · \(steps.count) \(noun)" : "\(capSummary)Done · \(failed) of \(steps.count) failed"
     }
 
     // MARK: Sections
@@ -446,10 +468,16 @@ struct CornerLivePanel: View {
         let text = answer.content
         let outputs = finishedSteps.map(\.output) + [answer.runOutput].compactMap { $0 }
         let excluded = Set(answer.attachments.map { $0.standardizedFileURL.path })
-        let found = await Task.detached(priority: .utility) {
+        var found = await Task.detached(priority: .utility) {
             TurnFileExtractor.files(answer: text, stepOutputs: outputs)
                 .filter { !excluded.contains($0.standardizedFileURL.path) }
         }.value
+        for recent in answer.recentFiles {
+            let path = recent.url.standardizedFileURL.path
+            if !excluded.contains(path) && !found.contains(where: { $0.standardizedFileURL.path == path }) {
+                found.append(recent.url)
+            }
+        }
         guard !Task.isCancelled else { return }
         files = found
     }
@@ -515,6 +543,11 @@ struct CornerLivePanel: View {
                 symbol: "app.connected.to.app.below.fill",
                 value: "\(adapter.appName) adapter",
                 trailing: adapter.isBuiltIn ? "built-in" : "\(adapter.actions.count) actions")
+        } else if appBundleID == "com.apple.finder" {
+            PanelRow(
+                symbol: "app.connected.to.app.below.fill",
+                value: "Finder adapter",
+                trailing: "built-in")
         }
         ForEach(names, id: \.self) { name in
             let inUse = steps.contains {
@@ -524,7 +557,13 @@ struct CornerLivePanel: View {
                 symbol: "server.rack", value: name,
                 trailing: inUse ? "in use" : (linked.contains(name) ? "MCP" : "called"))
         }
-        if adapter == nil && names.isEmpty {
+        let hostName = Host.current().localizedName ?? "Local Mac"
+        PanelRow(
+            symbol: "desktopcomputer",
+            value: hostName,
+            trailing: "ready")
+
+        if adapter == nil && appBundleID != "com.apple.finder" && names.isEmpty {
             Text("Nothing linked to \(appName.isEmpty ? "this app" : appName) yet")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
@@ -536,8 +575,8 @@ struct CornerLivePanel: View {
     private func loadCanDo() {
         let inventory = ScopeInventory.app(bundleId: appBundleID, appName: appName)
         groups = inventory.groups
-        canDo = inventory.canDoGroups
-            .prefix(6)
+        canDo = inventory.groups
+            .prefix(8)
             .map { CanDoLine(title: $0.title, symbol: $0.symbol, count: $0.items.count) }
     }
 }
