@@ -19,6 +19,22 @@
 
 import Foundation
 
+/// Which tool category a round is narrowed to.
+///
+/// The host picks one per round by rule before the round starts — no model call. The
+/// choice is logged in the turn trace (`dorax.round.focus`) so E2 numbers show how many
+/// tools each category sends per round.
+enum TurnFocus: String, Codable, Sendable {
+    /// Pure question: zero tools, model answers from context.
+    case answer
+    /// Gather information: read-only tools only.
+    case inspect
+    /// Carry out the action: write tools for the scoped app, behind existing gates.
+    case act
+    /// Confirm the result: read-back tools only.
+    case verify
+}
+
 enum AIToolBudget {
     /// Tools that are never trimmed.
     ///
@@ -32,6 +48,43 @@ enum AIToolBudget {
         "run_command",
         "verify_outcome",
     ]
+
+    /// Tools that modify state — excluded from inspect and verify rounds.
+    static let writeToolNames: Set<String> = [
+        "run_command", "spawn_worker", "send_keys", "window_control",
+        "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
+        "ax_act",
+    ]
+
+    /// Tools that confirm an action completed — allowed in verify rounds.
+    ///
+    /// `find_capability` and `run_capability` are included so the model can discover
+    /// and invoke a check even when most tools are trimmed.
+    static let verifyToolNames: Set<String> = [
+        "find_capability", "run_capability",
+        "verify_outcome", "read_tool_result", "ax_read",
+    ]
+
+    /// Return the subset of `tools` appropriate for a given focus.
+    ///
+    /// - `.answer`: empty — zero tools sent, model answers from context.
+    /// - `.inspect`: everything except write tools; `find_capability` is kept
+    ///   because it is not in `writeToolNames`.
+    /// - `.act`: write tools plus the essential lookup tools.
+    /// - `.verify`: read-back tools only.
+    static func apply(focus: TurnFocus, to tools: [[String: Any]]) -> [[String: Any]] {
+        switch focus {
+        case .answer:
+            return []
+        case .inspect:
+            return tools.filter { !writeToolNames.contains(toolName($0)) }
+        case .act:
+            let allowed = writeToolNames.union(["find_capability", "run_capability", "read_tool_result"])
+            return tools.filter { allowed.contains(toolName($0)) }
+        case .verify:
+            return tools.filter { verifyToolNames.contains(toolName($0)) }
+        }
+    }
 
     /// How many tool definitions this provider should carry.
     ///
