@@ -154,6 +154,7 @@ struct ApprovalCard: View {
         case .capability: return "checkmark.shield"
         case .generalAction: return "play.rectangle.on.rectangle"
         case .adapter: return "app.connected.to.app.below.fill"
+        case .restored: return "clock.arrow.circlepath"
         }
     }
 }

@@ -72,6 +72,15 @@ struct ApprovalRequest: Identifiable {
         case capability(AICapabilityApprovalCenter.PendingApproval)
         case generalAction(GeneralAIActionApprovalCenter.PendingApproval)
         case adapter(AdapterActionRequest)
+        /// A carry-over approval from a previous session. The original continuation is
+        /// dead; the action can only be re-run for `.command` kind via
+        /// `runPreApprovedCommand`. All other kinds can only be cancelled.
+        case restored(commandForReplay: String?)
+    }
+
+    var wasRestored: Bool {
+        if case .restored = kind { return true }
+        return false
     }
 
     let id: String
@@ -120,6 +129,7 @@ struct ApprovalRequest: Identifiable {
         switch kind {
         case .capability, .generalAction, .command: return .assistant
         case .adapter: return .connectedApp
+        case .restored: return .assistant
         }
     }
 
@@ -142,7 +152,46 @@ struct ApprovalRequest: Identifiable {
         switch kind {
         case .command: return "Approve & Run"
         case .capability, .generalAction, .adapter: return "Approve"
+        case .restored(let command): return command != nil ? "Re-run" : "Acknowledge"
         }
+    }
+
+    /// Build a serialisable record from this request for the pending-approval journal.
+    func asPendingRecord() -> PendingApprovalRecord {
+        var kindTag = "unknown"
+        var commandText: String? = nil
+        switch kind {
+        case .command(let cmd):
+            kindTag = "command"
+            commandText = cmd.command
+        case .capability:   kindTag = "capability"
+        case .generalAction: kindTag = "general-action"
+        case .adapter:      kindTag = "adapter"
+        case .restored:     kindTag = "restored"
+        }
+        return PendingApprovalRecord(
+            id: id,
+            title: title,
+            subtitle: subtitle,
+            requesterClaim: requesterClaim,
+            body: body,
+            riskRaw: risk.rawValue,
+            createdAt: Date(),
+            kindTag: kindTag,
+            commandText: commandText)
+    }
+
+    /// Reconstruct a display-only request from a journal record.
+    static func fromRecord(_ record: PendingApprovalRecord) -> ApprovalRequest {
+        ApprovalRequest(
+            id: record.id,
+            kind: .restored(commandForReplay: record.commandText),
+            title: record.title,
+            subtitle: record.subtitle,
+            requesterClaim: record.requesterClaim,
+            body: record.body,
+            risk: record.risk,
+            origin: nil)
     }
 }
 
@@ -167,6 +216,8 @@ final class ApprovalCenter: ObservableObject {
     @Published private(set) var pending: ApprovalRequest?
 
     private var cancellables: Set<AnyCancellable> = []
+    /// Carry-over approvals from previous sessions, oldest first.
+    private var restoredQueue: [ApprovalRequest] = []
 
     private init() {
         // Commands first, then capabilities, then adapters — the order they tend to
@@ -183,16 +234,38 @@ final class ApprovalCenter: ObservableObject {
         AppAdapterManager.shared.$pendingApproval
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
+
+        // Write a journal record whenever a live (non-restored) approval becomes pending.
+        $pending
+            .compactMap { $0 }
+            .removeDuplicates { $0.id == $1.id }
+            .sink { request in
+                guard !request.wasRestored else { return }
+                PendingApprovalJournal.shared.save(request.asPendingRecord())
+            }
+            .store(in: &cancellables)
+
+        // Load approvals that were waiting when the previous session ended.
+        let journal = PendingApprovalJournal.shared
+        _ = journal.cancelStale()
+        restoredQueue = journal.restored().map { ApprovalRequest.fromRecord($0) }
     }
 
     /// Recomputed rather than pushed: @Published notifies on willSet, so reading the
     /// three sources on the next runloop turn is what gets their settled values. Pushing
     /// the new value through would publish a request its own center has not stored yet.
+    /// Falls back to the first carry-over approval when no live request is waiting.
     private func refresh() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.pending = Self.currentRequest()
+            self.pending = Self.currentRequest() ?? self.restoredQueue.first
         }
+    }
+
+    /// Remove the head of the restored queue and trigger a refresh.
+    private func popNextRestored() {
+        if !restoredQueue.isEmpty { restoredQueue.removeFirst() }
+        refresh()
     }
 
     private static func currentRequest() -> ApprovalRequest? {
@@ -259,17 +332,37 @@ final class ApprovalCenter: ObservableObject {
     func approve(_ request: ApprovalRequest) {
         switch request.kind {
         case .command(let command):
+            // Write receipt before running: if the app crashes after the user taps
+            // "Approve" but before the command finishes, the receipt prevents a
+            // double-run when the restored request is answered again.
+            PendingApprovalJournal.shared.recordExecution(
+                requestID: request.id, success: true, summary: "Command approved")
+            PendingApprovalJournal.shared.clear(id: request.id)
             TerminalAIBridge.shared.approveCommand(command.command)
         case .capability:
+            PendingApprovalJournal.shared.clear(id: request.id)
             AICapabilityApprovalCenter.shared.approve()
         case .generalAction:
+            PendingApprovalJournal.shared.clear(id: request.id)
             GeneralAIActionApprovalCenter.shared.resolve(.allowOnce)
         case .adapter(let adapter):
+            PendingApprovalJournal.shared.clear(id: request.id)
             adapter.onApprove()
+        case .restored(let commandText):
+            // The original turn is dead. For command approvals we can re-run;
+            // for other kinds just clear the record (the user has acknowledged it).
+            let (_, isNew) = PendingApprovalJournal.shared.recordExecution(
+                requestID: request.id, success: true, summary: "Re-run after restart")
+            PendingApprovalJournal.shared.clear(id: request.id)
+            if isNew, let command = commandText {
+                Task { await TerminalAIBridge.shared.runPreApprovedCommand(command) }
+            }
+            popNextRestored()
         }
     }
 
     func deny(_ request: ApprovalRequest) {
+        PendingApprovalJournal.shared.clear(id: request.id)
         switch request.kind {
         case .command:
             TerminalAIBridge.shared.denyCommand()
@@ -279,6 +372,8 @@ final class ApprovalCenter: ObservableObject {
             GeneralAIActionApprovalCenter.shared.resolve(.cancel)
         case .adapter(let adapter):
             adapter.onDeny()
+        case .restored:
+            popNextRestored()
         }
     }
 
@@ -343,7 +438,7 @@ final class ApprovalCenter: ObservableObject {
             return { GeneralAIActionApprovalCenter.shared.resolve(.allowAlways) }
         case .adapter(let adapter):
             return adapter.onApproveAlways
-        case .command, .capability:
+        case .command, .capability, .restored:
             return nil
         }
     }
