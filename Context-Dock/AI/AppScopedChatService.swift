@@ -1891,7 +1891,7 @@ enum AppScopedChatService {
                 """)
             // Resolved once, with its gaps recorded: an answer that could not know
             // something now says which slot was empty instead of inventing a value.
-            let resolved = ContextResolver.resolve(scope: scope, appName: appName)
+            let resolved = ContextResolver.resolve(scope: scope, appName: appName, query: query)
             contextBefore = resolved
             let block = resolved.promptBlock()
             prompt.set(.resolvedContext, block)
@@ -2144,6 +2144,21 @@ enum AppScopedChatService {
                             + "I did not use browser history or remembered tabs as a substitute. "
                             + "For Safari, open the page and activate the Context Dock extension, then try again.",
                         toolChips: [], evidenceReceipts: [receipt], trace: trace)
+                }
+            }
+
+            // General Chat file & folder grounding (#384):
+            // When asking about files or standard folders, ground to live filesystem facts
+            // even if the provider does not support native tools.
+            if FinderContextGrounder.wantsFileGrounding(query) {
+                let outcome = FinderContextGrounder.resolveFinderContext(query: query)
+                let block = FinderContextGrounder.promptBlock(for: outcome)
+                if !block.isEmpty {
+                    prompt.set(.resolvedContext, block)
+                    sourceTrace.append("Grounded live filesystem context: \(outcome.targetPath)")
+                    if !outcome.matchingFiles.isEmpty {
+                        onStatus?("Found \(outcome.matchingFiles.count) matching file(s) in \(outcome.targetPath)")
+                    }
                 }
             }
         }

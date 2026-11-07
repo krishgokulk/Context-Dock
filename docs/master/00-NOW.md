@@ -10,15 +10,18 @@
 
 ## In progress
 
-**#154: E6a Tool loop: no-progress stop and backoff (one max_tokens table):**
-- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E6a) and Issue #154.
-- Stop tool loops that spin: two rounds whose tool results add nothing new (same outputs as earlier rounds, or only failures) stop the loop and answer with what is known.
-- Single provider max output tokens table in `ToolLoopBudget`, used by all three tool loops (OpenAI, Anthropic, Gemini).
-- Record loop stops in the turn trace with their reason.
-- Unit tests verifying two no-progress rounds stop the loop, progress resets the count, provider limits read from the table, and turn trace logs the stop reason.
-- PR: #383 (branch `claude/issue-154-loop-progress-stop`). All 9 unit tests passing (`ToolLoopProgressStopTests`), gate `./scripts/check.sh` clean pass.
+**Task: Autonomous Context Resolution & Windowless Grounding for Finder Pet and General Chat:**
+- Spec: `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md` (§8), `docs/architecture/FRONTMOST_AGENT.md` (§2a), and approved plan artifact `finder_flow_architecture.md`.
+- Cascading 4-tier context resolution for Finder Pet:
+  - Tier 1: User-highlighted files (`selectedFilePaths`).
+  - Tier 2: Query-named folder (`"downloads"` -> `~/Downloads`, `"documents"`, etc. via `namedFolder`).
+  - Tier 3: Open window target directory (`ContextDetector.getCurrentFinderDirectory()`).
+  - Tier 4: Windowless/background fallback to standard user roots (`~/Downloads`, `~/Documents`, `~/Desktop`).
+- Pre-turn passive grounding: Extract query-matching files (e.g. `sharecode` -> `Details to give your employer – GOV.UK.png`) and inject into `ResolvedContext` so tool-free providers (e.g. `chatGPTSubscription`) answer accurately without disclaimers.
+- Single-turn scope borrowing in General Chat: Bounded read of target folder/files when queries ask about Mac folders.
+- Comprehensive unit tests covering windowless resolution, named folder extraction, and passive grounding. Gate `./scripts/check.sh` clean pass.
 
-Coordinator: Antigravity Planner — since 2026-11-07 12:40 UTC
+Coordinator: Antigravity Planner — since 2026-11-07 14:50 UTC
 
 ## Queued (next)
 
@@ -26,6 +29,15 @@ Coordinator: Antigravity Planner — since 2026-11-07 12:40 UTC
 - **#155: E6b Tool loop: three loops become one** (`ready`).
 
 ## Done (most recent first)
+
+**#154: E6a Tool loop: no-progress stop and backoff (one max_tokens table):**
+- Completed on branch `claude/issue-154-loop-progress-stop` (PR #383, Issue #154).
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E6a) and Issue #154.
+- Stop tool loops that spin: two rounds whose tool results add nothing new (same outputs as earlier rounds, or only failures) stop the loop and answer with what is known.
+- Single provider max output tokens table in `ToolLoopBudget`, used by all three tool loops (OpenAI, Anthropic, Gemini).
+- Record loop stops in the turn trace with their reason (`dorax.stop_reason`).
+- Sidepanel toggle persistence across app launches in `pinStore` (`UserDefaults.cornerLivePanelOpen`).
+- Added unit tests in `ToolLoopProgressStopTests` (9/9 pass) and `CornerLivePanelTests` (9/9 pass). Gate `./scripts/check.sh` clean pass. Relaunched via `./scripts/dev-run.sh`.
 
 **#151: E3 Prompt order: stable sections first, a second cache mark, volatile last:**
 - Completed on branch `claude/issue-151-prompt-order` (PR #382, Issue #151).
