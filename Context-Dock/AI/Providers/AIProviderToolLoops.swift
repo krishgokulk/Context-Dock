@@ -2,16 +2,88 @@ import Foundation
 
 /// How much room a tool loop leaves the model to answer in.
 ///
-/// This was 1000 for every OpenAI-shaped provider — which is Kimi, Ollama, any custom
-/// endpoint, and both subscription bridges. Those bridges serve a coding agent that narrates
-/// before it acts, so a thousand tokens ran out mid-sentence; and a `tool_use` block cut in
-/// half is not a malformed call the loop can report, it is a turn that ends having done
-/// nothing while claiming to be finished. Anthropic's own loop was raised to 16000 for
-/// exactly this reason and the others were left behind.
-private enum ToolLoopBudget {
-    /// Providers whose models think before they write spend part of this budget before the
-    /// first visible token, so it has to cover both.
-    static let maxTokens = 8192
+/// Keeps per-provider output token limits in one canonical table across all tool loops.
+/// Anthropic defaults to 16,000 so models that think before they write (adaptive thinking)
+/// do not exhaust their budget before emitting visible tool calls or answers. Other
+/// providers default to 8,192.
+enum ToolLoopBudget {
+    /// Default output token budget when a provider is not explicitly mapped.
+    static let defaultMaxTokens = 8192
+
+    /// Output token budget per provider for tool loops.
+    static let maxTokensByProvider: [AIProvider: Int] = [
+        .anthropic: 16000,
+        .claudeCode: 16000,
+        .claudeBridge: 16000,
+        .openAI: 8192,
+        .googleGemini: 8192,
+        .ollama: 8192,
+        .openAICompatible: 8192,
+        .kimi: 8192,
+        .chatGPTSubscription: 8192,
+        .chatGPTBridge: 8192,
+        .onDevice: 2048,
+        .shortcuts: 8192,
+    ]
+
+    /// Legacy convenience property returning the default limit.
+    static var maxTokens: Int { defaultMaxTokens }
+
+    /// Returns the maximum output tokens for the specified provider.
+    static func maxTokens(for provider: AIProvider) -> Int {
+        maxTokensByProvider[provider] ?? defaultMaxTokens
+    }
+}
+
+/// Tracks whether tool calls in a tool loop are making forward progress.
+///
+/// A loop ends when:
+/// 1. The model finishes with prose (normal completion).
+/// 2. The loop hits `maxIterations` (step limit).
+/// 3. The user stops the turn (cancellation).
+/// 4. Two consecutive rounds add nothing new (same outputs as earlier rounds, or only failures).
+struct ToolLoopProgressTracker: Sendable {
+    /// Consecutive rounds that produced no new output or only failures.
+    private(set) var consecutiveNoProgressCount: Int = 0
+
+    /// Outputs from successful tool calls seen in earlier rounds.
+    private(set) var seenOutputs: Set<String> = []
+
+    /// Max consecutive rounds without progress before the loop stops.
+    let maxConsecutiveNoProgress: Int
+
+    init(maxConsecutiveNoProgress: Int = 2) {
+        self.maxConsecutiveNoProgress = maxConsecutiveNoProgress
+    }
+
+    /// Evaluates the results of a round's tool executions.
+    ///
+    /// - Parameter results: Array of (success, output) for all tool calls executed in the round.
+    /// - Returns: `true` if the loop should stop due to no progress (consecutiveNoProgressCount >= maxConsecutiveNoProgress).
+    mutating func recordRound(results: [(success: Bool, output: String)]) -> Bool {
+        guard !results.isEmpty else { return false }
+
+        var foundNewProgress = false
+
+        for result in results {
+            guard result.success else { continue }
+            let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if !seenOutputs.contains(trimmed) {
+                foundNewProgress = true
+                seenOutputs.insert(trimmed)
+            }
+        }
+
+        if foundNewProgress {
+            consecutiveNoProgressCount = 0
+        } else {
+            consecutiveNoProgressCount += 1
+        }
+
+        return consecutiveNoProgressCount >= maxConsecutiveNoProgress
+    }
 }
 
 extension AIProviderService {
@@ -131,6 +203,7 @@ extension AIProviderService {
         // which it was.
         var roundsUsed = 0
         var toolCallsSeen = 0
+        var progressTracker = ToolLoopProgressTracker()
         defer {
             AgentTurnDiagnostics.record(
                 model: model, toolsOffered: allTools.count,
@@ -143,6 +216,7 @@ extension AIProviderService {
             // in a scoped chat still driving the app — because cancellation was only read
             // once the whole loop had returned.
             if Task.isCancelled {
+                recorder?.noteStopReason("cancelled")
                 return ("Stopped.", executedCommands)
             }
             roundsUsed += 1
@@ -153,7 +227,7 @@ extension AIProviderService {
                 "tool_choice": "auto",
                 // No temperature: newer Claude models served through OpenAI-compatible
                 // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": ToolLoopBudget.maxTokens
+                "max_tokens": ToolLoopBudget.maxTokens(for: transport.ledgerProvider)
             ]
             if apiKey == nil { body.removeValue(forKey: "max_tokens") }
             let mayStream = onStream != nil && !streamingUnavailable
@@ -222,10 +296,14 @@ extension AIProviderService {
                 }
                 messages.append(assistantMsg)
 
+                var roundResults: [(success: Bool, output: String)] = []
                 for tc in toolCalls {
                     guard let argsData = tc.function.arguments.data(using: .utf8),
                           let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                    else { continue }
+                    else {
+                        roundResults.append((success: false, output: "Malformed arguments"))
+                        continue
+                    }
 
                     var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
@@ -263,11 +341,22 @@ extension AIProviderService {
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args, turn: turn, chatScope: chatScope)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
                     }
+                    roundResults.append((success: success, output: output))
                     messages.append([
                         "role": "tool", "tool_call_id": tc.id,
                         "content": AgentToolTranscript.payload(
                             success: success, output: output, exitCode: exitCode),
                     ])
+                }
+                if progressTracker.recordRound(results: roundResults) {
+                    recorder?.noteStopReason("no_progress")
+                    onStatus?("No progress after repeated attempts; answering with what is known…")
+                    return (
+                        executedCommands.isEmpty
+                            ? "I could not find what was requested after multiple attempts."
+                            : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
+                        executedCommands
+                    )
                 }
                 onStatus?("Understanding the returned tool data…")
             } else {
@@ -279,6 +368,7 @@ extension AIProviderService {
         // read as success and hid that: the user was told the work was done when the turn had
         // simply been cut off mid-way. Say which it is, and let the receipts speak for what
         // actually ran.
+        recorder?.noteStopReason("step_limit")
         return (
             executedCommands.isEmpty
                 ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
@@ -369,6 +459,7 @@ extension AIProviderService {
         recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
         var roundsUsed = 0
         var toolCallsSeen = 0
+        var progressTracker = ToolLoopProgressTracker()
         defer {
             AgentTurnDiagnostics.record(
                 model: model, toolsOffered: registryTools.count + customTools.count,
@@ -381,6 +472,7 @@ extension AIProviderService {
             // in a scoped chat still driving the app — because cancellation was only read
             // once the whole loop had returned.
             if Task.isCancelled {
+                recorder?.noteStopReason("cancelled")
                 return ("Stopped.", executedCommands)
             }
             // Prompt caching. Every iteration re-sends the same system prompt and tool set
@@ -397,7 +489,7 @@ extension AIProviderService {
                 // 1024 was far too small for an agentic loop: on models that think by default
                 // it caps thinking AND the reply together, so answers were cut mid-sentence
                 // and a truncated tool_use block ended the loop with no error.
-                "max_tokens": 16000,
+                "max_tokens": ToolLoopBudget.maxTokens(for: .anthropic),
             ]
             if usesAdaptiveThinking {
                 // Claude decides how much to think per step. `effort` is the depth/spend dial;
@@ -451,6 +543,7 @@ extension AIProviderService {
             // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
             // empty or partial, so reading it as an answer produces a blank or half reply.
             if decoded.stop_reason == "refusal" {
+                recorder?.noteStopReason("refusal")
                 let partial = textBlocks.compactMap { $0.text }.joined(separator: "\n")
                 return (
                     partial.isEmpty
@@ -482,12 +575,16 @@ extension AIProviderService {
             }
             messages.append(["role": "assistant", "content": assistantBlocks])
 
+            var roundResults: [(success: Bool, output: String)] = []
             var resultBlocks: [[String: Any]] = []
             for block in toolUseBlocks {
                 guard let toolId = block.id,
                       let toolName = block.name,
                       let inputDict = block.input
-                else { continue }
+                else {
+                    roundResults.append((success: false, output: "Malformed tool block"))
+                    continue
+                }
 
                 let args = inputDict.mapValues { $0.value }
                 var (success, output): (Bool, String) = (false, "")
@@ -526,6 +623,7 @@ extension AIProviderService {
                     executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
                 }
 
+                roundResults.append((success: success, output: output))
                 resultBlocks.append([
                     "type": "tool_result",
                     "tool_use_id": toolId,
@@ -535,12 +633,23 @@ extension AIProviderService {
                 ])
             }
             messages.append(["role": "user", "content": resultBlocks])
+            if progressTracker.recordRound(results: roundResults) {
+                recorder?.noteStopReason("no_progress")
+                onStatus?("No progress after repeated attempts; answering with what is known…")
+                return (
+                    executedCommands.isEmpty
+                        ? "I could not find what was requested after multiple attempts."
+                        : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
+                    executedCommands
+                )
+            }
             onStatus?("Understanding the returned tool data…")
         }
         // The loop ran out of steps with the model still calling tools. "Commands completed"
         // read as success and hid that: the user was told the work was done when the turn had
         // simply been cut off mid-way. Say which it is, and let the receipts speak for what
         // actually ran.
+        recorder?.noteStopReason("step_limit")
         return (
             executedCommands.isEmpty
                 ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
@@ -620,6 +729,7 @@ extension AIProviderService {
         recorder?.noteModel(AppSettings.shared.selectedGeminiModel)
         recorder?.noteToolsSent(TurnRecorder.toolNames(in: registryTools + customTools))
         recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
+        var progressTracker = ToolLoopProgressTracker()
 
         for _ in 0..<maxIterations {
             // Stop is a decision the user already made. Without this check the loop kept
@@ -627,6 +737,7 @@ extension AIProviderService {
             // in a scoped chat still driving the app — because cancellation was only read
             // once the whole loop had returned.
             if Task.isCancelled {
+                recorder?.noteStopReason("cancelled")
                 return ("Stopped.", executedCommands)
             }
             let body: [String: Any] = [
@@ -634,7 +745,7 @@ extension AIProviderService {
                 "tools": [["function_declarations": registryTools]]
                     + customTools.map { ["function_declarations": [$0]] },
                 "generationConfig": [
-                    "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens,
+                    "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens(for: .googleGemini),
                 ],
             ]
             let geminiModel = AppSettings.shared.selectedGeminiModel
@@ -696,6 +807,7 @@ extension AIProviderService {
             }
             contents.append(["role": "model", "parts": modelParts])
 
+            var roundResults: [(success: Bool, output: String)] = []
             var functionResultParts: [[String: Any]] = []
             for part in functionParts {
                 guard let fc = part.functionCall else { continue }
@@ -736,6 +848,7 @@ extension AIProviderService {
                     executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
                 }
 
+                roundResults.append((success: success, output: output))
                 functionResultParts.append([
                     "functionResponse": [
                         "name": fc.name,
@@ -747,12 +860,23 @@ extension AIProviderService {
                 ])
             }
             contents.append(["role": "function", "parts": functionResultParts])
+            if progressTracker.recordRound(results: roundResults) {
+                recorder?.noteStopReason("no_progress")
+                onStatus?("No progress after repeated attempts; answering with what is known…")
+                return (
+                    executedCommands.isEmpty
+                        ? "I could not find what was requested after multiple attempts."
+                        : "I stopped after consecutive attempts yielded no new results. What was found so far is listed below.",
+                    executedCommands
+                )
+            }
             onStatus?("Understanding the returned tool data…")
         }
         // The loop ran out of steps with the model still calling tools. "Commands completed"
         // read as success and hid that: the user was told the work was done when the turn had
         // simply been cut off mid-way. Say which it is, and let the receipts speak for what
         // actually ran.
+        recorder?.noteStopReason("step_limit")
         return (
             executedCommands.isEmpty
                 ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
