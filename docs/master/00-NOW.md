@@ -17,9 +17,16 @@ Coordinator: Antigravity Planner — since 2026-11-07 16:58 UTC
 ## Queued (next)
 
 **AI Engine Plan Backlog:**
-- **#156: E7a Focus: inspect / act / verify / answer each send their own tool set** (`ready`).
+- **#157: E7b Approvals survive quitting the app** (`ready`).
 
 ## Done (most recent first)
+
+**#156: E7a Focus: inspect / act / verify / answer each send their own tool set:**
+- Completed on branch `claude/issue-156-focus-tool-sets` (PR #390, Issue #156).
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E7a) and Issue #156.
+- Added `TurnFocus` and `RoundFocusTracker` in `AIToolBudget.swift`: categorized tools into `inspect`, `act`, `verify`, and `answer` sets; dynamically applies tool subsets per round based on previous tool calls.
+- Wired focus tracking into generic `runToolLoop` in `AIProviderToolLoops.swift`: dynamic tool subset per round and recorded `dorax.focus`, `dorax.round.focus`, and `dorax.tools.sent` in `TurnRecorder.swift`.
+- Added unit tests in `TurnFocusTests.swift` (15/15 pass), verified `ToolLoopAdapterTests` (3/3 pass) and `ToolLoopProgressStopTests` (9/9 pass). Gate `./scripts/check.sh` clean pass. Live hand checked and squash-merged into `general-chat-agent`.
 
 **#155: E6b Tool loop: three loops become one:**
 - Completed on branch `claude/issue-155-one-tool-loop` (PR #389, Issue #155).
