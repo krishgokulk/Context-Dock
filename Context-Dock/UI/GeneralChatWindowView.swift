@@ -1360,10 +1360,11 @@ struct GeneralChatWindowView: View {
                 // App Pack / Outputs, with this scope's config actions in the trailing slot.
                 // The window's per-message activity rides on each message, so live steps are
                 // passed empty.
+                let pet = model.resolvedConnectedPet
                 CornerLivePanel(
-                    appName: model.activeScopeAppName ?? model.activeScopeTitle,
-                    appBundleID: model.activeScopeBundleId ?? "",
-                    appIcon: GeneralChatSessionStore.icon(for: model.activeScope),
+                    appName: pet.name,
+                    appBundleID: pet.bundleID,
+                    appIcon: pet.icon ?? GeneralChatSessionStore.icon(for: model.activeScope),
                     messages: model.messages,
                     isAnswering: model.isSending,
                     liveSteps: windowLiveProgressSteps,
@@ -1704,18 +1705,41 @@ struct GeneralChatWindowView: View {
     }
 
     private var scopePill: some View {
-        HStack(spacing: 6) {
-            if let bundleId = model.activeScopeBundleId {
+        let pet = model.resolvedConnectedPet
+        let isGeneralOrThread: Bool = {
+            switch model.activeScope {
+            case .general, .thread: return true
+            default: return false
+            }
+        }()
+        return HStack(spacing: 6) {
+            if !pet.bundleID.isEmpty && isGeneralOrThread {
+                if let icon = pet.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 15, height: 15)
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5))
+                } else {
+                    AppBundleIconView(
+                        bundleId: pet.bundleID, fallbackSymbol: "app.dashed", size: 15, cornerRadius: 4)
+                }
+                Text(pet.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            } else if let bundleId = model.activeScopeBundleId {
                 AppBundleIconView(
                     bundleId: bundleId, fallbackSymbol: "app.dashed", size: 15, cornerRadius: 4)
+                Text(model.activeScopeTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
             } else {
                 Image(systemName: model.activeScopeSymbol)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+                Text(model.activeScopeTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
             }
-            Text(model.activeScopeTitle)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)

@@ -307,6 +307,54 @@ final class GeneralChatWindowModel: ObservableObject {
         return nil
     }
 
+    /// Dynamic Pet identity resolution for the live panel and scope rail (#387, #388).
+    /// Binds to the conversation's active Pet (Finder, connected app, borrowed turn
+    /// participant, or frontmost App Pet) so tools, skills, and connectors populate accurately.
+    var resolvedConnectedPet: (name: String, bundleID: String, icon: NSImage?) {
+        // 1. Participant set (explicitly attached / combined Pet)
+        if let participant = participantSet.first {
+            let icon = AppContextPicker.icon(forAppNamed: participant.displayName)
+                ?? Self.appIcon(for: participant.petID.dockBundleID)
+            return (participant.displayName, participant.petID.dockBundleID, icon)
+        }
+        // 2. Active turn borrowed participant
+        if let borrowed = activeTurnScope.borrowedParticipants.first {
+            let icon = AppContextPicker.icon(forAppNamed: borrowed.displayName)
+                ?? Self.appIcon(for: borrowed.petID.dockBundleID)
+            return (borrowed.displayName, borrowed.petID.dockBundleID, icon)
+        }
+        // 3. Scoped app
+        if case .app(let bundleId) = activeScope {
+            let name = activeScopeAppName ?? "App"
+            let icon = AppContextPicker.icon(forAppNamed: name)
+                ?? Self.appIcon(for: bundleId)
+            return (name, bundleId, icon)
+        }
+        // 4. File / folder inquiries ground Finder Pet
+        if let lastQuery = messages.last(where: { $0.role == .user })?.content,
+           FinderContextGrounder.wantsFileGrounding(lastQuery) {
+            let icon = Self.appIcon(for: "com.apple.finder")
+            return ("Finder", "com.apple.finder", icon)
+        }
+        // 5. Frontmost App Pet from Corner promptModel
+        let frontmostID = CornerChatPresentation.shared.appChat.appBundleID
+        if !frontmostID.isEmpty {
+            let frontmostName = CornerChatPresentation.shared.appChat.appName
+            let icon = Self.appIcon(for: frontmostID)
+            return (frontmostName, frontmostID, icon)
+        }
+        // 6. Default Mac-wide Finder / System
+        let finderIcon = Self.appIcon(for: "com.apple.finder")
+        return ("Finder", "com.apple.finder", finderIcon)
+    }
+
+    static func appIcon(for bundleID: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
     var activeScopeSymbol: String {
         switch activeScope {
         case .general, .thread: return "bubble.left.and.bubble.right"
