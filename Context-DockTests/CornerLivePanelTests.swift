@@ -94,4 +94,31 @@ struct CornerLivePanelTests {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         #expect(!model.showsLivePanel)
     }
+
+    @Test("Toggling livePanelOpen persists its state across model instances")
+    func livePanelOpenPersistsState() {
+        let store = AppChatPromptModel.pinStore
+        let key = AppChatPromptModel.livePanelOpenKey
+        let previous = store.object(forKey: key)
+        defer {
+            if let previous {
+                store.set(previous, forKey: key)
+            } else {
+                store.removeObject(forKey: key)
+            }
+        }
+
+        let model1 = AppChatPromptModel(conversation: AppChatConversation())
+        model1.livePanelOpen = false
+        #expect(store.bool(forKey: key) == false)
+
+        let model2 = AppChatPromptModel(conversation: AppChatConversation())
+        #expect(model2.livePanelOpen == false)
+
+        model2.livePanelOpen = true
+        #expect(store.bool(forKey: key) == true)
+
+        let model3 = AppChatPromptModel(conversation: AppChatConversation())
+        #expect(model3.livePanelOpen == true)
+    }
 }
