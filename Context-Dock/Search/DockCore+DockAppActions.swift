@@ -80,27 +80,37 @@ extension DockCore {
         lockedSubmenuParent = nil
     }
 
-    func refocusLauncherWindowAfterAppAction(delay: TimeInterval = 0.12) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+    func refocusDockInputAfterAppAction(delay: TimeInterval = 0.12) {
+        let action = { @MainActor in
             self.isVisible = true
             self.expandSearchBar()
             self.isSearchFieldFocused = true
-
-            if let window = NSApp.windows.first(where: { $0.isVisible })
-            {
-                window.orderFrontRegardless()
-                window.makeKeyAndOrderFront(nil)
-            }
-
+            self.reclaimSearchInputFocus()
             NSApp.activate(ignoringOtherApps: true)
         }
+
+        if delay <= 0 {
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { action() }
+            } else {
+                DispatchQueue.main.async { MainActor.assumeIsolated { action() } }
+            }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                MainActor.assumeIsolated { action() }
+            }
+        }
+    }
+
+    func refocusLauncherWindowAfterAppAction(delay: TimeInterval = 0.12) {
+        refocusDockInputAfterAppAction(delay: delay)
     }
 
     func openApplicationKeepingDockFocus(_ url: URL, bundleIdentifier: String? = nil) {
         let resolvedBundleId = bundleIdentifier ?? Bundle(url: url)?.bundleIdentifier
         let urlAppName = url.deletingPathExtension().lastPathComponent
         resetDockStateAfterAppAction()
-        hideLauncherAfterResultExecution()
+        resetEngineStateAfterResultExecution(force: false)
 
         if let resolvedBundleId,
             let runningApp = NSWorkspace.shared.runningApplications.first(where: {
@@ -144,9 +154,9 @@ extension DockCore {
     func activateRunningAppFromDock(_ app: NSRunningApplication, forceHideLauncher: Bool = false) {
         resetDockStateAfterAppAction()
         if forceHideLauncher {
-            forceHideLauncherAfterResultExecution()
+            resetEngineStateAfterResultExecution(force: true)
         } else {
-            hideLauncherAfterResultExecution()
+            resetEngineStateAfterResultExecution(force: false)
         }
         let name = app.localizedName ?? "App"
         let switchId = DockActionFeedback.start(
@@ -290,7 +300,7 @@ extension DockCore {
             bundleID: bundleID.isEmpty ? nil : bundleID
         )
         app.terminate()
-        refocusLauncherWindowAfterAppAction(delay: 0.06)
+        refocusDockInputAfterAppAction(delay: 0.06)
         scheduleDockRefreshAfterTerminationAttempt(for: app, feedbackID: feedbackID)
         refreshGlobalSearchAfterRunningAppMutation()
     }
@@ -596,7 +606,7 @@ extension DockCore {
                         l2.pillNavViaKeyboard = false
                         reclaimSearchInputFocus()
                     } else {
-                        hideLauncherAfterResultExecution()
+                        resetEngineStateAfterResultExecution(force: false)
                     }
                 },
                 refreshRunningApps: {
@@ -612,7 +622,7 @@ extension DockCore {
                     clearLiveDockMenuState()
                 },
                 refocusDockInput: {
-                    refocusLauncherWindowAfterAppAction(delay: 0.06)
+                    refocusDockInputAfterAppAction(delay: 0.06)
                 }
             )
         )

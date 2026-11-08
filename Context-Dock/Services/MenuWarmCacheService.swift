@@ -55,43 +55,15 @@ final class MenuWarmCacheService {
         }
     }
 
-    /// Called when the launcher window opens. Warms recent apps with a 2-min threshold
-    /// so global context AI and menu pills are fresh without waiting for the 5-min idle cycle.
-    func warmRecentAppsOnLauncherOpen() {
-        Task { [weak self] in
-            guard let self else { return }
-            await self.warmRecentWithFreshness(120)
-        }
-    }
-
-    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+    func warmRunningAppsForDock(_ apps: [NSRunningApplication], maxApps: Int = 6) {
         Task { [weak self] in
             guard let self else { return }
             await self.warmRunningApps(apps, maxApps: maxApps, freshness: 120)
         }
     }
 
-    func warmStatusMenuAppsOnLauncherOpen(force: Bool = false) async -> Bool {
-        guard AXIsProcessTrusted() else { return false }
-
-        if !force,
-            let lastStatusMenuWarmDate,
-            Date().timeIntervalSince(lastStatusMenuWarmDate) < 120
-        {
-            return false
-        }
-
-        for _ in 0..<12 where activeWarmPID != nil || AXMenuReader.shared.isScanningMenus {
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        guard activeWarmPID == nil,
-              !AXMenuReader.shared.isScanningMenus
-        else { return false }
-        lastStatusMenuWarmDate = Date()
-
-        return await Task.detached(priority: .utility) {
-            StatusMenuBarActionScanner.shared.scanAndStoreInstalledStatusMenus()
-        }.value
+    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+        warmRunningAppsForDock(apps, maxApps: maxApps)
     }
 
     private func warmRecentWithFreshness(_ freshness: TimeInterval) async {

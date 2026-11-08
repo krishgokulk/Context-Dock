@@ -179,9 +179,12 @@ When every Dock job has a Corner home:
    bottom dock are unchanged; the recorded custom launcher hotkey still opens the old Dock.
    **Done (#257, 2026-10-14):** the custom launcher hotkey and the menu bar item open the centred
    Corner too; the old Dock window no longer exists.
-2. **Retire `DockCore`'s Dock paths** — **done (#257 E1–E4, 2026-10-14).** E1 moved its state
+2. **Retire `DockCore`'s Dock paths** — **done (#257 E1–E4, 2026-10-14; final closure 2026-11-08).** E1 moved its state
    into `DockCoreState`, E2–E3a ran it windowless under `DockEngine`, E3b deleted the screen
-   (~35k lines), E4 the window leftovers. What remains of `DockCore` is engine only: the L2
+   (~35k lines), E4 the window leftovers, E5 renamed to `DockCore`. Final closure eliminated
+   residual `NSApp.windows` window-hunting in `DockCore+DockAppActions`, migrated `@FocusState` to
+   `@Published` on `DockCoreModel`, refactored vestigial launcher methods to `resetEngineStateAfterResultExecution`,
+   cleaned `MenuWarmCacheService`, and added `DockEngineHeadlessTests`. What remains of `DockCore` is engine only: the L2
    chat pipeline and the Global result builders the Corner calls. Moving those into `Services/`
    and renaming the type is follow-up work.
 3. **Product name decided (2026-10-27):** user-facing name is **Dock**. “Corner” remains an

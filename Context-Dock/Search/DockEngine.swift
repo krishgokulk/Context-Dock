@@ -41,11 +41,20 @@ final class DockEngine {
         isStarted = true
         let core = self.core
         let env = ContextDockEnvironment.shared
-        let center = NotificationCenter.default
 
         env.userContextUpdates.sink { core.handleUserContextUpdate($0) }.store(in: &sinks)
         env.frontmostAppUpdates.sink { core.handleFrontmostAppUpdate($0) }.store(in: &sinks)
 
+        attachNotificationInputs()
+
+        core.startEngine()
+        startWatching()
+    }
+
+    /// Shared notification subscriptions wired to DockCore handlers.
+    private func attachNotificationInputs() {
+        let core = self.core
+        let center = NotificationCenter.default
         let inputs: [(Notification.Name, (Notification) -> Void)] = [
             (.servicesOpenWithFiles, { core.handleServicesOpenWithFiles($0) }),
             (.servicesOpenWithText, { core.handleServicesOpenWithText($0) }),
@@ -63,9 +72,6 @@ final class DockEngine {
         for (name, handle) in inputs {
             center.publisher(for: name).sink { handle($0) }.store(in: &sinks)
         }
-
-        core.startEngine()
-        startWatching()
     }
 
     // MARK: - Reacting to its own state
@@ -122,3 +128,21 @@ final class DockEngine {
         }
     }
 }
+
+#if DEBUG
+extension DockEngine {
+    /// Safe test method: attaches notification sinks for testing without starting background indexing or menu warming.
+    func startObservingForTesting() {
+        guard !isStarted else { return }
+        isStarted = true
+        attachNotificationInputs()
+    }
+
+    func resetForTesting() {
+        sinks.removeAll()
+        watches.removeAll()
+        watchPassScheduled = false
+        isStarted = false
+    }
+}
+#endif
