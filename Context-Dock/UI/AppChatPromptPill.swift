@@ -907,7 +907,7 @@ struct AppChatPromptPill: View {
                 // either way, so the transcript keeps its scroll when the panel is toggled.
                 HStack(spacing: 0) {
                     transcript
-                        .frame(maxWidth: .infinity)
+                        .frame(width: compactChatWidth)
                     if model.showsLivePanel {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
