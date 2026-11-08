@@ -10,16 +10,32 @@
 
 ## In progress
 
-None — standing by for owner direction or next backlog item.
+**#157: E7b Approvals survive quitting the app:**
+- PR [#391](https://github.com/krishgokulk/Context-Dock/pull/391) on branch `claude/stoic-khorana-e2d57d`.
+- Rebased on top of `general-chat-agent`, auto-merge enabled. CI running on GitHub Actions.
 
-Coordinator: Antigravity Planner — since 2026-11-07 16:58 UTC
+Coordinator: Antigravity Planner — since 2026-11-08 11:40 UTC
 
 ## Queued (next)
 
-**AI Engine Plan Backlog:**
-- **#157: E7b Approvals survive quitting the app** (`ready`).
+- Milestone 1.0 remaining issues or Labs (E9–E16 App Pets memory/orchestration).
 
 ## Done (most recent first)
+
+**#160: E8c Replay judge for answer quality:**
+- Completed on branch `claude/issue-160-replay-judge` (PR #394, Issue #160).
+- Offline answer-quality judge: scores a `ReplayCase` final answer using heuristic signals (poor: empty, short, failure prefix, query echo, injection markers; good: no failure, addresses query, complete sentence, appropriate length).
+- Added `Services/ReplayCaseJudge.swift` and `Context-DockTests/ReplayCaseJudgeTests.swift` with 20 hand-graded cases (≥90% agreement achieved, 100% on fixture set). Squash-merged into `general-chat-agent`.
+
+**#159: E8b Replay runner: rule checks + retrieval metrics, offline:**
+- Completed on branch `claude/issue-159-replay-runner` (PR #393, Issue #159).
+- Added `Services/ReplayCaseRule.swift` (9 built-in rules) and `Services/ReplayRunner.swift` (runner, `RunReport`, `RetrievalMetrics` with hit@K and MRR).
+- Added `Context-DockTests/ReplayRunnerTests.swift` including 10 prompt-injection benchmark cases. Fixed static member qualifications in `PromptInjectionCaseTests`. Squash-merged into `general-chat-agent`.
+
+**#158: E8a Replay cases: record query, context and tool outputs from real turns:**
+- Completed on branch `claude/issue-158-replay-cases` (PR #392, Issue #158).
+- Added `Services/ReplayCase.swift` (versioned Codable turn snapshot), `Services/ReplayCaseSanitizer.swift` (stripping personal paths, emails, tokens, keys), `Services/ReplayCaseStore.swift` (disk store under `~/Library/Application Support/Context-Dock/ReplayCases/`).
+- Added `Context-DockTests/ReplayCaseTests.swift` (20 offline tests). Squash-merged into `general-chat-agent`.
 
 **#156: E7a Focus: inspect / act / verify / answer each send their own tool set:**
 - Completed on branch `claude/issue-156-focus-tool-sets` (PR #390, Issue #156).
