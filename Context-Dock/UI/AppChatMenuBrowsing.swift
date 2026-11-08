@@ -401,7 +401,7 @@ extension AppChatPromptModel {
         // included").
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
             tabsByIconID = [:]
-            return pins.isEmpty ? Self.pillIcons(excluding: appBundleID) : pins
+            return pins.isEmpty ? pillIcons(excluding: appBundleID) : pins
         }
         // Safari's own order, window by window, tab by tab — never the current page first:
         // choosing a tab here made it the current page, and it jumped to the front under
@@ -585,7 +585,7 @@ extension AppChatPromptModel {
         // The pills are what is running, the way the dock's global bar shows them — they
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
-        let running = showsTabBar ? tabStripIcons() : Self.pillIcons(excluding: appBundleID)
+        let running = showsTabBar ? tabStripIcons() : pillIcons(excluding: appBundleID)
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -607,7 +607,14 @@ extension AppChatPromptModel {
     /// The clipboard leads, because it is the thing that just happened — the user copied
     /// something a moment ago and the pill is how they get back to it without leaving what
     /// they are doing.
-    static func pillIcons(excluding scopedBundleID: String = "") -> [MatchDockIcon] {
+    func pillIcons(excluding scopedBundleID: String = "") -> [MatchDockIcon] {
+        Self.pillIcons(excluding: scopedBundleID, runningAppsSource: runningAppsSource)
+    }
+
+    static func pillIcons(
+        excluding scopedBundleID: String = "",
+        runningAppsSource: RunningAppsSourcing = WorkspaceRunningAppsSource()
+    ) -> [MatchDockIcon] {
         var icons: [MatchDockIcon] = []
         // The clipboard used to lead this list as a `MatchDockIcon`, mixed in with the
         // running apps. The dock's own equivalent row is apps only — its clipboard
@@ -620,7 +627,7 @@ extension AppChatPromptModel {
         // macOS's own Dock has it too — but that is a different dock, and the corner is
         // where they opened it.
         icons += minimizedPanelPills()
-        let apps = runningAppIcons()
+        let apps = runningAppsSource.runningAppIcons()
             .filter { $0.bundleID != scopedBundleID || scopedBundleID.isEmpty }
         // Finder leads the apps, always. It is the one scope that is always there and
         // always means the same thing, so it is the fixed point the eye starts from — the
@@ -685,24 +692,12 @@ extension AppChatPromptModel {
     }
 
     /// The apps that are running, newest first, as the pill row draws them.
+    func runningAppIcons() -> [MatchDockIcon] {
+        runningAppsSource.runningAppIcons()
+    }
+
     static func runningAppIcons() -> [MatchDockIcon] {
-        NSWorkspace.shared.runningApplications
-            .filter {
-                $0.activationPolicy == .regular && !$0.isTerminated
-                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
-            }
-            .compactMap { app in
-                guard let bundleID = app.bundleIdentifier, let icon = app.icon else { return nil }
-                return MatchDockIcon(
-                    id: bundleID,
-                    bundleID: bundleID,
-                    title: app.localizedName ?? bundleID,
-                    icon: icon,
-                    isRunning: true,
-                    isExpandable: false,
-                    score: 0,
-                    isExactAppPrefix: false)
-            }
+        WorkspaceRunningAppsSource().runningAppIcons()
     }
 
     /// Kept for the tests and for any caller with no screen to ask about: the count that
@@ -1974,9 +1969,9 @@ extension AppChatPromptModel {
         if let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }) {
-            AXContextReader.shared.refreshLightweight(from: app)
+            selectionReader.refreshLightweight(from: app)
         }
-        let context = AXContextReader.shared.current
+        let context = selectionReader.current
         Task { @MainActor [weak self] in
             let result = await AppAdapterManager.shared.execute(
                 action, context: context, targetBundleId: bundleID)

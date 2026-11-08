@@ -18,23 +18,28 @@ struct CornerFrontmostAppPillsTests {
 
     @Test("Summoning the frontmost-app chat populates the same pill data Global Context uses")
     func summonPopulatesPills() {
-        let model = AppChatPromptModel()
+        let fakeRunning = [
+            Self.icon("com.apple.finder"),
+            Self.icon("com.microsoft.VSCode"),
+            Self.icon("app1"),
+            Self.icon("app2"),
+            Self.icon("app3"),
+            Self.icon("app4")
+        ]
+        let runningSource = FixedRunningAppsSource(icons: fakeRunning)
+        let model = AppChatPromptModel(runningAppsSource: runningSource)
         // Seeded to something summon() must overwrite, so the assertion is that the call
         // actually happened rather than that these fields merely hold their zero value.
         model.setGlobalTyping(top: nil, running: [Self.icon("seed")])
 
         model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
 
-        // Read live, from the same sources the model itself reads — this asserts the
-        // mechanism ran, not a specific machine's set of running apps. An app's Context
-        // Dock has the app bar (owner 2026-10-08): its pins, or every running app when it
-        // has none, with room for `appBarVisibleIcons` before the rest scroll. Assuming the
-        // plain field's list and capacity failed this on any Mac running more apps than
-        // that field holds.
+        // Read from the injected source the model itself reads — this asserts the
+        // mechanism ran, not a specific machine's set of running apps.
         let expected =
             model.showsTabBar
             ? model.tabStripIcons()
-            : AppChatPromptModel.pillIcons(excluding: "com.microsoft.VSCode")
+            : model.pillIcons(excluding: "com.microsoft.VSCode")
         let capacity =
             model.showsTabBar
             ? AppChatPromptModel.appBarVisibleIcons : AppChatPromptModel.pillFieldCapacity
@@ -72,7 +77,12 @@ struct CornerFrontmostAppPillsTests {
 
     @Test("The scoped app itself never appears among its own pills")
     func theScopedAppIsExcludedFromItsOwnPills() {
-        let model = AppChatPromptModel()
+        let fakeRunning = [
+            Self.icon("com.apple.finder"),
+            Self.icon("com.microsoft.VSCode"),
+            Self.icon("app1")
+        ]
+        let model = AppChatPromptModel(runningAppsSource: FixedRunningAppsSource(icons: fakeRunning))
 
         model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
 

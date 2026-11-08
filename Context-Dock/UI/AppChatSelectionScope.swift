@@ -12,6 +12,7 @@
 // cannot claim a selection the turn will not carry.
 
 import AppKit
+import Combine
 import Foundation
 
 /// A selection, described the way the user would describe it.
@@ -55,5 +56,87 @@ struct AppChatSelectionScope: Equatable {
         let text = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return nil }
         return AppChatSelectionScope(kind: .text(characters: text.count))
+    }
+}
+
+// MARK: - Selection Reading Seam
+
+/// Reader of system AX context / selection for App Chat.
+/// Production uses AXContextReader.shared; tests inject a fake.
+protocol AppChatSelectionReading: AnyObject {
+    var contextPublisher: AnyPublisher<AXContext, Never> { get }
+    var current: AXContext { get }
+    func refreshLightweight(from app: NSRunningApplication)
+    func refreshSelectionOnly(from app: NSRunningApplication, includeFinderFiles: Bool)
+}
+
+extension AppChatSelectionReading {
+    func refreshSelectionOnly(from app: NSRunningApplication) {
+        refreshSelectionOnly(from: app, includeFinderFiles: true)
+    }
+}
+
+extension AXContextReader: AppChatSelectionReading {}
+
+/// Test fake providing isolated AXContext without live system AX queries.
+final class FakeAppChatSelectionReader: AppChatSelectionReading {
+    private let subject: CurrentValueSubject<AXContext, Never>
+    var contextPublisher: AnyPublisher<AXContext, Never> { subject.eraseToAnyPublisher() }
+    var current: AXContext {
+        get { subject.value }
+        set { subject.send(newValue) }
+    }
+
+    init(context: AXContext = .empty) {
+        self.subject = CurrentValueSubject(context)
+    }
+
+    func setContext(_ context: AXContext) {
+        self.current = context
+    }
+
+    func refreshLightweight(from app: NSRunningApplication) {}
+    func refreshSelectionOnly(from app: NSRunningApplication, includeFinderFiles: Bool = true) {}
+}
+
+// MARK: - Running Apps Sourcing Seam
+
+/// Source of running application icons for App Chat pill rows.
+/// Production reads NSWorkspace; tests inject a fixed list.
+protocol RunningAppsSourcing {
+    func runningAppIcons() -> [MatchDockIcon]
+}
+
+struct WorkspaceRunningAppsSource: RunningAppsSourcing {
+    func runningAppIcons() -> [MatchDockIcon] {
+        NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular && !$0.isTerminated
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            .compactMap { app in
+                guard let bundleID = app.bundleIdentifier, let icon = app.icon else { return nil }
+                return MatchDockIcon(
+                    id: bundleID,
+                    bundleID: bundleID,
+                    title: app.localizedName ?? bundleID,
+                    icon: icon,
+                    isRunning: true,
+                    isExpandable: false,
+                    score: 0,
+                    isExactAppPrefix: false)
+            }
+    }
+}
+
+struct FixedRunningAppsSource: RunningAppsSourcing {
+    let icons: [MatchDockIcon]
+
+    init(icons: [MatchDockIcon] = []) {
+        self.icons = icons
+    }
+
+    func runningAppIcons() -> [MatchDockIcon] {
+        icons
     }
 }
