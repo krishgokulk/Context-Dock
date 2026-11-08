@@ -11,9 +11,9 @@
 ## In progress
 
 **Issue #83: Extract SelectionActionSource out of DockCore:**
-- Branch `claude/issue-83-selection-action-source`.
+- Branch `claude/issue-83-selection-action-source` (PR #396, ready for review).
 - Extract `buildSelectionScopePills(query:)` and composed builders from `DockCore` into standalone `SelectionActionSource` conforming to `SelectionActionProviding`.
-- Keep `Context-DockTests/CornerSelectionActionsTests.swift` green.
+- Keep `Context-DockTests/CornerSelectionActionsTests.swift` green (50/50 passing).
 
 Coordinator: Antigravity Coordinator — since 2026-11-08 12:46 UTC
 
