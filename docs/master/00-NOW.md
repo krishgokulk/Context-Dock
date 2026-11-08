@@ -10,9 +10,12 @@
 
 ## In progress
 
-_None — standing by for next task._
+**Issue #225: Fix two offline tests depending on live Mac state (Safari selection, running apps):**
+- Branch `claude/issue-225-tests-no-live-state`.
+- Inject the selection reader and the running-apps source behind a seam with fixed fakes in tests.
+- Verify `./scripts/check.sh --full` reports 0 failed on a normal working Mac regardless of live screen/running app state.
 
-Coordinator: Antigravity Coordinator — since 2026-11-08 11:55 UTC
+Coordinator: Antigravity Coordinator — since 2026-11-08 11:58 UTC
 
 ## Queued (next)
 
