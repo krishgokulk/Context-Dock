@@ -140,10 +140,13 @@ struct CornerSelectionActionsTests {
             #expect(docks.contains { $0.id == SelectionShare.entryRowID })
             // The corner asks without the per-destination share lists, which are most of the
             // build's cost. Leaving them out must change nothing else.
+            let full: [SelectionActionRow]
             if let launcher = dock as? DockCore {
-                let full = launcher.selectionRows(for: snapshot, query: "", includeShare: true)
-                #expect(SelectionActions.cornerRows(full) == docks)
+                full = launcher.selectionRows(for: snapshot, query: "", includeShare: true)
+            } else {
+                full = dock.selectionRows(for: snapshot, query: "", includeShare: true)
             }
+            #expect(SelectionActions.cornerRows(full) == docks)
         }
     }
 

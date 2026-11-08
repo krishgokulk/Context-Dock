@@ -335,15 +335,19 @@ extension DockCore {
     /// which reads as "it said converted but there's no file".
     ///
     /// Values are shell-escaped because they land inside double quotes in the script.
-    func expandSelectionPlaceholders(in script: String) -> String {
-        let ctx = effectiveShareAXContext()
-        let selectionFiles = effectiveSelectedFileURLsForConversation().map(\.path)
+    func expandSelectionPlaceholders(
+        in script: String,
+        context: AXContext? = nil,
+        filePaths: [String]? = nil
+    ) -> String {
+        let ctx = context ?? effectiveShareAXContext()
+        let selectionFiles = filePaths ?? effectiveSelectedFileURLsForConversation().map(\.path)
         let files = selectionFiles.isEmpty ? ctx.selectedFilePaths : selectionFiles
         let text =
-            (effectiveSelectionForScope.flatMap { selection -> String? in
+            ctx.selectedText ?? (effectiveSelectionForScope.flatMap { selection -> String? in
                 if case .text(let value) = selection { return value }
                 return nil
-            }) ?? ctx.selectedText ?? ""
+            }) ?? ""
 
         func escaped(_ value: String) -> String {
             value

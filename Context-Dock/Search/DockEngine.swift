@@ -31,8 +31,8 @@ final class DockEngine {
     /// Global results. They were set by the view's `.onAppear` at launch, test host included,
     /// and are just references — so they are set at launch whether or not `start()` runs.
     func register() {
-        // The corner's Selection card asks the Dock's rows through this.
-        SelectionActions.provider = core
+        // The corner's Selection card asks the Dock's rows through this (Issue #83).
+        SelectionActions.provider = SelectionActionSource.shared
         core.connectGlobalResults()
     }
 
