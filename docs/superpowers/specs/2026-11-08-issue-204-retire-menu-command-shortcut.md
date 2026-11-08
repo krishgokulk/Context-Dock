@@ -45,7 +45,7 @@ In `Context-Dock/Search/DockCore+AIChat.swift` (lines 2540–2649), `handleL2Que
 2. **Retire `AIMenuProposal` and `pendingAIMenuProposal`:** Remove `struct AIMenuProposal` (`Context-Dock/Search/DockModels.swift:110-120`), `@Published var pendingAIProposal: AIMenuProposal?` (`Context-Dock/Search/FeatureViewModels.swift:171`), `var pendingAIMenuProposal: AIMenuProposal?` (`Context-Dock/Search/DockCore+StateBridges.swift:556-559`), and the `if q.isEmpty, let proposal = pendingAIMenuProposal` branch in `buildDockPills(query:)` (`Context-Dock/Search/DockCore+ContextualActions.swift:3645-3678`).
 3. **Remove `MenuIntentRouter` Class While Preserving `MenuPickRule`:** Delete `final class MenuIntentRouter` (`Context-Dock/Automation/MenuIntentRouter.swift:136-340`), which has zero remaining callers, while preserving `MenuPick` and `MenuPickRule` (`Context-Dock/Automation/MenuIntentRouter.swift:31-131`), which are unit-tested by `Context-DockTests/MenuPickRuleTests.swift`.
 4. **Simplify `handleL2Query` Entry Signature:** Remove the obsolete `skipMenuRouter: Bool` parameter from `handleL2Query` in `Context-Dock/Search/DockCore+AIChat.swift` so `func handleL2Query(_ query: String, isSelectionQuestion: Bool = false)` is the single implementation; retain `func handleL2QuerySkippingMenuRouter(_ query: String, isSelectionQuestion: Bool = false)` as a thin forwarding alias calling `handleL2Query(query, isSelectionQuestion: isSelectionQuestion)`.
-5. **Pin Routing Behavior in `RoutingPhrasebookTests`:** Add phrasebook rows and `MenuCommandShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift` verifying that exact menu commands (`"minimize"`, `"show sidebar"`, `"zoom in"`, `"File > New Folder"`) route to `.exactCommand`, token-overlapping requests (`"copy the passport pdf to the desktop"`, `"new folder for the tax documents"`, `"export this document as a summary"`) route to `.model` with `modelCandidates`, and questions (`"how do I export as pdf?"`, `"where is the sidebar?"`) route to `.none`.
+5. **Pin Routing Behavior in `RoutingPhrasebookTests`:** Add phrasebook rows and `MenuCommandShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift` verifying that exact menu commands (`"minimize"`, `"new tab"`, `"zoom in"`, `"File > New Folder"`) route to `.exactCommand`, token-overlapping requests (`"copy the passport pdf to the desktop"`, `"new folder for the tax documents"`, `"export this document as a summary"`, `"how do I export as pdf?"`) route to `.model` with `modelCandidates`, and read/questions (`"where is the sidebar?"`) route to `.none`.
 6. **Update Parity Inventory:** Add row `D17` to `docs/master/00-DOCK-PARITY-INVENTORY.md` recording the retirement of the `.menuCommand` shortcut.
 
 ### 1.3 Non-Goals
@@ -141,12 +141,12 @@ In `Context-Dock/Search/DockCore+AIChat.swift` (lines 2540–2649), `handleL2Que
 
 1. **Phrasebook Tests (`Context-DockTests/RoutingPhrasebookTests.swift`):**
    - Append new `Phrase` rows to `RoutingPhrasebookTests.phrasebook` covering:
-     - Exact menu commands in scoped chats: `"minimize"` (`Window > Minimize`), `"show sidebar"` (`View > Show Sidebar`), `"zoom in"` (`View > Zoom In`), `"File > New Folder"` (`File > New Folder`) → `.exactCommand`.
-     - Token-overlapping requests that `MenuIntentRouter` previously scored `>= 40`: `"copy the passport pdf to the desktop"` (with `Edit > Copy`), `"new folder for the tax documents"` (with `File > New Folder`), `"export this document as a summary"` (with `File > Export as PDF…`) → `.model`.
-     - Questions overlapping menu words: `"how do I export as pdf?"`, `"where is the sidebar?"` → `.none`.
+     - Exact menu commands in scoped chats: `"minimize"` (`Window > Minimize`), `"new tab"` (`File > New Tab`), `"zoom in"` (`View > Zoom In`), `"File > New Folder"` (`File > New Folder`) → `.exactCommand`.
+     - Token-overlapping requests that `MenuIntentRouter` previously scored `>= 40`: `"copy the passport pdf to the desktop"` (with `Edit > Copy`), `"new folder for the tax documents"` (with `File > New Folder`), `"export this document as a summary"` (with `File > Export as PDF…`), `"how do I export as pdf?"` (with `File > Export as PDF…`) → `.model`.
+     - Questions overlapping menu words without change verbs: `"where is the sidebar?"` → `.none`.
    - Add `struct MenuCommandShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift` asserting:
      - Token-overlapping sentences route to `.model` with `offer == nil` and populate `modelCandidates` with the matching menu item.
-     - Exact menu titles and explicit menu paths (`"Show Sidebar"`, `"Window > Minimize"`) route to `.exactCommand` with the matching menu candidate as `offer`.
+     - Exact menu titles and explicit menu paths (`"New Tab"`, `"Window > Minimize"`) route to `.exactCommand` with the matching menu candidate as `offer`.
      - `DockShortcut.allCases` does not contain `"menuCommand"`.
 2. **Shortcut Trace Tests (`Context-DockTests/DockShortcutTests.swift`):**
    - Remove `menuCommandStep()` and verify `everyFamilyHasADistinctShortcutLine()` passes for all remaining `DockShortcut` cases.

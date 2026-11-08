@@ -3642,41 +3642,6 @@ extension DockCore {
             return buildClipboardHistoryPills(query: q)
         }
 
-        // AI-found menu action: show as a focused pill instead of in the chat result sheet
-        if q.isEmpty, let proposal = pendingAIMenuProposal {
-            let path = proposal.path
-            let sc = proposal.shortcutChar
-            let mod = proposal.shortcutModifiers
-            let pid = proposal.sourcePID
-            let bId = proposal.sourceBundleId
-            let aName = proposal.sourceAppName
-            var pill = DockPill(
-                id: "ai-proposal-\(proposal.fullPathLabel)",
-                name: proposal.title,
-                icon: "cursorarrow.click",
-                accentColorName: "blue",
-                badge: aName.isEmpty ? nil : aName,
-                execute: {
-                    self.pendingAIMenuProposal = nil
-                    self.executeDockMenuAction(
-                        sourcePID: pid,
-                        // A proposal built from a cached snapshot carries pid 0; the bundle id
-                        // is what lets the click launch the app first.
-                        launchBundleId: pid == 0 ? bId : nil,
-                        path: path,
-                        shortcutChar: sc,
-                        shortcutModifiers: mod
-                    )
-                }
-            )
-            pill.menuItemImage = proposal.menuImage
-            pill.menuItemName = proposal.title
-            pill.sourceBundleId = bId
-            pill.sourceAppName = aName
-            pill.rankingKind = "menu"
-            return [pill]
-        }
-
         // Generic web search belongs to Global Context. Context Dock stays app-scoped.
         if isGlobalContextActive,
             L2AppActionRouter.shared.appScopeTarget(for: q) == nil,

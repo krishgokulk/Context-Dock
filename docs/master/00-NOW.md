@@ -10,11 +10,18 @@
 
 ## In progress
 
-None — standing by for next task.
+**Issue #204: P10: Retire the Menu Command pre-model shortcut into the ladder:**
+- Branch `claude/issue-204-retire-menu-command` (PR #402, ready for review).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-menu-command-shortcut.md` (Approved, 0 blocking gaps).
+- Retired pre-model `MenuIntentRouter` (`DockShortcut.menuCommand`) block from `DockCore+AIChat.swift` (`handleL2Query`) and removed `skipMenuRouter: Bool` recursion parameter.
+- Deleted dead `AIMenuProposal` / `pendingAIMenuProposal` / `pendingAIProposal` pill-sheet state across `DockModels.swift`, `FeatureViewModels.swift`, `DockCore+StateBridges.swift`, and `DockCore+ContextualActions.swift`.
+- Removed `MenuIntentRouter` class from `MenuIntentRouter.swift` while preserving `MenuPick` and `MenuPickRule`.
+- Added phrasebook rows and `MenuCommandShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `DockShortcutTests.swift` and `00-DOCK-PARITY-INVENTORY.md` (row D17).
+- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MenuCommandShortcutRetirementTests`, `DockShortcutTests`, `MenuPickRuleTests` — 39/39 pass) green.
 
 ## Queued (next)
 
-- Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
 - Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
 - **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
