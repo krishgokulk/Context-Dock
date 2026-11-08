@@ -283,7 +283,10 @@ extension DockCore {
     /// When Finder is frontmost and files are selected, generate instant-action pills
     /// for those files so they appear *before* the generic adapter pills.
     func buildFinderFilePills(query q: String) -> [DockPill] {
-        let selectedURLs = effectiveFinderSelectionURLsForPills()
+        buildFinderFilePills(urls: effectiveFinderSelectionURLsForPills(), query: q)
+    }
+
+    func buildFinderFilePills(urls selectedURLs: [URL], query q: String) -> [DockPill] {
         guard !selectedURLs.isEmpty else { return [] }
         let paths = selectedURLs.map(\.path)
         let count = paths.count
@@ -1075,7 +1078,20 @@ extension DockCore {
         excludingTitles: Set<String>,
         allowedRootNames: Set<String>? = nil
     ) -> [DockPill] {
-        let selectedURLs = effectiveFinderSelectionURLsForPills()
+        buildFinderSelectionMenuPills(
+            selectedURLs: effectiveFinderSelectionURLsForPills(),
+            query: q,
+            excludingTitles: excludingTitles,
+            allowedRootNames: allowedRootNames
+        )
+    }
+
+    func buildFinderSelectionMenuPills(
+        selectedURLs: [URL],
+        query q: String,
+        excludingTitles: Set<String>,
+        allowedRootNames: Set<String>? = nil
+    ) -> [DockPill] {
         guard !selectedURLs.isEmpty else { return [] }
 
         let openWithFilter = openWithChildFilter(from: q)
@@ -1132,8 +1148,9 @@ extension DockCore {
 
             let menuImg = resolvedMenuIcon(for: item)
             let shareItem = item
+            let menuID = item.path.isEmpty ? item.id.uuidString : item.path.joined(separator: ">").lowercased()
             var pill = DockPill(
-                id: "finder-menu-\(item.id)",
+                id: "finder-menu-\(menuID)",
                 name: item.title,
                 icon: isShareItem ? "square.and.arrow.up" : menuSymbol(for: item),
                 accentColorName: isShareItem ? "blue" : "gray",

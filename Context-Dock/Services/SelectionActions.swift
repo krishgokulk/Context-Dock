@@ -11,6 +11,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 
 /// One selection, captured once. Every row the corner builds or runs is about this copy —
 /// never whatever the Dock or the frontmost app holds by the time the row runs.
@@ -116,10 +117,11 @@ struct SelectionActionRow: Identifiable, Equatable {
     }
 }
 
-/// Rows for a selection, and running one. DockCore conforms today.
+/// Rows for a selection, and running one. DockCore conforms today; SelectionActionSource is the standalone source.
 @MainActor
 protocol SelectionActionProviding {
     func selectionRows(for snapshot: SelectionSnapshot, query: String) -> [SelectionActionRow]
+    func selectionRows(for snapshot: SelectionSnapshot, query: String, includeShare: Bool) -> [SelectionActionRow]
     /// Runs the row with this id, rebuilt for `snapshot`. False when the row is not there.
     @discardableResult
     func runSelectionRow(id: String, query: String, for snapshot: SelectionSnapshot) -> Bool
@@ -129,15 +131,91 @@ protocol SelectionActionProviding {
     func replaceSelection(with text: String, for snapshot: SelectionSnapshot) -> Bool
 }
 
+extension SelectionActionProviding {
+    func selectionRows(for snapshot: SelectionSnapshot, query: String) -> [SelectionActionRow] {
+        selectionRows(for: snapshot, query: query, includeShare: false)
+    }
+
+    func selectionRows(
+        for snapshot: SelectionSnapshot, query: String, includeShare: Bool
+    ) -> [SelectionActionRow] {
+        selectionRows(for: snapshot, query: query)
+    }
+}
+
+/// Decoupled host environment for external side-effects executed by SelectionActionSource.
+@MainActor
+protocol SelectionActionHost: AnyObject {
+    /// Navigate or submit a question to the selection-scoped chat session
+    func enterSelectionChat(prompt: String, snapshot: SelectionSnapshot)
+
+    /// Display feedback notification (e.g. "Copied selected text")
+    func showFeedback(title: String, icon: String, success: Bool)
+
+    /// Present macOS native sharing picker or dispatch share intent
+    func presentShare(items: [Any], from rect: NSRect?)
+
+    /// Execute a menu action (e.g. Finder contextual menu items)
+    func executeMenuAction(
+        sourcePID: pid_t,
+        launchBundleId: String?,
+        path: [String],
+        shortcutChar: String?,
+        shortcutModifiers: Int
+    )
+}
+
+extension SelectionActionHost {
+    func executeMenuAction(
+        sourcePID: pid_t,
+        launchBundleId: String? = nil,
+        path: [String],
+        shortcutChar: String?,
+        shortcutModifiers: Int
+    ) {
+        DockEngine.shared.core.executeDockMenuAction(
+            sourcePID: sourcePID,
+            launchBundleId: launchBundleId,
+            path: path,
+            shortcutChar: shortcutChar,
+            shortcutModifiers: shortcutModifiers
+        )
+    }
+}
+
+@MainActor
+final class DefaultSelectionActionHost: SelectionActionHost {
+    static let shared = DefaultSelectionActionHost()
+
+    func enterSelectionChat(prompt: String, snapshot: SelectionSnapshot) {
+        DockEngine.shared.core.enterSelectionChat(initialQuery: prompt)
+    }
+
+    func showFeedback(title: String, icon: String, success: Bool) {
+        AppToast.show(title, icon: icon, tint: success ? .primary : .secondary)
+    }
+
+    func presentShare(items: [Any], from rect: NSRect?) {
+        ShareActionCoordinator.shared.presentSharingPicker(items: items, setActive: { _ in })
+    }
+}
+
 @MainActor
 enum SelectionActions {
-    /// The provider the corner asks: DockCore, set by DockEngine when it starts at app
-    /// launch (didFinishLaunching).
+    /// Pure: context for a snapshot, forwarding to SelectionShare.
+    static func context(for snapshot: SelectionSnapshot) -> AXContext {
+        SelectionShare.context(for: snapshot)
+    }
+
+    /// Pure: shareable items for a snapshot, forwarding to SelectionShare.
+    static func items(for snapshot: SelectionSnapshot) -> [Any] {
+        SelectionShare.items(for: snapshot)
+    }
+    /// The provider the corner asks: SelectionActionSource (or DockCore for backward compatibility).
     static var provider: (any SelectionActionProviding)?
 
-    /// True while a corner build or run has the captured selection swapped into the Dock. The
-    /// Dock's helpers stop falling back to the live Accessibility selection while it is: the
-    /// captured copy is the whole truth for that call.
+    /// Deprecated: captured selection swapped into DockCore. Retained for test backwards compatibility.
+    @available(*, deprecated, message: "Use SelectionActionSource with explicit SelectionSnapshot instead")
     static var isScopedToCapturedSelection = false
 
     /// True while the corner runs a row the user approved in its card, so the Dock's own
@@ -193,6 +271,7 @@ enum SelectionActions {
 
     /// Swap `value` in, run `body`, put the old value back — even if `body` returns early.
     /// Pure over its accessors, which is what lets the swap be tested without a mounted view.
+    @available(*, deprecated, message: "Use SelectionActionSource with explicit SelectionSnapshot instead")
     static func withSwapped<Value, Result>(
         _ value: Value, get: () -> Value, set: (Value) -> Void, _ body: () -> Result
     ) -> Result {

@@ -26,8 +26,25 @@ extension DockCore {
         excludingTitles: Set<String> = [],
         includeSharing: Bool = true
     ) -> [DockPill] {
+        buildMacOSExtensionActionPills(
+            context: effectiveShareAXContext(),
+            fileURLs: effectiveFinderSelectionURLsForPills(),
+            query: rawQuery,
+            excludingTitles: excludingTitles,
+            includeSharing: includeSharing
+        )
+    }
+
+    func buildMacOSExtensionActionPills(
+        context: AXContext,
+        fileURLs: [URL],
+        query rawQuery: String,
+        excludingTitles: Set<String> = [],
+        includeSharing: Bool = true
+    ) -> [DockPill] {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let services = buildServicesActionSourcePills(
+            fileURLs: fileURLs,
             query: query,
             excludingTitles: excludingTitles
         )
@@ -35,6 +52,7 @@ extension DockCore {
             services.map { normalizedDockPillText($0.name) }
         )
         let finderQuickActions = buildFinderQuickActionSourcePills(
+            fileURLs: fileURLs,
             query: query,
             excludingTitles: serviceTitles
         )
@@ -42,12 +60,13 @@ extension DockCore {
             finderQuickActions.map { normalizedDockPillText($0.name) }
         )
         let sharing = includeSharing
-            ? buildSharingActionSourcePills(query: query, excludingTitles: finderTitles)
+            ? buildSharingActionSourcePills(context: context, query: query, excludingTitles: finderTitles)
             : []
         let shortcutTitles = finderTitles.union(
             sharing.map { normalizedDockPillText($0.name) }
         )
         let shortcuts = buildShortcutsActionSourcePills(
+            context: context,
             query: query,
             excludingTitles: shortcutTitles
         )
@@ -66,7 +85,19 @@ extension DockCore {
         query: String,
         excludingTitles: Set<String>
     ) -> [DockPill] {
-        buildFinderFilePills(query: query).compactMap { pill in
+        buildFinderQuickActionSourcePills(
+            fileURLs: effectiveFinderSelectionURLsForPills(),
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildFinderQuickActionSourcePills(
+        fileURLs: [URL],
+        query: String,
+        excludingTitles: Set<String>
+    ) -> [DockPill] {
+        buildFinderFilePills(urls: fileURLs, query: query).compactMap { pill in
             let title = normalizedDockPillText(pill.name)
             guard !excludingTitles.contains(title) else { return nil }
             var copy = pill
@@ -94,7 +125,20 @@ extension DockCore {
         query: String,
         excludingTitles: Set<String>
     ) -> [DockPill] {
+        buildServicesActionSourcePills(
+            fileURLs: effectiveFinderSelectionURLsForPills(),
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildServicesActionSourcePills(
+        fileURLs: [URL],
+        query: String,
+        excludingTitles: Set<String>
+    ) -> [DockPill] {
         let contextualPills = buildFinderContextualMenuActionPills(
+            fileURLs: fileURLs,
             query: query,
             excludingTitles: excludingTitles
         )
@@ -103,6 +147,7 @@ extension DockCore {
         }
 
         return buildFinderSelectionMenuPills(
+            selectedURLs: fileURLs,
             query: query,
             excludingTitles: excludingTitles,
             allowedRootNames: ["services", "quick actions"]
@@ -120,7 +165,18 @@ extension DockCore {
         query: String,
         excludingTitles: Set<String>
     ) -> [DockPill] {
-        let selectedURLs = effectiveFinderSelectionURLsForPills()
+        buildFinderContextualMenuActionPills(
+            fileURLs: effectiveFinderSelectionURLsForPills(),
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildFinderContextualMenuActionPills(
+        fileURLs selectedURLs: [URL],
+        query: String,
+        excludingTitles: Set<String>
+    ) -> [DockPill] {
         guard !selectedURLs.isEmpty else { return [] }
         let normalizedQuery = normalizedDockPillText(query)
         let actions: [FinderContextualMenuAction] = {
@@ -173,7 +229,18 @@ extension DockCore {
         query: String,
         excludingTitles: Set<String>
     ) -> [DockPill] {
-        let context = effectiveShareAXContext()
+        buildSharingActionSourcePills(
+            context: effectiveShareAXContext(),
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildSharingActionSourcePills(
+        context: AXContext,
+        query: String,
+        excludingTitles: Set<String>
+    ) -> [DockPill] {
         let items = ShareIntentRouter.shared.shareableItems(for: context)
         guard !items.isEmpty else { return [] }
 
@@ -239,7 +306,18 @@ extension DockCore {
         query: String,
         excludingTitles: Set<String>
     ) -> [DockPill] {
-        let context = effectiveShareAXContext()
+        buildShortcutsActionSourcePills(
+            context: effectiveShareAXContext(),
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildShortcutsActionSourcePills(
+        context: AXContext,
+        query: String,
+        excludingTitles: Set<String>
+    ) -> [DockPill] {
         let fileURLs = context.selectedFilePaths.map(URL.init(fileURLWithPath:))
         let selectedText = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentURL = context.currentURL?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -329,6 +407,20 @@ extension DockCore {
     ) -> [DockPill] {
         let selectionContext = effectiveShareAXContext()
         let selectedPaths = effectiveSelectedFileURLsForConversation().map(\.path)
+        return buildCustomSelectionExtensionPills(
+            context: selectionContext,
+            selectedPaths: selectedPaths,
+            query: query,
+            excludingTitles: excludingTitles
+        )
+    }
+
+    func buildCustomSelectionExtensionPills(
+        context selectionContext: AXContext,
+        selectedPaths: [String],
+        query: String,
+        excludingTitles: Set<String> = []
+    ) -> [DockPill] {
         let exts = LayeredExtensionManager.shared.allExtensions.filter {
             SelectionScopeExtensionPolicy.isEligible(
                 $0, context: selectionContext, filePaths: selectedPaths)

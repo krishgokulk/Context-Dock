@@ -12,7 +12,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
-private enum NativeWritingToolAction: String, CaseIterable {
+enum NativeWritingToolAction: String, CaseIterable {
     case show
     case proofread
     case rewrite
@@ -2571,7 +2571,7 @@ extension DockCore {
     }
 
 
-    private func executeNativeWritingTool(
+    func executeNativeWritingTool(
         _ action: NativeWritingToolAction,
         context: AXContext,
         sourcePID: pid_t,
@@ -2640,37 +2640,12 @@ extension DockCore {
     }
 
     func pasteNativeWritingToolOutput(_ text: String, sourcePID: pid_t) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        let targetApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == sourcePID }
-            ?? AppDelegate.shared?.previousFrontmostApp
-        let targetPID = sourcePID != 0 ? sourcePID : (targetApp?.processIdentifier ?? 0)
         hideLauncherAfterResultExecution()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-            if let targetApp, !targetApp.isTerminated {
-                targetApp.activate(options: [.activateIgnoringOtherApps])
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                postNativeWritingToolPasteShortcut(to: targetPID)
-            }
-        }
+        SelectionPasteback.pasteText(text, targetPID: sourcePID)
     }
 
     func postNativeWritingToolPasteShortcut(to pid: pid_t) {
-        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
-        let keyCode: CGKeyCode = 9
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        if pid > 0 {
-            keyDown?.postToPid(pid)
-            keyUp?.postToPid(pid)
-        } else {
-            keyDown?.post(tap: .cghidEventTap)
-            keyUp?.post(tap: .cghidEventTap)
-        }
+        SelectionPasteback.postPasteShortcut(to: pid)
     }
 
 
@@ -3641,52 +3616,28 @@ extension DockCore {
     /// the destinations in the corner's card) and leaves out the per-destination lists, which
     /// ask every share extension for its services and cost the card most of its opening time.
     func buildSelectionScopePills(query q: String, includeShare: Bool = true) -> [DockPill] {
-        let finderFilePills = buildFinderFilePills(query: q)
-        let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
-        let macOSExtensionPills = buildMacOSExtensionActionPills(
-            query: q,
-            excludingTitles: finderMenuTitleSet,
-            includeSharing: includeShare
-        )
-        let extensionTitleSet = finderMenuTitleSet.union(
-            macOSExtensionPills.map { normalizedDockPillText($0.name) }
-        )
-        let finderMenuPills = buildFinderSelectionMenuPills(
-            query: q,
-            excludingTitles: extensionTitleSet,
-            allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
-        )
-        var sel: [DockPill] = []
-        sel.append(selectionScopeAskAIPill(query: q))
-        sel.append(contentsOf: selectionScopeCopyPill(query: q))
-        sel.append(contentsOf: buildCustomSelectionExtensionPills(query: q, excludingTitles: extensionTitleSet))
-        sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
-        sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
-        sel.append(contentsOf: finderFilePills)
-        sel.append(contentsOf: macOSExtensionPills)
-        sel.append(contentsOf: finderMenuPills)
-        sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
-        if includeShare {
-            sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-        }
-        let rankedSelection = dedupeRankedDockPills(
-            rankDockPills(
-                sel,
-                rawQuery: q,
-                rankingQuery: q,
-                scopedBundleId: "com.apple.finder",
-                scopedAppName: "Finder",
-                isExplicitAppScope: false,
-                includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
-        )
-        // Ask AI is the floor row of this scope, not a search result: ranking dropped it for
-        // any query whose words it doesn't carry ("what", "about this file"), which left an
-        // expanded-but-empty sheet. Re-seat it whenever ranking filtered it out.
-        if rankedSelection.contains(where: { $0.rankingKind == "selectionAI" }) {
-            return rankedSelection
-        }
-        return [selectionScopeAskAIPill(query: q)] + rankedSelection
+        let snapshot: SelectionSnapshot = {
+            if let payload = selectionScopePayload {
+                return SelectionSnapshot.fromFrozen(
+                    payload,
+                    appName: frontmost.name,
+                    bundleID: frontmost.bundleID
+                )
+            }
+            if let active = activeSelection {
+                switch active {
+                case .text(let t):
+                    return SelectionSnapshot(text: t, filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
+                case .files(let urls):
+                    return SelectionSnapshot(text: "", filePaths: urls.map(\.path), appName: frontmost.name, bundleID: frontmost.bundleID)
+                case .url(let u):
+                    return SelectionSnapshot(text: u, filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
+                }
+            }
+            return SelectionSnapshot(text: "", filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
+        }()
+        guard !snapshot.isEmpty else { return [] }
+        return SelectionActionSource.shared.buildPills(for: snapshot, query: q, includeShare: includeShare)
     }
 
     /// Build the ordered list of visible pills for the current dock state.
