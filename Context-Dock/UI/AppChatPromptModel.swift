@@ -95,6 +95,12 @@ final class AppChatPromptModel: ObservableObject {
         UserDefaults.standard.object(forKey: "autoShrinkInputField") as? Bool ?? true
     }
 
+    /// Whether running apps appear in the strip. Read through a closure so tests
+    /// do not depend on the developer Mac's live UserDefaults setting.
+    var showRunningAppsEnabled: () -> Bool = {
+        AppDelegate.isHostingTests ? true : AppSettings.shared.showRunningApps
+    }
+
     /// Running apps the user took off the strip this session. Not persisted: like an icon
     /// dragged out of the Dock while its app runs, it comes back next launch.
     @Published var hiddenRunningBundleIDs: Set<String> = []
@@ -435,10 +441,20 @@ final class AppChatPromptModel: ObservableObject {
     /// Leaving a selected Pet or step-in scope back to Global Context.
     var onLeaveScopeForGlobal: (() -> Void)?
 
-    init(conversation: AppChatConversation? = nil, globalResultSource: GlobalContextResultSource? = nil) {
+    var selectionReader: AppChatSelectionReading
+    var runningAppsSource: RunningAppsSourcing
+
+    init(
+        conversation: AppChatConversation? = nil,
+        globalResultSource: GlobalContextResultSource? = nil,
+        selectionReader: AppChatSelectionReading? = nil,
+        runningAppsSource: RunningAppsSourcing? = nil
+    ) {
         let source = conversation ?? AppChatConversation.shared
         self.conversation = source
         self.globalResultSource = globalResultSource ?? .shared
+        self.selectionReader = selectionReader ?? (AppDelegate.isHostingTests ? FakeAppChatSelectionReader() : AXContextReader.shared)
+        self.runningAppsSource = runningAppsSource ?? WorkspaceRunningAppsSource()
         globalResultsObservation = self.globalResultSource.updates.sink { [weak self] in
             guard let self, self.isSearchField, self.phase.showsInput else { return }
             let focusedID = self.focusedRow?.id
@@ -457,7 +473,7 @@ final class AppChatPromptModel: ObservableObject {
         }
         // The selection changes under the corner while it is open — the user highlights
         // something and then asks about it, which is the whole point of the surface.
-        selectionObservation = AXContextReader.shared.contextPublisher
+        selectionObservation = self.selectionReader.contextPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] context in
                 guard let self, !self.isReconfirmingSelection else { return }
@@ -646,18 +662,18 @@ final class AppChatPromptModel: ObservableObject {
             if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
                 app.bundleIdentifier != ownBundleID
             {
-                AXContextReader.shared.refreshLightweight(from: app)
-                AXContextReader.shared.refreshSelectionOnly(from: app)
+                selectionReader.refreshLightweight(from: app)
+                selectionReader.refreshSelectionOnly(from: app, includeFinderFiles: true)
             }
         } else if !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == appBundleID && !$0.isTerminated
             })
         {
-            AXContextReader.shared.refreshLightweight(from: app)
-            AXContextReader.shared.refreshSelectionOnly(from: app)
+            selectionReader.refreshLightweight(from: app)
+            selectionReader.refreshSelectionOnly(from: app, includeFinderFiles: true)
         }
-        let context = AXContextReader.shared.current
+        let context = selectionReader.current
         let scopedTo =
             isGlobalScope
             ? (context.bundleId == ownBundleID ? "" : context.bundleId)
@@ -1062,7 +1078,7 @@ final class AppChatPromptModel: ObservableObject {
         self.suggestions = combinedSuggestions
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
-        applySelection(from: AXContextReader.shared.current, scopedTo: bundleID)
+        applySelection(from: selectionReader.current, scopedTo: bundleID)
         isShowingSelectionScope = false
         stopAwaitingAnswer()
         hasPresentedConversation = !messages.isEmpty
@@ -1134,7 +1150,7 @@ final class AppChatPromptModel: ObservableObject {
     /// The strip's running section: the dock's own running pills, minus the removed ones.
     /// Returns empty when the user has disabled running app visibility in settings.
     var stripIcons: [MatchDockIcon] {
-        guard AppSettings.shared.showRunningApps else { return [] }
+        guard showRunningAppsEnabled() else { return [] }
         return allRunningIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)

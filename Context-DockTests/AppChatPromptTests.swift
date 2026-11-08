@@ -77,6 +77,7 @@ struct AppChatPromptTests {
 
         let resting = AppChatPromptModel()
         resting.autoShrinkEnabled = { true }
+        resting.dockPins.pin(.appAction(id: "p1"), title: "New Document", app: "com.apple.TextEdit")
         resting.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
         resting.standDown()
         #expect(resting.phase == .dock)
@@ -105,10 +106,11 @@ struct AppChatPromptTests {
     @Test func anOpenSheetStaysOpenWhileTypingAndClosesWhenCleared() {
         let model = AppChatPromptModel()
         model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
-        model.rows = [.action(
-            AdapterAction(
-                id: "new-window", name: "New Window", icon: "bolt.fill",
-                description: "", triggers: [], type: .menubar))]
+        let action = AdapterAction(
+            id: "new-window", name: "New Window", icon: "bolt.fill",
+            description: "", triggers: [], type: .menubar)
+        model.adapterActions = [action]
+        model.rows = [.action(action)]
         #expect(model.moveMenuFocus(by: 1))
         #expect(model.phase == .suggesting)
 
@@ -184,7 +186,8 @@ struct AppChatPromptTests {
     /// The icon does nothing to a chat with nothing selected — an in-place view of an
     /// empty selection is a promise the button cannot keep.
     @Test func togglingSelectionScopeDoesNothingWithoutASelection() {
-        let model = AppChatPromptModel()
+        let fake = FakeAppChatSelectionReader(context: .empty)
+        let model = AppChatPromptModel(selectionReader: fake)
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
 
         model.toggleSelectionScope()
@@ -192,10 +195,24 @@ struct AppChatPromptTests {
         #expect(!model.isShowingSelectionScope)
     }
 
+    /// The selection icon toggles open when a real selection is present in the scoped app.
+    @Test func togglingSelectionScopeShowsSelectionWhenTextIsSelected() {
+        var context = AXContext(appName: "Safari", bundleId: "com.apple.Safari", pid: 99999)
+        context.selectedText = "selected text"
+        let fake = FakeAppChatSelectionReader(context: context)
+        let model = AppChatPromptModel(selectionReader: fake)
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        model.toggleSelectionScope()
+
+        #expect(model.isShowingSelectionScope)
+    }
+
     /// Esc backing out of a selection view that was never open is not this key's meaning —
     /// it has to fall through to whatever else Esc does here.
     @Test func leavingSelectionScopeWithNothingToLeaveIsIgnored() {
-        let model = AppChatPromptModel()
+        let fake = FakeAppChatSelectionReader(context: .empty)
+        let model = AppChatPromptModel(selectionReader: fake)
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
 
         #expect(model.leaveSelectionScope() == false)
