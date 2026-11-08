@@ -502,7 +502,7 @@ extension DockCore {
 
 
 
-    func hideLauncherAfterResultExecution() {
+    func resetEngineStateAfterResultExecution(force: Bool = false) {
         suppressAutomaticGlobalContextUntil = Date().addingTimeInterval(1.6)
         suppressedAutomaticFinderSelectionSignature = nil
         dismissedFinderSelectionSignature = nil
@@ -519,8 +519,8 @@ extension DockCore {
         }
 
         // Always-float (or taskbar mode): keep the dock visible after the action runs;
-        // just reset it to idle and refocus the input for the next command.
-        if settings.alwaysFloatDock || (settings.effectiveDockAtBottom && showContextInDock) {
+        // just reset it to idle and refocus the input for the next command, unless force is true.
+        if !force && (settings.alwaysFloatDock || (settings.effectiveDockAtBottom && showContextInDock)) {
             searchState.query = ""
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil
@@ -532,20 +532,12 @@ extension DockCore {
         isSearchFieldFocused = false
     }
 
+    func hideLauncherAfterResultExecution() {
+        resetEngineStateAfterResultExecution(force: false)
+    }
+
     func forceHideLauncherAfterResultExecution() {
-        suppressAutomaticGlobalContextUntil = Date().addingTimeInterval(1.6)
-        suppressedAutomaticFinderSelectionSignature = nil
-        dismissedFinderSelectionSignature = nil
-        searchState.query = ""
-        focusedAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        // A global-context launch is morphing into the app's Context Dock — don't hide.
-        if Date() < (AppDelegate.shared?.suppressResultHideUntil ?? .distantPast) {
-            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
-            return
-        }
-        isSearchFieldFocused = false
+        resetEngineStateAfterResultExecution(force: true)
     }
 
     func hideLauncherAfterFinderAction() {
@@ -556,7 +548,7 @@ extension DockCore {
                 || axContext.bundleId == "com.apple.finder"
         else { return }
 
-        hideLauncherAfterResultExecution()
+        resetEngineStateAfterResultExecution(force: false)
     }
 
 

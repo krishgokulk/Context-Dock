@@ -10,12 +10,19 @@
 
 ## In progress
 
-None. (Awaiting owner selection for next task)
+**Issue #257: Convert hidden Dock into headless DockEngine (Final Closure):**
+- Branch `claude/issue-257-headless-dock-engine` (PR #399, ready for review).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-257-headless-dock-engine.md` (6 Goldfish audit iterations, approved).
+- Eliminated residual window-hunting (`NSApp.windows`) in `DockCore+DockAppActions.swift`.
+- Migrated `@FocusState var isSearchFieldFocused` to `@Published` on `DockCoreModel` with `nonmutating set` bridge on `DockCore`.
+- Refactored vestigial launcher methods to `resetEngineStateAfterResultExecution(force:)`.
+- Removed dead launcher-open warming in `MenuWarmCacheService.swift`.
+- Added swift-testing unit test suite `Context-DockTests/DockEngineHeadlessTests.swift` (4/4 pass).
+- Check gate `./scripts/check.sh` clean pass.
 
 ## Queued (next)
 
 - Issue #77: test host: Corner tests with no synthetic window or dock dependency
-- Issue #257: Convert the hidden Dock into a headless engine (DockEngine)
 - Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
 - Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
 

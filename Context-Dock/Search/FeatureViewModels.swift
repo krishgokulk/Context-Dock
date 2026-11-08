@@ -21,6 +21,7 @@ struct DockInlineFeedback: Identifiable, Equatable {
 
 @MainActor
 final class DockCoreModel: ObservableObject {
+    @Published var isSearchFieldFocused = false
     @Published var query = ""
     @Published var indexedFileResults: [SearchResult] = []
     @Published var lastQuery = ""
