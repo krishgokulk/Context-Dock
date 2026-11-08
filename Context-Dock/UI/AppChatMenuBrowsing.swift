@@ -41,15 +41,17 @@ extension AppChatPromptModel {
     /// Called when the prompt opens and when the app changes — never per keystroke. The
     /// cached rows land immediately so the list is never empty while the AX read runs.
     func loadMenuItems() {
-        // Safari's tab pills do not wait on the menu read, nor on the app being found: they
-        // come from the tab cache. (Gating them behind the running-app check below made them
-        // appear only when Safari happened to be open — a race the CI run caught.)
         updateTabStrip()
-        refreshTabs()
-        // An app's own actions do not need it running: a scope "/" jumped to while the app
-        // is closed still offers them (owner 2026-10-10).
         adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
             .actions.filter { !$0.name.isEmpty } ?? []
+
+        if AppDelegate.isHostingTests {
+            updateMenuMatches()
+            return
+        }
+
+        refreshTabs()
+
         guard !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == appBundleID && !$0.isTerminated
@@ -613,7 +615,9 @@ extension AppChatPromptModel {
 
     static func pillIcons(
         excluding scopedBundleID: String = "",
-        runningAppsSource: RunningAppsSourcing = WorkspaceRunningAppsSource()
+        runningAppsSource: RunningAppsSourcing = AppDelegate.isHostingTests
+            ? FixedRunningAppsSource.defaultTestFixture
+            : WorkspaceRunningAppsSource()
     ) -> [MatchDockIcon] {
         var icons: [MatchDockIcon] = []
         // The clipboard used to lead this list as a `MatchDockIcon`, mixed in with the
@@ -741,14 +745,22 @@ extension AppChatPromptModel {
     /// arrow walks *this* list, because the pills are what the user is looking at: stepping
     /// into an app the row does not lead with makes the gesture look broken even when it
     /// picked something reasonable.
-    static func orderedAppPills() -> [MatchDockIcon] {
-        pillIcons().filter { $0.id != clipboardPillID && $0.bundleID != nil }
+    static func orderedAppPills(
+        runningAppsSource: RunningAppsSourcing = AppDelegate.isHostingTests
+            ? FixedRunningAppsSource.defaultTestFixture
+            : WorkspaceRunningAppsSource()
+    ) -> [MatchDockIcon] {
+        pillIcons(runningAppsSource: runningAppsSource).filter { $0.id != clipboardPillID && $0.bundleID != nil }
+    }
+
+    func orderedAppPills() -> [MatchDockIcon] {
+        Self.orderedAppPills(runningAppsSource: self.runningAppsSource)
     }
 
     @discardableResult
     func scopeIntoFirstRunningApp() -> Bool {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        let apps = Self.orderedAppPills()
+        let apps = self.orderedAppPills()
         // From Global the first app; already inside one, the next — which is what makes this
         // a switcher rather than a one-way door. ← walks the same list back
         // (`stepBackThroughRunningApps`); both read `DockKeyRules.appWalk`.
@@ -771,8 +783,13 @@ extension AppChatPromptModel {
 
     /// The running app after `bundleID` along the pills — the first when it is not among
     /// them, none past the last.
-    static func runningApp(after bundleID: String) -> (name: String, bundleID: String)? {
-        let apps = orderedAppPills()
+    static func runningApp(
+        after bundleID: String,
+        runningAppsSource: RunningAppsSourcing = AppDelegate.isHostingTests
+            ? FixedRunningAppsSource.defaultTestFixture
+            : WorkspaceRunningAppsSource()
+    ) -> (name: String, bundleID: String)? {
+        let apps = orderedAppPills(runningAppsSource: runningAppsSource)
         let current = apps.firstIndex { $0.bundleID == bundleID }
         guard case .app(let index) = DockKeyRules.appWalk(
             forward: true, current: current, count: apps.count),
@@ -787,7 +804,7 @@ extension AppChatPromptModel {
     func stepBackThroughRunningApps() -> Bool {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, returnsToGlobalScope
         else { return false }
-        let apps = Self.orderedAppPills()
+        let apps = self.orderedAppPills()
         let current = apps.firstIndex { $0.bundleID == appBundleID }
         switch DockKeyRules.appWalk(forward: false, current: current, count: apps.count) {
         case .app(let index):

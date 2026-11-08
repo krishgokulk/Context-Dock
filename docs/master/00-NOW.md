@@ -10,8 +10,30 @@
 
 ## In progress
 
-**Issue #257: Convert hidden Dock into headless DockEngine (Final Closure):**
-- Branch `claude/issue-257-headless-dock-engine` (PR #399, ready for review).
+None — standing by for next task.
+
+## Queued (next)
+
+- Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
+- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
+- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
+- **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
+
+## Done (most recent first)
+
+**#77: Corner tests with no synthetic window or dock dependency:**
+- Completed on branch `claude/issue-77-test-host-corner-decoupling` (PR #401, Issue #77).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-77-test-host-corner-decoupling.md` (6 Goldfish audit iterations, approved).
+- Partitioned `ILauncherApp.applicationDidFinishLaunching` into test host vs production environment.
+- Installed `TestHostMainActorWatchdog`, `AXMessagingTimeout.installProcessDefault()`, and `TestHostAppleEventBlocker` to fast-fail hangs.
+- Added headless execution mode to `CornerDockWindow`: separated Combine model subscriptions from NSPanel/HostView allocation; guarded WindowServer refresh and edge watch.
+- Injected `FixedRunningAppsSource.defaultTestFixture` (Finder and Safari stubs) to eliminate live AX calls and workspace dependencies under test hosting.
+- Quarantined `MenuWarmCacheService` and `AXObserverManager` during test hosting.
+- Added `TestHostQuarantineTests` (5/5) and `CornerHeadlessExecutionTests` (5/5).
+- 65 tests across Corner suites run fast and deterministic with 0 stalls. Gate `./scripts/check.sh` clean pass. PR #401 merged.
+
+**#257: Convert hidden Dock into headless DockEngine (Final Closure):**
+- Completed on branch `claude/issue-257-headless-dock-engine` (PR #399, Issue #257).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-257-headless-dock-engine.md` (6 Goldfish audit iterations, approved).
 - Eliminated residual window-hunting (`NSApp.windows`) in `DockCore+DockAppActions.swift`.
 - Migrated `@FocusState var isSearchFieldFocused` to `@Published` on `DockCoreModel` with `nonmutating set` bridge on `DockCore`.
@@ -19,16 +41,6 @@
 - Removed dead launcher-open warming in `MenuWarmCacheService.swift`.
 - Added swift-testing unit test suite `Context-DockTests/DockEngineHeadlessTests.swift` (4/4 pass).
 - Check gate `./scripts/check.sh` clean pass.
-
-## Queued (next)
-
-- Issue #77: test host: Corner tests with no synthetic window or dock dependency
-- Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
-- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
-- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
-- **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
-
-## Done (most recent first)
 
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
