@@ -14,12 +14,22 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- Issue #77: test host: Corner tests with no synthetic window or dock dependency
 - Issue #257: Convert the hidden Dock into a headless engine (DockEngine)
 - Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
 - Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
 
 ## Done (most recent first)
+
+**#77: Corner tests with no synthetic window or dock dependency:**
+- Completed on branch `claude/issue-77-test-host-corner-decoupling` (PR #401, Issue #77).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-77-test-host-corner-decoupling.md` (6 Goldfish audit iterations, approved).
+- Partitioned `ILauncherApp.applicationDidFinishLaunching` into test host vs production environment.
+- Installed `TestHostMainActorWatchdog`, `AXMessagingTimeout.installProcessDefault()`, and `TestHostAppleEventBlocker` to fast-fail hangs.
+- Added headless execution mode to `CornerDockWindow`: separated Combine model subscriptions from NSPanel/HostView allocation; guarded WindowServer refresh and edge watch.
+- Injected `FixedRunningAppsSource.defaultTestFixture` (Finder and Safari stubs) to eliminate live AX calls and workspace dependencies under test hosting.
+- Quarantined `MenuWarmCacheService` and `AXObserverManager` during test hosting.
+- Added `TestHostQuarantineTests` (5/5) and `CornerHeadlessExecutionTests` (5/5).
+- 65 tests across Corner suites run fast and deterministic with 0 stalls. Gate `./scripts/check.sh` clean pass. PR #401 ready for review.
 
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
