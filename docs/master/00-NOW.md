@@ -57,6 +57,12 @@
 - Added swift-testing unit test suite `Context-DockTests/DockEngineHeadlessTests.swift` (4/4 pass).
 - Check gate `./scripts/check.sh` clean pass.
 
+**UI bug: Live sidepanel toggle clipping (PR #400):**
+- Fixed message bubbles being clipped/cut when toggling the live sidepanel in App Pet and General Chat.
+- Root cause: `transcript.frame(maxWidth: .infinity)` let content expand when the panel exited layout, while the outer `clipShape` was still animating to `compactChatWidth`, clipping the right edge mid-transition.
+- Fix: pin transcript to `compactChatWidth` in `AppChatPromptPill.swift` and to `size.width - panelWidth` in `CornerGeneralChatView.swift`.
+- PR #400, squash-merged into `general-chat-agent` (2026-11-08).
+
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-83-selection-action-source.md` (5 Goldfish audit iterations, approved).
