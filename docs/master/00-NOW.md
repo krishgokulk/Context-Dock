@@ -10,17 +10,24 @@
 
 ## In progress
 
-**#157: E7b Approvals survive quitting the app:**
-- PR [#391](https://github.com/krishgokulk/Context-Dock/pull/391) on branch `claude/stoic-khorana-e2d57d`.
-- Rebased on top of `general-chat-agent`, auto-merge enabled. CI running on GitHub Actions.
+_None — standing by for next task._
 
-Coordinator: Antigravity Planner — since 2026-11-08 11:40 UTC
+Coordinator: Antigravity Coordinator — since 2026-11-08 11:55 UTC
 
 ## Queued (next)
 
 - Milestone 1.0 remaining issues or Labs (E9–E16 App Pets memory/orchestration).
 
 ## Done (most recent first)
+
+**#157: E7b Approvals survive quitting the app:**
+- Completed on branch `claude/stoic-khorana-e2d57d` (PR #391, commit `c12e9ad0`, Issue #157).
+- Spec: `docs/master/00-AI-ENGINE-PLAN.md` (§4 E7b) and Issue #157.
+- Persisted pending approvals across app restarts in `AI/PendingApprovalJournal.swift`:
+  - `PendingApprovalRecord` Codable snapshot written to `Application Support/Context-Dock/pending-approvals.json` before approval cards appear.
+  - `ApprovalExecutionReceipt`: Idempotency guard written before commands run, keyed by request ID.
+  - Restores pending approvals on app restart with `clock.arrow.circlepath` badge; auto-cancels stale records (>10 min).
+- Unit tests in `Context-DockTests/PendingApprovalJournalTests.swift` (8 tests passing in isolated test store). Squash-merged into `general-chat-agent`.
 
 **#160: E8c Replay judge for answer quality:**
 - Completed on branch `claude/issue-160-replay-judge` (PR #394, Issue #160).
