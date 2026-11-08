@@ -265,7 +265,7 @@ struct CornerGeneralChatView: View {
                 Divider().opacity(0.18)
                 HStack(spacing: 0) {
                     transcript
-                        .frame(maxWidth: .infinity)
+                        .frame(width: size.width - CornerLivePanelLayout.panelWidth(card: size.width))
                     if showsLivePanel {
                         let pet = activePetInfo
                         CornerLivePanel(
