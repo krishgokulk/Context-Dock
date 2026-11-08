@@ -10,18 +10,21 @@
 
 ## In progress
 
-**Issue #225: Fix two offline tests depending on live Mac state (Safari selection, running apps):**
-- Branch `claude/issue-225-tests-no-live-state`.
-- Inject the selection reader and the running-apps source behind a seam with fixed fakes in tests.
-- Verify `./scripts/check.sh --full` reports 0 failed on a normal working Mac regardless of live screen/running app state.
+None — standing by for next Milestone 1.0 issue or owner task.
 
-Coordinator: Antigravity Coordinator — since 2026-11-08 11:58 UTC
+Coordinator: Antigravity Coordinator — since 2026-11-08 12:44 UTC
 
 ## Queued (next)
 
 - Milestone 1.0 remaining issues or Labs (E9–E16 App Pets memory/orchestration).
 
 ## Done (most recent first)
+
+**#225: Fix two offline tests depending on live Mac state:**
+- Completed on branch `claude/issue-225-tests-no-live-state` (PR #395, commit `17f8754f`, Issue #225).
+- Injected `AppChatSelectionReading` seam (`FakeAppChatSelectionReader`) and `RunningAppsSourcing` seam (`FixedRunningAppsSource`) into `AppChatPromptModel`.
+- Added `showRunningAppsEnabled` test default preventing live developer preferences from overriding test expectations.
+- Tests in `Context-DockTests/AppChatPromptTests.swift` and `Context-DockTests/CornerFrontmostAppPillsTests.swift` pass deterministically. Squash-merged into `general-chat-agent`.
 
 **#157: E7b Approvals survive quitting the app:**
 - Completed on branch `claude/stoic-khorana-e2d57d` (PR #391, commit `c12e9ad0`, Issue #157).
