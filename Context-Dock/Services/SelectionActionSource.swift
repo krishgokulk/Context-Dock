@@ -594,6 +594,7 @@ final class SelectionActionSource: SelectionActionProviding {
             ("Explain", "text.magnifyingglass", "Explain what this file is about"),
             ("Key points", "list.bullet", "List the key points of this document"),
         ]
+        let nativeWritingTools = isText ? buildNativeSelectionWritingToolPills(for: snapshot, query: q) : []
         let actions = isText ? textActions : fileActions
 
         let chatPills = actions.compactMap { action -> DockPill? in
@@ -618,15 +619,15 @@ final class SelectionActionSource: SelectionActionProviding {
             pill.searchTerms = [action.name, action.prompt, "selection", "ai"]
             return pill
         }
-        return chatPills
+        return nativeWritingTools + chatPills
     }
 
     func buildNativeSelectionWritingToolPills(for snapshot: SelectionSnapshot, query q: String) -> [DockPill] {
         guard !snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        let sourcePID = NSRunningApplication.runningApplications(withBundleIdentifier: snapshot.bundleID)
-            .first(where: { !$0.isTerminated })?.processIdentifier
-            ?? AppDelegate.shared?.previousFrontmostApp?.processIdentifier
-            ?? 0
+        guard let targetApp = NSRunningApplication.runningApplications(withBundleIdentifier: snapshot.bundleID)
+            .first(where: { !$0.isTerminated })
+        else { return [] }
+        let sourcePID = targetApp.processIdentifier
 
         let sourceBundleId = snapshot.bundleID
         let sourceAppName = snapshot.appName

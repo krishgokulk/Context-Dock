@@ -3616,27 +3616,7 @@ extension DockCore {
     /// the destinations in the corner's card) and leaves out the per-destination lists, which
     /// ask every share extension for its services and cost the card most of its opening time.
     func buildSelectionScopePills(query q: String, includeShare: Bool = true) -> [DockPill] {
-        let snapshot: SelectionSnapshot = {
-            if let payload = selectionScopePayload {
-                return SelectionSnapshot.fromFrozen(
-                    payload,
-                    appName: frontmost.name,
-                    bundleID: frontmost.bundleID
-                )
-            }
-            if let active = activeSelection {
-                switch active {
-                case .text(let t):
-                    return SelectionSnapshot(text: t, filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
-                case .files(let urls):
-                    return SelectionSnapshot(text: "", filePaths: urls.map(\.path), appName: frontmost.name, bundleID: frontmost.bundleID)
-                case .url(let u):
-                    return SelectionSnapshot(text: u, filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
-                }
-            }
-            return SelectionSnapshot(text: "", filePaths: [], appName: frontmost.name, bundleID: frontmost.bundleID)
-        }()
-        guard !snapshot.isEmpty else { return [] }
+        guard let snapshot = currentSelectionSnapshot(), !snapshot.isEmpty else { return [] }
         return SelectionActionSource.shared.buildPills(for: snapshot, query: q, includeShare: includeShare)
     }
 

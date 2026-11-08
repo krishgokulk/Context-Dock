@@ -442,7 +442,9 @@ extension DockCore {
                 icon: ext.icon,
                 accentColorName: "indigo",
                 badge: "Extension",
-                execute: { self.runCustomSelectionExtension(ext) }
+                execute: {
+                    self.runCustomSelectionExtension(ext, context: selectionContext, filePaths: selectedPaths)
+                }
             )
             pill.runApproval = SelectionScopeExtensionPolicy.needsApproval(ext)
                 ? SelectionScopeExtensionPolicy.approvalSummary(ext) : nil
@@ -455,7 +457,11 @@ extension DockCore {
     }
 
     /// Run an imported selection extension against the frozen selection and toast its output.
-    private func runCustomSelectionExtension(_ ext: ILExtension) {
+    private func runCustomSelectionExtension(
+        _ ext: ILExtension,
+        context: AXContext? = nil,
+        filePaths customFilePaths: [String]? = nil
+    ) {
         guard let rawScript = ext.scriptContent, !rawScript.isEmpty else { return }
         // The corner's card asks this question inside itself before it runs the row; a system
         // alert from a background app does not take the keys, so it could only be clicked.
@@ -468,11 +474,11 @@ extension DockCore {
         // Same expansion the proposal "Run Once" path uses: extensions are written against the
         // documented {file}/{selectedText}/{url} placeholders, so they must be substituted here
         // or the script runs with the literal braces and silently does nothing.
-        let script = expandSelectionPlaceholders(in: rawScript)
-        let ctx = effectiveShareAXContext()
-        let frozenFilePaths = effectiveSelectedFileURLsForConversation().map(\.path)
+        let ctx = context ?? effectiveShareAXContext()
+        let frozenFilePaths = customFilePaths ?? effectiveSelectedFileURLsForConversation().map(\.path)
         let filePaths = SelectionScopeExtensionPolicy.resolvedFilePaths(
             context: ctx, frozenFilePaths: frozenFilePaths)
+        let script = expandSelectionPlaceholders(in: rawScript, context: ctx, filePaths: filePaths)
         var env: [String: String] = [
             "CD_TEXT":      ctx.selectedText ?? "",
             "CD_URL":       ctx.currentURL ?? "",

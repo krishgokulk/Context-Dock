@@ -35,4 +35,9 @@ extension DockCore: SelectionActionProviding {
     static func isShareRowID(_ id: String) -> Bool {
         SelectionActionSource.isShareRowID(id)
     }
+
+    func currentSelectionSnapshot() -> SelectionSnapshot? {
+        let snapshot = dockSelectionSnapshot
+        return snapshot.isEmpty ? nil : snapshot
+    }
 }
