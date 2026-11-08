@@ -109,6 +109,7 @@ edited by someone else **right now**, and that HEAD moves under you.
 - **Re-check before you conclude.** `git log --oneline -3` and `git status` at the start of a task,
   and again before reporting counts or "this is all the usages" — both change mid-task.
 - If `git status` shows modifications you did not make, leave them alone and say so.
+- **Design with an Elephant, review with a Goldfish (EGM).** The session/planner holds deep context (Elephant); reviews (specs, PR diffs) belong to zero-context subagents (Goldfish). Never evaluate your own design or code using conversational memory — feed the reviewer subagent only the written document or diff and cited references.
 - Cross-session progress goes in `MEMORY.md` at the repo root — append-only, one dated line per
   session.
 

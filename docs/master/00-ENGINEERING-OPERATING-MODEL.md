@@ -59,35 +59,59 @@ evidence-first docs (`FOUND.md`, `DECISIONS.md`, `docs/master` tags), and `turns
 
 | Role | Who | May do | May NOT do |
 |---|---|---|---|
-| **Owner** | you | product decisions, approve plans, merge PRs, release | — |
-| **Planner** | agent | turn an issue into a spec + plan with acceptance tests | write app code |
+| **Owner** | you | product decisions, approve plans/specs, merge PRs, release | — |
+| **Planner (The Elephant)** | agent (deep context) | turn an issue into a spec + plan with acceptance tests; brainstorm & explore | write app code |
 | **Builder** | agent (Claude Code / Codex) | implement **one issue** in **one worktree**, in the lane the issue names | touch files outside its lane; push to `main`; release |
-| **Reviewer** | agent, fresh session | review the PR diff (`/code-review`), check it against the issue's acceptance test | fix what it reviews (it reports; the Builder fixes) |
+| **Reviewer (The Goldfish)** | agent, zero-context subagent | review spec or PR diff with fresh eyes, audit unstated assumptions & drift | fix what it reviews (it reports; the Builder/Planner fixes) |
 | **Verifier** | agent + owner | run the app, exercise the acceptance test, attach a screenshot/turn-log excerpt | merge |
 
-Separating Builder from Reviewer matters: an agent reviewing its own work misses its own
-assumptions.
+#### The Elephant-Goldfish Model (EGM)
+
+Separating Builder from Reviewer matters: an agent reviewing its own work misses its own assumptions.
+We adopt the **Elephant-Goldfish Model (EGM)** (`google/elephant-goldfish-model`):
+
+1. **Design with an Elephant (Deep Context):** The planner/session holds extensive conversational history,
+   broad architecture blueprints, and product context. It explores alternatives, handles user Q&A, and drafts
+   specifications (`docs/superpowers/specs/` or `docs/designs/`).
+2. **Review with a Goldfish (Zero Context):** Review agents (`goldfish-reviewer`, `cavecrew-reviewer`) are
+   spawned with a clean slate. They receive **only** the written document (spec or PR diff) and explicit cited
+   references — no conversation history, no memory of prior compromises. Mindset: *"If it isn't in the spec,
+   it doesn't exist."* They audit for unstated assumptions, ambiguous requirements, missing failure modes,
+   and architecture layer violations.
+3. **The EGM Review Loop & Human Arbiter:** The Elephant revises based on Goldfish findings until zero blocking
+   gaps remain. The human Owner arbitrates trade-offs and grants final sign-off before coding begins.
+4. **Drift Verification:** During review, the Goldfish checks the Builder's diff against the approved spec to
+   catch unintended behavior or scope creep before merge.
 
 ### 2.2 The life of one change
 
 ```
  Issue (feature id, acceptance test, lane)          ← GitHub Issues, milestone = release
    │
-   ▼  Planner (only for work > 1 day)
- Spec + plan in docs/superpowers/  (links the issue)
+   ▼  Planner (The Elephant — deep context)
+ Draft Spec in docs/superpowers/specs/  (links the issue)
+   │
+   ▼  Spec Reviewer (The Goldfish — zero context) ◄───┐
+ Audit assumptions, edge cases, ambiguities           │ (EGM Spec Review Loop)
+   │                                                  │
+   ▼  Elephant revises spec ──────────────────────────┘
+   │
+   ▼  Owner sign-off (trade-offs, approval)
+ Approved Specification
    │
    ▼  Builder, in .claude/worktrees/<issue>/
  Branch  feat/<issue>-<slug>  →  code + tests  →  ./scripts/check.sh  (build · tests · file size)
    │
    ▼
- Pull request  (template: issue link, feature id, test added, doc updated, screenshots)
+ Pull request  (template: issue link, spec link, test added, doc updated, screenshots)
    │
-   ▼  CI  (required)
- build · all tests · golden-corpus pass-rate · file-size · dependency-direction
+   ▼  CI  (required: build · tests · golden-corpus pass-rate · file-size · dependency-direction)
    │
-   ▼  Reviewer agent → comments;  Builder fixes
+   ▼  Goldfish Code & Drift Reviewer (zero-context diff audit vs spec + AGENTS.md)
+   │  Builder fixes findings
+   │
    ▼  Owner: read diff, run the app, try the acceptance test
- Squash-merge to main   ← main is always releasable
+ Squash-merge to general-chat-agent (or main at release)
    │
    ▼  Release train (§2.7)
  Beta → Stable
@@ -152,9 +176,10 @@ assumptions.
 
 | When | Gate | Blocks |
 |---|---|---|
+| Before coding (M/L) | **Spec Gate (EGM)**: Goldfish review (0 blocking gaps) + Owner approval | starting Builder worktree |
 | Every agent turn | `Stop` hook → `check.sh` (build + fast tests) | ending the turn |
 | Every PR | CI: build, **all tests**, golden-corpus score, file size, dependency direction | merge |
-| Every PR | Reviewer agent + owner diff read + acceptance test | merge |
+| Every PR | **Code & Drift Gate (EGM)**: Goldfish reviewer (zero drift vs spec + AGENTS.md) + owner diff read + acceptance test | merge |
 | Every beta | Release build, `docs/RELEASE_CHECKLIST.md` manual QA, signed + notarized | publishing |
 | Every stable | beta crash-free ≥ 7 days, corpus score not lower than last stable | promoting |
 

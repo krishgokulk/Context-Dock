@@ -13,11 +13,11 @@ on Opus.
 
 | Job | Where | Model |
 |---|---|---|
-| Plan, design, architecture decisions, `/planner` | main session | strongest (Opus) |
-| Build an issue end to end, `/builder` | main session | Sonnet |
+| Plan, brainstorm, draft specs (**The Elephant** / `/planner`) | main session | strongest (Opus) |
+| Build an issue end to end, `/builder` | main session / worktree | Sonnet |
 | "Where is X / what calls Y" sweeps | `scout` subagent | Haiku |
 | Renames, test scaffolding, doc edits, a decided pattern across a few files | `mechanic` subagent | Sonnet |
-| Review a diff before ready | `reviewer` subagent | Opus |
+| Zero-context spec & diff review (**The Goldfish** / `/egm-review`) | `goldfish-reviewer` / `reviewer` | Opus |
 | Daily brief, summaries | scheduled task | Sonnet |
 
 Downgrade when the brief fits in three lines and needs no judgement. Upgrade the moment a task needs
