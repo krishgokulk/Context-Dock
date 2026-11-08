@@ -90,7 +90,10 @@ struct DockCore {
     @ObservedObject var finderContext = DockCoreState.shared.finderContext
     @ObservedObject var contextDockViewModel = DockCoreState.shared.contextDockViewModel
     @ObservedObject var aiChatViewModel = DockCoreState.shared.aiChatViewModel
-    @FocusState var isSearchFieldFocused: Bool
+    var isSearchFieldFocused: Bool {
+        get { dockCoreModel.isSearchFieldFocused }
+        nonmutating set { dockCoreModel.isSearchFieldFocused = newValue }
+    }
     @ObservedObject var settings = AppSettings.shared
     @ObservedObject var fileIndexManager = FileIndexManager.shared
     var onClose: () -> Void = {}

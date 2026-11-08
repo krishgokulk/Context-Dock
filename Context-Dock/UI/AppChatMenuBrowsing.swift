@@ -557,7 +557,7 @@ extension AppChatPromptModel {
                 $0.activationPolicy == .regular && !$0.isTerminated
                     && $0.bundleIdentifier != Bundle.main.bundleIdentifier
             }
-            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps, maxApps: 12)
+            MenuWarmCacheService.shared.warmRunningAppsForDock(runningApps, maxApps: 12)
         }
         refreshSelectionForCurrentScope()
         updateMenuMatches()

@@ -10,13 +10,14 @@
 
 ## In progress
 
-None. (Awaiting owner selection for next task)
+None — standing by for next task.
 
 ## Queued (next)
 
-- Issue #257: Convert the hidden Dock into a headless engine (DockEngine)
 - Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
 - Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
+- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
+- **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
 
 ## Done (most recent first)
 
@@ -29,7 +30,17 @@ None. (Awaiting owner selection for next task)
 - Injected `FixedRunningAppsSource.defaultTestFixture` (Finder and Safari stubs) to eliminate live AX calls and workspace dependencies under test hosting.
 - Quarantined `MenuWarmCacheService` and `AXObserverManager` during test hosting.
 - Added `TestHostQuarantineTests` (5/5) and `CornerHeadlessExecutionTests` (5/5).
-- 65 tests across Corner suites run fast and deterministic with 0 stalls. Gate `./scripts/check.sh` clean pass. PR #401 ready for review.
+- 65 tests across Corner suites run fast and deterministic with 0 stalls. Gate `./scripts/check.sh` clean pass. PR #401 merged.
+
+**#257: Convert hidden Dock into headless DockEngine (Final Closure):**
+- Completed on branch `claude/issue-257-headless-dock-engine` (PR #399, Issue #257).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-257-headless-dock-engine.md` (6 Goldfish audit iterations, approved).
+- Eliminated residual window-hunting (`NSApp.windows`) in `DockCore+DockAppActions.swift`.
+- Migrated `@FocusState var isSearchFieldFocused` to `@Published` on `DockCoreModel` with `nonmutating set` bridge on `DockCore`.
+- Refactored vestigial launcher methods to `resetEngineStateAfterResultExecution(force:)`.
+- Removed dead launcher-open warming in `MenuWarmCacheService.swift`.
+- Added swift-testing unit test suite `Context-DockTests/DockEngineHeadlessTests.swift` (4/4 pass).
+- Check gate `./scripts/check.sh` clean pass.
 
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
@@ -446,12 +457,12 @@ The planner labels the next issue `ready` when the one before it is in review.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
-4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first)
+4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first) · **#397** Foundation Models native image input (after E5)
 5. **#154 E6a → #155 E6b → #156 E7a · #157 E7b**
 6. **#158 E8a → #159 E8b → #160 E8c** (#160 `needs-owner`: which model grades the replays)
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
-Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5).
+Labs, after 1.0: E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5). **#398** App Intents / Siri AI (macOS 27.3+, opens discoverability via "Hey Siri, open Context-Dock for Xcode" — post-1.0).
 
 **#327 owner-verified (2026-10-27, “okay. perfect”):** write a staged implementation plan and split it into issues in
 this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
@@ -607,6 +618,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-28 | **General Chat and App Pet Chat are separate identities.** General Chat is Dora's Mac-wide conversation and may use an app ability only for the current turn; this does not rename it, load Pet memory or restrict later turns. **Open in App Pet** explicitly creates the anchored, remembered app conversation. Combined Chat requires persistent connected Pets, not merely multiple tool routes. |
 | 2026-10-28 | **Pet presentation & expansion lifecycle:** clicking/double-clicking the floating desktop mascot jumps directly to Tier 3 (Expanded Window); action receipt bubbles stay pinned until explicitly closed with ✕; micro-bar ✏️ expands into inline input `[+] [Start new chat] [↑]` without opening a window (spec: `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md`). |
 | 2026-11-05 | **Two-Sided Normalized Adapter Architecture & Settings Consolidation:** Documented in `FRONTMOST_AGENT.md` (§7) and `CAPABILITY_LAYER.md`. DoraX acts as the governor and sandbox between frontmost apps and AI providers (Claude Code / Codex / Gemini), replacing fragmented manual scripts with the 3-Tier Escalation Ladder (built-in/UTCP → synthesized scripting → Computer Use UI automation). Settings UI consolidated via Task #373 (`docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`). |
+| 2026-11-08 | **Apple API opportunities noted (not yet owner-confirmed):** (1) Foundation Models native image input (macOS 26.4+) — `OnDeviceToolBridge` already uses `FoundationModels` but falls back to Vision OCR for images; native multimodal is now available. Filed as **#397**, queued after E5b (#153). (2) Siri AI / App Intents (macOS 27.3 dev preview) — expose OpenAppPet, SwitchScope, SummariseContext as App Intents so Siri AI can invoke them. Filed as **#398**, Labs / post-1.0. Neither is `ready` until the owner labels it so. |
 
 ## Open decisions (owner)
 

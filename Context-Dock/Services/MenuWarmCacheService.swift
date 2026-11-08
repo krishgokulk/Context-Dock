@@ -71,12 +71,16 @@ final class MenuWarmCacheService {
         }
     }
 
-    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+    func warmRunningAppsForDock(_ apps: [NSRunningApplication], maxApps: Int = 6) {
         guard !AppDelegate.isHostingTests else { return }
         Task { [weak self] in
             guard let self else { return }
             await self.warmRunningApps(apps, maxApps: maxApps, freshness: 120)
         }
+    }
+
+    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+        warmRunningAppsForDock(apps, maxApps: maxApps)
     }
 
     func warmStatusMenuAppsOnLauncherOpen(force: Bool = false) async -> Bool {
