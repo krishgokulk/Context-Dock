@@ -10,18 +10,26 @@
 
 ## In progress
 
-**Issue #83: Extract SelectionActionSource out of DockCore:**
-- Branch `claude/issue-83-selection-action-source` (PR #396, ready for review).
-- Extract `buildSelectionScopePills(query:)` and composed builders from `DockCore` into standalone `SelectionActionSource` conforming to `SelectionActionProviding`.
-- Keep `Context-DockTests/CornerSelectionActionsTests.swift` green (50/50 passing).
-
-Coordinator: Antigravity Coordinator — since 2026-11-08 12:46 UTC
+None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- Milestone 1.0 remaining issues or Labs (E9–E16 App Pets memory/orchestration).
+- Issue #77: test host: Corner tests with no synthetic window or dock dependency
+- Issue #257: Convert the hidden Dock into a headless engine (DockEngine)
+- Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
+- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
 
 ## Done (most recent first)
+
+**#83: Extract SelectionActionSource out of DockCore:**
+- Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-83-selection-action-source.md` (5 Goldfish audit iterations, approved).
+- Extracted standalone `SelectionActionSource` conforming to `SelectionActionProviding`.
+- Decoupled host interactions via `SelectionActionHost` and `DefaultSelectionActionHost`.
+- Consolidated paste-back into `SelectionPasteback` helper with process termination validation.
+- Delegated `DockCore+SelectionActionProviding.swift` and `DockCore+ContextualActions.swift` directly to `SelectionActionSource.shared`.
+- Wired `DockEngine` to use `SelectionActionSource.shared`.
+- All 50 tests in `Context-DockTests/CornerSelectionActionsTests.swift` pass 100% green. Gate `./scripts/check.sh` clean pass. Squash-merged into `general-chat-agent`.
 
 **#225: Fix two offline tests depending on live Mac state:**
 - Completed on branch `claude/issue-225-tests-no-live-state` (PR #395, commit `17f8754f`, Issue #225).
