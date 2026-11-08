@@ -39,12 +39,14 @@ struct RoutingPhrasebookTests {
         case safariChat = "Safari chat"
         case generalChat = "General Chat"
         case notesChat = "Notes chat"
+        case mailChat = "Mail chat"
 
         var scopedApp: String? {
             switch self {
             case .finderChat: return "Finder"
             case .safariChat: return "Safari"
             case .notesChat: return "Notes"
+            case .mailChat: return "Mail"
             case .generalChat: return nil
             }
         }
@@ -118,6 +120,7 @@ struct RoutingPhrasebookTests {
     private static let shortcutsRun = menu("Shortcuts", ["Shortcut", "Run"])
     private static let finderFind = menu("Finder", ["File", "Find"])
     private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
+    private static let mailCreateDraft = capability("Mail", "mail.createDraft", "Create Mail Draft")
 
     // MARK: - The phrasebook
     //
@@ -288,6 +291,27 @@ struct RoutingPhrasebookTests {
                found: [menu("Safari", ["File", "Export as PDF…"])], expected: .model),
         Phrase(surface: .finderChat, sentence: "where is the sidebar?",
                found: [menu("Finder", ["View", "Show Sidebar"])], expected: .none),
+
+        // Issue 204 (P10, E12): the pre-model Mail Question shortcut and its attached-context gate
+        // are retired. Questions in the Mail scope are answered from live Mail readers (.none);
+        // imperative searches and draft requests go to the model with `mail.search`, `mail.read`,
+        // `mail.unread`, `mail.currentMessage`, and `mail.createDraft` (.model).
+        Phrase(surface: .mailChat, sentence: "any unread mail?",
+               found: [mailCreateDraft], expected: .none),
+        Phrase(surface: .mailChat, sentence: "is there any mail from sarah today?",
+               found: [mailCreateDraft], expected: .none),
+        Phrase(surface: .mailChat, sentence: "did i get mail from SBI yesterday?",
+               found: [mailCreateDraft], expected: .none),
+        Phrase(surface: .mailChat, sentence: "who sent this message?",
+               found: [mailCreateDraft], expected: .none),
+        Phrase(surface: .mailChat, sentence: "what's the subject line?",
+               found: [mailCreateDraft], expected: .none),
+        Phrase(surface: .mailChat, sentence: "find mail from SBI today",
+               found: [mailCreateDraft], expected: .model),
+        Phrase(surface: .mailChat, sentence: "any mail from sarah today",
+               found: [mailCreateDraft], expected: .model),
+        Phrase(surface: .mailChat, sentence: "draft an email to alex about the invoice",
+               found: [mailCreateDraft], expected: .model),
     ]
 
     // MARK: - Running a row
@@ -295,7 +319,7 @@ struct RoutingPhrasebookTests {
     /// Which of the fixture apps the sentence names, judged by the same rule the resolver
     /// applies to every installed name (`isAppReference`). Offline stand-in for
     /// `namedInstalledApp`, which reads the machine's app catalogue.
-    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts"]
+    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts", "Mail"]
 
     static func namedApp(in sentence: String) -> String? {
         let lowered = sentence.lowercased()
@@ -906,5 +930,70 @@ struct MenuCommandShortcutRetirementTests {
     /// `DockShortcut` no longer includes the retired `menuCommand` case.
     @Test func menuCommandShortcutIsRetiredFromDockShortcut() {
         #expect(!DockShortcut.allCases.map(\.rawValue).contains("menuCommand"))
+    }
+}
+
+// MARK: - Issue 204: Mail Question shortcut retirement
+
+@MainActor
+struct MailQuestionShortcutRetirementTests {
+
+    /// Questions that the retired Mail Question shortcut and its attached-context gate
+    /// previously intercepted before the model now route to `.liveState` in `AgentSourceAuthority`
+    /// (`requiresFreshRead == true`, `allowsMemoryEvidence == false`), while ordinary greetings in
+    /// Mail scope stay `.conversation`.
+    @Test func mailScopeQuestionsAreFreshLiveStateReads() {
+        for sentence in [
+            "any unread mail?",
+            "is there any mail from sarah today?",
+            "did i get mail from SBI yesterday?",
+            "who sent this message?",
+            "what's the subject line?",
+            "do i have any attachments from sarah?",
+        ] {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.mail")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+            #expect(decision.promptRule.contains("mail.search"))
+        }
+
+        let greeting = AgentSourceAuthority.decide(
+            query: "hi hello?", scopeBundleId: "com.apple.mail")
+        #expect(greeting.primary == .conversation)
+    }
+
+    /// Imperative record searches in Mail ("find mail from SBI today") are data-lane reads of
+    /// Mail's records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
+    /// Mail's read tools (`search_mail`, `read_unread_mail`) are included.
+    @Test func findInMailIsADataLaneRead() {
+        let query = "find mail from SBI today"
+        let plan = FrontmostAppTaskPlan.make(
+            query: query, bundleId: "com.apple.mail", appName: "Mail")
+        #expect(plan.intent == .read)
+        #expect(!plan.permitsUIAutomation)
+        #expect(RequestLane.decide(query) == .data)
+        #expect(plan.allowedToolNames.contains("search_mail"))
+        #expect(plan.allowedToolNames.contains("read_unread_mail"))
+    }
+
+    /// Mail's read capabilities (`mail.recent`, `mail.read`, `mail.search`, `mail.unread`,
+    /// `mail.currentMessage`) are registered and free (`requiresApproval == false`).
+    @Test func mailCapabilitiesAreRegisteredAndReadCapabilitiesAreFree() {
+        for id in ["mail.recent", "mail.read", "mail.search", "mail.unread", "mail.currentMessage"] {
+            let cap = CapabilityRegistry.shared.capability(id: id)
+            #expect(cap != nil, "Missing capability \(id)")
+            #expect(cap?.riskLevel.requiresApproval == false, "\(id) should not require approval")
+        }
+    }
+
+    /// `DockShortcut` no longer includes the retired `mailQuestion` case, and `AppleLiveDataContext`
+    /// pre-fetches inbox headers for Mail questions.
+    @Test func mailQuestionShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("mailQuestion"))
+        #expect(AppleLiveDataContext.wantsMailContext("any unread mail?"))
+        #expect(AppleLiveDataContext.wantsMailContext("what's the subject line?"))
+        #expect(!AppleLiveDataContext.wantsMailContext("hi hello?"))
     }
 }

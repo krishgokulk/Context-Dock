@@ -39,10 +39,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.messages.step == "Shortcut: Messages — matched 'message … to someone'")
     }
 
-    @Test func mailQuestionStep() {
-        #expect(DockShortcut.mailQuestion.step == "Shortcut: Mail Question — matched 'a question about the attached mail'")
-    }
-
     /// The owner hand check: "search mail from SBI" → the panel shows this line.
     @Test func mailboxSearchStep() {
         #expect(DockShortcut.mailboxSearch.step == "Shortcut: Mailbox Search — matched 'search mail …'")

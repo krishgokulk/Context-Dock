@@ -48,7 +48,7 @@ When a user submits a query in Mail scope (`scopedBundleId == "com.apple.mail"`)
      - `GeneralAIActionResolver.shared.asksOnly(query)` is `true` → `ScopedRoutePolicy.decide` returns `.none` (`offer == nil`, `modelCandidates == []`). No menu command or draft action is offered.
    - **Imperative record reads & write requests** (`"find mail from SBI today"`, `"any mail from sarah today"`, `"draft an email to alex about the invoice"`):
      - Not an exact command title (`ExactCommand.matches` is `false`), and `asksOnly` is `false` → `ScopedRoutePolicy.decide` returns `.model` (`offer == nil`).
-     - In `FrontmostAppTaskPlan.make(query:bundleId: "com.apple.mail", appName: "Mail")`, imperative record reads matching `ScopedRecordRead.matches` (`"find mail from SBI today"`, `"search mail from sarah yesterday"`) plan with `intent == .read`, `permitsUIAutomation == false`, and withhold UI-lane tools (`operate_app`, `run_menu_command`, `find_menu_command`, `send_keys`).
+     - In `FrontmostAppTaskPlan.make(query:bundleId: "com.apple.mail", appName: "Mail")`, imperative record reads matching `ScopedRecordRead.matches` (`"find mail from SBI today"`, `"search mail from sarah yesterday"`) plan with `intent == .read`, `permitsUIAutomation == false`, `RequestLane.decide(query) == .data`, and include Mail's read tools (`search_mail`, `read_unread_mail`).
 
 4. **Source Authority (`AgentSourceAuthority.decide`):**
    - In `Context-Dock/AI/AgentSourceAuthority.swift`:
@@ -114,7 +114,7 @@ When a user submits a query in Mail scope (`scopedBundleId == "com.apple.mail"`)
      - `"draft an email to alex about the invoice"` (`.mailChat`, `found: [mailCreateDraft]`, `expected: .model`)
    - Add `struct MailQuestionShortcutRetirementTests` verifying:
      1. `mailScopeQuestionsAreFreshLiveStateReads`: `AgentSourceAuthority.decide(query:scopeBundleId: "com.apple.mail")` returns `.liveState` (`requiresFreshRead == true`, `allowsMemoryEvidence == false`) for `"any unread mail?"`, `"is there any mail from sarah today?"`, `"did i get mail from SBI yesterday?"`, `"who sent this message?"`, `"what's the subject line?"`, and `"do i have any attachments from sarah?"`, while `"hi hello?"` in Mail scope stays `.conversation`.
-     2. `findInMailIsADataLaneReadWithoutUITools`: `FrontmostAppTaskPlan.make(query: "find mail from SBI today", bundleId: "com.apple.mail", appName: "Mail")` has `intent == .read`, `!permitsUIAutomation`, and withholds `operate_app`, `run_menu_command`, `find_menu_command`, and `send_keys`.
+     2. `findInMailIsADataLaneRead`: `FrontmostAppTaskPlan.make(query: "find mail from SBI today", bundleId: "com.apple.mail", appName: "Mail")` has `intent == .read`, `!permitsUIAutomation`, `RequestLane.decide == .data`, and includes `search_mail` and `read_unread_mail`.
      3. `mailCapabilitiesAreRegisteredAndReadCapabilitiesAreFree`: `CapabilityRegistry.shared` registers `mail.recent`, `mail.read`, `mail.search`, `mail.unread`, and `mail.currentMessage` with `requiresApproval == false`.
      4. `mailQuestionShortcutIsRetiredFromDockShortcut`: `!DockShortcut.allCases.map(\.rawValue).contains("mailQuestion")` and `AppleLiveDataContext.wantsMailContext` matches Mail questions.
 
