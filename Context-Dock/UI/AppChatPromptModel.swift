@@ -454,7 +454,11 @@ final class AppChatPromptModel: ObservableObject {
         self.conversation = source
         self.globalResultSource = globalResultSource ?? .shared
         self.selectionReader = selectionReader ?? (AppDelegate.isHostingTests ? FakeAppChatSelectionReader() : AXContextReader.shared)
-        self.runningAppsSource = runningAppsSource ?? WorkspaceRunningAppsSource()
+        self.runningAppsSource = runningAppsSource ?? (
+            AppDelegate.isHostingTests
+                ? FixedRunningAppsSource.defaultTestFixture
+                : WorkspaceRunningAppsSource()
+        )
         globalResultsObservation = self.globalResultSource.updates.sink { [weak self] in
             guard let self, self.isSearchField, self.phase.showsInput else { return }
             let focusedID = self.focusedRow?.id
@@ -658,20 +662,22 @@ final class AppChatPromptModel: ObservableObject {
     /// resolve to us.
     func refreshSelectionForCurrentScope() {
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
-        if isGlobalScope {
-            if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
-                app.bundleIdentifier != ownBundleID
+        if !AppDelegate.isHostingTests {
+            if isGlobalScope {
+                if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                    app.bundleIdentifier != ownBundleID
+                {
+                    selectionReader.refreshLightweight(from: app)
+                    selectionReader.refreshSelectionOnly(from: app, includeFinderFiles: true)
+                }
+            } else if !appBundleID.isEmpty,
+                let app = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.bundleIdentifier == appBundleID && !$0.isTerminated
+                })
             {
                 selectionReader.refreshLightweight(from: app)
                 selectionReader.refreshSelectionOnly(from: app, includeFinderFiles: true)
             }
-        } else if !appBundleID.isEmpty,
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == appBundleID && !$0.isTerminated
-            })
-        {
-            selectionReader.refreshLightweight(from: app)
-            selectionReader.refreshSelectionOnly(from: app, includeFinderFiles: true)
         }
         let context = selectionReader.current
         let scopedTo =

@@ -87,7 +87,7 @@ struct CornerDockPhaseTests {
         let (model, _) = globalModel()
         model.standDown()
         #expect(model.expandFromDock(seeding: "s"))
-        #expect(model.phase == .prompt)
+        #expect(model.phase == .suggesting)
         #expect(model.query == "s")
     }
 
@@ -197,6 +197,9 @@ struct CornerDockPhaseTests {
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(finder.isAppStepIn)
         #expect(!finder.isSearchField)
+        // An app without pins gets the compact pill without tab bar (owner 2026-11-03).
+        #expect(!finder.showsTabBar)
+        finder.dockPins.pin(.app(bundleID: "com.apple.finder"), title: "Finder", app: "com.apple.finder")
         #expect(finder.showsTabBar)
         // Its live menus are not read from Global — the read that once froze the field.
         #expect(finder.finderSkipsLiveMenus)
