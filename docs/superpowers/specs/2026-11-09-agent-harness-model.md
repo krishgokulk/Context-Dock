@@ -6,7 +6,7 @@
 > the frontmost app and context, with the AI provider's power; learn skills and reuse them;
 > offline too"). §13 records the owner's answers: two are revised for safety and need the owner's
 > re-confirmation, and one is open. Work items H0–H6 (§12) are filed only after **both** a Goldfish
-> approval **and** the owner's re-confirmation of §13.1–13.2 (as the 2026-11-09 row in
+> approval (given: review 4, 0 blocking) **and** the owner's confirmation of §13.1, 13.2 and 13.5 (as the 2026-11-09 row in
 > `00-NOW.md` requires); none is `ready` until the owner labels it.
 > **Extends:** #205 solved-task library (`docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §6.3,
 > `docs/engineering/205-solved-task-library.md`), whose rules stay in force.
@@ -306,7 +306,9 @@ This spec adds or tightens:
    consolidation), which is for community packs. So learned skills are listed with **their app**:
    *Settings › Extensions › Apps › the app › Resources*, in a **"Made by DoraX"** group with run
    count, success rate and delete, where the recorder's skills already appear. Global and
-   selection-scoped learned skills get the same group on the Global page. This departs from the
+   selection-scoped learned skills get the same group on the Apps page's **Global** tab
+   (`UI/Settings/Integrations/IntegrationBrowserView.swift:20`, `GlobalIntegrationDetailView`).
+   This departs from the
    letter of #205 rule 6 (one place, named for a page that no longer exists) but keeps its intent.
 8. **Shared skills arrive inert** (post-1.0): an imported learned skill cannot run until the user
    turns it on, and each run is approved (SAFETY.md, "Scripts an app carries are inert").
@@ -430,6 +432,12 @@ The owner answered "Yes. Go on" to the recommendations on 2026-11-09.
 3. ❓ **Open:** keep the menu browser as a power-user view, or remove it after H4? No
    recommendation yet. Until decided, it stays.
 4. ✅ **Sharing learned skills as a Store pack is post-1.0**, and shared skills arrive inert.
+5. ⚠️ **New, needs the owner's confirmation.** #205 rule 6 (owner plan, 2026-10-06) lists learned
+   skills in "Settings › Plugins". That page is now Store / Packs (community packs), so §8 rule 7
+   lists them in the app's Resources (or the Global tab) under "Made by DoraX". Confirm, or name
+   another place.
+
+Filing H0–H6 waits for the owner's confirmation of 13.1, 13.2 and 13.5.
 
 ---
 
