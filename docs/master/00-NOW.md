@@ -10,15 +10,14 @@
 
 ## In progress
 
-None. #204 continues with its next pre-model shortcut (Queued). Both earlier #204 PRs merged.
+None. #204 continues with its next pre-model shortcut (Queued). Three earlier #204 PRs merged (#314/#315 Notes, #402 Menu Command, #403 Mail Question).
 
 ## Queued (next)
 
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
-- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
-- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
-- **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, approved; owner-confirmed 2026-11-09): **#405** H0 general slot deriver → **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim. None `ready` until the owner labels it.
+- **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
+- Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
 
@@ -282,17 +281,13 @@ None. #204 continues with its next pre-model shortcut (Queued). Both earlier #20
 - Milestone 5 (Native MCP Server Bridge): Exposed the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`) over Context-Dock's native MCP server (`context-dock`). External agents and CLIs (e.g. Claude Code) can invoke Mac capabilities natively over standard JSON-RPC HTTP transport (`127.0.0.1:8213/mcp`). Updated registration command and added one-click copy buttons in Settings › AI Providers. Verified by `DoraXMCPCapabilityToolTests`.
 
 **Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phases 1-4):**
-- Completed, PR #368 open into `general-chat-agent` awaiting owner review and merge.
+- Completed and merged via PR #368 into `general-chat-agent`.
 - Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
 - Phase 1 (Context Assembler Unification): Injects frontmost app's AGENT.md, per-app skills (`SkillScope.app`), and live menu commands snapshot into user-selected AI Provider's turn context. Ambient app discovery for General Chat & App Pet turns; non-blocking fallback to `run_menu_command` and `operate_app`. Verified by `FrontmostAppAgentPhase1Tests` (6/6 pass).
 - Phase 2 (Autonomous Scripting Tool): Sandboxed `run_synthesized_script` capability allowing Claude/Codex to execute on-the-fly AppleScript/JXA with `AICapabilityApprovalCenter` approval gating and `AGENT.md` safety verification; `read_app_dictionary` tool to inspect sdef classes, properties, and commands. Verified by `SynthesizedScriptToolTests` (8/8 pass).
 - Phase 3 (Seamless Computer Use Cascading): Deprecated blocking "Install CLI" cards in favor of autonomous escalation with optional accelerators; enhanced `ComputerUseTargetResolver` with hierarchy/path segment delimiter parsing (`>`, `▸`, `›`, `/`, `|`) and full-path token matching; added `AXUIFocusHelper` for one-shot search field focusing and direct text entry; verified with `ComputerUseEscalationPhase3Tests` (7/7 pass).
 - Phase 4 (End-to-End Verification Across 3-Tier Escalation Ladder): Verified Tier 1 Apple Native App headless / data lane planning and context assembly, Tier 2 Scriptable Third-Party App sdef inspection and synthesized scripting execution, Tier 3 Non-Scriptable UI App fallback escalation to live menu commands and Computer Use, and ambient context isolation across app switches. Verified by `FrontmostAppAgentE2ETests` (4/4 pass).
 - Gate `./scripts/check.sh` clean build passed. Full test suite (25/25 tests) passed.
-
-**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
-- Completed, PR #367 open awaiting owner review and merge.
-- Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).
@@ -475,24 +470,24 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · ~~#208 P13~~ (#312, merged 2026-10-26) · ~~#205 P11~~ (#367, merged) · ~~#368 Unified Frontmost App Agent & Autonomous Computer Use~~ (closed 2026-11-03) (subsumes #204 & #206; eliminates manual tool install requirements and hardcoded keyword routers via 3-tier escalation: Headless → AI Scripting → Computer Use).
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · ~~#208 P13~~ (#312, merged 2026-10-26) · ~~#205 P11~~ (#367, merged) · ~~#368 Unified Frontmost App Agent & Autonomous Computer Use~~ (closed 2026-11-03) · **#204 P10** (retire remaining pre-model shortcuts in `DockCore+AIChat.swift`, one per PR: Notes #314/#315, Menu Command #402, Mail Question #403 merged; remaining shortcuts queued) · **#405–#413 Agent Harness Model (H0–H6)**.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. ~~#147~~ Drop Shelf becomes an icon at the end of the dock, in every app (UI) — closed 2026-10-04
 3. ~~#165 E1b~~ (closed 2026-10-04) outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
 4. ~~#151 E3~~ Prompt order (closed 2026-11-07) · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first) · **#397** Foundation Models native image input (after E5)
-5. ~~#154 E6a → #155 E6b → #156 E7a · #157 E7b~~ (merged: #389, #391; #154/#156 closed 2026-11-07)
+5. ~~#154 E6a → #155 E6b → #156 E7a · #157 E7b~~ (merged: #383, #389, #390, #391; closed 2026-11-07/08)
 6. ~~#158 E8a → #159 E8b~~ (merged: #392, #393) → #160 E8c: built in #394 with a deterministic heuristic judge; **issue left open** for the owner (is that enough for 1.0, or add a model judge?)
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
-Labs, after 1.0: E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5). **#398** App Intents / Siri AI (macOS 27.3+, opens discoverability via "Hey Siri, open Context-Dock for Xcode" — post-1.0).
+Labs, after 1.0: ~~E9 / E9a~~ (#340 / PR #361), ~~E9b `/mods`~~ (#341 / PR #362), ~~E17 CLI learner~~ (#202 / PR #309), ~~E18 / E19 proactive watch mode~~ (#343 / PR #366); remaining: E10–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model). **#398** App Intents / Siri AI (macOS 27.3+, opens discoverability via "Hey Siri, open Context-Dock for Xcode" — post-1.0).
 
 **#327 owner-verified (2026-10-27, “okay. perfect”):** write a staged implementation plan and split it into issues in
 this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
 `/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
 Corner, stores, capability index and shared executor; no second engine or registry.
 Plan written: [`2026-10-27-app-pets-rollout.md`](../superpowers/plans/2026-10-27-app-pets-rollout.md).
-Implementation issues: ~~#338 identity/scope~~ (#356, merged 2026-10-30) → ~~#339 promotion/consent~~ (#360, merged 2026-10-30) → ~~#340 memory~~ (#361, merged 2026-10-30) →
-~~#341 `/mods`~~ (closed 2026-10-31) → ~~#342 detached presentation~~ (closed 2026-11-01) → **#343** proactive behavior. **#343 is the next stage** in the App Pets rollout lane.
+Implementation issues (all 6 stages complete): ~~#338 identity/scope~~ (#356, merged 2026-10-30) → ~~#339 promotion/consent~~ (#360, merged 2026-10-30) → ~~#340 memory~~ (#361, merged 2026-10-30) →
+~~#341 `/mods`~~ (#362, closed 2026-10-31) → ~~#342 detached presentation~~ (#364, closed 2026-11-01) → ~~#343 proactive behavior~~ (#366, merged 2026-11-02).
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).

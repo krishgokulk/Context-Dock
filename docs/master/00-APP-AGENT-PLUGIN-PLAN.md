@@ -77,21 +77,23 @@ channel, and the most expensive.** If a request can be done without the window (
 scripting dictionary, MCP, CLI, Shortcut or saved skill), it's done that way, inside the same
 app chat, without activating the app, stealing focus or opening a window.
 
-### What the code does today (checked 2026-10-06)
+### What the code did before P2/P3 (checked 2026-10-06; fixed in #196, #197, #277)
 
-- `ScopedAppPromptBuilder.swift` (~272–315) puts **up to 50 menu commands** into every scoped
+> **As-built update (2026-11-09):** P2 (#196) updated `ScopedAppPromptBuilder.swift` (`toolOrderLine`) to rank `saved skill → saved adapter action → dictionary/API → MCP tool → linked CLI → Shortcut → menu command (find_menu_command) → Computer Use (operate_app)`. P3/P3b (#197/#277, PR #295) removed `activate()` from data-lane reads and restricted `AXMenuReader.clickMenuItem(activatesApp:)` to the UI lane. H4 (#411 in `2026-11-09-agent-harness-model.md`) finishes removing the remaining menu snapshot from the prompt.
+
+- `ScopedAppPromptBuilder.swift` (~272–315) put **up to 50 menu commands** into every scoped
   prompt, with the instruction *"When a request maps to a menu command, CALL it immediately"*.
-- Its tool order is **adapter → menu → MCP/API → Shortcut → CLI**, and it says *"never generate
-  shell or AppleScript for an operation exposed by … the live menu"*. That ranks menus above
+- Its tool order was **adapter → menu → MCP/API → Shortcut → CLI**, and it said *"never generate
+  shell or AppleScript for an operation exposed by … the live menu"*. That ranked menus above
   every headless route.
-- This contradicts the rest of the code. `CapabilityIndex.Surface` says headless < opens app <
+- This contradicted the rest of the code. `CapabilityIndex.Surface` says headless < opens app <
   takes screen. The `run_menu_command` tool's own description says it's for apps *"which have no
   adapter"*.
-- `MailAutomation.activateOrLaunchMail()` activates Mail even for reads, the Mail search
-  shortcut clicks Edit › Find, and `AXMenuReader.clickMenuItem` (~562) activates the app before
+- `MailAutomation.activateOrLaunchMail()` activated Mail even for reads, the Mail search
+  shortcut clicked Edit › Find, and `AXMenuReader.clickMenuItem` (~562) activated the app before
   every menu click.
-- Result: the largest block in the prompt is a menu list, so the model reasons in menu terms
-  even for data questions. That's the "messy reasoning" the owner sees.
+- Result: the largest block in the prompt was a menu list, so the model reasoned in menu terms
+  even for data questions. That was the "messy reasoning" the owner saw.
 
 ### Words: lanes, rungs, Computer Use
 
@@ -216,15 +218,14 @@ Same flow for each: understand → lane → tool → get the app ready → do it
 
 ### Mail
 
-Today's tools: `mail.recent`, `mail.read`, `mail.search`, `mail.currentMessage` (AppleScript)
-and `mail.createDraft` (`mailto:`; **no send verb by design**). Optional: `mail-app-cli` (§7).
+Today's tools: `mail.recent`, `mail.read`, `mail.unread`, `mail.search`, `mail.currentMessage` (AppleScript), `mail.createDraft` (`mailto:`), and `mail.send` / `send_mail` (PR #369: outbound confirmation card via `AICapabilityApprovalCenter`, automatic contact resolution, headless AppleScript dispatch, and verified read-back against Sent mailbox history). Optional: `mail-app-cli` (§7).
 
 | You type | Lane | Tool | App state handling | Card? |
 |---|---|---|---|---|
 | "find mail from SBI today" | data | `mail.search(sender: SBI, day: today)` | not running → started hidden; otherwise untouched | no (read) |
 | "read my latest email and do what it says" | data | `mail.recent` → body | as above | **yes**: the email's instruction is quoted and DoraX asks; never obeyed directly |
 | "fetch the link in that email" | data | `dorax_read_url` | — | **yes**: private data in the turn → outbound gate names the host (E1c) |
-| "reply saying I'll call tomorrow" | data | `mail.createDraft` | the composer opens **because you will press Send** | write card; DoraX never sends |
+| "reply saying I'll call tomorrow" | data | `mail.createDraft` or `mail.send` | draft opens composer; `mail.send` dispatches headlessly after outbound card approval + Sent read-back | **yes**: write / outbound card |
 | "archive the newest bank email" | data → UI | with `mail-app-cli`: `archive` (headless). Without: Message › Archive | without CLI: plan card "bring Mail forward, Archive, return" | **yes** (write) |
 | "show the mailbox list" | UI | menu View › Show Mailbox List | in front: pressed; elsewhere: plan card, focus returns | only if Mail must come forward |
 
@@ -247,14 +248,13 @@ the user is using.
 ### Messages
 
 Reads come from the local `chat.db`, so **Messages is never launched to read**
-(`MessagesChatDBReader`). That needs Full Disk Access. Composing opens Messages with the text
-filled in and **never presses Send** (`messages.compose`).
+(`MessagesChatDBReader`). That needs Full Disk Access. Composing (`messages.compose`) opens Messages with the text filled in; sending (`messages.send` / `send_message`, PR #369) presents an explicit outbound draft confirmation card (`AICapabilityApprovalCenter`), resolves the contact (`CNContactStore`), dispatches via AppleScript, and verifies the sent message in `chat.db` (`MessagesChatDBReader.verifySentMessage`).
 
 | You type | Lane | Tool | App state handling | Card? |
 |---|---|---|---|---|
 | "what did Salman text me today" | data | `messages.search` (chat.db) | Messages untouched in every state | no (read); the message text is untrusted |
 | "who do I message most" | data | `messages.topContacts` | untouched | no |
-| "text Salman I'm running late" | data | `messages.compose` | Messages opens with the draft because **you press Send** | **yes**: outbound card |
+| "text Salman I'm running late" | data | `messages.send` / `messages.compose` | outbound confirmation card → headless send + `chat.db` verify (or draft fallback) | **yes**: outbound card |
 | "open the link Salman sent" | data | `dorax_read_url` / open URL | — | **yes**: exact-URL gate (E1b) |
 | "show my chat with Salman" | UI | open the conversation | the window opens because you asked to see it | no |
 | any read, no Full Disk Access | data | — | "I need Full Disk Access to read Messages" + the setting button | no; **no screenshot reading** as a workaround unless you ask for Computer Use |
@@ -433,7 +433,7 @@ Rules:
 4. **Auto-save reads only** (filter, find, read, list, count). A write, send, delete or network
    skill needs owner approval to save, and **still shows the gate card on every run**.
 5. **Argv, no free-form shell, no network inside a read skill.**
-6. **Visible in Settings › Plugins** as "made by DoraX": run count, success rate, delete.
+6. **Visible in Settings › Extensions › Apps › `<App>` › Capabilities & Skills** (and Global tab for global skills) as "Made by DoraX": run count, success rate, delete (updated 2026-11-09 in `2026-11-09-agent-harness-model.md` §8 rule 7 after #373 consolidated Settings › Plugins into Store / Packs).
 7. **Re-tested after the app's version changes** (E19b) before next use.
 8. **Who does what:** Claude Code writes skills. On-device Apple Intelligence matches and fills
    parameters, never authors code.
@@ -466,21 +466,21 @@ real repeat rate from E2 traces before promising a number.
 
 ## 8. Tasks, in order
 
-| # | Task | Size | Hand check |
-|---|---|---|---|
-| P1 #195 | Mail keyword shortcut obeys Task 17 (exact command only); fix the false "Answered without running anything"; the owner's sentence in `RoutingPhrasebookTests`; check the Corner for the same bug | S | re-run the sentence |
-| P2 #196 | Menus out of the default prompt (§2a): one tool order equal to `Surface`; `find_menu_command` on demand; delete "CALL it immediately" | M | data and UI sentences |
-| P3 #197 | Two lanes (§2a): data lane never activates the app (Mail adapter reads without `activate()`); UI lane only for interface requests; menu fallback shown as a step | M | Mail stays in background |
-| P4 #198 | Every pre-model shortcut reports a "Shortcut: …" step | S–M | yes |
-| P5 #199 | Progress panel shows Understood → Lane → Tools → Chose → Gate → Result from the trace | M | yes |
-| P6 #200 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | M | yes |
-| P7 #201 | Ranking + fallback per §5, with visible steps | M | yes |
-| P8 #202 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | M | yes |
-| P9 #203 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
-| P10 #204 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
-| P11 #205 | Solved-task library (§6.3): verified turn → parameterized read skill → runs before the model → repaired on failure. Mail first | M–L | yes |
-| P13 #208 | Scripting-dictionary rung: read any scriptable app without an adapter (no generic `sdef` reader exists today); typed Apple Events, no free-form AppleScript; never activates the app | M | a third-party app answers with "no window opens" |
-| P12 #206 | DoraX-made plugins (§6.3 level 2) | L | yes |
+| # | Task | Status | Size | Hand check |
+|---|---|---|---|---|
+| P1 #195 | Mail keyword shortcut obeys Task 17 (exact command only); fix the false "Answered without running anything"; the owner's sentence in `RoutingPhrasebookTests`; check the Corner for the same bug | ✅ Merged (#209) | S | re-run the sentence |
+| P2 #196 | Menus out of the default prompt (§2a): one tool order equal to `Surface`; `find_menu_command` on demand; delete "CALL it immediately" | ✅ Merged | M | data and UI sentences |
+| P3 #197 | Two lanes (§2a): data lane never activates the app (Mail adapter reads without `activate()`); UI lane only for interface requests; menu fallback shown as a step (+ P3b #277) | ✅ Merged (#276, #295) | M | Mail stays in background |
+| P4 #198 | Every pre-model shortcut reports a "Shortcut: …" step | ✅ Merged (#297) | S–M | yes |
+| P5 #199 | Progress panel shows Understood → Lane → Tools → Chose → Gate → Result from the trace | ✅ Merged (#299) | M | yes |
+| P6 #200 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | ✅ Closed | M | yes |
+| P7 #201 | Ranking + fallback per §5, with visible steps | ✅ Closed | M | yes |
+| P8 #202 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | ✅ Merged (#309) | M | yes |
+| P9 #203 | Curated catalog + "no route → options" card (§6.2; updated in #368 Phase 3 to non-blocking accelerator) | ✅ Merged (#311) | S–M | yes |
+| P10 #204 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | 🔄 In progress (Notes #314/#315, Menu #402, Mail Question #403 merged) | L | per PR |
+| P11 #205 | Solved-task library (§6.3, `SolvedSkill*.swift`) + curated system scope capabilities | ✅ Merged (#367) + extending in #405–#413 (H0–H6) | M–L | yes |
+| P13 #208 | Scripting-dictionary rung: read any scriptable app without an adapter (no generic `sdef` reader exists today); typed Apple Events, no free-form AppleScript; never activates the app | ✅ Merged (#312) | M | a third-party app answers with "no window opens" |
+| P12 #206 | DoraX-made plugins (§6.3 level 2) | Queued (after #405–#413) | L | yes |
 
 Order: P1 now (it also blocks the #184 hand test). P2–P3 fix the reasoning: they remove the
 menu bias at its source. P4–P5 make every later step visible. P6–P9 are the plugin manager, and P13 (#208) follows P6: it gives third-party apps a data route on day one. P10

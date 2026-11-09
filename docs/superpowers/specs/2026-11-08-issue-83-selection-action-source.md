@@ -1,7 +1,7 @@
 # Issue #83: Extract SelectionActionSource Out of DockCore
 
-> **Date:** 2026-11-08  
-> **Status:** Specification / Revised (EGM Cycle - Iteration 3)  
+> **Date:** 2026-11-08
+> **Status:** Shipped (PR #396)
 > **Target Branch:** `claude/issue-83-selection-action-source` (bases on `general-chat-agent`)  
 > **GitHub Issue:** #83 (Milestone 1.0)  
 > **References:**  

@@ -69,7 +69,7 @@ The provider is the brain and the app is the harness:
 - **Tool loop:** `AI/AgentToolRegistry.swift` (and its extensions); per-turn tool narrowing in
   `AI/FrontmostAppTaskPlan.swift`.
 - **Data lane vs UI lane:** `Services/DataLane.swift` (`RequestLane`), `Services/LanePlan.swift`.
-- **Skills:** `Services/SkillStore` / `Services/SkillScope.swift`; solved skills (#205) in
+- **Skills:** `Services/SkillStore.swift` / `Services/SkillScope.swift`; solved skills (#205) in
   `AI/SolvedSkill*.swift`; Computer Use skills in `AI/ComputerUseSkillRecorder.swift`.
 - **Per-app instructions:** `AppAgentProfileStore` (each app's `AGENT.md`).
 - **Turn diagnosis:** `docs/runbooks/diagnose-an-ai-turn.md`.

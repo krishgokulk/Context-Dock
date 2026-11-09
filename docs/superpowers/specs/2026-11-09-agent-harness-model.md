@@ -301,9 +301,7 @@ This spec adds or tightens:
 7. **Visible and undoable.** Each automatic (read) save shows "Saved as a skill: … · Undo" in
    the turn (Undo deletes it). A write skill is offered with "Save as a skill?" instead (rule 4
    above). #205 rule 6 said "Settings › Plugins, made by DoraX", but that page is now **Store /
-   Packs** (Extensions section, `UI/Settings/SettingsModels.swift:32,173-180`, 2026-11-05
-   consolidation), which is for community packs. So learned skills are listed with **their app**:
-   *Settings › Extensions › Apps › the app › Resources*, in a **"Made by DoraX"** group with run
+   *Settings › Extensions › Apps › the app › Capabilities & Skills* (formerly Resources), in a **"Made by DoraX"** group with run
    count, success rate and delete, where the recorder's skills already appear. Global and
    selection-scoped learned skills get the same group on the Apps page's **Global** tab
    (`UI/Settings/Integrations/IntegrationBrowserView.swift:20`, `GlobalIntegrationDetailView`).
@@ -402,7 +400,7 @@ One issue and one PR each, following the #204 pattern.
 | **H0** #405 | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block; `SolvedSkillMatch.match` takes turn context (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
 | **H1a** #406 | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names, reads auto-save / writes offered) | H0 | tests |
 | **H1b** #407 | Solved skills for typed menu presses and connector/MCP calls (reads first; writes per #205's deferred slice, gated every run) | H1a | tests |
-| **H1c** #408 | "Saved as a skill · Undo" / "Save as a skill?" in the turn; "Made by DoraX" group in the app's Resources (and Global) | H1a | screenshot vs. reference (`AGENTS.md`) |
+| **H1c** #408 | "Saved as a skill · Undo" / "Save as a skill?" in the turn; "Made by DoraX" group in the app's Capabilities & Skills (formerly Resources, and Global) | H1a | screenshot vs. reference (`AGENTS.md`) |
 | **H2** #409 | Job key + conflict order + staleness / auto-disable | H1a, H1b | tests |
 | **H3** #410 | Selection-type scope: stored field + migration | H2 | tests incl. migration |
 | **H4** #411 | Menus: no per-item tools, no prompt snapshot, UI lane first | #204 (PR #402) | phrasebook tests |
@@ -433,7 +431,7 @@ app" to the revised list, both on 2026-11-09.
 4. ✅ **Sharing learned skills as a Store pack is post-1.0**, and shared skills arrive inert.
 5. ✅ **Confirmed by the owner (2026-11-09).** #205 rule 6 (owner plan, 2026-10-06) lists learned
    skills in "Settings › Plugins". That page is now Store / Packs (community packs), so §8 rule 7
-   lists them in the app's Resources (or the Global tab) under "Made by DoraX".
+   lists them in the app's Capabilities & Skills (formerly Resources, or the Global tab) under "Made by DoraX".
 
 ---
 
@@ -445,7 +443,7 @@ app" to the revised list, both on 2026-11-09.
 | 2026-11-03 spec §6 Phase 1 | "live menu snapshot into the turn prompt" | No snapshot in every prompt; titles on demand |
 | 2026-11-03 spec §3 Tier 3 | Menus and Computer Use as one tier | Split into rung 3 (menu press) and rung 4 (Computer Use) |
 | `FRONTMOST_AGENT.md` §7 item 4 | Claimed Tier 2 scripts are auto-captured | Corrected: only Computer Use is captured today; scripts are H1a |
-| `00-APP-AGENT-PLUGIN-PLAN.md` §6.3 rule 6 | Learned skills listed in "Settings › Plugins" | Listed in the app's Resources, "Made by DoraX" group (§8 rule 7); the named page no longer exists |
+| `00-APP-AGENT-PLUGIN-PLAN.md` §6.3 rule 6 | Learned skills listed in "Settings › Plugins" | Listed in the app's Capabilities & Skills ("Made by DoraX" group, §8 rule 7; the named page no longer exists) |
 
 #205's rules are **not** changed. This spec extends where they apply.
 

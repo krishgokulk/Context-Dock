@@ -9,8 +9,8 @@
 
 ```text
 ConversationID
-  kind: general | pet(PetID) | combined
-  participants: [] | [PetID] | [PetID, PetID, …]
+  kind: .general | .appPet(AppPetID) | .combined (`ConversationKind`, AppPetIdentity.swift)
+  participants: ParticipantSet (`[ConversationParticipant]`)
   turnScopes: app/tool profiles authorized for the current request only
   transcript: full local history
   summary: rolling factual conversation memory

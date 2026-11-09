@@ -11,9 +11,10 @@ Pet is another presentation of the same app scope.
 
 ```text
 DockShell
-  placement: centre | corner(anchor)
-  focus: global | general(conversationID) | pet(appID, conversationID)
-       | combined(conversationID) | selection | media
+  placement: centre | corner(anchor) (`DockAnchor`)
+  focus: .frontmost | .global | .pet(AppPetID) (`SurfaceFocus`, SurfaceFocus.swift)
+  conversation: .general | .appPet(AppPetID) | .combined (`ConversationKind`, AppPetIdentity.swift)
+  modes / overlays: selection card, drop shelf, media (Labs)
   shared input, rows, material, keyboard state, animation and sizing
 ```
 
