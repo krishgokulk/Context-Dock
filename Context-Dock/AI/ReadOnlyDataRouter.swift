@@ -72,7 +72,7 @@ enum ReadOnlyDataRouter {
             "my ", "any ", "unread", "recent", "upcoming", "do i have", "did i",
             "show ", "show me", "find ", "lookup ", "look up ", "get ", "list ",
             "check ", "what's on", "whats on", "how many", "this week", "today",
-            "tomorrow", "latest",
+            "yesterday", "tomorrow", "latest",
         ]
         guard readSignals.contains(where: q.contains) else { return nil }
         // A read signal is not proof of a read. `create a reminder "call sujith" today at

@@ -4,18 +4,6 @@ import SwiftUI
 
 extension DockCore {
 
-    func isCurrentMailContextAttached() -> Bool {
-        guard
-            frontmost.bundleID == "com.apple.mail"
-                || contextTargetApp()?.bundleIdentifier == "com.apple.mail"
-        else { return false }
-        return isMailContextAttached
-    }
-
-
-
-
-
     func isFinderFolderSearchAttached(currentFolderPath: String? = nil) -> Bool {
         let folderPath =
             currentFolderPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path }

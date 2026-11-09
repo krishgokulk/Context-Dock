@@ -2565,47 +2565,16 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.mail" {
-            let isMailQuestion = isQuestionStyleMailQuery(rawScopedSearchQuery)
-
-            // Both halves: asking something, and asking about mail. This branch used to fire
-            // on question shape alone, so the Mail scope answered "hi hello?" by demanding an
-            // attached mailbox — a scope refusing to be a chat.
-            if frontmost.bundleID == "com.apple.mail",
-                MailQuestionRouter.needsAttachedMailContext(
-                    query: rawScopedSearchQuery,
-                    isMailContextAttached: isCurrentMailContextAttached())
-            {
-                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
-                l2.chatMessages.append(
-                    AIChatMessage(
-                        role: .assistant,
-                        content:
-                            "Attach Mail context with the + button first, then ask again. That keeps Mail questions local and targeted to the current mailbox."
-                    ))
-                searchState.query = ""
-                l2.focusedPillIndex = nil
-                return
-            }
-
-            if isMailQuestion, let answer = answerAttachedMailQuestion(for: rawScopedSearchQuery) {
-                dockShortcutStep(.mailQuestion)
-                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
-                l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
-                searchState.query = ""
-                l2.focusedPillIndex = nil
-                return
-            }
-
+        if dockScope.scopedBundleId == "com.apple.mail",
+            let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery)
+        {
             // Only an exact search command ("search mail from SBI") is claimed here; any
             // other sentence that mentions a sender goes to the model, which has
             // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
             // this same function. It runs headless (mail.search); Mail's window is not touched.
-            if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) {
-                dockShortcutStep(.mailboxSearch)
-                executeMailMailboxSearch(intent: intent, userMessage: query)
-                return
-            }
+            dockShortcutStep(.mailboxSearch)
+            executeMailMailboxSearch(intent: intent, userMessage: query)
+            return
         }
 
         // ── Cross-app natural language ────────────────────────────────────────

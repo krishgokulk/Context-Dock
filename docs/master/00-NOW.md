@@ -10,6 +10,14 @@
 
 ## In progress
 
+**Issue #204: P10: Retire the Mail Question pre-model shortcut into the ladder:**
+- Branch `claude/issue-204-retire-mail-question` (PR #403, stacked on PR #402 `claude/issue-204-retire-menu-command`).
+- EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-mail-question-shortcut.md` (Approved, 0 blocking gaps).
+- Retired pre-model `answerAttachedMailQuestion` (`DockShortcut.mailQuestion`) and orphaned `MailQuestionRouter.needsAttachedMailContext` / `isMailContextAttached` gate from `DockCore+AIChat.swift` (`handleL2Query`), `DockCore+MailFindActions.swift`, `DockCore+FinderAttachment.swift`, and `DockCore.swift`.
+- Replaced `MailQuestionRouter.needsAttachedMailContext` with `MailQuestionRouter.isMailboxQuestion`, wired into `AgentSourceAuthority.decide` for `com.apple.mail` scope alongside `"yesterday"` / `"did i"` freshness signals, and added `AppleLiveDataContext.wantsMailContext`.
+- Added Mail chat phrasebook rows and `MailQuestionShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `MailQuestionRouterTests.swift`, `DockShortcutTests.swift`, and `00-DOCK-PARITY-INVENTORY.md` (row D18).
+- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MailQuestionShortcutRetirementTests`, `MailQuestionRouterTests`, `DockShortcutTests`, `MailboxSearchCommandTests` — 37/37 pass) green.
+
 **Issue #204: P10: Retire the Menu Command pre-model shortcut into the ladder:**
 - Branch `claude/issue-204-retire-menu-command` (PR #402, ready for review).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-menu-command-shortcut.md` (Approved, 0 blocking gaps).

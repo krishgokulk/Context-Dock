@@ -84,7 +84,6 @@ struct DockCore {
         get { appState.contextDock.frontmost }
         nonmutating set { appState.contextDock.frontmost = newValue }
     }
-    @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
     @ObservedObject var dockCoreModel = DockCoreState.shared.dockCoreModel
     @ObservedObject var globalContextViewModel = DockCoreState.shared.globalContextViewModel
     @ObservedObject var finderContext = DockCoreState.shared.finderContext
