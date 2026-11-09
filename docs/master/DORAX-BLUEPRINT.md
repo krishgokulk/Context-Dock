@@ -313,6 +313,12 @@ Pet or Combined Chat. An anchored App Pet promotes to Combined Chat only when an
 Pet is explicitly connected. This supersedes the older user-facing “two shells” description while
 preserving distinct conversation identities and scope lifetimes.
 
+**Owner direction (2026-11-09):** the Unified Spotlight-Pet Surface dissolves the modal `Command` /
+`Backspace` toggle between Global Context and App Pet into a single, context-biased intent bar.
+Commands, menus, apps, and files execute immediately on `Return`, while conversational questions
+escalate directly to the active App Pet with ambient window context. Spec:
+[`docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`](../superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md).
+
 ---
 
 *This file replaces reading five plans. When you have answered Part 7, it becomes

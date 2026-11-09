@@ -5,9 +5,11 @@
 > (`DockEngine`) behind the Corner's App Chat and Global results. The sections below are the
 > history of the migration; §5 records how it ended.
 >
-> **Target update (2026-10-27, #327):** centre and bottom corner are placements of this one shell.
-> A normal launch opens the frontmost App Pet; Command or empty Backspace returns to Global
-> Context. Running-app icons switch Pets or detach as persistent desktop Pets. See the
+> **Target update (2026-10-27, #327; refined 2026-11-10):** centre and bottom corner are placements of this one shell.
+> A normal launch opens the Unified Dock Launcher (context-biased to the frontmost app). The modal `Command` / `Backspace` switch
+> between Global and App Pet is dissolved into a single unified intent board: commands/files execute immediately on `Return`,
+> while conversational questions escalate directly to the active App Pet. See the
+> [Unified Spotlight-Pet Surface spec](../superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md) and
 > [canonical App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 >
 > **Earlier status: CURRENT — owner-confirmed direction (2026-09-24).** Read with
