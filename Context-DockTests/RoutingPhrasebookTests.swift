@@ -262,6 +262,32 @@ struct RoutingPhrasebookTests {
                found: [notesCreate], expected: .model),
         Phrase(surface: .notesChat, sentence: "create a note about the roof quote",
                found: [notesCreate], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Menu Command shortcut (`MenuIntentRouter` /
+        // `DockShortcut.menuCommand`) is retired. Menu commands route through the Task 17
+        // ladder (`offerScopedNativeAppAction` → `ScopedRoutePolicy.decide`):
+        // - Exact menu titles and explicit menu paths offer the command (.exactCommand).
+        // - Token-overlapping sentences that `MenuIntentRouter` used to score ≥ 40 go to the
+        //   model with the matching menu items in `modelCandidates` (.model).
+        // - Question-shaped sentences about menus are answered as reads (.none).
+        Phrase(surface: .finderChat, sentence: "minimize",
+               found: [menu("Finder", ["Window", "Minimize"])], expected: .exactCommand),
+        Phrase(surface: .finderChat, sentence: "new tab",
+               found: [menu("Finder", ["File", "New Tab"])], expected: .exactCommand),
+        Phrase(surface: .safariChat, sentence: "zoom in",
+               found: [menu("Safari", ["View", "Zoom In"])], expected: .exactCommand),
+        Phrase(surface: .finderChat, sentence: "File > New Folder",
+               found: [menu("Finder", ["File", "New Folder"])], expected: .exactCommand),
+        Phrase(surface: .finderChat, sentence: "copy the passport pdf to the desktop",
+               found: [menu("Finder", ["Edit", "Copy"]), findMyCopy], expected: .model),
+        Phrase(surface: .finderChat, sentence: "new folder for the tax documents",
+               found: [menu("Finder", ["File", "New Folder"])], expected: .model),
+        Phrase(surface: .safariChat, sentence: "export this document as a summary",
+               found: [menu("Safari", ["File", "Export as PDF…"])], expected: .model),
+        Phrase(surface: .safariChat, sentence: "how do I export as pdf?",
+               found: [menu("Safari", ["File", "Export as PDF…"])], expected: .model),
+        Phrase(surface: .finderChat, sentence: "where is the sidebar?",
+               found: [menu("Finder", ["View", "Show Sidebar"])], expected: .none),
     ]
 
     // MARK: - Running a row
@@ -805,5 +831,80 @@ struct NotesShortcutRetirementTests {
         let count = CapabilityRegistry.shared.capability(id: "notes.count")
         #expect(count != nil)
         #expect(count?.riskLevel.requiresApproval == false)
+    }
+}
+
+// MARK: - Issue 204: Menu Command shortcut retirement
+
+@MainActor
+struct MenuCommandShortcutRetirementTests {
+
+    private static func menu(_ app: String, _ path: [String]) -> DoraXActionCandidate {
+        var made = DoraXActionCandidate(
+            id: "menu.\(app).\(path.joined(separator: "."))",
+            title: path.last ?? "",
+            appName: app,
+            bundleID: "test.\(app)",
+            source: .cachedMenu,
+            route: .verifiedMenu,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .low,
+            confidence: 0.6,
+            permissionKey: "generalAI.execute.menu",
+            debugReason: "menu-retirement")
+        made.menuPath = path
+        return made
+    }
+
+    /// Token-overlapping requests that `MenuIntentRouter` previously scored >= 40 (because a
+    /// single token > 2 chars equalled the menu title) no longer preempt the model: they route
+    /// to `.model` with `offer == nil` and keep the menu item in `modelCandidates`.
+    @Test func tokenOverlappingSentencesGoToTheModelWithCandidates() {
+        let copyCandidate = Self.menu("Finder", ["Edit", "Copy"])
+        let copyDecision = ScopedRoutePolicy.decide(
+            query: "copy the passport pdf to the desktop",
+            scopedApp: "Finder",
+            namedApp: nil,
+            candidates: [copyCandidate])
+        #expect(copyDecision.routeClass == .model)
+        #expect(copyDecision.offer == nil)
+        #expect(copyDecision.modelCandidates.map(\.title) == ["Copy"])
+
+        let newFolderCandidate = Self.menu("Finder", ["File", "New Folder"])
+        let folderDecision = ScopedRoutePolicy.decide(
+            query: "new folder for the tax documents",
+            scopedApp: "Finder",
+            namedApp: nil,
+            candidates: [newFolderCandidate])
+        #expect(folderDecision.routeClass == .model)
+        #expect(folderDecision.offer == nil)
+        #expect(folderDecision.modelCandidates.map(\.title) == ["New Folder"])
+    }
+
+    /// Exact menu commands and explicit menu paths still offer the command via `ScopedRoutePolicy`.
+    @Test func exactMenuCommandsAreOfferedThroughTheLadder() {
+        let newTab = Self.menu("Finder", ["File", "New Tab"])
+        let titleDecision = ScopedRoutePolicy.decide(
+            query: "New Tab",
+            scopedApp: "Finder",
+            namedApp: nil,
+            candidates: [newTab])
+        #expect(titleDecision.routeClass == .exactCommand)
+        #expect(titleDecision.offer?.title == "New Tab")
+
+        let minimize = Self.menu("Finder", ["Window", "Minimize"])
+        let pathDecision = ScopedRoutePolicy.decide(
+            query: "Window > Minimize",
+            scopedApp: "Finder",
+            namedApp: nil,
+            candidates: [minimize])
+        #expect(pathDecision.routeClass == .exactCommand)
+        #expect(pathDecision.offer?.title == "Minimize")
+    }
+
+    /// `DockShortcut` no longer includes the retired `menuCommand` case.
+    @Test func menuCommandShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("menuCommand"))
     }
 }

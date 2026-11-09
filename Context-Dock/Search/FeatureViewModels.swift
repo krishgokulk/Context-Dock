@@ -168,7 +168,6 @@ final class ContextDockViewModel: ObservableObject {
     @Published var state = ContextDockState()
     @Published var cachedPills: [DockPill] = []
     @Published var visiblePills: [DockPill] = []
-    @Published var pendingAIProposal: AIMenuProposal?
     @Published var pendingPillQuery: String?
     @Published var pendingPreviewPills: [DockPill] = []
     @Published var lastPillQuery = ""

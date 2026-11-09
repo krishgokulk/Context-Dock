@@ -27,10 +27,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.appFind.step == "Shortcut: App Find — matched 'find … in this app'")
     }
 
-    @Test func menuCommandStep() {
-        #expect(DockShortcut.menuCommand.step == "Shortcut: Menu Command — matched 'an app menu command'")
-    }
-
     @Test func transformShareStep() {
         #expect(DockShortcut.transformShare.step == "Shortcut: Transform & Share — matched 'transform this and send it'")
     }
