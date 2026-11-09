@@ -2,12 +2,11 @@
 
 > **Date:** 2026-11-09 · **Revision 3** (Goldfish review 1: 7 blocking; review 2: 5 blocking; all
 > addressed below)
-> **Status:** Direction confirmed by the owner on 2026-11-09 ("work like Claude / Codex, based on
+> **Status:** **Approved.** Direction confirmed by the owner on 2026-11-09 ("work like Claude / Codex, based on
 > the frontmost app and context, with the AI provider's power; learn skills and reuse them;
-> offline too"). §13 records the owner's answers: two are revised for safety and need the owner's
-> re-confirmation, and one is open. Work items H0–H6 (§12) are filed only after **both** a Goldfish
-> approval (given: review 4, 0 blocking) **and** the owner's confirmation of §13.1, 13.2 and 13.5 (as the 2026-11-09 row in
-> `00-NOW.md` requires); none is `ready` until the owner labels it.
+> offline too"). Goldfish review 4: 0 blocking. The owner confirmed §13.1, 13.2 and 13.5 and
+> delegated 13.3 ("Confirm, do best that fits our app", 2026-11-09). Work items are filed as
+> **#405–#413** (§12); none is `ready` until the owner labels it.
 > **Extends:** #205 solved-task library (`docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §6.3,
 > `docs/engineering/205-solved-task-library.md`), whose rules stay in force.
 > **Builds on:** `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`
@@ -217,7 +216,7 @@ before pressing (`AI/AgentToolRegistry.swift:2092`), gated by `AppAccessPolicy .
 `find_menu_command` when it needs them. Menu items are **not** offered as one tool per item, and
 the menu snapshot is **not** pasted into every prompt (this changes the 2026-11-03 spec; see §14).
 
-**UI:** the menu browser stays as a power-user view (§13.3, open), but it is no longer the
+**UI:** the menu browser stays as a power-user view (§13.3), but it is no longer the
 main way to get things done. The user asks; the brain may choose a menu.
 
 ---
@@ -400,44 +399,41 @@ One issue and one PR each, following the #204 pattern.
 
 | # | Item | Depends on | Check |
 |---|---|---|---|
-| **H0** | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block; `SolvedSkillMatch.match` takes turn context (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
-| **H1a** | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names, reads auto-save / writes offered) | H0 | tests |
-| **H1b** | Solved skills for typed menu presses and connector/MCP calls (reads first; writes per #205's deferred slice, gated every run) | H1a | tests |
-| **H1c** | "Saved as a skill · Undo" / "Save as a skill?" in the turn; "Made by DoraX" group in the app's Resources (and Global) | H1a | screenshot vs. reference (`AGENTS.md`) |
-| **H2** | Job key + conflict order + staleness / auto-disable | H1a, H1b | tests |
-| **H3** | Selection-type scope: stored field + migration | H2 | tests incl. migration |
-| **H4** | Menus: no per-item tools, no prompt snapshot, UI lane first | #204 (PR #402) | phrasebook tests |
-| **H5** | Solved skills matched and filled on-device (no code authoring): shared tool definitions, budget, outbound gate | E5 #152/#153 + owner E5 answer | tests + hand check offline |
-| **H6** | Tool core trim, one tool per PR | H4 | phrasebook tests |
+| **H0** #405 | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block; `SolvedSkillMatch.match` takes turn context (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
+| **H1a** #406 | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names, reads auto-save / writes offered) | H0 | tests |
+| **H1b** #407 | Solved skills for typed menu presses and connector/MCP calls (reads first; writes per #205's deferred slice, gated every run) | H1a | tests |
+| **H1c** #408 | "Saved as a skill · Undo" / "Save as a skill?" in the turn; "Made by DoraX" group in the app's Resources (and Global) | H1a | screenshot vs. reference (`AGENTS.md`) |
+| **H2** #409 | Job key + conflict order + staleness / auto-disable | H1a, H1b | tests |
+| **H3** #410 | Selection-type scope: stored field + migration | H2 | tests incl. migration |
+| **H4** #411 | Menus: no per-item tools, no prompt snapshot, UI lane first | #204 (PR #402) | phrasebook tests |
+| **H5** #412 | Solved skills matched and filled on-device (no code authoring): shared tool definitions, budget, outbound gate | E5 #152/#153 + owner E5 answer | tests + hand check offline |
+| **H6** #413 | Tool core trim, one tool per PR | H4 | phrasebook tests |
 
 ---
 
 ## 13. Owner decisions (2026-11-09)
 
-The owner answered "Yes. Go on" to the recommendations on 2026-11-09.
+The owner answered "Yes. Go on" to the recommendations, then "Confirm, do best that fits our
+app" to the revised list, both on 2026-11-09.
 
-1. ⚠️ **Narrowed, needs the owner's re-confirmation.** The owner accepted "learned skills are
+1. ✅ **Confirmed by the owner (2026-11-09), narrowed.** The owner accepted "learned skills are
    saved automatically, with a 'Saved as a skill · Undo' line". #205 rule 4 (owner plan,
    2026-10-06) allows automatic saving for **reads only**. The spec now auto-saves reads and
-   *offers* writes ("Save as a skill?"). The owner may explicitly override this; until then, the
-   earlier rule wins.
-2. ⚠️ **Revised, needs the owner's re-confirmation.** The recommendation the owner accepted was
+   *offers* writes ("Save as a skill?").
+2. ✅ **Confirmed by the owner (2026-11-09), revised.** The recommendation the owner accepted was
    "approval on the first replay only, then standing consent". The Goldfish review showed that
    this conflicts with SAFETY.md (destructive actions never get standing grants; every script run
    is approved) and with #205 rule 4 (owner plan, 2026-10-06: writes gate every run). The spec now
    follows those rules (§8 rule 5): **replay is gated exactly like a fresh run, and there is no new
    grant type.** Friction stays low because reads run freely, solved skills skip the model, and
-   the existing per-action "always allow" still applies where it applies today. The owner may
-   explicitly override this; until then, the safety rule wins.
-3. ❓ **Open:** keep the menu browser as a power-user view, or remove it after H4? No
-   recommendation yet. Until decided, it stays.
+   the existing per-action "always allow" still applies where it applies today.
+3. ✅ **Decided under the owner's delegation (2026-11-09):** the menu browser **stays** as a
+   power-user view. Removing it gains nothing H4 needs, and keeping it removes no way for a user
+   to reach an app feature. It can be revisited after H4 lands.
 4. ✅ **Sharing learned skills as a Store pack is post-1.0**, and shared skills arrive inert.
-5. ⚠️ **New, needs the owner's confirmation.** #205 rule 6 (owner plan, 2026-10-06) lists learned
+5. ✅ **Confirmed by the owner (2026-11-09).** #205 rule 6 (owner plan, 2026-10-06) lists learned
    skills in "Settings › Plugins". That page is now Store / Packs (community packs), so §8 rule 7
-   lists them in the app's Resources (or the Global tab) under "Made by DoraX". Confirm, or name
-   another place.
-
-Filing H0–H6 waits for the owner's confirmation of 13.1, 13.2 and 13.5.
+   lists them in the app's Resources (or the Global tab) under "Made by DoraX".
 
 ---
 
