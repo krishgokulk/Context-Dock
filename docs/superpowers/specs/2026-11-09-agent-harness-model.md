@@ -5,8 +5,9 @@
 > **Status:** Direction confirmed by the owner on 2026-11-09 ("work like Claude / Codex, based on
 > the frontmost app and context, with the AI provider's power; learn skills and reuse them;
 > offline too"). §13 records the owner's answers: two are revised for safety and need the owner's
-> re-confirmation, and one is open. Work items H0–H6 (§12) are filed only after a Goldfish review
-> approves this revision; none is `ready` until the owner labels it.
+> re-confirmation, and one is open. Work items H0–H6 (§12) are filed only after **both** a Goldfish
+> approval **and** the owner's re-confirmation of §13.1–13.2 (as the 2026-11-09 row in
+> `00-NOW.md` requires); none is `ready` until the owner labels it.
 > **Extends:** #205 solved-task library (`docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §6.3,
 > `docs/engineering/205-solved-task-library.md`), whose rules stay in force.
 > **Builds on:** `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`
@@ -273,7 +274,13 @@ This spec adds or tightens:
    - **Word slots second:** `{day}` everywhere. `{sender}` only in Mail and Messages scopes, so a
      product name in another app is never taken for a person.
    - A value that would remain in a recipe and is neither a slot nor an app/route word (a file
-     name, an address, a recipient) blocks the save under #205 rule 2.
+     name, an address, a recipient) blocks the save under #205 rule 2. "App/route word" means a
+     word that appears in the route itself (tool name, capability id, menu path, script keyword)
+     or in the request's command words (`ExactCommand.commandWords`); anything else that looks
+     like a name, path, address or number is a value. H0's tests pin the list down.
+   - Matching must see the same context: `SolvedSkillMatch.match` takes only `query`,
+     `bundleId` and `skills` today (`AI/SolvedSkillMatch.swift:25`), so H0 adds the turn's
+     context (selection, files) to it.
 
    Names and summaries come from a template (app + route + slot-lifted request shape), **not**
    from the model's `reason` text, which can carry file names or recipients. *(Fixes the
@@ -294,9 +301,13 @@ This spec adds or tightens:
    relearned on the next success.
 7. **Visible and undoable.** Each automatic (read) save shows "Saved as a skill: … · Undo" in
    the turn (Undo deletes it). A write skill is offered with "Save as a skill?" instead (rule 4
-   above). All learned skills are listed where #205 rule 6 puts them: **Settings › Plugins, "made
-   by DoraX"**, with run count, success rate and delete. The recorder's skills, shown under the
-   app's Resources today, move there in H1c.
+   above). #205 rule 6 said "Settings › Plugins, made by DoraX", but that page is now **Store /
+   Packs** (Extensions section, `UI/Settings/SettingsModels.swift:32,173-180`, 2026-11-05
+   consolidation), which is for community packs. So learned skills are listed with **their app**:
+   *Settings › Extensions › Apps › the app › Resources*, in a **"Made by DoraX"** group with run
+   count, success rate and delete, where the recorder's skills already appear. Global and
+   selection-scoped learned skills get the same group on the Global page. This departs from the
+   letter of #205 rule 6 (one place, named for a page that no longer exists) but keeps its intent.
 8. **Shared skills arrive inert** (post-1.0): an imported learned skill cannot run until the user
    turns it on, and each run is approved (SAFETY.md, "Scripts an app carries are inert").
 
@@ -387,10 +398,10 @@ One issue and one PR each, following the #204 pattern.
 
 | # | Item | Depends on | Check |
 |---|---|---|---|
-| **H0** | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
+| **H0** | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block; `SolvedSkillMatch.match` takes turn context (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
 | **H1a** | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names, reads auto-save / writes offered) | H0 | tests |
 | **H1b** | Solved skills for typed menu presses and connector/MCP calls (reads first; writes per #205's deferred slice, gated every run) | H1a | tests |
-| **H1c** | "Saved as a skill · Undo" / "Save as a skill?" in the turn; learned skills listed in Settings › Plugins "made by DoraX" | H1a | screenshot vs. reference (`AGENTS.md`) |
+| **H1c** | "Saved as a skill · Undo" / "Save as a skill?" in the turn; "Made by DoraX" group in the app's Resources (and Global) | H1a | screenshot vs. reference (`AGENTS.md`) |
 | **H2** | Job key + conflict order + staleness / auto-disable | H1a, H1b | tests |
 | **H3** | Selection-type scope: stored field + migration | H2 | tests incl. migration |
 | **H4** | Menus: no per-item tools, no prompt snapshot, UI lane first | #204 (PR #402) | phrasebook tests |
@@ -430,6 +441,7 @@ The owner answered "Yes. Go on" to the recommendations on 2026-11-09.
 | 2026-11-03 spec §6 Phase 1 | "live menu snapshot into the turn prompt" | No snapshot in every prompt; titles on demand |
 | 2026-11-03 spec §3 Tier 3 | Menus and Computer Use as one tier | Split into rung 3 (menu press) and rung 4 (Computer Use) |
 | `FRONTMOST_AGENT.md` §7 item 4 | Claimed Tier 2 scripts are auto-captured | Corrected: only Computer Use is captured today; scripts are H1a |
+| `00-APP-AGENT-PLUGIN-PLAN.md` §6.3 rule 6 | Learned skills listed in "Settings › Plugins" | Listed in the app's Resources, "Made by DoraX" group (§8 rule 7); the named page no longer exists |
 
 #205's rules are **not** changed. This spec extends where they apply.
 
