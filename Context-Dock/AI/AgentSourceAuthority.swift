@@ -23,7 +23,8 @@ struct AgentSourceDecision: Equatable {
                 SOURCE AUTHORITY: This asks about changing live state. Answer only from a live
                 reader: one included below, or a typed read tool you call (for example
                 notes.search or notes.count for Notes; mail.search, mail.unread, mail.read, or
-                mail.currentMessage for Mail). Do not use conversation history, model
+                mail.currentMessage for Mail; messages.recent, messages.search, or
+                messages.topContacts for Messages). Do not use conversation history, model
                 knowledge, or saved memory as factual evidence. Do not tell the user to search or
                 select things themselves while a read tool for the request exists. If no live
                 reader has the answer, say it was not readable.
@@ -74,6 +75,7 @@ enum AgentSourceAuthority {
             asksAboutScopedRecords(q)
                 || ScopedRecordRead.matches(query: q, bundleId: scopeBundleId)
                 || (domain == .mail && isScopedMailQuestion(q))
+                || (domain == .messages && isScopedMessagesQuestion(q))
         {
             return AgentSourceDecision(
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
@@ -123,6 +125,18 @@ enum AgentSourceAuthority {
             !isProcedureOrAppQuestion(q)
         else { return false }
         return MailQuestionRouter.isMailboxQuestion(q)
+    }
+
+    private static func isScopedMessagesQuestion(_ q: String) -> Bool {
+        guard !GeneralAIActionResolver.shared.requestsChange(q),
+            !isProcedureOrAppQuestion(q),
+            MailQuestionRouter.isQuestionShaped(q)
+        else { return false }
+        let signals = [
+            "message", "messages", "imessage", "text", "texts", "texted", "chat", "chatted",
+            "conversation", "conversations", "unread", "who do i talk", "who i talk",
+        ]
+        return signals.contains(where: q.contains)
     }
 
     /// A question about the frontmost app's records that never named them. `isLiveStateQuestion`
@@ -196,7 +210,7 @@ enum AgentSourceAuthority {
                          "newest", "last commit", "open ", "unread", "due ", "status"]
         let liveObjects = ["commit", "branch", "change", "workspace", "project", "file",
                            "window", "tab", "page", "website", "site", "url", "email", "mail", "note", "reminder", "inbox",
-                           "event", "calendar", "message", "song", "track", "history",
+                           "event", "calendar", "message", "text", "texts", "imessage", "song", "track", "history",
                            "playback", "watched", "played", "viewed"]
         // `create a reminder "call mum" today at 5pm` carries "today" and "reminder" and was
         // classified live state, so the request that had to reach .action — the only kind

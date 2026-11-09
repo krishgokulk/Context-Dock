@@ -139,47 +139,6 @@ final class CrossAppNLHandler {
         return nil
     }
 
-    func parseMessagesScopedIntent(_ raw: String) -> CrossAppIntent? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let quotedPattern = #"^\s*send\s+"([^"]+)"\s+to\s+(.+?)\s*$"#
-        if let body = firstMatch(in: trimmed, pattern: quotedPattern, group: 1),
-            let recipient = firstMatch(in: trimmed, pattern: quotedPattern, group: 2)
-        {
-            let cleanedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanedBody.isEmpty, !cleanedRecipient.isEmpty else { return nil }
-            return CrossAppIntent(
-                action: .sendMessage,
-                recipientName: cleanedRecipient,
-                messageBody: cleanedBody
-            )
-        }
-
-        let plainPattern = #"^\s*send\s+(.+?)\s+to\s+(.+?)\s*$"#
-        if let body = firstMatch(in: trimmed, pattern: plainPattern, group: 1),
-            let recipient = firstMatch(in: trimmed, pattern: plainPattern, group: 2)
-        {
-            let cleanedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-            let contextualPayloadMarkers: Set<String> = [
-                "this", "that", "selected", "selection", "file", "files", "link", "page", "url",
-                "document", "documents"
-            ]
-            guard !cleanedBody.isEmpty, !cleanedRecipient.isEmpty,
-                !contextualPayloadMarkers.contains(cleanedBody.lowercased())
-            else { return nil }
-            return CrossAppIntent(
-                action: .sendMessage,
-                recipientName: cleanedRecipient,
-                messageBody: cleanedBody
-            )
-        }
-
-        return nil
-    }
-
     // MARK: Resolve
 
     func resolve(_ intent: CrossAppIntent) async -> CrossAppResult? {

@@ -2254,6 +2254,41 @@ extension DockCore {
     /// Pure: whether a query may start an installed extension whose trigger words it matches.
     static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
 
+    /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
+    /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
+    /// `AppleMessagesMCPCapabilities`). Genuine cross-app contextual share payloads (`"send this file
+    /// to Salman"`) or explicit requests naming another destination channel/app still pass through.
+    nonisolated static func shouldSkipCrossAppMessagesRouting(
+        scopedBundleId: String, rawScopedQuery: String
+    ) -> Bool {
+        guard scopedBundleId.caseInsensitiveCompare("com.apple.MobileSMS") == .orderedSame else {
+            return false
+        }
+        if MailQuestionRouter.isQuestionShaped(rawScopedQuery) {
+            return true
+        }
+        let tokens = Set(
+            rawScopedQuery.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+        )
+        let contextualSharePayloadTokens: Set<String> = [
+            "this", "that", "selected", "selection", "file", "files", "link", "page", "url",
+            "document", "documents", "pdf", "image",
+        ]
+        if !tokens.isDisjoint(with: contextualSharePayloadTokens) {
+            return false
+        }
+        let otherChannelOrAppTokens: Set<String> = [
+            "email", "mail", "airdrop", "safari", "notes", "reminders", "calendar", "finder",
+            "xcode", "slack",
+        ]
+        if !tokens.isDisjoint(with: otherChannelOrAppTokens) {
+            return false
+        }
+        return true
+    }
+
     func handleL2Query(_ query: String, isSelectionQuestion: Bool = false) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
@@ -2562,27 +2597,19 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.MobileSMS",
-            let intent = messagesScopedSemanticIntent(for: rawScopedSearchQuery)
-        {
-            dockShortcutStep(.messages)
-            executeCrossAppIntent(
-                intent,
-                userMessage: query,
-                unresolvedMessage:
-                    "❌ Couldn't resolve that Messages recipient. Try: message send \"hi\" to [name]"
-            )
-            return
-        }
-
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
         let shouldSkipCrossAppMailRouting =
             dockScope.scopedBundleId == "com.apple.mail"
             && isQuestionStyleMailQuery(rawScopedSearchQuery)
+        let shouldSkipCrossAppMessagesRouting = Self.shouldSkipCrossAppMessagesRouting(
+            scopedBundleId: dockScope.scopedBundleId,
+            rawScopedQuery: rawScopedSearchQuery
+        )
 
         if !shouldStayInScopedAIChat,
             !shouldSkipCrossAppMailRouting,
+            !shouldSkipCrossAppMessagesRouting,
             let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
             // In an app's own chat, "search mail from SBI" is a read of that app's records for
             // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot

@@ -22,7 +22,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
     case appFind
     case transformShare
     case finder
-    case messages
     case crossApp
     case appAction
     case appLaunch
@@ -37,7 +36,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .appFind: return "App Find"
         case .transformShare: return "Transform & Share"
         case .finder: return "Finder"
-        case .messages: return "Messages"
         case .crossApp: return "Cross-App"
         case .appAction: return "App Action"
         case .appLaunch: return "App Launch"
@@ -55,7 +53,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .appFind: return "find … in this app"
         case .transformShare: return "transform this and send it"
         case .finder: return "a Finder folder request"
-        case .messages: return "message … to someone"
         case .crossApp: return "send/open this in another app"
         case .appAction: return "a global app action"
         case .appLaunch: return "open an app"

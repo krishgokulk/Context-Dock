@@ -10,7 +10,7 @@ import Foundation
 enum ScopedRecordRead {
     /// Words that ask the app to do something rather than to look something up.
     static let actionWords = [
-        "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
+        "create ", "draft ", "compose ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
         "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
         "quit ", "enable ", "disable ", "export ",
         // Switching a setting or pressing a control. "turn on the spelling option" had none of

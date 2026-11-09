@@ -40,6 +40,7 @@ struct RoutingPhrasebookTests {
         case generalChat = "General Chat"
         case notesChat = "Notes chat"
         case mailChat = "Mail chat"
+        case messagesChat = "Messages chat"
 
         var scopedApp: String? {
             switch self {
@@ -47,6 +48,7 @@ struct RoutingPhrasebookTests {
             case .safariChat: return "Safari"
             case .notesChat: return "Notes"
             case .mailChat: return "Mail"
+            case .messagesChat: return "Messages"
             case .generalChat: return nil
             }
         }
@@ -122,6 +124,7 @@ struct RoutingPhrasebookTests {
     private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
     private static let mailCreateDraft = capability("Mail", "mail.createDraft", "Create Mail Draft")
     private static let mailSearch = capability("Mail", "mail.search", "Search Mail")
+    private static let messagesCompose = capability("Messages", "messages.compose", "Open a Message for Review")
 
     // MARK: - The phrasebook
     //
@@ -329,6 +332,30 @@ struct RoutingPhrasebookTests {
                found: [mailSearch], expected: .model),
         Phrase(surface: .mailChat, sentence: "search mail for \"invoice and receipt\"",
                found: [mailSearch], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Messages shortcut (`DockShortcut.messages`) is
+        // retired. Questions in the Messages scope are answered from live `chat.db` readers (.none);
+        // compose/send and search requests go to the model with `messages.compose`, `messages.send`,
+        // `messages.search`, `messages.recent`, and `messages.topContacts` (.model); exact menu
+        // commands still offer the command (.exactCommand).
+        Phrase(surface: .messagesChat, sentence: "what did Salman text me today?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "who do I message most?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "do I have any unread messages?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "did Salman text me yesterday?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "send \"hi\" to Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "send I'm running late to Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "text Salman I'm running late",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "find messages from Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "New Message",
+               found: [menu("Messages", ["File", "New Message"])], expected: .exactCommand),
     ]
 
     // MARK: - Running a row
@@ -336,7 +363,7 @@ struct RoutingPhrasebookTests {
     /// Which of the fixture apps the sentence names, judged by the same rule the resolver
     /// applies to every installed name (`isAppReference`). Offline stand-in for
     /// `namedInstalledApp`, which reads the machine's app catalogue.
-    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts", "Mail"]
+    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts", "Mail", "Messages"]
 
     static func namedApp(in sentence: String) -> String? {
         let lowered = sentence.lowercased()
@@ -1059,5 +1086,122 @@ struct MailboxSearchShortcutRetirementTests {
 
     @Test func mailboxSearchShortcutIsRetiredFromDockShortcut() {
         #expect(!DockShortcut.allCases.map(\.rawValue).contains("mailboxSearch"))
+    }
+}
+
+// MARK: - Issue 204: Messages shortcut retirement
+
+@MainActor
+struct MessagesShortcutRetirementTests {
+
+    /// Questions in the Messages scope route to `.liveState` in `AgentSourceAuthority`
+    /// (`requiresFreshRead == true`, `allowsMemoryEvidence == false`), while ordinary greetings in
+    /// Messages scope stay `.conversation`.
+    @Test func messagesScopeQuestionsAreFreshLiveStateReads() {
+        for sentence in [
+            "what did Salman text me today?",
+            "who do I message most?",
+            "do I have any unread messages?",
+            "did Salman text me yesterday?",
+        ] {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.MobileSMS")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+            #expect(decision.promptRule.contains("messages.search"))
+        }
+
+        let greeting = AgentSourceAuthority.decide(
+            query: "hi hello?", scopeBundleId: "com.apple.MobileSMS")
+        #expect(greeting.primary == .conversation)
+    }
+
+    /// Outbound compose and send requests that the retired pre-model Messages shortcut
+    /// previously intercepted without approval now route to `.action` in `AgentSourceAuthority`,
+    /// plan as `.act` in `FrontmostAppTaskPlan` with `compose_message` / `send_message`, skip
+    /// `CrossAppNLHandler` in Messages scope, and resolve `messages.compose` (`requiresApproval == true`)
+    /// in `AppAdapterCapabilityCatalog`.
+    @Test func messagesComposeAndSendRequestsAreGatedActions() {
+        for sentence in [
+            "send \"hi\" to Salman",
+            "send I'm running late to Salman",
+            "text Salman I'm running late",
+        ] {
+            let sourceDecision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.MobileSMS")
+            #expect(sourceDecision.primary == .action, "\"\(sentence)\"")
+            #expect(sourceDecision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!sourceDecision.allowsMemoryEvidence, "\"\(sentence)\"")
+
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.MobileSMS", appName: "Messages")
+            #expect(plan.intent == .act, "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+
+            #expect(
+                DockCore.shouldSkipCrossAppMessagesRouting(
+                    scopedBundleId: "com.apple.MobileSMS", rawScopedQuery: sentence),
+                "\"\(sentence)\" should stay in the Messages ladder")
+
+            let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+                appName: "Messages", bundleID: "com.apple.MobileSMS", query: sentence)
+            #expect(candidates.first?.capabilityID == "messages.compose", "\"\(sentence)\"")
+            #expect(candidates.first?.riskLevel.requiresApproval == true, "\"\(sentence)\"")
+            #expect(candidates.first?.inputValues["recipient"]?.lowercased().contains("salman") == true, "\"\(sentence)\"")
+        }
+
+        // Genuine cross-app contextual share payloads in Messages scope are not blocked.
+        #expect(
+            !DockCore.shouldSkipCrossAppMessagesRouting(
+                scopedBundleId: "com.apple.MobileSMS", rawScopedQuery: "send this file to Salman"))
+    }
+
+    /// Imperative record searches in Messages ("find messages from Salman") are data-lane reads of
+    /// Messages' records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
+    /// Messages' read tools (`search_messages`, `get_messages_conversations`) are included.
+    @Test func findInMessagesIsADataLaneRead() {
+        let query = "find messages from Salman"
+        let plan = FrontmostAppTaskPlan.make(
+            query: query, bundleId: "com.apple.MobileSMS", appName: "Messages")
+        #expect(plan.intent == .read)
+        #expect(!plan.permitsUIAutomation)
+        #expect(RequestLane.decide(query) == .data)
+        #expect(plan.allowedToolNames.contains("search_messages"))
+        #expect(plan.allowedToolNames.contains("get_messages_conversations"))
+        for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
+            #expect(!plan.allowedToolNames.contains(tool), "Messages find offered \(tool)")
+        }
+
+        let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: query)
+        #expect(candidates.first?.capabilityID == "messages.search")
+        #expect(candidates.first?.inputValues["query"] == "salman")
+    }
+
+    /// Messages read capabilities (`messages.recent`, `messages.search`, `messages.topContacts`)
+    /// are free (`requiresApproval == false`), while outbound capabilities (`messages.compose`,
+    /// `messages.send`) require approval (`requiresApproval == true`).
+    @Test func messagesCapabilitiesRespectApprovalGates() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        for id in ["messages.recent", "messages.search", "messages.topContacts"] {
+            let cap = CapabilityRegistry.shared.capability(id: id)
+            #expect(cap != nil, "Missing capability \(id)")
+            #expect(cap?.riskLevel.requiresApproval == false, "\(id) should not require approval")
+        }
+        for id in ["messages.compose", "messages.send"] {
+            let cap = CapabilityRegistry.shared.capability(id: id)
+            #expect(cap != nil, "Missing capability \(id)")
+            #expect(cap?.riskLevel.requiresApproval == true, "\(id) must require approval")
+        }
+    }
+
+    /// `DockShortcut` no longer includes the retired `messages` case, and `ReadOnlyDataRouter`
+    /// classifies "text me" questions as `.messages`.
+    @Test func messagesShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("messages"))
+        #expect(ReadOnlyDataRouter.domain(for: "what did Salman text me today?") == .messages)
+        #expect(ReadOnlyDataRouter.domain(for: "did Salman text me yesterday?") == .messages)
     }
 }
