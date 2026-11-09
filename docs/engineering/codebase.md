@@ -136,7 +136,7 @@ singletons before that point. Under XCTest the app returns early into
 `configureTestHostEnvironment()`.
 
 **Tests**: `Context-DockTests/` uses swift-testing (`import Testing`, `@Test`), not XCTest. Nothing
-in the suite needs a live model.
+**Evaluation & Benchmarks**: offline tests and reasoning evaluations live under `Context-DockTests/` and follow [`MAC_AGENT_BENCHMARKS.md`](MAC_AGENT_BENCHMARKS.md). Model turns must comply with [`AGENT_REASONING_CONTRACT.md`](../architecture/AGENT_REASONING_CONTRACT.md).
 
 ## Apple documentation
 

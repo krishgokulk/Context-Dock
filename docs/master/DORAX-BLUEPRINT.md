@@ -118,6 +118,7 @@ merely because two tools ran. `[owner/target]`
 
 Detail → [`00-AI-ENGINE-PLAN.md`](00-AI-ENGINE-PLAN.md) ·
 [`AI_TURN_LIFECYCLE.md`](../architecture/AI_TURN_LIFECYCLE.md) ·
+[`AGENT_REASONING_CONTRACT.md`](../architecture/AGENT_REASONING_CONTRACT.md) ·
 [`SAFETY.md`](../architecture/SAFETY.md)
 
 ---
