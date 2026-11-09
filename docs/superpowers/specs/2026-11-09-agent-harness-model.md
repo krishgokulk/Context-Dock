@@ -1,11 +1,12 @@
 # Agent Harness Model: the provider thinks, Context-Dock does
 
-> **Date:** 2026-11-09 · **Revision 2** (after Goldfish review 1: 7 blocking gaps, all addressed below)
+> **Date:** 2026-11-09 · **Revision 3** (Goldfish review 1: 7 blocking; review 2: 5 blocking; all
+> addressed below)
 > **Status:** Direction confirmed by the owner on 2026-11-09 ("work like Claude / Codex, based on
 > the frontmost app and context, with the AI provider's power; learn skills and reuse them;
-> offline too"). §13 records the owner's answers: one is revised for safety and needs the owner's
-> re-confirmation, and one is open. Work items H1a–H6 are filed as issues; none is `ready` until
-> the owner labels it.
+> offline too"). §13 records the owner's answers: two are revised for safety and need the owner's
+> re-confirmation, and one is open. Work items H0–H6 (§12) are filed only after a Goldfish review
+> approves this revision; none is `ready` until the owner labels it.
 > **Extends:** #205 solved-task library (`docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §6.3,
 > `docs/engineering/205-solved-task-library.md`), whose rules stay in force.
 > **Builds on:** `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`
@@ -119,8 +120,9 @@ Under the word *skill*, the code has three kinds. Users see one list.
  E. VERIFY       read back the effect (file exists, draft saved …)
    │
    ▼
- F. LEARN        verified, nothing untrusted in the turn → save a solved skill or a learned
-                 recipe (§8); show "Saved as a skill · Undo"
+ F. LEARN        verified, nothing untrusted in the turn → a read is saved as a solved skill or
+                 learned recipe, with "Saved as a skill · Undo"; a write is offered with
+                 "Save as a skill?" (§8)
 ```
 
 Step B exists today for app-scoped reads (`AI/AppScopedChatService.swift:1574`); step F exists
@@ -235,17 +237,25 @@ main way to get things done. The user asks; the brain may choose a menu.
 |---|---|---|
 | 1 direct (capability, connector, MCP) | **Solved skill**: typed calls with `{slots}` | Already typed; #205 rule 5 holds |
 | 3 menu press | **Solved skill**: a typed `run_menu_command` call, path fixed | Typed, verified at replay |
-| 2 AI script | **Learned recipe**: the script's *shape* as know-how, e.g. "Pages: AppleScript `export front document to file {path} as PDF`" | #205 rule 5 forbids replaying free-form shell. The model re-emits the script, which is classified and approved like a fresh one |
+| 2 AI script | **Learned recipe**: the script's *shape* as know-how, e.g. "Finder: zip `{file}` with `ditto -c -k --keepParent`" | #205 rule 5 forbids replaying free-form shell. A **cloud** model re-emits the script, which is classified and approved like a fresh one (#205 rule 8: on-device never authors code) |
 | 4 Computer Use | **Learned recipe** (as today) | UI steps need the model |
 
-A learned recipe never runs by itself. It only makes the next turn's model fast and correct,
-including a small on-device model (§9). A solved skill runs by itself, but only through the same
-executor, gates and approvals as a model-chosen call.
+A learned recipe never runs by itself. It only makes the next turn's cloud model fast and
+correct. A solved skill runs by itself, but only through the same executor, gates and approvals
+as a model-chosen call. A script that proves worth keeping can later become a typed,
+owner-approved DoraX-made plugin (#206 P12), and then it replays like any solved skill.
 
 ### Rules
 
-#205's rules 1–8 (`00-APP-AGENT-PLUGIN-PLAN.md` §6.3) apply to every learned skill. This spec
-adds or tightens:
+#205's rules 1–8 (`00-APP-AGENT-PLUGIN-PLAN.md` §6.3, owner plan of 2026-10-06) apply to every
+learned skill: recipes as well as solved skills. In particular:
+
+- **Rule 4: reads auto-save; writes do not.** A skill that writes, sends, deletes or reaches the
+  network is never saved silently. The turn offers "Save as a skill?" and saves only on the user's
+  yes, and the skill still shows the gate card on every run.
+- **Rule 8: on-device never authors code.** It may match a skill and fill its slots, nothing more.
+
+This spec adds or tightens:
 
 1. **Verified success only.** A Stop, a failure or a failed read-back discards the run. *(New for
    the recorder: it tracks only `lastSucceeded` today.)*
@@ -253,12 +263,24 @@ adds or tightens:
    `UntrustedContent.containsFence` over the answer or any receipt), nothing is saved. This is
    #205 rule 3, extended to the recorder.
 3. **No user content, deterministic blanks.** Specifics become `{slots}` through deterministic
-   code (`SolvedSkillCapture.derive`), never through the model. Names and summaries come from a
-   template (app + route + slot-lifted request shape), **not** from the model's `reason` text,
-   which can carry file names or recipients. *(Fixes the recorder's naming at
-   `ComputerUseSkillRecorder.swift:44,102,120`.)*
-4. **One job, one key.** A job's key is *(scope, slot-lifted request shape)*, as `derive` builds
-   it. For the same key the order is: user-installed or pack skill › solved skill › learned
+   code, never through the model. Today `SolvedSkillCapture.derive`
+   (`AI/SolvedSkillCapture.swift:112-151`) only knows `{sender}` and `{day}`, and it treats any
+   capitalised word as a sender ("convert this to Word" → `{sender}=Word`). **H0** generalises it:
+   - **Context slots first, taken from the turn's context, not from words:** `{selection}`
+     (selected text), `{file}` / `{files}` (selected or attached paths, from `ContextDetector`),
+     `{app}`. A request word that refers to them ("this", "it", "these", the file's own name) is
+     replaced by the slot.
+   - **Word slots second:** `{day}` everywhere. `{sender}` only in Mail and Messages scopes, so a
+     product name in another app is never taken for a person.
+   - A value that would remain in a recipe and is neither a slot nor an app/route word (a file
+     name, an address, a recipient) blocks the save under #205 rule 2.
+
+   Names and summaries come from a template (app + route + slot-lifted request shape), **not**
+   from the model's `reason` text, which can carry file names or recipients. *(Fixes the
+   recorder's naming at `ComputerUseSkillRecorder.swift:44,102,120`.)*
+4. **One job, one key.** A job's key is *(scope, slot-lifted request shape)*, built by the H0
+   deriver. Example: "zip this" with `report.pdf` selected becomes key *(Finder, `zip {file}`)*.
+   For the same key the order is: user-installed or pack skill › solved skill › learned
    recipe. Within learned skills, a lower rung number replaces a higher one, and a newer success
    on the same rung replaces an older one.
 5. **Replay is gated like a fresh run. There is no new grant.** Reads run. Anything that changes
@@ -270,9 +292,11 @@ adds or tightens:
    mismatch, which repairs it (#205 rule 7). A learned recipe records the app version it was
    learned on. After an app version change, or two failures in a row, it is disabled and
    relearned on the next success.
-7. **Visible and undoable.** Each save shows "Saved as a skill: … · Undo" in the turn (Undo
-   deletes it). Learned skills are listed with the app's skills in Settings, where they can be
-   edited, disabled or deleted.
+7. **Visible and undoable.** Each automatic (read) save shows "Saved as a skill: … · Undo" in
+   the turn (Undo deletes it). A write skill is offered with "Save as a skill?" instead (rule 4
+   above). All learned skills are listed where #205 rule 6 puts them: **Settings › Plugins, "made
+   by DoraX"**, with run count, success rate and delete. The recorder's skills, shown under the
+   app's Resources today, move there in H1c.
 8. **Shared skills arrive inert** (post-1.0): an imported learned skill cannot run until the user
    turns it on, and each run is approved (SAFETY.md, "Scripts an app carries are inert").
 
@@ -287,14 +311,21 @@ a persistence migration**, for both `AdapterSkill` and `SolvedSkill`.
 
 ## 9. Offline: learn online, replay offline
 
-The on-device model is small. It is weak at inventing a correct script, but good at following a
-known recipe and filling blanks.
+The on-device model is small, and #205 rule 8 says it never authors code: it matches a skill
+and fills its slots. So what works offline is exactly what can run **without anyone writing a
+script**:
 
 ```
  First time (online)   cloud brain works out the route → verified → saved (§8)
- Next time (offline)   solved skill replays with no model, or the on-device brain
-                       reads the learned recipe → fills the blanks → harness runs it, gated
+ Next time (offline)   SOLVED SKILL (typed calls: direct, connector*, MCP, menu press)
+                         → on-device matches it, fills {slots} → harness runs it, gated  ✅
+                       LEARNED RECIPE for a script (rung 2) or Computer Use (rung 4)
+                         → needs a cloud model to re-emit the steps                      ⛔ offline
+                       * a connector needs the network anyway; local routes are the offline set
 ```
+
+A script that users rely on offline gets there by becoming a typed, owner-approved DoraX-made
+plugin (#206 P12). After that it is a solved-skill route like any other.
 
 Constraints the H5 work must meet:
 
@@ -337,6 +368,7 @@ the core (look · do · know · click, §5). The trim is gradual: one tool per P
 | Learned recipes from Computer Use (incl. menu presses) | ✅ | `ComputerUseSkillRecorder` |
 | AI-written scripts | ✅ | `SynthesizedScriptTool.swift` |
 | Verified menu press, menu search | ✅ | `run_menu_command`, `find_menu_command` |
+| **General slot deriver (context slots)** | 🆕 | H0 |
 | **Recipes from AI scripts** | 🆕 | H1a |
 | **Recorder safety: verify-discard, untrusted guard, templated names** | 🆕 | H1a |
 | **Solved skills for menu presses and connector/MCP calls** | 🆕 | H1b |
@@ -344,7 +376,7 @@ the core (look · do · know · click, §5). The trim is gradual: one tool per P
 | **Job key, conflict order, staleness** | 🆕 | H2 |
 | **Selection-type scope (stored field + migration)** | 🆕 | H3 |
 | **Menus: no per-item tools, no snapshot in every prompt** | 🔧 | H4 |
-| **Skills on-device** | 🆕 | H5 |
+| **Solved skills matched and filled on-device** | 🆕 | H5 |
 | **Tool core trim** | 🔧 | H6 |
 
 ---
@@ -355,13 +387,14 @@ One issue and one PR each, following the #204 pattern.
 
 | # | Item | Depends on | Check |
 |---|---|---|---|
-| **H1a** | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names) | — | tests |
+| **H0** | General slot deriver: context slots (`{selection}`, `{file}`, `{files}`, `{app}`), `{sender}` only in Mail/Messages, leftover-value block (§8 rule 3) | — | tests (incl. "convert this to Word" ≠ `{sender}`) |
+| **H1a** | Learned recipes from AI scripts (rung 2) + recorder safety (verify-discard, untrusted guard, templated names, reads auto-save / writes offered) | H0 | tests |
 | **H1b** | Solved skills for typed menu presses and connector/MCP calls (reads first; writes per #205's deferred slice, gated every run) | H1a | tests |
-| **H1c** | "Saved as a skill · Undo" line in the turn | H1a | screenshot vs. reference (`AGENTS.md`) |
+| **H1c** | "Saved as a skill · Undo" / "Save as a skill?" in the turn; learned skills listed in Settings › Plugins "made by DoraX" | H1a | screenshot vs. reference (`AGENTS.md`) |
 | **H2** | Job key + conflict order + staleness / auto-disable | H1a, H1b | tests |
 | **H3** | Selection-type scope: stored field + migration | H2 | tests incl. migration |
 | **H4** | Menus: no per-item tools, no prompt snapshot, UI lane first | #204 (PR #402) | phrasebook tests |
-| **H5** | Skills on-device: shared tool definitions, budget, outbound gate | E5 #152/#153 + owner E5 answer | tests + hand check offline |
+| **H5** | Solved skills matched and filled on-device (no code authoring): shared tool definitions, budget, outbound gate | E5 #152/#153 + owner E5 answer | tests + hand check offline |
 | **H6** | Tool core trim, one tool per PR | H4 | phrasebook tests |
 
 ---
@@ -370,11 +403,15 @@ One issue and one PR each, following the #204 pattern.
 
 The owner answered "Yes. Go on" to the recommendations on 2026-11-09.
 
-1. ✅ **Learned skills are saved automatically**, with the "Saved as a skill · Undo" line.
+1. ⚠️ **Narrowed, needs the owner's re-confirmation.** The owner accepted "learned skills are
+   saved automatically, with a 'Saved as a skill · Undo' line". #205 rule 4 (owner plan,
+   2026-10-06) allows automatic saving for **reads only**. The spec now auto-saves reads and
+   *offers* writes ("Save as a skill?"). The owner may explicitly override this; until then, the
+   earlier rule wins.
 2. ⚠️ **Revised, needs the owner's re-confirmation.** The recommendation the owner accepted was
    "approval on the first replay only, then standing consent". The Goldfish review showed that
    this conflicts with SAFETY.md (destructive actions never get standing grants; every script run
-   is approved) and with #205 rule 4 (owner, 2026-10-27: writes gate every run). The spec now
+   is approved) and with #205 rule 4 (owner plan, 2026-10-06: writes gate every run). The spec now
    follows those rules (§8 rule 5): **replay is gated exactly like a fresh run, and there is no new
    grant type.** Friction stays low because reads run freely, solved skills skip the model, and
    the existing per-action "always allow" still applies where it applies today. The owner may

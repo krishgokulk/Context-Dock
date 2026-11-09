@@ -33,7 +33,7 @@
 - Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
 - **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, awaiting owner approval + Goldfish review): H1 learn the route that worked → H2 saved skill first → H3 selection-scoped skills → H4 menus tightened → H5 learned skills on-device (after E5) → H6 tool core trim
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, revision 3, in Goldfish review; §13 has two answers for the owner to re-confirm and one open): H0 general slot deriver → H1a learned recipes from AI scripts + recorder safety → H1b solved skills for menu/connector/MCP calls → H1c save/undo line + Settings › Plugins → H2 job key, conflicts, staleness → H3 selection-type scope → H4 menus tightened (after #204) → H5 solved skills on-device (after E5) → H6 tool core trim
 
 ## Done (most recent first)
 
