@@ -73,6 +73,7 @@ struct RichFileCard: View {
     /// lookup and the disk read are too slow for a view initialiser.
     @State private var loaded: RichFileCardModel?
     @State private var appIcon: NSImage?
+    @State private var fileIcon: NSImage?
 
     private var model: RichFileCardModel {
         loaded ?? RichFileCardModel(
@@ -83,18 +84,18 @@ struct RichFileCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: model.url.path))
+                Image(nsImage: fileIcon ?? NSWorkspace.shared.icon(forFile: model.url.path))
                     .resizable()
                     .scaledToFit()
                     .frame(width: 24, height: 24)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.name)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(model.metadataLine)
-                        .font(.system(size: 10))
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -115,21 +116,17 @@ struct RichFileCard: View {
                 .help("\(model.openLabel): \(model.name)")
                 .accessibilityLabel("\(model.openLabel), \(model.name)")
                 if let onPreview {
-                    Button {
+                    Button("Quick Look \(model.name)", systemImage: "eye") {
                         onPreview(model.url)
-                    } label: {
-                        Image(systemName: "eye")
                     }
+                    .labelStyle(.iconOnly)
                     .help("Quick Look \(model.name) beside this chat")
-                    .accessibilityLabel("Quick Look \(model.name)")
                 }
-                Button {
+                Button("Reveal \(model.name) in Finder", systemImage: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([model.url])
-                } label: {
-                    Image(systemName: "folder")
                 }
+                .labelStyle(.iconOnly)
                 .help("Reveal \(model.name) in Finder")
-                .accessibilityLabel("Reveal \(model.name) in Finder")
                 Spacer(minLength: 0)
             }
             .buttonStyle(.bordered)
@@ -144,6 +141,7 @@ struct RichFileCard: View {
             let live = RichFileCardModel.live(url: url)
             loaded = live
             appIcon = live.exists ? DefaultAppResolver.shared.getDefaultApp(for: url)?.icon : nil
+            fileIcon = NSWorkspace.shared.icon(forFile: url.path)
         }
     }
 }
