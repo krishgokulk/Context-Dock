@@ -1,7 +1,7 @@
 # Issue #257: Convert Hidden Dock into Headless DockEngine (Final Closure)
 
-> **Date:** 2026-11-08  
-> **Status:** Specification / Revised (EGM Cycle - Iteration 6)  
+> **Date:** 2026-11-08
+> **Status:** Shipped (PR #398)
 > **Target Branch:** `claude/issue-257-headless-dock-engine` (bases on `general-chat-agent`)  
 > **GitHub Issue:** #257 (Milestone 1.0)  
 > **References:**  

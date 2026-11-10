@@ -12,7 +12,7 @@ assignees: ""
 ## Scope
 
 - [ ] Global Context
-- [ ] Context Dock
+- [ ] App Pet / Combined Chat
 - [ ] Menu cache
 - [ ] Accessibility / AX
 - [ ] Search

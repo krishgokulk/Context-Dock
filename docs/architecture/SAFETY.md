@@ -82,8 +82,10 @@ Sixty seconds of silence is a refusal. One answer per request, enforced — a do
 to trap.
 
 `ApprovalCenter` decides *where* a card is drawn so a question asked in the corner is not answered
-on the dock behind it. `AdapterActionConsentStore` holds standing "always allow" grants, which
-destructive actions never get.
+on the dock behind it. `PendingApprovalJournal` (E7b #157 / PR #391) persists pending approvals
+across app restarts in `pending-approvals.json` with a 10-minute stale expiration and records
+`ApprovalExecutionReceipt` to guarantee idempotency and prevent duplicate execution.
+`AdapterActionConsentStore` holds standing "always allow" grants, which destructive actions never get.
 
 ### The denylist: `AppMenuConsentStore.isDestructive`
 

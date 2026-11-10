@@ -1,6 +1,7 @@
 # Specification: Issue #204 (P10 / E12) — Retire the Mail Question Pre-Model Shortcut (`DockShortcut.mailQuestion`)
 
 - **Issue:** [#204](https://github.com/krishgokulk/Context-Dock/issues/204)
+- **Status:** Shipped (PR #403)
 - **Plan Reference:** `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §10 (`P10` / `E12` — Retire the Dock's pre-model shortcuts into the ladder, one per PR)
 - **Precedent:** PR #314 / #315 (Shortcut 1: `DockShortcut.notes` / `tryHandleNotesMCPQuery` retired into `ScopedRoutePolicy` + `AgentSourceAuthority` + `AppleNotesMCPCapabilities`); PR #402 (Shortcut 2: `DockShortcut.menuCommand` / `MenuIntentRouter` retired into `ScopedRoutePolicy`).
 - **Branch:** `claude/issue-204-retire-mail-question` (stacked on `claude/issue-204-retire-menu-command`, targeting `general-chat-agent`)

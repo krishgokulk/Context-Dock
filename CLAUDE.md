@@ -41,6 +41,10 @@ Skills trigger automatically on the matching task. **Where** says whether a skil
 | SwiftUI accessibility audit (VoiceOver, Dynamic Type) | swiftui-accessibility-auditor | repo |
 | UIKit accessibility audit (iOS/iPadOS) | uikit-accessibility-auditor | repo |
 | AppKit accessibility audit (macOS) | appkit-accessibility-auditor | repo |
+| Elephant-Goldfish Model (EGM) spec drafting and zero-context review | egm | repo |
+| Delegate to caveman-compressed subagents | cavecrew | repo |
+| Ultra-compressed communication mode and token efficiency | caveman / caveman-* | repo |
+| Knowledge graph navigation and index | graphify | repo |
 
 `swiftui-pro` overlaps with `swiftui-patterns` (deep API review vs. app architecture);
 `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general

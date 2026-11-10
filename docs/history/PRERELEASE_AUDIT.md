@@ -1,4 +1,6 @@
 # Context Dock — Pre-Release Audit
+
+> **Status: Retired (historical record, read-only).** 2026-06/08 pre-release audit.
 **Scope:** Global Context mode, launch path, stability, performance  
 **Standard:** Spotlight / Raycast parity  
 **Date:** 2026-06-14  

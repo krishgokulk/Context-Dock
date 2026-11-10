@@ -1,6 +1,6 @@
 # Clean Universal App Agent Architecture: The 5-Tool Engine
-> **Date:** 2026-11-04  
-> **Status:** Active Architecture & Specification  
+> **Date:** 2026-11-04
+> **Status:** Partially Shipped (PR #369: Messages/Mail/Notes/Safari capabilities + 5-tool external MCP bridge); model-facing tool consolidation superseded by 2026-11-09-agent-harness-model.md (H6 #413)
 > **Target:** Universal Mac App Pets (`general-chat-agent`)  
 > **Reference App #1:** Apple Messages (`com.apple.MobileSMS`)
 

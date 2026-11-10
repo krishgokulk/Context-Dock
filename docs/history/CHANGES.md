@@ -1,5 +1,7 @@
 # Context-Dock — Change Journal
 
+> **Status: Retired (historical record, read-only).** Contains 2026-06 commit log.
+
 Auto-generated. One entry per commit.
 For full diff: `git show <hash>`
 

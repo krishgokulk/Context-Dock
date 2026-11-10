@@ -34,9 +34,9 @@ Rules:
 - Live verify only before execution or when idle refresh is safe.
 - Rank installed apps and recent apps high.
 
-## Context Dock
+## App Pet (Frontmost Focus)
 
-Context Dock is frontmost-app live-first, but UI-stable.
+App Pet is frontmost-app live-first, but UI-stable.
 
 Rules:
 - Live menu updates can happen after typing path.
@@ -45,9 +45,9 @@ Rules:
 - Backspace must not collapse sheet to compact mode when valid previous rows exist.
 - No sheet recreation per word.
 
-## Selection Shortcut Sheet
+## Selection Scope Card
 
-Selection Shortcut Sheet must be instant after long-press Command.
+Selection Scope Card opens from its dedicated hotkey or explicit attach action (⌘ tap is reserved for switching App Pet ↔ Global Context per #318) and must be instant.
 
 Rules:
 - Precompute available actions when selection/context changes.

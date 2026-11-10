@@ -1,5 +1,7 @@
 # Context Dock Architecture Release Map
 
+> **Status: Retired (historical record, read-only).** Current architecture is defined in `docs/master/DORAX-BLUEPRINT.md` and `docs/architecture/`.
+
 ## Release-Safe Boundaries Added
 
 App:
