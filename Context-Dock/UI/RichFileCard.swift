@@ -1,7 +1,8 @@
 //
 //  RichFileCard.swift
 //  Rich card for a local file shown in a chat answer: icon, name, metadata and
-//  "Open in {Default App}". Every button is a direct AppKit call, never the provider.
+//  three icon-only action buttons (open, quick look, reveal). Every button is a
+//  direct AppKit call, never the provider.
 //
 
 import SwiftUI
@@ -82,39 +83,35 @@ struct RichFileCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(nsImage: fileIcon ?? NSWorkspace.shared.icon(forFile: model.url.path))
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 24, height: 24)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(model.name)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(model.metadataLine)
-                        .font(.caption2)
+        HStack(spacing: 8) {
+            // Show a cheap placeholder until the async task delivers the real icon.
+            Group {
+                if let fileIcon {
+                    Image(nsImage: fileIcon).resizable().scaledToFit()
+                } else {
+                    Image(systemName: "doc").resizable().scaledToFit()
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
                 }
-                Spacer(minLength: 0)
             }
-            HStack(spacing: 6) {
-                Button {
-                    NSWorkspace.shared.open(model.url)
-                } label: {
-                    HStack(spacing: 4) {
-                        if let appIcon {
-                            Image(nsImage: appIcon).resizable().frame(width: 12, height: 12)
-                        }
-                        Text(model.openLabel).lineLimit(1)
-                    }
-                }
-                .help("\(model.openLabel): \(model.name)")
-                .accessibilityLabel("\(model.openLabel), \(model.name)")
+            .frame(width: 20, height: 20)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.name)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(model.metadataLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 4)
+
+            // Three compact icon-only buttons on the right edge.
+            HStack(spacing: 4) {
                 if let onPreview {
                     Button("Quick Look \(model.name)", systemImage: "eye") {
                         onPreview(model.url)
@@ -122,16 +119,29 @@ struct RichFileCard: View {
                     .labelStyle(.iconOnly)
                     .help("Quick Look \(model.name) beside this chat")
                 }
+                Button {
+                    NSWorkspace.shared.open(model.url)
+                } label: {
+                    if let appIcon {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                }
+                .help("\(model.openLabel): \(model.name)")
+                .accessibilityLabel("\(model.openLabel), \(model.name)")
                 Button("Reveal \(model.name) in Finder", systemImage: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([model.url])
                 }
                 .labelStyle(.iconOnly)
                 .help("Reveal \(model.name) in Finder")
-                Spacer(minLength: 0)
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
-            .disabled(!model.exists)
+            .disabled(!(loaded?.exists ?? true))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
