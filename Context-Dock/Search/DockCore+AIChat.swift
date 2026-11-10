@@ -2030,16 +2030,8 @@ extension DockCore {
         }
     }
 
-    /// Called when MenuIntentRouter found no menu match — skips menu routing to avoid recursion.
     func handleL2QuerySkippingMenuRouter(_ query: String, isSelectionQuestion: Bool = false) {
-        handleL2Query(query, skipMenuRouter: true, isSelectionQuestion: isSelectionQuestion)
-    }
-
-
-
-
-    func handleL2Query(_ query: String) {
-        handleL2Query(query, skipMenuRouter: false)
+        handleL2Query(query, isSelectionQuestion: isSelectionQuestion)
     }
 
     func isExplicitAppFindCommand(_ query: String, rawScopedQuery: String) -> Bool {
@@ -2262,7 +2254,7 @@ extension DockCore {
     /// Pure: whether a query may start an installed extension whose trigger words it matches.
     static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
 
-    func handleL2Query(_ query: String, skipMenuRouter: Bool, isSelectionQuestion: Bool = false) {
+    func handleL2Query(_ query: String, isSelectionQuestion: Bool = false) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
         // The launcher becomes key while the user types, so NSWorkspace/frontmost can now be
@@ -2537,117 +2529,6 @@ extension DockCore {
             return
         }
 
-        // ── Menu Intent Router ────────────────────────────────────────────────
-        // Only runs when:
-        //   • Not explicitly skipped (recursion guard)
-        //   • Query does NOT look like a question (selection-oriented questions → AI answer)
-        //   • App has a cached menu snapshot to search
-        let menuRouteEligible =
-            !skipMenuRouter
-            && !looksLikeQuestion  // question  = user wants an AI answer
-            && !isGlobalContextActive  // global context already active = chat mode
-            && !shouldStayInScopedAIChat  // continued scoped chat stays AI, not menu scan
-        let menuRouteTarget: (bundleId: String, appName: String)? = {
-            if isExplicitScopedApp {
-                return (scopedBundleId, scopedAppName)
-            }
-            if let target = l2.targetApp, !target.bundleId.hasPrefix("scope://") {
-                return (target.bundleId, target.name)
-            }
-            if let frontmostApp = NSWorkspace.shared.frontmostApplication,
-                let bundleId = frontmostApp.bundleIdentifier,
-                bundleId != Bundle.main.bundleIdentifier
-            {
-                return (bundleId, frontmostApp.localizedName ?? frontmost.name)
-            }
-            return nil
-        }()
-        if menuRouteEligible,
-            let target = menuRouteTarget,
-            target.bundleId != "com.apple.Safari",  // Safari has its own command system
-            GlobalContextEngine.shared.hasMenuSnapshot(bundleIdentifier: target.bundleId)
-        {
-            let capturedTarget = target
-            l2.isLoading = true
-            let reqID = beginL2AIRequest()
-            l2.currentTask = Task {
-                // Find the best menu match WITHOUT activating the app (will activate on pill click)
-                let runningApp = NSWorkspace.shared.runningApplications.first(where: {
-                    $0.bundleIdentifier == capturedTarget.bundleId && !$0.isTerminated
-                })
-                await MainActor.run {
-                    dockTraceStep(
-                        runningApp == nil
-                            ? "\(capturedTarget.appName) isn't running — reading its cached menus"
-                            : "Reading \(capturedTarget.appName) menu commands…")
-                }
-                // A live read when the app is running; otherwise the cached snapshot this
-                // branch already confirmed exists. Refusing to use that cache was a
-                // contradiction: the guard above requires hasMenuSnapshot, and then the
-                // request fell through to a generic AI answer because the app happened to be
-                // closed. The click launches the app and verifies the path before pressing it.
-                var matched: (
-                    path: [String], title: String, pathString: String,
-                    shortcutChar: String?, shortcutModifiers: Int, image: NSImage?
-                )?
-                if let app = runningApp,
-                    let live = await MenuIntentRouter.shared.findMatch(query: query, app: app)
-                {
-                    matched = (
-                        live.path, live.title, live.pathString, live.shortcutChar,
-                        live.shortcutModifiers, live.image)
-                } else if runningApp == nil,
-                    let cached = await MenuIntentRouter.shared.findCachedMatch(
-                        query: query, bundleId: capturedTarget.bundleId,
-                        appName: capturedTarget.appName)
-                {
-                    matched = (
-                        cached.path, cached.title, cached.pathString, cached.shortcutChar,
-                        cached.shortcutModifiers, cached.image)
-                }
-                if let matchedItem = matched {
-                    await MainActor.run {
-                        l2.isLoading = false
-                        dockShortcutStep(.menuCommand)
-                        dockTraceStep(
-                            runningApp == nil
-                                ? "Best path: \(matchedItem.pathString) · cached menu, will launch \(capturedTarget.appName)"
-                                : "Best path: \(matchedItem.pathString) · menu command")
-                        // pid 0 means "launch first" — the execution path resolves the real
-                        // process from the bundle id before clicking.
-                        let pid = runningApp?.processIdentifier ?? 0
-                        let path = matchedItem.path
-                        let sc = matchedItem.shortcutChar
-                        let mod = matchedItem.shortcutModifiers
-                        self.pendingAIMenuProposal = AIMenuProposal(
-                            path: path,
-                            title: matchedItem.title,
-                            fullPathLabel: matchedItem.pathString,
-                            shortcutChar: sc,
-                            shortcutModifiers: mod,
-                            menuImage: matchedItem.image,
-                            sourcePID: pid,
-                            sourceBundleId: capturedTarget.bundleId,
-                            sourceAppName: capturedTarget.appName
-                        )
-                        searchState.query = ""
-                        scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
-                        l2.pillNavViaKeyboard = true
-                        l2.focusedPillIndex = 0
-                        finishL2AIRequest(reqID)
-                    }
-                    return
-                }
-                // No match or app not running — fall through to normal AI flow
-                await MainActor.run {
-                    l2.isLoading = false
-                    finishL2AIRequest(reqID)
-                    self.handleL2QuerySkippingMenuRouter(query)
-                }
-            }
-            return
-        }
-
         if !shouldStayInScopedAIChat, let transformIntent = transformShareIntent(for: query) {
             dockShortcutStep(.transformShare)
             executeTransformShareIntent(transformIntent, userMessage: query)
@@ -2684,47 +2565,16 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.mail" {
-            let isMailQuestion = isQuestionStyleMailQuery(rawScopedSearchQuery)
-
-            // Both halves: asking something, and asking about mail. This branch used to fire
-            // on question shape alone, so the Mail scope answered "hi hello?" by demanding an
-            // attached mailbox — a scope refusing to be a chat.
-            if frontmost.bundleID == "com.apple.mail",
-                MailQuestionRouter.needsAttachedMailContext(
-                    query: rawScopedSearchQuery,
-                    isMailContextAttached: isCurrentMailContextAttached())
-            {
-                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
-                l2.chatMessages.append(
-                    AIChatMessage(
-                        role: .assistant,
-                        content:
-                            "Attach Mail context with the + button first, then ask again. That keeps Mail questions local and targeted to the current mailbox."
-                    ))
-                searchState.query = ""
-                l2.focusedPillIndex = nil
-                return
-            }
-
-            if isMailQuestion, let answer = answerAttachedMailQuestion(for: rawScopedSearchQuery) {
-                dockShortcutStep(.mailQuestion)
-                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
-                l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
-                searchState.query = ""
-                l2.focusedPillIndex = nil
-                return
-            }
-
+        if dockScope.scopedBundleId == "com.apple.mail",
+            let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery)
+        {
             // Only an exact search command ("search mail from SBI") is claimed here; any
             // other sentence that mentions a sender goes to the model, which has
             // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
             // this same function. It runs headless (mail.search); Mail's window is not touched.
-            if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) {
-                dockShortcutStep(.mailboxSearch)
-                executeMailMailboxSearch(intent: intent, userMessage: query)
-                return
-            }
+            dockShortcutStep(.mailboxSearch)
+            executeMailMailboxSearch(intent: intent, userMessage: query)
+            return
         }
 
         // ── Cross-app natural language ────────────────────────────────────────
@@ -2794,8 +2644,7 @@ extension DockCore {
                     // The re-run is the same question: it keeps how it was asked. Dropping
                     // these made a Selection card question a command again on the re-run.
                     self.handleL2Query(
-                        fullQueryForRerun, skipMenuRouter: skipMenuRouter,
-                        isSelectionQuestion: isSelectionQuestion)
+                        fullQueryForRerun, isSelectionQuestion: isSelectionQuestion)
                 }
                 return
             }

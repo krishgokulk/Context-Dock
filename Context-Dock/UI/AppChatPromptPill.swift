@@ -213,7 +213,7 @@ enum AppChatPromptMetrics {
                 || AppSettings.shared.launcherPresentationMode == .centerScreen
                 || CornerDockController.shared.showsBoardUnderField)
                 ? DockShellWidth.current
-                : (model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current),
+                : (model.fitsField && !model.showsTabBar && !model.showsLivePanel ? nil : DockShellWidth.current),
             fieldLines: model.fieldLines)
     }
 
@@ -637,7 +637,12 @@ struct AppChatPromptPill: View {
     /// what the transcript already occupies when the panel is open.
     private var compactChatWidth: CGFloat {
         let full = DockShellWidth.current
-        return full - CornerLivePanelLayout.panelWidth(card: full)
+        return max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
+    }
+
+    private var transcriptColumnWidth: CGFloat {
+        let full = DockShellWidth.current
+        return model.showsLivePanel ? (full - CornerLivePanelLayout.panelWidth(card: full)) : compactChatWidth
     }
 
     private var drawnWidth: CGFloat {
@@ -907,7 +912,7 @@ struct AppChatPromptPill: View {
                 // either way, so the transcript keeps its scroll when the panel is toggled.
                 HStack(spacing: 0) {
                     transcript
-                        .frame(maxWidth: .infinity)
+                        .frame(width: transcriptColumnWidth, alignment: .leading)
                     if model.showsLivePanel {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
@@ -978,6 +983,10 @@ struct AppChatPromptPill: View {
             .padding(.horizontal, model.phase == .chat ? 10 : 0)
             .padding(.top, model.phase == .chat ? 6 : 0)
             .padding(.bottom, model.phase == .chat ? 10 : 0)
+            .frame(
+                maxWidth: (model.phase == .chat && model.showsLivePanel && !splitsChatComposer)
+                    ? transcriptColumnWidth : .infinity,
+                alignment: .leading)
         }
         // Fills what the body gives it: 372 points in the legacy shell, the field's
         // widened prompt width in Global.
@@ -1029,7 +1038,7 @@ struct AppChatPromptPill: View {
     private var header: some View {
         let fallbackName = model.appName.isEmpty ? "This app" : model.appName
         let identity = conversation.headerIdentity(fallbackAppName: fallbackName)
-        return HStack(spacing: 8) {
+        return HStack(spacing: 6) {
             if let icon = appIcon {
                 Image(nsImage: icon)
                     .resizable()
@@ -1039,12 +1048,13 @@ struct AppChatPromptPill: View {
             Text(identity.primaryTitle)
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
+                .layoutPriority(2)
             if let subtitle = identity.subtitle {
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .fixedSize()
+                    .layoutPriority(0)
             }
 
             let petID = AppPetID(dockBundleID: model.appBundleID)
@@ -1074,25 +1084,25 @@ struct AppChatPromptPill: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         if let icon = activeMode.icon {
                             Image(systemName: icon)
-                                .font(.system(size: 9.5, weight: .semibold))
+                                .font(.system(size: 9, weight: .semibold))
                         }
                         Text(activeMode.name)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
                             .foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
                     .background(Color.accentColor.opacity(0.12), in: Capsule())
                     .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1))
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .fixedSize()
                 .help("App Pet mode (/mods): \(activeMode.summary)")
             }
             ForEach(identity.previewChips, id: \.self) { chip in
@@ -1109,97 +1119,103 @@ struct AppChatPromptPill: View {
                     )
             }
 
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
+
+            // Provider / context usage chip (#335)
+            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
+                .transition(.opacity)
 
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
-
-            // Past conversations browser (#334).
-            Button {
-                model.openConversationsBoard()
-            } label: {
-                headerGlyph("clock.arrow.circlepath", tinted: false)
-            }
-            .buttonStyle(.plain)
-            .help("Browse past conversations (⌥H)")
-            .accessibilityLabel("Browse past conversations")
-
-            // Capabilities & Skills browser (#335).
-            Button {
-                model.openCapabilitiesSkillsBrowser()
-            } label: {
-                headerGlyph("sparkles", tinted: false)
-            }
-            .buttonStyle(.plain)
-            .help("Browse capabilities & skills (⌥K)")
-            .accessibilityLabel("Browse capabilities and skills")
-
-            // The app's panel beside the conversation, shown or hidden (#191) — Claude's
-            // sidebar toggle, in the same place.
-            if !model.isGlobalScope {
-                Button { model.livePanelOpen.toggle() } label: {
-                    headerGlyph("sidebar.right", tinted: model.livePanelOpen)
-                }
-                .buttonStyle(.plain)
-                .help(model.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
-                .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
-            }
-
-            // Expand opens this conversation in the full window on its Chat tab, seeded with
-            // the transcript the dock has not flushed yet (#323). Never in Global search
-            // (layer rule), and inert while a turn is running — it waits for the answer
-            // (owner 2026-10-26). `CornerRailRules` is the one place that decides this.
-            let expand = CornerRailRules.expand(
-                isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
-            if expand != .hidden {
+            HStack(spacing: 2) {
+                // Past conversations browser (#334).
                 Button {
-                    let targetScope =
-                        identity.kind == .combined
-                        ? conversation.effectiveParticipants(fallbackAppName: fallbackName).combinedScope
-                        : CornerRailRules.windowScope(appBundleID: model.appBundleID)
-                    GeneralChatWindowController.shared.show(
-                        opening: targetScope,
-                        title: identity.primaryTitle,
-                        seed: AppChatConversation.shared.messages)
+                    model.openConversationsBoard()
                 } label: {
-                    headerGlyph("arrow.up.left.and.arrow.down.right")
+                    headerGlyph("clock.arrow.circlepath", tinted: false)
                 }
                 .buttonStyle(.plain)
-                .disabled(expand == .disabled)
-                .help("Open this conversation in the full window")
-            }
+                .help("Browse past conversations (⌥H)")
+                .accessibilityLabel("Browse past conversations")
 
-            Button {
-                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
-            } label: {
-                headerGlyph(
-                    "keyboard",
-                    tinted: CornerDockController.shared.chatPresentation.isShowingKeysOverlay)
-            }
-            .buttonStyle(.plain)
-            .help("Keyboard shortcuts (⌘/)")
+                // Capabilities & Skills browser (#335).
+                Button {
+                    model.openCapabilitiesSkillsBrowser()
+                } label: {
+                    headerGlyph("sparkles", tinted: false)
+                }
+                .buttonStyle(.plain)
+                .help("Browse capabilities & skills (⌥K)")
+                .accessibilityLabel("Browse capabilities and skills")
 
-            Button { model.newConversation() } label: {
-                headerGlyph("trash")
-            }
-            .buttonStyle(.plain)
-            .help("Clear this conversation")
+                // The app's panel beside the conversation, shown or hidden (#191) — Claude's
+                // sidebar toggle, in the same place.
+                if !model.isGlobalScope {
+                    Button { model.livePanelOpen.toggle() } label: {
+                        headerGlyph("sidebar.right", tinted: model.livePanelOpen)
+                    }
+                    .buttonStyle(.plain)
+                    .help(model.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
+                    .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
+                }
 
-            Button { model.togglePin() } label: {
-                headerGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+                // Expand opens this conversation in the full window on its Chat tab, seeded with
+                // the transcript the dock has not flushed yet (#323). Never in Global search
+                // (layer rule), and inert while a turn is running — it waits for the answer
+                // (owner 2026-10-26). `CornerRailRules` is the one place that decides this.
+                let expand = CornerRailRules.expand(
+                    isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
+                if expand != .hidden {
+                    Button {
+                        let targetScope =
+                            identity.kind == .combined
+                            ? conversation.effectiveParticipants(fallbackAppName: fallbackName).combinedScope
+                            : CornerRailRules.windowScope(appBundleID: model.appBundleID)
+                        GeneralChatWindowController.shared.show(
+                            opening: targetScope,
+                            title: identity.primaryTitle,
+                            seed: AppChatConversation.shared.messages)
+                    } label: {
+                        headerGlyph("arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(expand == .disabled)
+                    .help("Open this conversation in the full window")
+                }
+
+                Button {
+                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+                } label: {
+                    headerGlyph(
+                        "keyboard",
+                        tinted: CornerDockController.shared.chatPresentation.isShowingKeysOverlay)
+                }
+                .buttonStyle(.plain)
+                .help("Keyboard shortcuts (⌘/)")
+
+                Button { model.newConversation() } label: {
+                    headerGlyph("trash")
+                }
+                .buttonStyle(.plain)
+                .help("Clear this conversation")
+
+                Button { model.togglePin() } label: {
+                    headerGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+                }
+                .buttonStyle(.plain)
+                .help(model.isPinned ? "Unpin" : "Keep this open")
             }
-            .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin" : "Keep this open")
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 15)
+        .padding(.horizontal, 10)
         .frame(height: 48)
     }
 
     private func headerGlyph(_ symbol: String, tinted: Bool = false) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(tinted ? Color.accentColor : .secondary)
-            .frame(width: 26, height: 26)
+            .frame(width: 23, height: 23)
             .background(tinted ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle())
             .contentShape(Rectangle())
     }
@@ -1223,6 +1239,7 @@ struct AppChatPromptPill: View {
                 scopeChipWithExit
             } else {
                 appChip
+                    .layoutPriority(1)
             }
 
             ZStack(alignment: .leading) {
@@ -1667,8 +1684,8 @@ struct AppChatPromptPill: View {
             }
         }
         .padding(.leading, globalStrip.map {
-            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
-        .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
+            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? (model.phase == .chat ? 10 : 14))
+        .padding(.trailing, globalStrip == nil || splitsShell ? (model.phase == .chat ? 10 : 14) : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
@@ -1815,6 +1832,7 @@ struct AppChatPromptPill: View {
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             // The app's settings card lives in its chip (owner 2026-09-28, layout C). Open, the
             // gear turns into the arrow that puts it away (owner 2026-10-07). In a
             // conversation the ⌄ puts the chat sheet away — the header's toggle has the panel

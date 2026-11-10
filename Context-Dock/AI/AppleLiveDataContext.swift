@@ -41,6 +41,13 @@ enum AppleLiveDataContext {
         }.joined(separator: "\n")
     }
 
+    /// Whether the query asks for Mail inbox context to be pre-fetched into the prompt block.
+    nonisolated static func wantsMailContext(_ query: String) -> Bool {
+        let q = query.lowercased()
+        return ["email", "mail", "e-mail", "inbox", "mailbox", "message from", "subject line"]
+            .contains(where: q.contains)
+    }
+
     static func appleAppsContextBlock(for query: String) async -> String {
         let q = query.lowercased()
         let api = AppleAppsAPI.shared
@@ -143,7 +150,7 @@ enum AppleLiveDataContext {
             }
         }
 
-        if ["email", "mail", "inbox", "message from"].contains(where: q.contains) {
+        if wantsMailContext(q) {
             let emails = api.getRecentEmails(limit: 12)
             // Headers only. Bodies are never in this block, so say where they are: without
             // the pointer the model answered "body not returned" and asked the user to open

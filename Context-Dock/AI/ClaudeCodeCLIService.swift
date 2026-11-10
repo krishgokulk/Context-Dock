@@ -546,12 +546,24 @@ enum ClaudeCodeCLIService {
         }
 
         if let usage = payload["usage"] as? [String: Any] {
+            let inputTokens = usage["input_tokens"] as? Int ?? 0
+            let cachedTokens = usage["cache_read_input_tokens"] as? Int ?? 0
+            let outputTokens = usage["output_tokens"] as? Int ?? 0
+            let modelName = (payload["model"] as? String) ?? model ?? "claude"
             AITokenLedger.shared.record(
                 provider: .claudeCode,
-                model: (payload["model"] as? String) ?? model ?? "claude",
-                inputTokens: usage["input_tokens"] as? Int ?? 0,
-                cachedInputTokens: usage["cache_read_input_tokens"] as? Int ?? 0,
-                outputTokens: usage["output_tokens"] as? Int ?? 0)
+                model: modelName,
+                inputTokens: inputTokens,
+                cachedInputTokens: cachedTokens,
+                outputTokens: outputTokens)
+            let scope = ClaudeCodeChat.scope
+            ProviderContextUsageStore.shared.recordRound(
+                scope: scope,
+                provider: .claudeCode,
+                model: modelName,
+                inputTokens: inputTokens + cachedTokens,
+                outputTokens: outputTokens
+            )
         }
 
         if payload["is_error"] as? Bool == true {

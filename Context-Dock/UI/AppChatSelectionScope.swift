@@ -140,3 +140,28 @@ struct FixedRunningAppsSource: RunningAppsSourcing {
         icons
     }
 }
+
+extension FixedRunningAppsSource {
+    static let defaultTestFixture = FixedRunningAppsSource(icons: [
+        MatchDockIcon(
+            id: "com.apple.finder",
+            bundleID: "com.apple.finder",
+            title: "Finder",
+            icon: NSImage(),
+            isRunning: true,
+            isExpandable: false,
+            score: 0,
+            isExactAppPrefix: false
+        ),
+        MatchDockIcon(
+            id: "com.apple.Safari",
+            bundleID: "com.apple.Safari",
+            title: "Safari",
+            icon: NSImage(),
+            isRunning: true,
+            isExpandable: false,
+            score: 0,
+            isExactAppPrefix: false
+        )
+    ])
+}

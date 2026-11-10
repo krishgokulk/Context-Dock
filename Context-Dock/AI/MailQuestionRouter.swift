@@ -3,19 +3,11 @@
 //
 // Whether a message typed into a Mail-scoped chat is asking about the mailbox.
 //
-// The Mail scope refused to answer "hi hello?" — it replied "Attach Mail context with the +
-// button first, then ask again." The test was `rawScopedQuery.contains("?")`, so every
-// question was a mail question: "how are you?", "what's 2+2?", any greeting with a question
-// mark. A scope is not supposed to stop being a chat.
-//
-// The two halves were being conflated. Question *shape* says the sentence is asking something.
-// Mailbox *subject* says it is asking about mail. Demanding attached context needs both; a
-// question already sitting on an attached message needs only the first, because "who sent
-// this?" names no mail noun and is obviously about the message on screen.
-//
-// Pure string work, extracted from DockCore for the reason ReadOnlyDataRouter was: a view
-// with four hundred @State properties cannot be stood up in a test, so the decision that
-// silences the chat could not be exercised at all.
+// Question *shape* says the sentence is asking something. Mailbox *subject* says it is asking
+// about mail. Keeping the two halves separate lets a Mail-scoped chat answer greetings ("hi
+// hello?", "how are you?", "what's 2+2?") conversationally while grounding real mailbox
+// questions ("any unread mail?", "who sent this message?", "what's the subject line?") in live
+// Mail readers (`mail.recent`, `mail.read`, `mail.search`, `mail.unread`, `mail.currentMessage`).
 
 import Foundation
 
@@ -62,14 +54,9 @@ enum MailQuestionRouter {
         return false
     }
 
-    /// Whether the chat should stop and ask the user to attach Mail context.
-    ///
-    /// Both halves, and only when nothing is attached yet. Getting this wrong in the
-    /// permissive direction is what made the Mail scope decline to say hello.
-    static func needsAttachedMailContext(
-        query: String, isMailContextAttached: Bool
-    ) -> Bool {
-        guard !isMailContextAttached else { return false }
-        return isQuestionShaped(query) && mentionsMailbox(query)
+    /// Whether a sentence in the Mail scope is asking a question about the mailbox's records
+    /// (as opposed to a greeting like "hi hello?" or a write command like "delete this email").
+    static func isMailboxQuestion(_ query: String) -> Bool {
+        isQuestionShaped(query) && mentionsMailbox(query)
     }
 }

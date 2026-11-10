@@ -53,16 +53,34 @@ struct DockShellWidthTests {
     @Test("General Chat, Global and an app read the one live width")
     func liveSurfacesReadTheOneWidth() {
         let live = W.current
-        #expect(live >= W.base)
+        // 680 (board under the field), 460 (centred) or the strip plan's width, by the
+        // host's presentation settings (486fd230 / 527696da); never the retired >= 600 base.
+        #expect([680, 460, DockStripPlan.shellWidth].contains(live))
         #expect(CornerGeneralChatMetrics.size(for: GeneralChatWindowModel()).width == live)
-        // A fresh model is Global Context; its board and its shell share the width.
+        // Global Context: its board and its shell share the width.
         let global = AppChatPromptModel(conversation: AppChatConversation())
+        global.summonGlobalContext()
         #expect(M.boardWidth(for: global) == live)
         #expect(M.shellSize(for: global, phase: .dock).width <= live)
         #expect(M.shellSize(for: global, phase: .prompt).width == live)
-        global.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
-        #expect(M.boardWidth(for: global) == live)
-        #expect(M.shellSize(for: global, phase: .prompt).width == live)
+        // An app with a pin has the bar and takes the same width (owner 2026-11-03).
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        app.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
+        app.dockPins.pin(.appAction(id: "bar"), title: "Pinned", app: "com.apple.TextEdit")
+        app.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(app.showsTabBar)
+        #expect(M.boardWidth(for: app) == live)
+        #expect(M.shellSize(for: app, phase: .prompt).width == live)
+        // Without one it is the compact pill: fitted to its content, never wider than the
+        // shell, and its board as wide as its field.
+        let pill = AppChatPromptModel(conversation: AppChatConversation())
+        pill.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
+        pill.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(!pill.showsTabBar)
+        #expect(M.shellSize(for: pill, phase: .prompt).width <= live)
+        #expect(M.boardWidth(for: pill) == M.shellSize(for: pill, phase: .prompt).width)
     }
 
     @Test("The launcher's width holds for a handful of pins, then grows a pin's span per pin, then caps")

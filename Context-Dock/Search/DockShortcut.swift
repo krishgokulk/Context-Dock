@@ -20,11 +20,9 @@ enum DockShortcut: String, CaseIterable, Sendable {
     case systemCommand
     case githubInstall
     case appFind
-    case menuCommand
     case transformShare
     case finder
     case messages
-    case mailQuestion
     case mailboxSearch
     case crossApp
     case appAction
@@ -38,11 +36,9 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .systemCommand: return "System Command"
         case .githubInstall: return "GitHub Install"
         case .appFind: return "App Find"
-        case .menuCommand: return "Menu Command"
         case .transformShare: return "Transform & Share"
         case .finder: return "Finder"
         case .messages: return "Messages"
-        case .mailQuestion: return "Mail Question"
         case .mailboxSearch: return "Mailbox Search"
         case .crossApp: return "Cross-App"
         case .appAction: return "App Action"
@@ -59,11 +55,9 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .systemCommand: return "a built-in system command"
         case .githubInstall: return "link a GitHub tool"
         case .appFind: return "find … in this app"
-        case .menuCommand: return "an app menu command"
         case .transformShare: return "transform this and send it"
         case .finder: return "a Finder folder request"
         case .messages: return "message … to someone"
-        case .mailQuestion: return "a question about the attached mail"
         case .mailboxSearch: return "search mail …"
         case .crossApp: return "send/open this in another app"
         case .appAction: return "a global app action"

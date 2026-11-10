@@ -731,7 +731,7 @@ struct AutomationSettingsView: View {
             $0.activationPolicy == .regular && !$0.isTerminated
                 && $0.bundleIdentifier != Bundle.main.bundleIdentifier
         }
-        MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(apps, maxApps: 12)
+        MenuWarmCacheService.shared.warmRunningAppsForDock(apps, maxApps: 12)
     }
 
     private var systemCommandList: some View {

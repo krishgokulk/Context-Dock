@@ -20,7 +20,12 @@ final class MenuWarmCacheService {
 
     private init() {}
 
+    #if DEBUG
+    var isWarmingActive: Bool { warmTask != nil || idleWarmTask != nil }
+    #endif
+
     func frontmostAppDidChange(_ app: NSRunningApplication) {
+        guard !AppDelegate.isHostingTests else { return }
         guard shouldWarm(app) else { return }
         rememberRecent(app)
 
@@ -44,6 +49,7 @@ final class MenuWarmCacheService {
     }
 
     func appDidLaunch(_ app: NSRunningApplication) {
+        guard !AppDelegate.isHostingTests else { return }
         guard shouldWarm(app) else { return }
         rememberRecent(app)
 
@@ -58,20 +64,27 @@ final class MenuWarmCacheService {
     /// Called when the launcher window opens. Warms recent apps with a 2-min threshold
     /// so global context AI and menu pills are fresh without waiting for the 5-min idle cycle.
     func warmRecentAppsOnLauncherOpen() {
+        guard !AppDelegate.isHostingTests else { return }
         Task { [weak self] in
             guard let self else { return }
             await self.warmRecentWithFreshness(120)
         }
     }
 
-    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+    func warmRunningAppsForDock(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+        guard !AppDelegate.isHostingTests else { return }
         Task { [weak self] in
             guard let self else { return }
             await self.warmRunningApps(apps, maxApps: maxApps, freshness: 120)
         }
     }
 
+    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+        warmRunningAppsForDock(apps, maxApps: maxApps)
+    }
+
     func warmStatusMenuAppsOnLauncherOpen(force: Bool = false) async -> Bool {
+        guard !AppDelegate.isHostingTests else { return false }
         guard AXIsProcessTrusted() else { return false }
 
         if !force,
@@ -147,6 +160,7 @@ final class MenuWarmCacheService {
     }
 
     func startIdleWarming() {
+        guard !AppDelegate.isHostingTests else { return }
         guard idleWarmTask == nil else { return }
         idleWarmTask = Task { [weak self] in
             guard let self else { return }
@@ -163,6 +177,7 @@ final class MenuWarmCacheService {
     }
 
     func warm(app: NSRunningApplication, force: Bool) async {
+        guard !AppDelegate.isHostingTests else { return }
         guard shouldWarm(app) else { return }
         guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return }
         guard AXIsProcessTrusted() else { return }

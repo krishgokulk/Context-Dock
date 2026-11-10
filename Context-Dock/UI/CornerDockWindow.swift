@@ -53,6 +53,8 @@ final class CornerDockHostView: NSView {
 final class CornerDockController: NSObject {
     static let shared = CornerDockController()
 
+    var isHeadless: Bool = AppDelegate.isHostingTests
+    private var hasSetupSubscriptions = false
     private var panel: CornerDockPanel?
     private var hostView: CornerDockHostView?
     private var hoverMonitors: [Any] = []
@@ -145,8 +147,12 @@ final class CornerDockController: NSObject {
     // MARK: - Window
 
     private func ensurePanel() {
-        guard panel == nil else { return }
-        prompt.onStepIntoFile = { [weak self] url in self?.showSelection(forFile: url) ?? false }
+        setupModelSubscriptions()
+        guard !isHeadless, panel == nil else { return }
+        allocatePanelAndHostView()
+    }
+
+    private func allocatePanelAndHostView() {
         let p = CornerDockPanel(
             contentRect: NSRect(
                 origin: .zero, size: CornerDockLayout.panelSize(for: anchor)),
@@ -179,6 +185,13 @@ final class CornerDockController: NSObject {
         panel = p
         hostView = host
         position()
+    }
+
+    private func setupModelSubscriptions() {
+        guard !hasSetupSubscriptions else { return }
+        hasSetupSubscriptions = true
+
+        prompt.onStepIntoFile = { [weak self] url in self?.showSelection(forFile: url) ?? false }
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
         // either has something to say.
@@ -620,12 +633,46 @@ final class CornerDockController: NSObject {
         )
     }
 
+    static func calculatePanelOrigin(
+        visibleScreenFrame: CGRect,
+        fullScreenFrame: CGRect,
+        panelSize: CGSize,
+        anchor: CornerDockAnchor,
+        isCentred: Bool,
+        centredOffsetX: CGFloat = CGFloat(AppSettings.shared.centredLauncherOffsetX),
+        centredOffsetY: CGFloat = CGFloat(AppSettings.shared.centredLauncherOffsetY)
+    ) -> CGPoint {
+        let pad = CornerDockLayout.pad
+        let margin: CGFloat = 20
+
+        if isCentred {
+            let screenW = fullScreenFrame.width
+            let screenX = fullScreenFrame.minX
+            let defaultX = (screenW - panelSize.width) / 2 + screenX
+            let defaultY = visibleScreenFrame.minY + visibleScreenFrame.height * 0.62 + pad - panelSize.height
+            let maxOffsetY = max(0, visibleScreenFrame.maxY - (visibleScreenFrame.minY + visibleScreenFrame.height * 0.62 + pad) - 40)
+            let minOffsetY = -(visibleScreenFrame.height * 0.45)
+            let clampedOffsetY = min(max(minOffsetY, centredOffsetY), maxOffsetY)
+            let clampedOffsetX = min(max(-screenW * 0.4, centredOffsetX), screenW * 0.4)
+            return CGPoint(x: defaultX + clampedOffsetX, y: defaultY + clampedOffsetY)
+        }
+
+        let x: CGFloat
+        switch anchor {
+        case .right: x = visibleScreenFrame.maxX - margin + pad - panelSize.width
+        case .left, .center, .notch: x = visibleScreenFrame.minX + margin - pad
+        }
+        let y = visibleScreenFrame.minY + margin - pad
+        return CGPoint(x: x, y: y)
+    }
+
     private func position() {
         guard let panel else { return }
         let screen =
             NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
+        let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let fullScreen = screen?.frame ?? visible
         let pad = CornerDockLayout.pad
         let margin: CGFloat = 20
 
@@ -637,36 +684,20 @@ final class CornerDockController: NSObject {
             panel.setContentSize(wanted)
             hostView?.frame = CGRect(origin: .zero, size: wanted)
         }
-        let size = panel.frame.size
-        let x: CGFloat
-        let y: CGFloat
 
-        if isCentredMode {
-            panel.isMovable = true
-            panel.isMovableByWindowBackground = true
-            let screenW = screen?.frame.width ?? visible.width
-            let screenX = screen?.frame.minX ?? 0
-            let defaultX = (screenW - size.width) / 2 + screenX
-            let defaultY = visible.minY + visible.height * 0.62 + pad - size.height
-            let maxOffsetY = max(0, visible.maxY - (visible.minY + visible.height * 0.62 + pad) - 40)
-            let minOffsetY = -(visible.height * 0.45)
-            let clampedOffsetY = min(max(minOffsetY, CGFloat(AppSettings.shared.centredLauncherOffsetY)), maxOffsetY)
-            let clampedOffsetX = min(max(-screenW * 0.4, CGFloat(AppSettings.shared.centredLauncherOffsetX)), screenW * 0.4)
-            x = defaultX + clampedOffsetX
-            y = defaultY + clampedOffsetY
-        } else {
-            panel.isMovable = false
-            panel.isMovableByWindowBackground = false
-            switch anchor {
-            case .right: x = visible.maxX - margin + pad - size.width
-            case .left: x = visible.minX + margin - pad
-            case .center, .notch: x = visible.minX + margin - pad
-            }
-            y = visible.minY + margin - pad
-        }
+        panel.isMovable = isCentredMode
+        panel.isMovableByWindowBackground = isCentredMode
 
-        shownPanelOrigin = NSPoint(x: x, y: y)
-        dockScreenFrame = screen?.frame ?? visible
+        let origin = Self.calculatePanelOrigin(
+            visibleScreenFrame: visible,
+            fullScreenFrame: fullScreen,
+            panelSize: panel.frame.size,
+            anchor: anchor,
+            isCentred: isCentredMode
+        )
+
+        shownPanelOrigin = origin
+        dockScreenFrame = fullScreen
         panel.setFrameOrigin(isCentredMode ? shownPanelOrigin : (isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin))
     }
 
@@ -772,6 +803,7 @@ final class CornerDockController: NSObject {
     }
 
     private func syncEdgeWatch() {
+        guard !isHeadless else { return }
         let wanted = AppSettings.shared.cornerDockAutoHide
         if wanted, edgeMonitors.isEmpty {
             // Dragged too: carrying a file to the edge is the Dock's other way up, and a held
@@ -927,7 +959,7 @@ final class CornerDockController: NSObject {
     // MARK: - Visibility
 
     func refresh() {
-        guard let panel, let hostView else { return }
+        guard !isHeadless, let panel, let hostView else { return }
         defer { syncAutoHide() }
         let slots = currentSlots()
         var rects = [

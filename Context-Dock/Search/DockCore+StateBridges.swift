@@ -552,12 +552,6 @@ extension DockCore {
         nonmutating set { contextDockViewModel.listViewHoveredIndex = newValue }
     }
 
-
-    var pendingAIMenuProposal: AIMenuProposal? {
-        get { contextDockViewModel.pendingAIProposal }
-        nonmutating set { contextDockViewModel.pendingAIProposal = newValue }
-    }
-
     var dockPillBuildTask: Task<Void, Never>? {
         get { contextDockViewModel.pillBuildTask }
         nonmutating set { contextDockViewModel.pillBuildTask = newValue }

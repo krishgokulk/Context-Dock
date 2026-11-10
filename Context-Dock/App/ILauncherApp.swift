@@ -28,7 +28,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// person launched.
     static let isHostingTests: Bool = {
         let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil
+        return env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestBundlePath"] != nil
+            || env["CONTEXT_DOCK_DEFAULTS_SUITE"] != nil
+            || env["TEST_RUNNER_CONTEXT_DOCK_DEFAULTS_SUITE"] != nil
+            || NSClassFromString("XCTest") != nil
     }()
 
 
@@ -208,9 +212,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
-        // Before anything else can send one: in the test host every Apple Event fails fast
-        // instead of waiting 120 s for an Automation prompt nobody answers.
-        if Self.isHostingTests { TestHostAppleEventBlocker.install() }
+
+        if Self.isHostingTests {
+            configureTestHostEnvironment()
+            return
+        }
+
+        configureProductionEnvironment()
+    }
+
+    private func configureTestHostEnvironment() {
+        // Fast-fail any unexpected Apple Events in the test host
+        TestHostAppleEventBlocker.install()
+        AXMessagingTimeout.installProcessDefault()
+        PluginCapability.installApprovalProvider()
+        TestHostMainActorWatchdog.install()
+
+        NSApp.setActivationPolicy(.accessory)
+
+        // Engine registration for notification routing (pure registry, no active tasks)
+        DockEngine.shared.register()
+
+        // Activate CornerDockController in headless mode (wires Combine model sinks,
+        // skips NSPanel allocation and WindowServer calls)
+        CornerDockController.shared.activate()
+    }
+
+    private func configureProductionEnvironment() {
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
@@ -238,16 +266,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // model, so it is free enough to sit on a timer.
         BrainMaintenance.shared.start()
         // Enforce single instance — if another copy is already running, tell it to show and quit
-        //
-        // Except under XCTest. The test bundle is loaded into a second copy of this app, and
-        // the developer's own copy is nearly always running while they work — so the runner
-        // launched, saw a duplicate, terminated itself, and every test failed with "exited
-        // before establishing connection". That is why this project believed it could not
-        // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty, !Self.isHostingTests {
+        if !others.isEmpty {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)
@@ -288,21 +310,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the singleton is created, and the extension can fire before any UI does.
         _ = SafariBrowserBridge.shared
 
-        // The clipboard history records every copy from launch, whatever is on screen. Not
-        // in the test host: it would write the developer's own history file.
-        if !Self.isHostingTests { ClipboardHistoryEngine.shared.start() }
+        // The clipboard history records every copy from launch, whatever is on screen.
+        ClipboardHistoryEngine.shared.start()
         // Global search's index builds itself and stays fresh, whatever is on screen.
-        if !Self.isHostingTests { GlobalSearchIndexBuilder.shared.start() }
+        GlobalSearchIndexBuilder.shared.start()
 
         // The engine the Corner's search and App Chat run on, window or not (#257 E2).
         DockEngine.shared.register()
-        if !Self.isHostingTests { DockEngine.shared.start() }
-
-        // No launcher window: the engine runs without one, and the Corner is the launcher
-        // (#257 E3).
+        DockEngine.shared.start()
 
         // Restore detached Pet companions on the desktop (#342)
-        if !Self.isHostingTests { DetachedPetManager.shared.restoreDetachedPets() }
+        DetachedPetManager.shared.restoreDetachedPets()
 
         // Register global hotkeys
         registerGlobalHotkey()
