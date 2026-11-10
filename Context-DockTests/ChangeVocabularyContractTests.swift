@@ -42,6 +42,8 @@ struct ChangeVocabularyContractTests {
         "finder.organize": "organize these",
         "finder.newFolder": "make a new folder called Screenshots",
         "messages.compose": "compose a message to sujith about dinner",
+        "mail.send": "send this email to sarah",
+        "messages.send": "send a message to sujith saying i'm running late",
         "mail.createDraft": "draft a reply to this",
         // "save this" and "run the build", not "remember that" and "build this project".
         //
