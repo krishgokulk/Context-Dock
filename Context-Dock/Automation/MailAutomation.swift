@@ -523,9 +523,47 @@ enum MailAutomation {
     /// `maxScan` is kept for callers but no longer bounds the search: Mail filters with `whose`
     /// across the whole mailbox in about a second, and rejects `whose` on a message range.
     /// `limit` still caps the rows returned.
+    /// How a search request's three text inputs become filters. A bare `query` is matched
+    /// against the sender **or** the subject: it used to be the subject alone, so "SBI" found
+    /// nothing from SBI. `from <name>` in the query is a sender. An explicit field wins.
+    nonisolated static func searchFilters(query: String, sender: String, subject: String)
+        -> (sender: String, subject: String, any: String)
+    {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, sender.isEmpty, subject.isEmpty else {
+            return (sender, subject, "")
+        }
+        if trimmed.lowercased().hasPrefix("from ") {
+            let name = String(trimmed.dropFirst("from ".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return (name, "", "") }
+        }
+        return ("", "", trimmed)
+    }
+
+    /// The AppleScript `whose` test for a mailbox search. Fields are ANDed; `any` is one term
+    /// tried against sender or subject.
+    nonisolated static func whoseClause(
+        hasSender: Bool, hasSubject: Bool, hasAny: Bool, unreadOnly: Bool,
+        wantsToday: Bool, wantsYesterday: Bool
+    ) -> String {
+        var conditions: [String] = []
+        if hasSender { conditions.append("sender contains senderFilter") }
+        if hasSubject { conditions.append("subject contains subjectFilter") }
+        if hasAny { conditions.append("(sender contains anyFilter or subject contains anyFilter)") }
+        if unreadOnly { conditions.append("read status is false") }
+        if wantsToday { conditions.append("(date received ≥ todayStart and date received < todayEnd)") }
+        if wantsYesterday {
+            conditions.append("(date received ≥ yesterdayStart and date received < yesterdayEnd)")
+        }
+        return conditions.isEmpty
+            ? "read status is true or read status is false" : conditions.joined(separator: " and ")
+    }
+
     nonisolated static func mailboxSnapshot(
         senderContains: String = "",
         subjectContains: String = "",
+        anyContains: String = "",
         unreadOnly: Bool = false,
         relativeDay: String = "",
         limit: Int = 20,
@@ -536,22 +574,17 @@ enum MailAutomation {
         let safeLimit = max(1, min(limit, 50))
         let safeMaxScan = max(1, min(maxScan, 500))
 
-        var conditions: [String] = []
-        if !senderContains.isEmpty { conditions.append("sender contains senderFilter") }
-        if !subjectContains.isEmpty { conditions.append("subject contains subjectFilter") }
-        if unreadOnly { conditions.append("read status is false") }
-        if wantsToday { conditions.append("(date received ≥ todayStart and date received < todayEnd)") }
-        if wantsYesterday {
-            conditions.append("(date received ≥ yesterdayStart and date received < yesterdayEnd)")
-        }
-        let whoseClause =
-            conditions.isEmpty ? "read status is true or read status is false" : conditions.joined(separator: " and ")
+        let whoseClause = whoseClause(
+            hasSender: !senderContains.isEmpty, hasSubject: !subjectContains.isEmpty,
+            hasAny: !anyContains.isEmpty, unreadOnly: unreadOnly,
+            wantsToday: wantsToday, wantsYesterday: wantsYesterday)
 
         let script = """
             tell application "Mail"
                 try
                     set senderFilter to "\(escapeAppleScriptLiteral(senderContains))"
                     set subjectFilter to "\(escapeAppleScriptLiteral(subjectContains))"
+                    set anyFilter to "\(escapeAppleScriptLiteral(anyContains))"
                     set wantsToday to \(wantsToday ? "true" : "false")
                     set wantsYesterday to \(wantsYesterday ? "true" : "false")
                     set wantsUnread to \(unreadOnly ? "true" : "false")
@@ -598,7 +631,7 @@ enum MailAutomation {
                     if foundCount > resultLimit then set foundCount to resultLimit
                     repeat with i from 1 to foundCount
                         set msg to item i of found
-                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string)
+                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string) & " | Id: " & ((id of msg) as text)
                     end repeat
 
                     if (count of matchedLines) = 0 then return "MAILBOX:" & targetMailboxName & return & "NO_MATCHES"
@@ -650,7 +683,11 @@ enum MailAutomation {
             limit: limit,
             maxScan: maxScan
         )
+        return parseSnapshot(summary)
+    }
 
+    /// Reads `mailboxSnapshot`'s text back into rows. A line may end with " | Id: <n>".
+    nonisolated static func parseSnapshot(_ summary: String) -> MailAutomationMailboxSnapshot? {
         let lines = summary
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -686,9 +723,11 @@ enum MailAutomation {
             let dateText = String(dateAndRead[..<readRange.lowerBound]).trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
-            let readText = String(dateAndRead[readRange.upperBound...]).trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
+            var readText = String(dateAndRead[readRange.upperBound...])
+            if let idRange = readText.range(of: " | Id: ") {
+                readText = String(readText[..<idRange.lowerBound])
+            }
+            readText = readText.trimmingCharacters(in: .whitespacesAndNewlines)
 
             return MailAutomationMessageSummary(
                 subject: subject.isEmpty ? "(no subject)" : subject,

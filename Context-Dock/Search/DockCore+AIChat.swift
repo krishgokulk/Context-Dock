@@ -3394,7 +3394,8 @@ extension DockCore {
                     )
                 }
                 var appleData = canUseAppleAppsContext
-                    ? await self.appleAppsAndWeatherContext(for: query)
+                    ? await self.appleAppsAndWeatherContext(
+                        for: query, scopeBundleId: scopedBundleId)
                     : ""
                 // The dictionary rung (P13 #208) for the app this chat is scoped to: a cold
                 // cache is awaited so the first question is not answered from an empty
@@ -4109,8 +4110,11 @@ extension DockCore {
     /// Combined Apple-apps data + live weather for a query, ready to append to any chat
     /// system prompt. Used by both General Chat and Context Dock chat so both answer with
     /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
-    func appleAppsAndWeatherContext(for query: String) async -> String {
-        await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+    func appleAppsAndWeatherContext(for query: String, scopeBundleId: String? = nil) async
+        -> String
+    {
+        await AppleLiveDataContext.appleAppsAndWeatherContext(
+            for: query, scopeBundleId: scopeBundleId)
     }
 
     /// Reads the app back after an action and reports what actually moved.
@@ -6330,7 +6334,8 @@ extension DockCore {
             scopedBundleId: scoped.bundleId,
             scopedAppName: scoped.appName
         ) {
-            let appleData = await appleAppsAndWeatherContext(for: query)
+            let appleData = await appleAppsAndWeatherContext(
+                for: query, scopeBundleId: scoped.bundleId)
             if !appleData.isEmpty {
                 systemPrompt += "\n\n" + appleData
             }

@@ -184,11 +184,24 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
   fails the way every other Mail sentence already does (the existing provider error message).
   There is no offline fallback to the old snapshot. Accepted: the owner's plan retires every
   pre-model shortcut on these terms.
-- Tool-less providers get inbox headers pre-fetched only when
-  `AppleLiveDataContext.wantsMailContext(query)` is true. Sentences 2 and 9 contain none of its
-  words; a tool-less provider answers them from the source-authority rule alone and may say it
-  cannot search. Accepted and listed as a hand-check item; not widened here.
-- `mail.search` matches `query` against sender **or** subject, which fixes the subject-only defect.
+- **Follow-up after the owner's hand check (2026-11-10).** On a provider with no tool protocol
+  (`nativeTools=false`) the first build answered "a full Mail search wasn't readable": the model
+  could not call `search_mail` and the prefetch held only the 12 newest headers. Four fixes:
+  1. `AppleLiveDataContext.mailSearchIntent(for:)` reads a sender (after "from") or a term (from a
+     look-up sentence, or after "about") and an optional day. `appleAppsContextBlock` runs that
+     search before the model (`MailAutomation.mailboxSnapshot`, limit 15, off the main thread,
+     only when Mail access is enabled) and injects `## Mail — search matches for "<term>"` with
+     the headers fenced as untrusted, or a plain "no messages match" line. With no term, or an
+     unreadable mailbox, the recent inbox is injected as before. In Mail's own chat the sentence
+     need not contain the word "mail" (`scopeBundleId`).
+  2. `MailAutomation.mailboxSnapshot(anyContains:)`: a bare `query` is matched against sender
+     **or** subject (it was subject only, in `search_mail` and in `mail.search`). Result lines end
+     with ` | Id: <n>` so `mail.read` can open a match; `parseSnapshot` ignores the suffix.
+  3. `AppleLiveDataContext.mailSearchFilters`: the scoped route puts the user's whole sentence in
+     the `query` input, which was searched for verbatim. A sentence is now read as one.
+  4. `ChatRouteResolver.termsMatch` ignores glue words (now including "from"): "any mails from
+     uel?" matched Mail's read-newest-message route on "from" alone.
+  Tests: `MailSearchGroundingTests`.
 
 ---
 

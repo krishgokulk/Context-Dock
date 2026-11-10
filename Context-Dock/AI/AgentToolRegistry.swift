@@ -2673,18 +2673,18 @@ final class AgentToolRegistry {
             required: []
         ) { arguments, _ in
             let query = arguments["query"] as? String ?? ""
-            var sender = arguments["sender"] as? String ?? ""
-            var subject = arguments["subject"] as? String ?? ""
             let unreadOnly = arguments["unread_only"] as? Bool ?? false
             let limit = arguments["limit"] as? Int ?? 20
-            if !query.isEmpty && sender.isEmpty && subject.isEmpty {
-                subject = query
-            }
+            let filters = await AppleLiveDataContext.mailSearchFilters(
+                query: query, sender: arguments["sender"] as? String ?? "",
+                subject: arguments["subject"] as? String ?? "", day: "")
+            let sender = filters.sender
             let output = await withCheckedContinuation { cont in
                 DispatchQueue.global(qos: .userInitiated).async {
                     cont.resume(returning: MailAutomation.mailboxSnapshot(
-                        senderContains: sender, subjectContains: subject,
-                        unreadOnly: unreadOnly, relativeDay: "", limit: limit))
+                        senderContains: filters.sender, subjectContains: filters.subject,
+                        anyContains: filters.any,
+                        unreadOnly: unreadOnly, relativeDay: filters.day, limit: limit))
                 }
             }
             return AgentToolResult(success: true, output: output, displayCommand: "search_mail(\(query.isEmpty ? sender : query))")
