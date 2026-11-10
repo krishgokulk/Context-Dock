@@ -218,31 +218,45 @@ struct CornerGeneralChatView: View {
                     board
                         .frame(width: size.width, height: boardHeight)
                     Spacer(minLength: 0)
-                    Divider().opacity(0.12)
-                        .padding(.horizontal, 14)
                     composer
                         .frame(width: size.width, height: composerHeight)
-                        .padding(.bottom, 2)
+                        .padding(.bottom, 6)
                 }
                 .frame(width: size.width, height: size.height)
-                .background(GlassBackground(cornerRadius: 24, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .background(GlassBackground(cornerRadius: 26, isDark: nil))
+                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(.white.opacity(0.16), lineWidth: 1))
-                .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.24), .white.opacity(0.06)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
                 .transition(.opacity)
             } else {
                 let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
                     ? composerHeight / 2 : 22
                 composer
                     .frame(width: size.width, height: composerHeight)
-                    .background(GlassBackground(cornerRadius: radius, isDark: true))
+                    .background(GlassBackground(cornerRadius: radius, isDark: nil))
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [.white.opacity(0.24), .white.opacity(0.06)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .bottom)
@@ -276,7 +290,7 @@ struct CornerGeneralChatView: View {
                 Divider().opacity(0.18)
                 HStack(spacing: 0) {
                     transcript
-                        .frame(width: size.width - CornerLivePanelLayout.panelWidth(card: size.width))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if showsLivePanel {
                         let pet = activePetInfo
                         CornerLivePanel(
@@ -636,11 +650,16 @@ struct CornerGeneralChatView: View {
                             .id("live-progress")
                     }
                 }
-                .padding(15)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
             }
+            .defaultScrollAnchor(.bottom)
+            .scrollIndicators(.never)
             .onChange(of: model.messages.count) { _, _ in
                 guard let last = model.messages.last else { return }
-                proxy.scrollTo(last.id, anchor: .bottom)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
             }
         }
     }

@@ -1959,6 +1959,7 @@ struct AIChatMessageView: View {
             // compact success bubble appeared centred.
             if message.role != .user { Spacer(minLength: 52) }
         }
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
