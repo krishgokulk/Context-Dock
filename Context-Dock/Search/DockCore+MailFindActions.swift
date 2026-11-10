@@ -57,24 +57,6 @@ extension DockCore {
         let pressReturnAfterInject: Bool
     }
 
-    func mailSearchDisplayLabel(
-        query: String,
-        tokenKind: MailSearchTokenKind
-    ) -> String {
-        switch tokenKind {
-        case .date:
-            return query
-        case .sender:
-            return "from \(query)"
-        case .subject:
-            return "subject \(query)"
-        case .attachment:
-            return "attachment \(query)"
-        case .generic:
-            return query
-        }
-    }
-
     func weekdayNameCandidate(for normalizedQuery: String) -> String? {
         let weekdays = [
             "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -224,26 +206,6 @@ extension DockCore {
     func isQuestionStyleMailQuery(_ rawScopedQuery: String) -> Bool {
         MailQuestionRouter.isQuestionShaped(rawScopedQuery)
     }
-
-    /// Whether Mail's Mailbox Search shortcut takes this turn before the model (issue #195).
-    /// Only when the sentence IS the search command and its value — "search mail from SBI".
-    /// "check my recent mail from … and do what it says" or "find mail from SBI today" is a
-    /// request: the model takes it, with `mail.search` and `mail.read`.
-    func shouldExecuteMailMailboxSearch(for rawScopedQuery: String) -> MailSearchIntent? {
-        guard let command = MailboxSearchCommand.claims(rawScopedQuery) else { return nil }
-        let tokenKind: MailSearchTokenKind
-        switch command.field {
-        case .any: tokenKind = .generic
-        case .sender: tokenKind = .sender
-        case .subject: tokenKind = .subject
-        case .attachment: tokenKind = .attachment
-        }
-        return MailSearchIntent(
-            query: command.term,
-            tokenKind: tokenKind,
-            displayLabel: mailSearchDisplayLabel(query: command.term, tokenKind: tokenKind))
-    }
-
 
     func applicationURL(bundleIdentifier: String, appName: String) -> URL? {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {

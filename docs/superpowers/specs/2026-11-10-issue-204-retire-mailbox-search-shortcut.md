@@ -1,7 +1,7 @@
 # Specification: Issue #204 (P10 / E12) — Retire the Mailbox Search Pre-Model Shortcut (`DockShortcut.mailboxSearch`)
 
 - **Issue:** [#204](https://github.com/krishgokulk/Context-Dock/issues/204)
-- **Status:** Draft — awaiting Goldfish review and owner sign-off
+- **Status:** Goldfish-reviewed (round 1 findings folded in) — awaiting owner sign-off
 - **Plan reference:** `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` §2a (lanes), §2b (Mail example), §10 (P10 / E12: one shortcut per PR, phrasebook tests first)
 - **Precedent:** `docs/superpowers/specs/2026-11-08-issue-204-retire-mail-question-shortcut.md` (shortcut 3, PR #403)
 - **Branch:** `claude/issue-204-retire-mailbox-search-f9190a`, base `general-chat-agent`
@@ -33,7 +33,7 @@ if dockScope.scopedBundleId == "com.apple.mail",
   parser: a search verb (`search`, `search for`, `find`, `look for`, `look up`, `lookup`), optional
   scope words, one optional field word, then a value of at most 4 words with no date, qualifier or
   second clause. It has no other caller.
-- `executeMailMailboxSearch(intent:userMessage:)` (`DockCore+MailFindActions.swift:530–573`) calls
+- `executeMailMailboxSearch(intent:userMessage:)` (`DockCore+MailFindActions.swift:530–580`) calls
   `MailAutomation.mailboxSnapshot(senderContains:subjectContains:)` headlessly and appends the raw
   snapshot text as the assistant message. Its own comment records the defect: a search with field
   "any" or "attachment" is matched against the **subject only**.
@@ -60,7 +60,11 @@ ladder that every other Mail sentence already uses: `ScopedRoutePolicy.decide` �
   for …" suggestion pill is an explicit click, not a pre-model claim of a typed sentence.
 - `isQuestionStyleMailQuery` and `shouldSkipCrossAppMailRouting` (`DockCore+AIChat.swift:2582–2584`) stay.
 - The `App Find` shortcut that runs earlier in `handleL2Query` (`DockCore+AIChat.swift:2519–2530`) is
-  untouched; it already ran before Mailbox Search, so what it claims does not change.
+  untouched and is its own retirement PR under #204. It already ran before Mailbox Search. When
+  `findIntentMustBeExplicit` is false (the first sentence of a Mail chat that is not yet active, no
+  linked CLI, not question-shaped) it claims find/search/look-for sentences with a UI search in
+  Mail, exactly as it does today. **The contract in §3 therefore holds for turns App Find does not
+  claim — in practice an already-active Mail chat (`wasContextDockChatActive == true`).**
 - No change to `mail.search` itself, to `AppAdapterCapabilityCatalog.mailCandidate`, or to any
   write / outbound path.
 - PR #404 (Messages shortcut, same issue) is open against the same base and edits neighbouring
@@ -112,8 +116,13 @@ For every one of them, in Mail scope (`com.apple.mail`):
 1. **No pre-model claim.** `handleL2Query` has no Mail-specific branch that answers before the
    model. `DockShortcut` has no `mailboxSearch` case; the trace line "Shortcut: Mailbox Search — …"
    can no longer appear.
-2. **Cross-app parser does not claim it.** `CrossAppNLHandler.shared.parse(sentence.lowercased())`
-   is `nil` (it is the next branch in `handleL2Query`).
+2. **Cross-app parser does not claim it.** The next branch in `handleL2Query` calls
+   `CrossAppNLHandler.shared.parse(normalizedQuery)` when `!shouldStayInScopedAIChat`. Its
+   `searchAppQuery` reads "search mail …" / "find mail …" as `.searchInApp` with target `mail`
+   (rows 1, 3, 4, 10) — a UI search of Mail's window, which the retired block used to pre-empt.
+   New rule (§3.1a): an intent that searches the app the chat is already scoped to is not
+   cross-app and is skipped. For every row, `parse(sentence.lowercased())` is either `nil` or an
+   intent for which `searchesScopedApp(intent, scopedBundleId: "com.apple.mail")` is true.
 3. **Route policy.** `ScopedRoutePolicy.decide(query:scopedApp: "Mail", namedApp: nil, candidates: [mail.search])`
    returns `.model` or `.none`, never `.exactCommand` or `.crossAppOffer`, and `offer == nil`.
    The phrasebook pins the exact class per row (§5.1).
@@ -140,6 +149,33 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
 - Guard cases that must stay as they are: `look for the sidebar` (UI lane → not a record read);
   `look for mail from SBI and reply to it` (explicit action word `reply ` → not a record read).
 
+### 3.1a The second rule change: a search of the scoped app is not cross-app
+
+- Add `CrossAppNLHandler.searchesScopedApp(_ intent: CrossAppIntent, scopedBundleId: String) -> Bool`:
+  true only when `intent.action == .searchInApp`, `intent.targetAppName` (lower-cased) is a key of
+  the handler's existing `appAliases`, and that alias's bundle id equals `scopedBundleId`
+  case-insensitively. A nil target, an unknown alias or an empty `scopedBundleId` gives false.
+- In `handleL2Query`, the cross-app branch claims the turn only when
+  `dockScope.isGlobalScope || isGlobalContextActive || !searchesScopedApp(intent, scopedBundleId: scopedBundleId)`.
+  `scopedBundleId` is the function's merged scope (the locked chat scope when a chat is active,
+  otherwise the resolved one).
+- **When the rule is reachable.** The cross-app branch runs only when `shouldStayInScopedAIChat`
+  is false, i.e. the chat is not yet active (or Global Context is active). So the rule changes
+  exactly one situation: the **first** sentence of an app-scoped chat, not typed from Global
+  Context, that App Find did not claim (question-shaped, or a linked CLI exists, so
+  `findIntentMustBeExplicit` is true and the sentence is not an explicit App Find command).
+  Before this PR the Mailbox Search block answered that turn in Mail; without this rule the
+  cross-app parser would take it and run a UI search. In an already-active chat neither branch
+  runs and the sentence reaches the model directly.
+- **Global Context is unchanged.** `resolveDockScope` resolves an explicit target there, so
+  "search notes tax return" typed in Global Context has `scopedBundleId == com.apple.Notes`; the
+  `isGlobalScope || isGlobalContextActive` guard keeps it a cross-app search, as today.
+- Scope-neutral in app chats by design (behaviour follows intent and lane, not scope): the first
+  sentence "search notes groceries" in Notes' own chat goes to the model as a record read. A
+  search of a *different* app and every non-search cross-app intent are unchanged.
+- The pure predicate is unit-tested; the scope guard in `handleL2Query` needs a live `DockCore`
+  and is covered by the hand check (§5.4), not by an offline test.
+
 ### 3.2 What the user sees (accepted changes)
 
 - The answer is written by the model from `mail.search` results instead of the raw snapshot text,
@@ -159,7 +195,8 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
 ## 4. Files to change
 
 1. `Context-Dock/Search/DockCore+AIChat.swift` — delete the `if dockScope.scopedBundleId == "com.apple.mail", let intent = shouldExecuteMailMailboxSearch(…) { … }` block (2568–2578). Nothing else in the function changes.
-2. `Context-Dock/Search/DockCore+MailFindActions.swift` — delete `shouldExecuteMailMailboxSearch(for:)` and its doc comment. Keep every other helper; `mailSearchDisplayLabel` is deleted only if the build shows it has no remaining caller.
+2. `Context-Dock/Search/DockCore+MailFindActions.swift` — delete `shouldExecuteMailMailboxSearch(for:)` and its doc comment, and `mailSearchDisplayLabel(query:tokenKind:)`, whose only caller it was. Keep every other helper.
+2a. `Context-Dock/Automation/CrossAppNLHandler.swift` and the cross-app branch of `handleL2Query` — §3.1a.
 3. `Context-Dock/AI/MailboxSearchCommand.swift` — delete the file (Xcode uses file-system-synchronized groups; if the build reports a stale reference, remove it from `project.pbxproj`).
 4. `Context-Dock/Search/DockShortcut.swift` — remove `case mailboxSearch` from the enum, `displayName` and `matchedRule`; reword the "Shortcut: Mailbox Search" example in comments.
 5. `Context-Dock/AI/FrontmostAppTaskPlan.swift` — §3.1.
@@ -175,28 +212,35 @@ All tests are pure and offline (no Mail, no provider, no network).
 
 ### 5.1 Phrasebook rows (`RoutingPhrasebookTests.phrasebook`, surface `.mailChat`, `found: [mail.search "Search Mail"]`)
 
-Sentences 1, 2, 4, 5, 7, 10. Expected class: `.model`. If the unchanged `asksOnly` classifies a
-row as read-only, that row's expected class is `.none` and the spec is updated to say which; a
-row may never be `.exactCommand`.
+Sentences 1, 2, 4, 5, 7, 10. Expected class for each: `.model` (verified: the unchanged
+`asksOnly` is false for all six, and none equals the title "Search Mail").
 
 ### 5.2 `MailboxSearchShortcutRetirementTests`
 
 1. `searchCommandsAreFreshLiveStateReads` — §3 item 4 for all 10 sentences.
 2. `searchCommandsPlanAsDataLaneReads` — §3 item 5 for all 10 sentences.
-3. `crossAppRoutingDoesNotClaimSearchCommands` — §3 item 2 for all 10 sentences.
+3. `crossAppRoutingDoesNotClaimSearchCommands` — §3 item 2 for all 10 sentences; and `parse("search notes tax return")` is non-nil, is not a scoped search for `com.apple.mail`, and is one for `com.apple.Notes`.
 4. `lookUpVerbsAreRecordReads` — `ScopedRecordRead.matches` is true for `look for emails from SBI` (Mail) and `look up notes about tax` (`com.apple.Notes`); false for `look for the sidebar` and `look for mail from SBI and reply to it` (Mail).
 5. `mailboxSearchShortcutIsRetiredFromDockShortcut` — no `DockShortcut` raw value equals `mailboxSearch`.
 
 ### 5.3 Gates
 
-1. `grep -rn "MailboxSearchCommand\|shouldExecuteMailMailboxSearch\|\.mailboxSearch\b" Context-Dock Context-DockTests` returns no match (`mailboxSearchPath` in `MailAutomation.swift` is a different symbol and stays).
+1. `grep -rn "MailboxSearchCommand\|shouldExecuteMailMailboxSearch\|mailSearchDisplayLabel\|\.mailboxSearch\b" Context-Dock Context-DockTests` returns no match (`mailboxSearchPath` in `MailAutomation.swift` is a different symbol and stays).
 2. `./scripts/check.sh --full` passes; the suites `RoutingPhrasebookTests`, `MailboxSearchShortcutRetirementTests`, `MailQuestionShortcutRetirementTests`, `DockShortcutTests` are confirmed by name in the result bundle.
 3. No existing test changes its expectation except the removals in §4 items 6–7.
 
 ### 5.4 Owner hand check (live model; not automatable)
 
-In the Mail App Pet, in both the bottom dock and the centred launcher: `search mail from SBI`,
-`search for invoice`, `look for emails from SBI`. Expect: a `mail.search` tool step, a written
+In the Mail App Pet, in both the bottom dock and the centred launcher:
+
+1. Active chat (send "hi" first): `search mail from SBI`, `search for invoice`,
+   `look for emails from SBI`.
+2. Fresh chat, first sentence (§3.1a): `can you search mail from SBI?` is a question and goes to
+   the model. A bare first sentence `search mail from SBI` may still be claimed by App Find
+   (§1.3) — note what happens; it is the next PR, not a failure of this one.
+3. Global Context: `search notes tax return` still offers the cross-app search of Notes.
+
+Expect: a `mail.search` tool step, a written
 answer listing matching messages, Mail not raised, no "Shortcut: Mailbox Search" line. The
 "Search Mail for …" pill still works when clicked.
 

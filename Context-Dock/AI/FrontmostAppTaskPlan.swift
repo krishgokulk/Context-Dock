@@ -19,6 +19,10 @@ enum ScopedRecordRead {
         "click ", "press ",
     ]
 
+    /// Verbs that ask for a look-up. "look for"/"look up" were only understood by Mail's retired
+    /// Mailbox Search shortcut (issue #204); they are the same read in every record-set app.
+    static let lookupVerbs = ["find ", "search ", "list ", "look for ", "look up ", "lookup "]
+
     static func hasExplicitAction(_ query: String) -> Bool {
         let lower = query.lowercased()
         return actionWords.contains(where: lower.contains)
@@ -28,7 +32,7 @@ enum ScopedRecordRead {
         let lower = query.lowercased()
         return ReadOnlyDataDomain(scopeBundleId: bundleId) != nil
             && RequestLane.decide(query) == .data
-            && ["find ", "search ", "list "].contains(where: lower.contains)
+            && lookupVerbs.contains(where: lower.contains)
             && !hasExplicitAction(query)
     }
 }
@@ -148,7 +152,7 @@ struct FrontmostAppTaskPlan: Equatable {
         let hasAction = !asksOnly
             && (actionWords.contains(where: lower.contains)
                 || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery)))
-        let hasRead = readWords.contains(where: lower.contains)
+        let hasRead = readsScopeRecords || readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 
         let isBrowser = ScopedAppPromptBuilder.isBrowserBundle(bundleId)

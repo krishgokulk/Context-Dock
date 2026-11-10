@@ -669,6 +669,17 @@ final class CrossAppNLHandler {
         return (String(q[qRange]), String(q[aRange]))
     }
 
+    /// Whether the intent is a search of the app the chat is already scoped to. That is not
+    /// cross-app: "search mail from SBI" typed in Mail's chat is a read of Mail's records, which
+    /// the model answers in the data lane (issue #204), not a UI search of Mail's window.
+    func searchesScopedApp(_ intent: CrossAppIntent, scopedBundleId: String) -> Bool {
+        guard intent.action == .searchInApp,
+            let target = intent.targetAppName?.lowercased(),
+            let bundleId = appAliases[target]
+        else { return false }
+        return bundleId.caseInsensitiveCompare(scopedBundleId) == .orderedSame
+    }
+
     /// Matches "search {knownApp} {query}" — e.g. "search mail from linkedin"
     /// The first token after "search"/"find" must be a known app alias.
     private func searchAppQuery(_ q: String) -> CrossAppIntent? {

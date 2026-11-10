@@ -2565,18 +2565,6 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.mail",
-            let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery)
-        {
-            // Only an exact search command ("search mail from SBI") is claimed here; any
-            // other sentence that mentions a sender goes to the model, which has
-            // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
-            // this same function. It runs headless (mail.search); Mail's window is not touched.
-            dockShortcutStep(.mailboxSearch)
-            executeMailMailboxSearch(intent: intent, userMessage: query)
-            return
-        }
-
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
         let shouldSkipCrossAppMailRouting =
@@ -2585,7 +2573,13 @@ extension DockCore {
 
         if !shouldStayInScopedAIChat,
             !shouldSkipCrossAppMailRouting,
-            let intent = CrossAppNLHandler.shared.parse(normalizedQuery)
+            let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
+            // In an app's own chat, "search mail from SBI" is a read of that app's records for
+            // the model (issue #204), not a cross-app UI search. From Global Context the same
+            // sentence names its target app and stays cross-app.
+            dockScope.isGlobalScope || isGlobalContextActive
+                || !CrossAppNLHandler.shared.searchesScopedApp(
+                    intent, scopedBundleId: scopedBundleId)
         {
             dockShortcutStep(.crossApp)
             executeCrossAppIntent(intent, userMessage: query)
