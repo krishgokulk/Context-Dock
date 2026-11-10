@@ -123,10 +123,18 @@ enum AppKnowledgeSkill {
 
         body += """
 
+            Updates, new features, and in-window UI actions:
+            - When the user asks to check for updates, report what's new, or restart to update \(appName):
+              1. Check available version notes or changelog commands (e.g. CLI changelog or version queries for linked CLIs).
+              2. Inspect the active window (`ax_snapshot`) for in-window update banners, notifications, or buttons (such as "Restart to Update", "Update Available", "Check for Updates", "Download Update"). Modern desktop and web/Electron apps frequently present updates directly within their window surface rather than in the macOS top menu bar.
+              3. If an update action or button is visible in the window, offer or trigger it via UI action (`ax_act`) rather than assuming no update exists.
+              4. Summarize new features or changes clearly and concisely.
+
             Answer about \(appName) from this and from what the user asked. Do not open
-            menus to find something out; menus are for carrying out an action the user
-            asked for. If the answer needs something not listed above, say what is missing
-            rather than guessing.
+            menus merely to browse or find something out; menus and UI controls are for carrying
+            out an action the user asked for. If the answer needs something not listed above
+            and not discoverable via window inspection or CLI, say what is missing rather
+            than guessing.
             """
 
         return AdapterSkill(
