@@ -27,7 +27,10 @@ struct AppChatSuggestion: Identifiable, Equatable {
     let icon: String
     let title: String
     let kind: Kind
-    var id: String { "\(title)-\(icon)" }
+    /// A proactive Pet suggestion (#343) says why it surfaced and can be dismissed or muted.
+    var detail: String? = nil
+    var proactiveID: UUID? = nil
+    var id: String { proactiveID?.uuidString ?? "\(title)-\(icon)" }
 }
 
 /// What is actually behind the selection — `AppChatSelectionScope` is only ever a count
@@ -405,6 +408,9 @@ final class AppChatPromptModel: ObservableObject {
     }
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
+    private var proactiveObservation: AnyCancellable?
+    /// The app's own suggestions, kept apart from the Pet's proactive ones laid over them.
+    private var appSuggestions: [AppChatSuggestion] = []
     private var messagesObservation: AnyCancellable?
     private var selectionObservation: AnyCancellable?
     private var globalResultsObservation: AnyCancellable?
@@ -468,6 +474,14 @@ final class AppChatPromptModel: ObservableObject {
         conversationObservation = source.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        // A briefing arrives a moment after its app does, and a dismissal on the detached Pet
+        // must clear the strip too: one suggestion state, every view.
+        proactiveObservation = AppPetSuggestionCoordinator.shared.$activeSuggestions
+            .dropFirst()
+            .sink { [weak self] active in
+                guard let self else { return }
+                self.showSuggestions(self.appSuggestions, proactive: active)
+            }
         // The dock switches the conversation one hop after the corner asks it to, so a
         // scope change reads the *outgoing* app's messages, goes to .chat, and is then
         // left holding a full-height card with nothing in it. Watch the messages
@@ -602,14 +616,7 @@ final class AppChatPromptModel: ObservableObject {
         }
         appName = name
         appBundleID = bundleID
-        var combinedSuggestions = suggestions
-        if let petID = AppPetID(dockBundleID: bundleID) {
-            let proactive = AppPetSuggestionCoordinator.shared.activeSuggestions
-                .filter { $0.petID == petID }
-                .map { AppChatSuggestion(icon: "sparkles", title: $0.title, kind: .action) }
-            combinedSuggestions = proactive + combinedSuggestions
-        }
-        self.suggestions = combinedSuggestions
+        showSuggestions(suggestions)
         capabilitySummary = summary
         if leavingChat {
             set(restingInputPhase)
@@ -1053,6 +1060,25 @@ final class AppChatPromptModel: ObservableObject {
     /// Follow the live frontmost-app scope while this corner entry point is visible. The
     /// shared dock handler switches the actual conversation before this chooses which
     /// presentation to show, so the corner never owns a parallel per-app history.
+    /// The app's suggestions with this Pet's proactive ones (#343) on top.
+    private func showSuggestions(
+        _ base: [AppChatSuggestion], proactive active: [AppPetSuggestion]? = nil
+    ) {
+        appSuggestions = base
+        guard let petID = AppPetID(dockBundleID: appBundleID) else {
+            suggestions = base
+            return
+        }
+        let proactive = (active ?? AppPetSuggestionCoordinator.shared.activeSuggestions)
+            .filter { $0.petID == petID }
+            .map {
+                AppChatSuggestion(
+                    icon: "sparkles", title: $0.title, kind: .action,
+                    detail: $0.provenance.trigger.summary, proactiveID: $0.id)
+            }
+        suggestions = proactive + base
+    }
+
     func frontmostAppDidChange(
         app name: String,
         bundleID: String,
@@ -1074,14 +1100,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         appName = name
         appBundleID = bundleID
-        var combinedSuggestions = suggestions
-        if let petID = AppPetID(dockBundleID: bundleID) {
-            let proactive = AppPetSuggestionCoordinator.shared.activeSuggestions
-                .filter { $0.petID == petID }
-                .map { AppChatSuggestion(icon: "sparkles", title: $0.title, kind: .action) }
-            combinedSuggestions = proactive + combinedSuggestions
-        }
-        self.suggestions = combinedSuggestions
+        showSuggestions(suggestions)
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
         applySelection(from: selectionReader.current, scopedTo: bundleID)
