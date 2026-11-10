@@ -62,6 +62,10 @@ enum AppleLiveDataContext {
         "mails", "unread", "new", "sender", "subject", "up", "there", "have", "has", "got",
         "get", "sent", "received", "attachment", "attachments", "titled", "regarding",
         "morning", "afternoon", "evening", "tonight", "ago", "since", "before", "after",
+        "earlier", "anything", "something", "how", "many", "much",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "january", "february", "march", "april", "may", "june", "july", "august",
+        "september", "october", "november", "december",
     ]
 
     /// The search a Mail sentence names, or nil when it names none (the recent inbox is the
@@ -77,23 +81,30 @@ enum AppleLiveDataContext {
         guard !ScopedRecordRead.hasExplicitAction(query) else { return nil }
         let lower = query.lowercased()
         let day = lower.contains("today") ? "today" : lower.contains("yesterday") ? "yesterday" : ""
-        func term(_ text: String) -> String? {
+        func term(_ text: String, maxWords: Int) -> String? {
             let words = DataSubject.subject(in: text).split(separator: " ").map(String.init)
                 .filter { !notAMailTerm.contains($0) }
-            // More than a few words is a description, not something a mailbox contains.
-            return words.isEmpty || words.count > 4 ? nil : words.joined(separator: " ")
+            // The words are searched as one phrase, so more than a few is a description that
+            // no header contains word for word.
+            return words.isEmpty || words.count > maxWords ? nil : words.joined(separator: " ")
         }
         if let from = lower.range(of: #"\bfrom\s+"#, options: .regularExpression) {
             var tail = String(lower[from.upperBound...])
+            // An address is the sender as written; splitting it on punctuation loses it.
+            if let first = tail.split(separator: " ").first, first.contains("@") {
+                let address = first.trimmingCharacters(in: CharacterSet(charactersIn: "?.!,;:<>\"'"))
+                return MailSearchIntent(sender: address, term: "", day: day)
+            }
             for stop in [" and ", " then ", " about ", " regarding ", " with ", " that ", " who ", " whose "] {
                 if let cut = tail.range(of: stop) { tail = String(tail[..<cut.lowerBound]) }
             }
-            return term(tail).map { MailSearchIntent(sender: $0, term: "", day: day) }
+            return term(tail, maxWords: 4).map { MailSearchIntent(sender: $0, term: "", day: day) }
         }
-        let isLookUp = ScopedRecordRead.lookupVerbs.contains(where: (lower + " ").contains)
-            || lower.contains(" about ") || lower.contains(" regarding ")
+        let isLookUp = lower.range(
+            of: #"\b(search|find|list|look for|look up|lookup)\b|\b(about|regarding)\s"#,
+            options: .regularExpression) != nil
         guard isLookUp else { return nil }
-        return term(lower).map { MailSearchIntent(sender: "", term: $0, day: day) }
+        return term(lower, maxWords: 2).map { MailSearchIntent(sender: "", term: $0, day: day) }
     }
 
     /// The filters for a `mail.search` / `search_mail` call. The `query` input is not always a
@@ -122,13 +133,16 @@ enum AppleLiveDataContext {
         if body.isEmpty || body == "Mail context could not be read." { return nil }
         if body == "No matching messages found." {
             return "## Mail — no messages match \"\(label)\" in the \(mailbox) mailbox. The search "
-                + "ran (sender and subject were checked); say that nothing matched there, not "
-                + "that the search could not be run."
+                + "ran (sender and subject were checked for exactly that text); say that nothing "
+                + "matched \"\(label)\" there, not that the search could not be run. If "
+                + "\"\(label)\" is not what the user meant, answer from the rest of this data."
         }
         return "## Mail — search matches for \"\(label)\" (\(mailbox) mailbox, already searched):\n"
             + UntrustedContent.fenced(body, from: "Mail message headers")
-            + "\nThese are the search results; answer from them. Only headers are listed. To "
-            + "read a message's text, call mail.read with an Id from this list."
+            + "\nThese are the search results; answer from them. Only headers are listed."
+            // mail.read resolves an id in the inbox only.
+            + (mailbox.lowercased().contains("inbox")
+                ? " To read a message's text, call mail.read with an Id from this list." : "")
     }
 
     /// - Parameter scopeBundleId: the app the chat is scoped to. In Mail's own chat a search
@@ -243,7 +257,10 @@ enum AppleLiveDataContext {
         let mailIntent = mailSearchIntent(for: query)
         let wantsMail = wantsMailContext(q)
             || (scopeBundleId?.lowercased() == "com.apple.mail" && mailIntent != nil)
-        if wantsMail, AppSettings.shared.mailMCPEnabled, let intent = mailIntent {
+        // Only when Mail is already running: a read never launches an app.
+        if wantsMail, AppSettings.shared.mailMCPEnabled,
+            AppleAppsAPI.isRunning("com.apple.mail"), let intent = mailIntent
+        {
             let summary = await Task.detached(priority: .userInitiated) {
                 MailAutomation.mailboxSnapshot(
                     senderContains: intent.sender, anyContains: intent.term,

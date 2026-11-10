@@ -353,7 +353,9 @@ enum ChatRouteResolver {
     /// must be words the user said — short commands ("Open", "New Folder") still match
     /// on one or two, while a four-word command needs real overlap.
     nonisolated static func commandStronglyMatches(_ command: String, terms: Set<String>) -> Bool {
-        let glue = glueWords
+        // "from" stays a counted word here: dropping it would let one shared word drive
+        // "Remove from Sidebar" or "Import from File".
+        let glue = glueWords.subtracting(["from"])
         let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
             .filter { !glue.contains($0) }

@@ -19,6 +19,7 @@ struct MailSearchGroundingTests {
             ("did i get mail from SBI yesterday?", "sbi", "yesterday"),
             ("do i have any attachments from sarah?", "sarah", ""),
             ("check my recent mail from Gokula kannan J and do what it says", "gokula kannan", ""),
+            ("any mail from sarah@example.com?", "sarah@example.com", ""),
         ]
         for (sentence, sender, day) in cases {
             let intent = AppleLiveDataContext.mailSearchIntent(for: sentence)
@@ -50,6 +51,13 @@ struct MailSearchGroundingTests {
             "draft an email to alex about the invoice",
             "reply to the mail from sarah",
             "search mail from a sender whose name i forget but who wrote last spring",
+            // "from" followed by a date is not a sender.
+            "any mail from monday", "mail from january", "mail from earlier",
+            // A long or vague term matches no header word for word.
+            "find the email about the train tickets to paris",
+            "how about the mail i got",
+            // Look-up verbs are whole words.
+            "my research mail", "the playlist email",
         ] {
             #expect(AppleLiveDataContext.mailSearchIntent(for: sentence) == nil, "\"\(sentence)\"")
         }
@@ -97,6 +105,9 @@ struct MailSearchGroundingTests {
             "Read an email's full body (the latest one, or by id from mail.recent)", terms: terms))
         #expect(ChatRouteResolver.termsMatch(
             "Search Mail", terms: ChatRouteResolver.contentTerms(query: "search from uel", appName: "Mail")))
+        // A command that takes the screen still counts "from": one shared word is not enough.
+        #expect(!ChatRouteResolver.commandStronglyMatches(
+            "Remove from Sidebar", terms: ["remove", "the", "attachment"]))
     }
 
     @Test func theMailFilterMatchesEitherFieldForABareTerm() {

@@ -527,14 +527,16 @@ extension DockCore {
                 finish("Mail access is disabled in Settings.", ok: false, isError: true)
                 return
             }
-            // ponytail: mailboxSnapshot filters only sender and subject; "any" and
-            // attachment searches match the subject until the adapter grows those fields.
-            let bySender = intent.tokenKind == .sender
+            // A sender or subject token searches that field; anything else is tried against
+            // both. The message ids at the end of each line are for the model, not the reader.
+            let kind = intent.tokenKind
             let summary = await Task.detached(priority: .userInitiated) {
                 MailAutomation.mailboxSnapshot(
-                    senderContains: bySender ? searchQuery : "",
-                    subjectContains: bySender ? "" : searchQuery)
-            }.value
+                    senderContains: kind == .sender ? searchQuery : "",
+                    subjectContains: kind == .subject ? searchQuery : "",
+                    anyContains: kind == .sender || kind == .subject ? "" : searchQuery)
+            }.value.replacingOccurrences(
+                of: #" \| Id: \d+"#, with: "", options: .regularExpression)
             searchState.query = ""
             l2.focusedPillIndex = nil
             finish(summary, ok: true)

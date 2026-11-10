@@ -191,8 +191,11 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
      look-up sentence, or after "about") and an optional day. `appleAppsContextBlock` runs that
      search before the model (`MailAutomation.mailboxSnapshot`, limit 15, off the main thread,
      only when Mail access is enabled) and injects `## Mail — search matches for "<term>"` with
-     the headers fenced as untrusted, or a plain "no messages match" line. With no term, or an
-     unreadable mailbox, the recent inbox is injected as before. In Mail's own chat the sentence
+     the headers fenced as untrusted, or a "no messages match" line. The recent inbox is
+     injected as before whenever there are no matches (no term, nothing matched, unreadable
+     mailbox). The search runs only when Mail is already running (a read never launches an app).
+     A free term is at most 2 words and a sender at most 4, searched as one phrase; weekday,
+     month and vague words are not terms. In Mail's own chat the sentence
      need not contain the word "mail" (`scopeBundleId`).
   2. `MailAutomation.mailboxSnapshot(anyContains:)`: a bare `query` is matched against sender
      **or** subject (it was subject only, in `search_mail` and in `mail.search`). Result lines end
@@ -200,7 +203,12 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
   3. `AppleLiveDataContext.mailSearchFilters`: the scoped route puts the user's whole sentence in
      the `query` input, which was searched for verbatim. A sentence is now read as one.
   4. `ChatRouteResolver.termsMatch` ignores glue words (now including "from"): "any mails from
-     uel?" matched Mail's read-newest-message route on "from" alone.
+     uel?" matched Mail's read-newest-message route on "from" alone. `commandStronglyMatches`
+     (commands that take the screen) still counts "from", as before.
+  5. The clickable "Search Mail for …" pill strips the ids from what it shows and searches both
+     fields for a generic term.
+  Not covered offline: the wiring inside `appleAppsContextBlock` (it scripts Mail); it was
+  checked live through the app's ask path.
   Tests: `MailSearchGroundingTests`.
 
 ---
