@@ -617,7 +617,6 @@ final class AppChatPromptModel: ObservableObject {
         appName = name
         appBundleID = bundleID
         showSuggestions(suggestions)
-        if outgoing != incoming { briefOnArrival() }
         capabilitySummary = summary
         if leavingChat {
             set(restingInputPhase)
@@ -1080,13 +1079,6 @@ final class AppChatPromptModel: ObservableObject {
         suggestions = proactive + base
     }
 
-    /// One read-only arrival check for the Pet whose app just came forward (#343).
-    private func briefOnArrival() {
-        let bundleID = appBundleID
-        let typing = !query.isEmpty
-        Task { await AppPetArrivalBriefing.shared.appCameForward(bundleID: bundleID, isUserTyping: typing) }
-    }
-
     func frontmostAppDidChange(
         app name: String,
         bundleID: String,
@@ -1109,7 +1101,6 @@ final class AppChatPromptModel: ObservableObject {
         appName = name
         appBundleID = bundleID
         showSuggestions(suggestions)
-        briefOnArrival()
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
         applySelection(from: selectionReader.current, scopedTo: bundleID)
