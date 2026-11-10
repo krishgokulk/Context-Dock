@@ -66,14 +66,18 @@ struct RichFileCardModel: Equatable {
 }
 
 struct RichFileCard: View {
-    let model: RichFileCardModel
-    let appIcon: NSImage?
+    let url: URL
     var onPreview: ((URL) -> Void)?
 
-    init(url: URL, onPreview: ((URL) -> Void)? = nil) {
-        self.model = .live(url: url)
-        self.appIcon = model.exists ? DefaultAppResolver.shared.getDefaultApp(for: url)?.icon : nil
-        self.onPreview = onPreview
+    /// Read once per file, not on every re-render of the transcript: the default-app
+    /// lookup and the disk read are too slow for a view initialiser.
+    @State private var loaded: RichFileCardModel?
+    @State private var appIcon: NSImage?
+
+    private var model: RichFileCardModel {
+        loaded ?? RichFileCardModel(
+            url: url, defaultAppName: nil, byteCount: nil, modified: nil,
+            homeDirectory: NSHomeDirectory(), exists: true)
     }
 
     var body: some View {
@@ -136,5 +140,10 @@ struct RichFileCard: View {
         .padding(.vertical, 7)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityElement(children: .contain)
+        .task(id: url) {
+            let live = RichFileCardModel.live(url: url)
+            loaded = live
+            appIcon = live.exists ? DefaultAppResolver.shared.getDefaultApp(for: url)?.icon : nil
+        }
     }
 }
