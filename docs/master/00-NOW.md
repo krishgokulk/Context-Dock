@@ -18,7 +18,6 @@
 
 ## Queued (next)
 
-- Issue #333: UI/UX queue 3/5 — Side Thread (branch a sub-conversation)
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#405** H0 general slot deriver → **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim. None `ready` until the owner labels it.
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
