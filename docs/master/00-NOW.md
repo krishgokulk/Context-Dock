@@ -10,11 +10,14 @@
 
 ## In progress
 
-None. (Awaiting owner selection for next task)
+- **Issue #343 wiring — draft PR #423** (`claude/app-pets-bounded-proactive-60b69f`): PR #366 merged
+  the policy core with no production caller. #423 wires it in: Finder arrival briefing (files added
+  to Downloads in 24 h), per-app switch in Settings › Apps › Finder › Agent, dismiss/mute on the
+  strip row and detached bubble. Owner hand check passed 2026-11-10; awaiting "merge 423".
+  Not built: tappable row, system notification surface, DND/in-call detection.
 
 ## Queued (next)
 
-- Issue #343: App Pets 6/6 — Bounded proactive Pet behavior
 - Issue #333: UI/UX queue 3/5 — Side Thread (branch a sub-conversation)
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
 - Labs (E9–E16 App Pets memory/orchestration)
