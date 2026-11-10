@@ -41,7 +41,7 @@ struct RichFileCardModel: Equatable {
     }
 
     var dateDisplay: String? {
-        modified.map { $0.formatted(.dateTime.year().month(.abbreviated).day().locale(Locale(identifier: "en_US_POSIX"))) }
+        modified.map { $0.formatted(.dateTime.year().month(.abbreviated).day()) }
     }
 
     /// "1.2 MB · ~/Documents · Nov 10, 2026"; a missing file says so instead.
