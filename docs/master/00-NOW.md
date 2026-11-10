@@ -10,11 +10,7 @@
 
 ## In progress
 
-- **Issue #343 wiring — draft PR #423** (`claude/app-pets-bounded-proactive-60b69f`): PR #366 merged
-  the policy core with no production caller. #423 wires it in: Finder arrival briefing (files added
-  to Downloads in 24 h), per-app switch in Settings › Apps › Finder › Agent, dismiss/mute on the
-  strip row and detached bubble. Owner hand check passed 2026-11-10; awaiting "merge 423".
-  Not built: tappable row, system notification surface, DND/in-call detection.
+None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
@@ -24,6 +20,21 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#423: Wire bounded proactive Pet behavior into the app (Finder arrival briefing):**
+- Completed on branch `claude/app-pets-bounded-proactive-60b69f` (PR #423, commit `1f8d9e6a`).
+- Added `AppPetArrivalBriefing`: reads newly added files in `~/Downloads` (last 24 hours) upon Finder arrival.
+- Added per-app switch under Settings › Apps › Finder › Agent (off by default).
+- Added `Mute for a day` (24h cooldown) and `Dismiss` actions on the prompt strip suggestion row and detached Pet bubble context menu.
+- Added daily headless monitoring scan budget (24 scans, 5s limit, backoff after 3 consecutive no-progress scans).
+- Added 7 deterministic unit tests in `AppPetArrivalBriefingTests` (3,326 total tests passing).
+- Verified live on macOS with visual screenshot in `docs/screenshots/issue-343-bounded-proactive/settings_window.png`.
+- Squash-merged into `general-chat-agent`.
+
+**#424: Clean up stale #333 queue entry:**
+- Completed on branch `claude/issue-333-ui-ux-queue-61d8f9` (PR #424, commit `4bfb517a`).
+- Closed stale queue entry in `00-NOW.md` for Issue #333 (Side Thread), which had landed in PR #376 (`3c29998c`).
+- Squash-merged into `general-chat-agent`.
 
 **#422: Provider / context usage chip (meter per turn):**
 - Completed on branch `claude/issue-335-context-chip` (PR #422, commit `287bc7a5`).
