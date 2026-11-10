@@ -213,7 +213,7 @@ enum AppChatPromptMetrics {
                 || AppSettings.shared.launcherPresentationMode == .centerScreen
                 || CornerDockController.shared.showsBoardUnderField)
                 ? DockShellWidth.current
-                : (model.fitsField && !model.showsTabBar ? nil : DockShellWidth.current),
+                : (model.fitsField && !model.showsTabBar && !model.showsLivePanel ? nil : DockShellWidth.current),
             fieldLines: model.fieldLines)
     }
 
@@ -640,6 +640,11 @@ struct AppChatPromptPill: View {
         return max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
     }
 
+    private var transcriptColumnWidth: CGFloat {
+        let full = DockShellWidth.current
+        return model.showsLivePanel ? (full - CornerLivePanelLayout.panelWidth(card: full)) : compactChatWidth
+    }
+
     private var drawnWidth: CGFloat {
         if splitsShell { return CornerDockController.shared.splitWidths.field }
         if model.phase == .chat && !model.showsLivePanel { return compactChatWidth }
@@ -907,7 +912,7 @@ struct AppChatPromptPill: View {
                 // either way, so the transcript keeps its scroll when the panel is toggled.
                 HStack(spacing: 0) {
                     transcript
-                        .frame(width: compactChatWidth)
+                        .frame(width: transcriptColumnWidth, alignment: .leading)
                     if model.showsLivePanel {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
@@ -975,9 +980,13 @@ struct AppChatPromptPill: View {
             // The composer's width changes once, not over frames: animating the width of the
             // row that holds the focused TextField is the per-frame re-layout that hung the app.
             .animation(nil, value: splitsChatComposer)
-            .padding(.horizontal, model.phase == .chat ? 12 : 0)
+            .padding(.horizontal, model.phase == .chat ? 10 : 0)
             .padding(.top, model.phase == .chat ? 6 : 0)
-            .padding(.bottom, model.phase == .chat ? 12 : 0)
+            .padding(.bottom, model.phase == .chat ? 10 : 0)
+            .frame(
+                maxWidth: (model.phase == .chat && model.showsLivePanel && !splitsChatComposer)
+                    ? transcriptColumnWidth : .infinity,
+                alignment: .leading)
         }
         // Fills what the body gives it: 372 points in the legacy shell, the field's
         // widened prompt width in Global.
@@ -1114,7 +1123,7 @@ struct AppChatPromptPill: View {
 
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
-            HStack(spacing: 3) {
+            HStack(spacing: 2) {
                 // Past conversations browser (#334).
                 Button {
                     model.openConversationsBoard()
@@ -1194,7 +1203,7 @@ struct AppChatPromptPill: View {
             }
             .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .frame(height: 48)
     }
 
@@ -1202,7 +1211,7 @@ struct AppChatPromptPill: View {
         Image(systemName: symbol)
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(tinted ? Color.accentColor : .secondary)
-            .frame(width: 24, height: 24)
+            .frame(width: 23, height: 23)
             .background(tinted ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle())
             .contentShape(Rectangle())
     }
@@ -1226,6 +1235,7 @@ struct AppChatPromptPill: View {
                 scopeChipWithExit
             } else {
                 appChip
+                    .layoutPriority(1)
             }
 
             ZStack(alignment: .leading) {
@@ -1670,8 +1680,8 @@ struct AppChatPromptPill: View {
             }
         }
         .padding(.leading, globalStrip.map {
-            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
-        .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
+            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? (model.phase == .chat ? 10 : 14))
+        .padding(.trailing, globalStrip == nil || splitsShell ? (model.phase == .chat ? 10 : 14) : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
@@ -1818,6 +1828,7 @@ struct AppChatPromptPill: View {
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             // The app's settings card lives in its chip (owner 2026-09-28, layout C). Open, the
             // gear turns into the arrow that puts it away (owner 2026-10-07). In a
             // conversation the ⌄ puts the chat sheet away — the header's toggle has the panel
