@@ -121,6 +121,7 @@ struct RoutingPhrasebookTests {
     private static let finderFind = menu("Finder", ["File", "Find"])
     private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
     private static let mailCreateDraft = capability("Mail", "mail.createDraft", "Create Mail Draft")
+    private static let mailSearch = capability("Mail", "mail.search", "Search Mail")
 
     // MARK: - The phrasebook
     //
@@ -312,6 +313,22 @@ struct RoutingPhrasebookTests {
                found: [mailCreateDraft], expected: .model),
         Phrase(surface: .mailChat, sentence: "draft an email to alex about the invoice",
                found: [mailCreateDraft], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Mailbox Search shortcut is retired. The search
+        // commands it claimed ("search mail from SBI") are requests with a value, not a command
+        // title, so the model takes them and calls `mail.search` with the sender / subject / query.
+        Phrase(surface: .mailChat, sentence: "search mail from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search for invoice",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "find mail from Gokula kannan J",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "look for emails from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search my inbox for subject payslip",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search mail for \"invoice and receipt\"",
+               found: [mailSearch], expected: .model),
     ]
 
     // MARK: - Running a row
@@ -995,5 +1012,73 @@ struct MailQuestionShortcutRetirementTests {
         #expect(AppleLiveDataContext.wantsMailContext("any unread mail?"))
         #expect(AppleLiveDataContext.wantsMailContext("what's the subject line?"))
         #expect(!AppleLiveDataContext.wantsMailContext("hi hello?"))
+    }
+}
+
+// MARK: - Issue 204: Mailbox Search commands reach the model as data-lane Mail reads
+
+@MainActor
+struct MailboxSearchShortcutRetirementTests {
+
+    /// Every sentence the retired `MailboxSearchCommand.claims` took before the model.
+    static let retiredCommands = [
+        "search mail from SBI",
+        "search for invoice",
+        "Search mail for quarterly report",
+        "find mail from Gokula kannan J",
+        "look for emails from SBI",
+        "look up mail from SBI",
+        "search my inbox for subject payslip",
+        "please search mail from SBI",
+        // The Mail scope may already have stripped its own name from the sentence.
+        "search from SBI",
+        "search mail for \"invoice and receipt\"",
+    ]
+
+    /// A search command in Mail scope is a fresh read of Mail's records, never an answer from
+    /// memory or conversation.
+    @Test func searchCommandsAreFreshLiveStateReads() {
+        for sentence in Self.retiredCommands {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.mail")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+        }
+    }
+
+    /// The plan is a data-lane read with Mail's search tool and no UI automation: Mail's
+    /// window is never raised, clicked or typed into (owner, 2026-10-10).
+    @Test func searchCommandsPlanAsDataLaneReads() {
+        for sentence in Self.retiredCommands {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.mail", appName: "Mail")
+            #expect(plan.intent == .read, "\"\(sentence)\"")
+            #expect(!plan.permitsUIAutomation, "\"\(sentence)\"")
+            #expect(plan.complexity != .direct, "\"\(sentence)\" needs a tool round")
+            #expect(plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+        }
+    }
+
+    /// Nothing between the retired shortcut and the model claims the sentence: the cross-app
+    /// share parser runs next in `handleL2Query`.
+    @Test func crossAppRoutingDoesNotClaimSearchCommands() {
+        for sentence in Self.retiredCommands {
+            #expect(
+                CrossAppNLHandler.shared.parse(sentence.lowercased()) == nil, "\"\(sentence)\"")
+        }
+    }
+
+    /// A look-up verb is a record read in every record-set app, not only Mail, and a UI
+    /// sentence with the same verb stays an action.
+    @Test func lookUpVerbsAreRecordReads() {
+        #expect(ScopedRecordRead.matches(query: "look for emails from SBI", bundleId: "com.apple.mail"))
+        #expect(ScopedRecordRead.matches(query: "look up notes about tax", bundleId: "com.apple.Notes"))
+        #expect(!ScopedRecordRead.matches(query: "look for the sidebar", bundleId: "com.apple.mail"))
+        #expect(!ScopedRecordRead.matches(query: "look for mail from SBI and reply to it", bundleId: "com.apple.mail"))
+    }
+
+    @Test func mailboxSearchShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("mailboxSearch"))
     }
 }
