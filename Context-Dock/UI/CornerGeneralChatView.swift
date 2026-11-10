@@ -195,7 +195,7 @@ struct CornerGeneralChatView: View {
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
     private var showsLivePanel: Bool {
-        (promptModel.livePanelOpen || model.isSending) && showsTranscript
+        promptModel.livePanelOpen && showsTranscript
     }
 
     /// The conversation, the start screen, or the `/` picker: a card of its own above the
@@ -203,36 +203,61 @@ struct CornerGeneralChatView: View {
     /// are one surface, so switching scope changes what the board holds — not how many
     /// containers there are, which is what made the switch flicker.
     private var boardHeight: CGFloat { CornerGeneralChatMetrics.boardHeight(for: model) }
+    private var composerHeight: CGFloat {
+        CornerGeneralChatMetrics.composerHeight(
+            hasAttachments: !model.attachments.isEmpty,
+            slashMatchCount: slashMatches.count,
+            hasApproval: approvals.pending(for: .corner) != nil,
+            lines: model.cornerComposerLines)
+    }
 
     var body: some View {
-        VStack(spacing: CornerDockLayout.gap) {
+        Group {
             if boardHeight > 0 {
-                board
-                    .frame(width: size.width, height: boardHeight)
-                    .background(GlassBackground(cornerRadius: 22, isDark: true))
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
-                    .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-                    .transition(.opacity)
-            }
-            let composerHeight = CornerGeneralChatMetrics.composerHeight(
-                hasAttachments: !model.attachments.isEmpty,
-                slashMatchCount: slashMatches.count,
-                hasApproval: approvals.pending(for: .corner) != nil,
-                lines: model.cornerComposerLines)
-            // The Context Dock's capsule when the row stands alone, its 22-point card once
-            // something sits over it — the same rule that field follows.
-            let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
-                ? composerHeight / 2 : 22
-            composer
-                .frame(width: size.width, height: composerHeight)
-                .background(GlassBackground(cornerRadius: radius, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                VStack(spacing: 0) {
+                    board
+                        .frame(width: size.width, height: boardHeight)
+                    Spacer(minLength: 0)
+                    composer
+                        .frame(width: size.width, height: composerHeight)
+                        .padding(.bottom, 6)
+                }
+                .frame(width: size.width, height: size.height)
+                .background(GlassBackground(cornerRadius: 26, isDark: nil))
+                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(.white.opacity(0.16)))
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.24), .white.opacity(0.06)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                .transition(.opacity)
+            } else {
+                let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
+                    ? composerHeight / 2 : 22
+                composer
+                    .frame(width: size.width, height: composerHeight)
+                    .background(GlassBackground(cornerRadius: radius, isDark: nil))
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [.white.opacity(0.24), .white.opacity(0.06)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
+            }
         }
         .frame(width: size.width, height: size.height, alignment: .bottom)
         .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
@@ -265,7 +290,7 @@ struct CornerGeneralChatView: View {
                 Divider().opacity(0.18)
                 HStack(spacing: 0) {
                     transcript
-                        .frame(width: size.width - CornerLivePanelLayout.panelWidth(card: size.width))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if showsLivePanel {
                         let pet = activePetInfo
                         CornerLivePanel(
@@ -386,34 +411,6 @@ struct CornerGeneralChatView: View {
 
             Spacer(minLength: 6)
 
-            // Past conversations browser (#334).
-            Button {
-                CornerChatPresentation.shared.appChat.openConversationsBoard()
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Browse past conversations (⌥H)")
-            .accessibilityLabel("Browse past conversations")
-
-            // Capabilities & Skills browser (#335).
-            Button {
-                CornerChatPresentation.shared.appChat.openCapabilitiesSkillsBrowser()
-            } label: {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Browse capabilities & skills (⌥K)")
-            .accessibilityLabel("Browse capabilities and skills")
-
             // Live sidepanel toggle (#191 / #386 parity with App Pet).
             Button {
                 promptModel.livePanelOpen.toggle()
@@ -451,37 +448,7 @@ struct CornerGeneralChatView: View {
                 .help("Open this conversation in the full window")
             }
 
-            Button {
-                CornerDockController.shared.chatPresentation.toggleKeysOverlay()
-            } label: {
-                let shown = CornerDockController.shared.chatPresentation.isShowingKeysOverlay
-                Image(systemName: "keyboard")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(shown ? Color.accentColor : .secondary)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        shown ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle()
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Keyboard shortcuts (⌘/)")
-
-            // Clear current conversation
-            Button {
-                model.clearActiveThread()
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Clear this conversation")
-            .accessibilityLabel("Clear conversation")
-
-            // Beside expand, because both are about this card rather than this question.
+            // Pin toggle
             Button {
                 CornerDockController.shared.chatPresentation.toggleGeneralPin()
             } label: {
@@ -499,6 +466,46 @@ struct CornerGeneralChatView: View {
             .help(
                 CornerDockController.shared.chatPresentation.isGeneralPinned
                     ? "Unpin" : "Keep this open")
+
+            // Consolidated overflow menu (⋯) for secondary actions
+            Menu {
+                Button {
+                    CornerChatPresentation.shared.appChat.openConversationsBoard()
+                } label: {
+                    Label("Browse Past Conversations (⌥H)", systemImage: "clock.arrow.circlepath")
+                }
+
+                Button {
+                    CornerChatPresentation.shared.appChat.openCapabilitiesSkillsBrowser()
+                } label: {
+                    Label("Browse Capabilities & Skills (⌥K)", systemImage: "sparkles")
+                }
+
+                Button {
+                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+                } label: {
+                    Label("Keyboard Shortcuts (⌘/)", systemImage: "keyboard")
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    model.clearActiveThread()
+                } label: {
+                    Label("Clear Conversation (⌘K)", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.04), in: Circle())
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More actions")
         }
         .padding(.horizontal, 15)
         .frame(height: 48)
@@ -643,11 +650,16 @@ struct CornerGeneralChatView: View {
                             .id("live-progress")
                     }
                 }
-                .padding(15)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
             }
+            .defaultScrollAnchor(.bottom)
+            .scrollIndicators(.never)
             .onChange(of: model.messages.count) { _, _ in
                 guard let last = model.messages.last else { return }
-                proxy.scrollTo(last.id, anchor: .bottom)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
             }
         }
     }
@@ -830,7 +842,7 @@ struct CornerGeneralChatView: View {
                     })
                 },
                 showsProviderName: true,
-                onClear: model.isEmpty ? nil : { model.clearActiveThread() },
+                onClear: nil,
                 onRemoveApp: { model.removeApp($0) },
                 onPasteImages: { urls in
                     model.attachments.append(contentsOf: urls.filter {
