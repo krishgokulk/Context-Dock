@@ -1868,6 +1868,8 @@ struct AIChatMessageView: View {
                                         .font(.system(size: 9.5, weight: .semibold))
                                     Text("Side thread")
                                         .font(.system(size: 10, weight: .medium))
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
                                 }
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 7)
@@ -1881,6 +1883,7 @@ struct AIChatMessageView: View {
                         Spacer(minLength: 4)
 
                         LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.top, 2)
                 } else if let mode = message.activeMode {
