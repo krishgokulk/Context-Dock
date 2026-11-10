@@ -498,3 +498,114 @@ struct AppPetProactivityTests {
         #expect(updatedSettings.isBehaviorActive(.contextAnomalyWatch) == false)
     }
 }
+
+// MARK: - Arrival briefing wiring (#343 follow-up)
+
+@Suite("AppPetArrivalBriefingTests")
+@MainActor
+struct AppPetArrivalBriefingTests {
+    private let finder = AppPetArrivalBriefing.finderBundleID
+    /// Noon, so the default 22–8 quiet hours never decide a test.
+    private static let noon = Calendar.current.date(
+        bySettingHour: 12, minute: 0, second: 0, of: Date(timeIntervalSince1970: 1_800_000_000))!
+
+    private final class Probe: @unchecked Sendable {
+        var scans = 0
+        var found = 5
+        var now = AppPetArrivalBriefingTests.noon
+    }
+
+    private func make() -> (AppPetArrivalBriefing, AppPetSuggestionCoordinator, AppPetProactivityStore, Probe) {
+        let store = AppPetProactivityStore(
+            defaults: UserDefaults(suiteName: "test.dorax.briefing.\(UUID().uuidString)")!)
+        let coordinator = AppPetSuggestionCoordinator(store: store)
+        let probe = Probe()
+        let briefing = AppPetArrivalBriefing(
+            store: store, coordinator: coordinator,
+            countNewDownloads: { _ in probe.scans += 1; return probe.found },
+            now: { probe.now })
+        return (briefing, coordinator, store, probe)
+    }
+
+    @Test("Off by default: arriving reads nothing and proposes nothing")
+    func offByDefaultReadsNothing() async {
+        let (briefing, coordinator, _, probe) = make()
+        #expect(await briefing.appCameForward(bundleID: finder, isUserTyping: false) == nil)
+        #expect(probe.scans == 0)
+        #expect(coordinator.activeSuggestions.isEmpty)
+    }
+
+    @Test("Switched on: one suggestion that states its trigger and proposes no action")
+    func switchedOnSurfacesOneSuggestionWithItsTrigger() async throws {
+        let (briefing, coordinator, _, _) = make()
+        briefing.setOn(true, bundleID: finder)
+        let result = await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        let suggestion = try #require(try result?.get())
+        #expect(suggestion.provenance.trigger.summary == "5 files added to Downloads in the last 24 hours")
+        #expect(suggestion.consequentialAction == nil)
+        #expect(coordinator.activeSuggestions.map(\.id) == [suggestion.id])
+    }
+
+    @Test("Arriving again with the same facts does not repeat the suggestion")
+    func sameFactsAreNotRepeated() async {
+        let (briefing, coordinator, _, probe) = make()
+        briefing.setOn(true, bundleID: finder)
+        await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        probe.now += 3600
+        let second = await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        #expect(second == .failure(.duplicateSuggestion))
+        #expect(coordinator.activeSuggestions.count == 1)
+    }
+
+    @Test("A newer briefing replaces the older one instead of stacking")
+    func newerBriefingReplacesOlder() async throws {
+        let (briefing, coordinator, _, probe) = make()
+        briefing.setOn(true, bundleID: finder)
+        await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        probe.now += 3600
+        probe.found = 9
+        let second = try #require(try await briefing.appCameForward(bundleID: finder, isUserTyping: false)?.get())
+        #expect(coordinator.activeSuggestions.map(\.id) == [second.id])
+    }
+
+    @Test("Typing, a mute, and an unsupported app each stop the scan before it starts")
+    func guardsStopTheScan() async {
+        let (briefing, coordinator, _, probe) = make()
+        briefing.setOn(true, bundleID: finder)
+        #expect(await briefing.appCameForward(bundleID: finder, isUserTyping: true) == nil)
+        #expect(await briefing.appCameForward(bundleID: "com.apple.mail", isUserTyping: false) == nil)
+
+        let shown = await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        let id = try? shown?.get().id
+        coordinator.dismissSuggestion(id: id ?? UUID(), mutePetFor: 86_400)
+        // The mute is stamped with the real clock, so it outlives the probe's fixed noon.
+        probe.now = Date().addingTimeInterval(60)
+        #expect(!briefing.isOn(bundleID: finder))
+        #expect(await briefing.appCameForward(bundleID: finder, isUserTyping: false) == nil)
+        #expect(probe.scans == 1)
+        #expect(coordinator.activeSuggestions.isEmpty)
+    }
+
+    @Test("Three empty arrivals in a row end scanning for the day; the next day starts fresh")
+    func noProgressBudgetBacksOffUntilTomorrow() async {
+        let (briefing, _, _, probe) = make()
+        briefing.setOn(true, bundleID: finder)
+        probe.found = 0
+        for _ in 0..<6 {
+            #expect(await briefing.appCameForward(bundleID: finder, isUserTyping: false) == nil)
+        }
+        #expect(probe.scans == 3)
+        probe.now += 86_400
+        await briefing.appCameForward(bundleID: finder, isUserTyping: false)
+        #expect(probe.scans == 4)
+    }
+
+    @Test("Switching off stops briefings")
+    func switchingOffStops() async {
+        let (briefing, _, _, probe) = make()
+        briefing.setOn(true, bundleID: finder)
+        briefing.setOn(false, bundleID: finder)
+        #expect(await briefing.appCameForward(bundleID: finder, isUserTyping: false) == nil)
+        #expect(probe.scans == 0)
+    }
+}
