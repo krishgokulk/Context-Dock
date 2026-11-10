@@ -21,6 +21,30 @@ None. (Awaiting owner selection for next task)
 
 ## Done (most recent first)
 
+**#421: Unify General Chat into Siri-style seamless liquid-glass UI:**
+- Completed on branch `fix/general-chat-siri-ui` (PR #421).
+- Unified board transcript and composer into one continuous liquid-glass container (`cornerRadius: 26`) with a specular gradient rim border.
+- Fixed centred results layout bug: expanded transcript to full width (`maxWidth: .infinity`) when live panel is closed.
+- Refactored corner composer to Siri 3-piece layout: frosted circular `+` button on left, recessed capsule input in center, and circular action/send button on right.
+- De-cluttered message bubbles: hid repeating per-message toolbars (`[Side thread] [Summary | Normal | Verbose]`) behind hover (`.onHover`).
+- Removed middle vertical scrollbar via `.scrollIndicators(.never)` and added `.defaultScrollAnchor(.bottom)` with smooth animated scroll transitions.
+- Squash-merged into `general-chat-agent`.
+
+**#420: Fix the red test suite on general-chat-agent (33 failures to 3):**
+- Completed on branch `claude/fix-red-test-suite` (PR #420, commit `e5704315`).
+- Fixed 33 test failures and test host crashes across CornerSafariTabsTests, CornerAppPinsTests, CornerBoardLayoutTests, AppScopeCardTests, CornerDockPhaseTests, CornerGeneralChatTests, DockKeyRulesTests, and DockShellWidthTests.
+- Restored intent + lane rule in `FrontmostAppTaskPlan.swift` for read-only questions.
+- Squash-merged into `general-chat-agent`.
+
+**#417: Fit header pin icon and composer in compact app pet chat:**
+- Completed on branch `fix/app-pet-header-pin-and-composer-fit` (PR #417, commit `cb6ac5db`).
+- Fixed composer input field width and trailing padding inside 18pt rounded corner pill.
+- Prevented `appChip` title from collapsing to 0 width with `.layoutPriority(1)` and `.fixedSize(horizontal: true, vertical: false)`.
+- Synchronized transcript and live panel widths via dynamic `transcriptColumnWidth` and `shellWidth`.
+- Pinned header action buttons strip to 23x23 glyphs and 2pt spacing, keeping the Pin icon fully visible.
+- Prevented detail mode picker pills ("Summary", "Normal", "Verbose") from wrapping into multiple lines.
+- Squash-merged into `general-chat-agent`.
+
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-83-selection-action-source.md` (5 Goldfish audit iterations, approved).
