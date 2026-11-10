@@ -427,6 +427,14 @@ final class HeadlessMonitoringBudgetTracker: @unchecked Sendable {
         self.budget = budget
     }
 
+    /// True once any limit is reached: the caller must not start another scan.
+    var isExhausted: Bool {
+        cumulativeTokens > budget.maxTokens
+            || cumulativeDuration >= budget.maxDurationSeconds
+            || roundCount >= budget.maxRounds
+            || consecutiveNoProgressCount >= budget.maxConsecutiveNoProgressScans
+    }
+
     /// Records a monitoring scan iteration, validating against token, time, round, and no-progress limits.
     func recordScan(tokens: Int, duration: TimeInterval, foundProgress: Bool) throws {
         // Enforce no-progress limit first: if already at cap, prevent further scans
@@ -545,7 +553,10 @@ final class AppPetSuggestionCoordinator: ObservableObject {
 
     init(store: AppPetProactivityStore = AppPetProactivityStore()) {
         self.store = store
-        self.activeSuggestions = store.loadHistory().filter { $0.status == .active }
+        let now = Date()
+        self.activeSuggestions = store.loadHistory().filter {
+            $0.status == .active && ($0.expiresAt.map { $0 > now } ?? true)
+        }
     }
 
     /// Register an execution handler for an approved consequential action.
@@ -590,6 +601,17 @@ final class AppPetSuggestionCoordinator: ObservableObject {
         case .allowed:
             var active = suggestion
             active.status = .active
+            // One line per Pet and behavior: a newer briefing replaces the older one, and
+            // anything past its expiry leaves with it.
+            let stale = activeSuggestions.filter {
+                ($0.petID == active.petID && $0.behavior == active.behavior)
+                    || ($0.expiresAt.map { $0 <= evalContext.currentTime } ?? false)
+            }
+            for old in stale {
+                activeSuggestions.removeAll { $0.id == old.id }
+                store.updateSuggestionStatus(id: old.id, status: .expired)
+                syncDismissalToDetachedPet(old)
+            }
             activeSuggestions.append(active)
             store.appendSuggestion(active)
 
