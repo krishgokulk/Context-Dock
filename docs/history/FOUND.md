@@ -1,5 +1,7 @@
 # FOUND.md
 
+> **Status: Retired (historical record, read-only).** Recorded during 2026 security remediation.
+
 Things noticed while working the security remediation that are **out of scope for the
 item being fixed**. Recorded rather than fixed, per the remediation ground rule "do not
 improve adjacent code".

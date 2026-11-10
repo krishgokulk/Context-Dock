@@ -6,5 +6,5 @@ model: haiku
 ---
 
 Find what was asked and report `path:line` plus one line each. Start with `graphify query "<question>"`
-when `graphify-out/graph.json` exists, then grep. Read only the ranges you need. Do not suggest fixes,
-do not edit, do not run builds.
+(or `graphify query "<q>" --graph "$(git worktree list | head -1 | awk '{print $1}')/graphify-out/graph.json"` in a worktree),
+then grep. Read only the ranges you need. Do not suggest fixes, do not edit, do not run builds.

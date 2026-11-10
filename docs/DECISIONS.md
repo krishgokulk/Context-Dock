@@ -1,5 +1,7 @@
 # Engineering Decisions
 
+> **Status:** Historical engineering log (May 2026). Note that the 2026-05-21 "Find Commands Need App-Specific Profiles" (`AppFindProfile` / `ContentView.swift`) entry is superseded by Task 17 and Issue #204 model-first capability ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, `docs/master/00-NOW.md`).
+
 Record decisions that affect stability, performance, or release behavior.
 
 ## 2026-05-21: Apple Menu Stays Session-Scoped

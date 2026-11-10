@@ -1,7 +1,7 @@
 # Streamline Settings & Extensions Architecture: Unified Packs, Apps, and Store
 
-> **Date:** 2026-11-05  
-> **Status:** Specification / Ready for Implementation  
+> **Date:** 2026-11-05
+> **Status:** Shipped (PR #374, Issue #373)
 > **Target Branch:** `general-chat-agent`  
 > **References:** `docs/master/00-NOW.md`, `docs/architecture/FRONTMOST_AGENT.md`, `docs/architecture/CAPABILITY_LAYER.md`, `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`
 

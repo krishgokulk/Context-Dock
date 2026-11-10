@@ -24,11 +24,11 @@ assignees: ""
 ## Context
 
 - App:
-- Mode: Global Context / Context Dock / Other
+- Mode: Global Context / App Pet / Combined Chat / Selection / Other
 - Query:
 - Frontmost app:
 
 ## Verification
 
-- [ ] Reproduced on latest main
+- [ ] Reproduced on latest general-chat-agent
 - [ ] Screenshot or screen recording attached

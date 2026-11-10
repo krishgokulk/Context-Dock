@@ -118,6 +118,7 @@ merely because two tools ran. `[owner/target]`
 
 Detail → [`00-AI-ENGINE-PLAN.md`](00-AI-ENGINE-PLAN.md) ·
 [`AI_TURN_LIFECYCLE.md`](../architecture/AI_TURN_LIFECYCLE.md) ·
+[`AGENT_REASONING_CONTRACT.md`](../architecture/AGENT_REASONING_CONTRACT.md) ·
 [`SAFETY.md`](../architecture/SAFETY.md)
 
 ---
@@ -166,9 +167,10 @@ Context-Dock/
 **Where a new file goes:** draws pixels → app · talks to a model → Engine · acts in another app →
 Capabilities · reads the screen → Context · touches memory → Memory · plain data → Core.
 
-**Today vs target:** 587 files / ~248k lines; `Search/` holds 83k lines of mixed UI; 39
-`DockCore+*` files share one view; 21 files > 2,000 lines; 12 engine/service files reach
-into the UI. `[code]` The move is staged so the app builds after every step.
+**Today vs target (updated 2026-11-09):** 798 Swift files / ~274k lines (+ 359 test files in
+`Context-DockTests/`); `Search/` holds 85 files / ~49k lines after the #257 Dock-window deletion;
+41 `DockCore+*` extension files run headless under `DockEngine`; 16 files > 2,000 lines. `[code]`
+The move is staged so the app builds after every step.
 
 Detail → [`00-APP-STRUCTURE.md`](00-APP-STRUCTURE.md) (every file mapped) ·
 [`00-CODEBASE-PLAN.md`](00-CODEBASE-PLAN.md) (rules + migration order)
@@ -255,9 +257,9 @@ Milestone = release  ◄──── squash-merge to protected main ◄───
 Max **3 builders at once** — your review time is the limit. Agents get tests, small fixes, docs
 freely; features only with an approved plan; security code, releases and merges stay with you.
 
-**Urgent today** `[code]`: `.claude/settings.json` pre-approves `./scripts/ship.sh` and
-`rm -rf ~/Library/Caches/*` — any agent can publish a release without asking. Turn those into
-deny rules first.
+**Release gate (`[code]`, fixed):** `.claude/settings.json` gates `./scripts/ship.sh` and
+`./scripts/release-prep.sh` behind explicit `"ask"` confirmation rules so no agent can publish a
+release without owner approval.
 
 Detail → [`00-ENGINEERING-OPERATING-MODEL.md`](00-ENGINEERING-OPERATING-MODEL.md)
 
@@ -310,6 +312,12 @@ remains Dora's Mac-wide conversation and can use temporary per-turn app routes w
 Pet or Combined Chat. An anchored App Pet promotes to Combined Chat only when another persistent
 Pet is explicitly connected. This supersedes the older user-facing “two shells” description while
 preserving distinct conversation identities and scope lifetimes.
+
+**Owner direction (2026-11-09):** the Unified Spotlight-Pet Surface dissolves the modal `Command` /
+`Backspace` toggle between Global Context and App Pet into a single, context-biased intent bar.
+Commands, menus, apps, and files execute immediately on `Return`, while conversational questions
+escalate directly to the active App Pet with ambient window context. Spec:
+[`docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`](../superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md).
 
 ---
 

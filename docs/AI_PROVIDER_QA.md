@@ -60,7 +60,7 @@ For vision-capable providers:
 - [ ] Provider Tool Calls QA performs simulation only and causes no local side effects.
 - [ ] Critical terminal command blocks.
 - [ ] Suggested terminal command uses `TerminalAIBridge` preview.
-- [ ] Direct ChatGPT Plus or Claude Pro login is not offered.
+- [ ] Direct web-session login is not offered; Claude Code CLI (`claudeCode`) and ChatGPT Subscription (`chatGPTSubscription`) use official CLI auth only.
 - [ ] No browser-cookie or desktop-session extraction exists.
 
 ## Build Verification

@@ -1,5 +1,11 @@
 # Safari in DoraX, as it actually is
 
+> **Status (Updated 2026-11-09):** Core Safari capabilities and safety controls have shipped:
+> - **Page caching:** `BrowserPageCache.shared` caches extracted page content across turns (`ScopedGroundingBlocks.swift:135–143`).
+> - **Sensitive URL protection:** `withheldPageBlock` and `withheldTabRow` redact and withhold banking, sign-in, and token-bearing URLs (`ScopedGroundingBlocks.swift:113–117`).
+> - **Native capabilities (PR #369):** `AppleSafariMCPCapabilities` provides direct, headless tools (`safari.currentTab`, `safari.pageContent`, `safari.listTabs`, `safari.switchTab`).
+> The section below describes the initial baseline and route taxonomy.
+
 Written 2026-09-22 by reading the code and driving the running app. Every claim here was checked;
 where something is unverified it says so.
 

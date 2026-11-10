@@ -1,6 +1,6 @@
 # Runbook — ship a release
 
-Status: current · Last checked: 2026-09-24 · Describes: `scripts/release-prep.sh`, `scripts/ship.sh`
+Status: current · Last checked: 2026-11-09 · Describes: `scripts/release-prep.sh`, `scripts/ship.sh`
 
 When the owner says **"ship it"** / **"release it"**, follow these two steps — do **not** re-derive
 them. Agents never run `ship.sh` on their own: `.claude/settings.json` makes it ask first.

@@ -11,9 +11,10 @@ Pet is another presentation of the same app scope.
 
 ```text
 DockShell
-  placement: centre | corner(anchor)
-  focus: global | general(conversationID) | pet(appID, conversationID)
-       | combined(conversationID) | selection | media
+  placement: centre | corner(anchor) (`DockAnchor`)
+  focus: .frontmost | .global | .pet(AppPetID) (`SurfaceFocus`, SurfaceFocus.swift)
+  conversation: .general | .appPet(AppPetID) | .combined (`ConversationKind`, AppPetIdentity.swift)
+  modes / overlays: selection card, drop shelf, media (Labs)
   shared input, rows, material, keyboard state, animation and sizing
 ```
 
@@ -34,28 +35,31 @@ The shared shell owns:
 
 Focus content owns only the information and controls for its job.
 
-## Focus transitions
+## Focus transitions & Unified Intent Routing
+
+> **Update (2026-11-10):** Under the Unified Spotlight-Pet Surface (`docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`), Global Context and Frontmost App Pet are **unified into a single input bar**. Users no longer need to tap `Command` to switch layers. Queries simultaneously search frontmost menus, global apps, files, and clipboard clips, with natural-language questions automatically escalating to the App Pet.
 
 | Start | Action | Destination |
 |---|---|---|
-| Closed over an eligible app | normal launch | that frontmost App Pet |
-| Closed with no eligible app | normal launch | Global Context |
-| App Pet | tap Command | Global Context |
-| App Pet with empty composer | Backspace | Global Context |
-| Global Context | click running/pinned app | that App Pet in the Dock |
-| Global Context | drag app icon out | detached persistent Pet |
-| Global Context | New chat / Ask Dora | General Chat |
+| Closed (anywhere) | normal launch (⌘⌘ or hotkey) | Unified Dock Launcher (Context-biased to frontmost app) |
+| Unified Launcher | type command / app / file name | Highlighted command/file executes on ↵ |
+| Unified Launcher | type question / AI instruction | Escalates to Frontmost App Pet on ↵ |
+| Unified Launcher | tap Tab | Pins composer into App Pet Chat Mode |
+| Unified Launcher | click running/pinned app | Switches active Pet context |
+| Unified Launcher | drag app icon out | detached persistent Pet |
+| Unified Launcher | New chat / Ask Dora | General Chat |
 | General Chat | use an app ability for one turn | General Chat, with a temporary app step chip |
 | General Chat | choose Open in App Pet | same conversation anchored to that App Pet |
 | App Pet | accept another required Pet | same conversation promoted to Combined Chat |
 
 Typed text is never discarded by a focus shortcut. Escape/back behavior stays one level at a time.
 
-## Global Context content
+## Unified Board content
 
 - Universal search results, apps, files, extensions, commands and tools.
+- Frontmost app contextual actions and menus boosted by +500.
 - Pet strip at rest and during search when layout allows.
-- Launcher rows only; no transcript pretending to be search.
+- Conversational questions and instructions rank `[ 🤖 Ask Pet ]` and `[ 🌐 Search Web ]` at the top with incidental file penalty.
 
 ## App Pet content
 
