@@ -14,10 +14,10 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- Issue #77: test host: Corner tests with no synthetic window or dock dependency
-- Issue #257: Convert the hidden Dock into a headless engine (DockEngine)
-- Issue #204: P10: Retire the Dock's pre-model result sheet and menu bar fallback
-- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
+- Issue #335: UI/UX queue 5/5 — Provider / context usage chip (meter per turn)
+- Issue #343: App Pets 6/6 — Bounded proactive Pet behavior
+- Issue #333: UI/UX queue 3/5 — Side Thread (branch a sub-conversation)
+- Labs (E9–E16 App Pets memory/orchestration)
 
 ## Done (most recent first)
 
