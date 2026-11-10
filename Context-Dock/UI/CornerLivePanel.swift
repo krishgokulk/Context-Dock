@@ -203,10 +203,7 @@ struct CornerLivePanel: View {
             if detailMode != .summary {
                 section("Usage") {
                     HStack(spacing: 6) {
-                        AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 12)
-                        Text(AppSettings.shared.selectedAIProvider.displayName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.primary.opacity(0.85))
+                        ProviderContextChip(scope: GeneralChatScope.app(bundleId: appBundleID))
                         Spacer(minLength: 0)
                     }
                     .padding(.vertical, 2)

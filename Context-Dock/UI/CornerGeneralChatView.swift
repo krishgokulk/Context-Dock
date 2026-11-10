@@ -411,6 +411,10 @@ struct CornerGeneralChatView: View {
 
             Spacer(minLength: 6)
 
+            // Provider / context usage chip (#335)
+            ProviderContextChip(scope: model.activeScope)
+                .transition(.opacity)
+
             // Live sidepanel toggle (#191 / #386 parity with App Pet).
             Button {
                 promptModel.livePanelOpen.toggle()
