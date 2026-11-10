@@ -218,16 +218,13 @@ struct FrontmostAppTaskPlan: Equatable {
         }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
 
-        // Universal App Pet principle: an app-scoped pet is NEVER starved of its app's
-        // control and vision tools by brittle keyword matchers. The model is the brain;
-        // Context-Dock is the safe native body. The safety guards (consent store,
-        // approval cards, emergency stop HUD, destructive denylist) govern execution.
-        if !bundleId.isEmpty {
-            tools.formUnion([
-                "find_menu_command", "run_menu_command", "send_keys", "window_control",
-                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
-            ])
-        } else if hasAction {
+        // The UI lane is for action turns only (AGENTS.md: behaviour is decided by intent +
+        // lane, never by scope; #357). 52c7a575 offered these on every app-scoped turn, so a
+        // question such as "how many tabs are open?" was handed run_menu_command again.
+        // operate_app is offered on action turns even when Computer Use is switched off for
+        // this app, because its refusal *is* the offer: it tells the model to ask the user
+        // for permission in one line.
+        if hasAction {
             tools.formUnion([
                 "find_menu_command", "run_menu_command", "send_keys", "window_control",
                 "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
