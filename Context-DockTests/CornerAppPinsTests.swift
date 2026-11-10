@@ -146,17 +146,20 @@ struct CornerAppPinsTests {
     }
 
     @Test("A pinned tab leaves the live tabs and leads the bar as a pin")
-    func aPinnedTabLeadsTheBar() {
+    func aPinnedTabLeadsTheBar() throws {
         let (store, _) = temporaryStore()
+        // The bar (and so its live tabs) exists only for an app with a pin (owner 2026-11-03).
+        store.pin(.appAction(id: "seed"), title: "Seed", app: "com.apple.Safari")
         let model = scope(store)
-        let prs = model.stripIcons.first { $0.title == "Pull requests" }!
+        let prs = try #require(model.stripIcons.first { $0.title == "Pull requests" })
         model.toggleTabPin(iconID: prs.id)
-        // The pin is the bar's first icon — in the strip and in the field's pill alike —
+        // The new pin follows the first one — in the strip and in the field's pill alike —
         // and the tab it stands for is not drawn a second time among the live ones.
-        #expect(model.stripIcons.map(\.title) == ["Pull requests", "Inbox"])
-        #expect(model.globalMatchIcons.map(\.title) == ["Pull requests", "Inbox"])
-        #expect(model.isAppPinIcon(model.stripIcons[0].id))
-        #expect(!model.isTabIcon(model.stripIcons[0].id))
+        #expect(model.stripIcons.map(\.title) == ["Seed", "Pull requests", "Inbox"])
+        #expect(model.globalMatchIcons.map(\.title) == ["Seed", "Pull requests", "Inbox"])
+        let pinned = try #require(model.stripIcons.first { $0.title == "Pull requests" })
+        #expect(model.isAppPinIcon(pinned.id))
+        #expect(!model.isTabIcon(pinned.id))
         // Never Global's pins in an app's bar.
         #expect(model.stripPins.isEmpty)
     }
@@ -177,15 +180,15 @@ struct CornerAppPinsTests {
     }
 
     @Test("A click on a pin in the bar runs that pin")
-    func aPinIconRunsItsPin() {
+    func aPinIconRunsItsPin() throws {
         let (store, _) = temporaryStore()
         var opened: [URL] = []
         let model = scope(store, opened: { opened.append($0) })
         store.pin(.tab(url: "https://forums.swift.org/latest"), title: "Forums",
             app: "com.apple.Safari")
         model.updateTabStrip()
-        let icon = model.stripIcons[0]
-        let pin = try! #require(model.appPin(forIconID: icon.id))
+        let icon = try #require(model.stripIcons.first)
+        let pin = try #require(model.appPin(forIconID: icon.id))
         model.openAppPin(pin)
         #expect(opened == [URL(string: "https://forums.swift.org/latest")!])
     }
@@ -215,12 +218,13 @@ struct CornerAppPinsTests {
         #expect(plan.layout.overflow > 0)
     }
 
-    @Test("Every app has the bar: its pins when it has some, the running apps otherwise")
+    @Test("An app has the bar once it has a pin; until then it is the compact pill over the running apps")
     func pinsGiveAnyAppTheBar() {
         let (store, _) = temporaryStore()
         let textEdit = scope(store, bundleID: "com.apple.TextEdit", name: "TextEdit")
-        // No pins: the bar still stands, holding the running apps (owner 2026-10-08).
-        #expect(textEdit.showsTabBar)
+        // No pins: no bar (owner 2026-11-03, replacing 2026-10-08's "every app has the bar");
+        // the strip holds the running apps.
+        #expect(!textEdit.showsTabBar)
         textEdit.updateTabStrip()
         #expect(!textEdit.stripIcons.contains { textEdit.appPin(forIconID: $0.id) != nil })
         store.pin(.menuCommand(path: ["Format", "Make Plain Text"]), title: "Make Plain Text",
@@ -324,9 +328,11 @@ struct CornerAppPinsTests {
         let (store, _) = temporaryStore()
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
         let shell = DockShellWidth.current
-        #expect(AppChatPromptMetrics.boardWidth(for: model) == shell, "no pins: the shell")
-        // No pins: the bar holds the running apps (owner 2026-10-08) — however many this
-        // machine is running, so no fixed pill width to check here.
+        // No pins: the compact pill (owner 2026-11-03) fits its own content, never wider than
+        // the shell, and its card is as wide as its field.
+        let bare = AppChatPromptMetrics.boardWidth(for: model)
+        #expect(bare == AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width)
+        #expect(bare <= shell, "no pins: the compact pill")
 
         store.pin(.menuCommand(path: ["Window", "Centre"]), title: "Centre",
             app: "com.anthropic.claudefordesktop")
@@ -368,6 +374,8 @@ struct CornerAppPinsTests {
     @Test("Resting on the pill opens the big bar, even with keep-open on; typed text keeps the field")
     func hoverOnThePillOpensTheBigBar() {
         let (store, _) = temporaryStore()
+        // The bar exists only for an app with a pin (owner 2026-11-03).
+        store.pin(.appAction(id: "bar"), title: "Pinned", app: "com.apple.Safari")
         let model = scope(store)
         model.set(.prompt)
         #expect(model.expandAppBar())
@@ -383,16 +391,19 @@ struct CornerAppPinsTests {
     @Test("Opening a tab does not move it: the bar keeps Safari's own order")
     func tabsKeepTheirPlace() {
         let (store, _) = temporaryStore()
+        // The bar exists only for an app with a pin (owner 2026-11-03); the pin leads.
+        store.pin(.appAction(id: "bar"), title: "Pinned", app: "com.apple.Safari")
         let model = scope(store)
         // Safari is showing the second tab — it must not jump to the front.
         model.currentTabURL = { "https://github.com/pulls" }
         model.updateTabStrip()
-        #expect(model.stripIcons.map(\.title) == ["Inbox", "Pull requests"])
+        #expect(model.stripIcons.map(\.title) == ["Pinned", "Inbox", "Pull requests"])
     }
 
     @Test("A click on the big bar does not open the field: a list refresh leaves the dock alone")
     func aListRefreshLeavesTheDock() {
         let (store, _) = temporaryStore()
+        store.pin(.appAction(id: "bar"), title: "Pinned", app: "com.apple.Safari")
         let model = scope(store)
         model.set(.prompt)
         #expect(model.expandAppBar())

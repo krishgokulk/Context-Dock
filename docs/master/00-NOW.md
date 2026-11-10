@@ -10,16 +10,52 @@
 
 ## In progress
 
-None. #204 continues with its next pre-model shortcut (Queued). Three earlier #204 PRs merged (#314/#315 Notes, #402 Menu Command, #403 Mail Question).
+None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
+- Issue #343: App Pets 6/6 — Bounded proactive Pet behavior
+- Issue #333: UI/UX queue 3/5 — Side Thread (branch a sub-conversation)
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#405** H0 general slot deriver → **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim. None `ready` until the owner labels it.
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#422: Provider / context usage chip (meter per turn):**
+- Completed on branch `claude/issue-335-context-chip` (PR #422, commit `287bc7a5`).
+- Added `ProviderContextUsageStore` tracking per-scope turn context occupancy against `ProviderContextBudget.maxContextTokens`.
+- Replaced rather than summed prompt tokens across multi-round tool loops to prevent artificial context inflation. Resets on turn start and scope changes.
+- Added compact, shared-shell `ProviderContextChip` displaying provider icon, compact model name, miniature meter track, and context percentage (`—%` when unknown), with a popup menu to switch the active provider.
+- Integrated into `AppChatPromptPill`, `CornerGeneralChatView`, `AppChatListCard`, and `CornerLivePanel`.
+- Added 7 offline unit tests in `Context-DockTests/ProviderContextUsageChipTests.swift`.
+- Visual verification and screenshots saved in `docs/screenshots/issue-335-context-chip/`.
+- Squash-merged into `general-chat-agent`.
+
+**#421: Unify General Chat into Siri-style seamless liquid-glass UI:**
+- Completed on branch `fix/general-chat-siri-ui` (PR #421).
+- Unified board transcript and composer into one continuous liquid-glass container (`cornerRadius: 26`) with a specular gradient rim border.
+- Fixed centred results layout bug: expanded transcript to full width (`maxWidth: .infinity`) when live panel is closed.
+- Refactored corner composer to Siri 3-piece layout: frosted circular `+` button on left, recessed capsule input in center, and circular action/send button on right.
+- De-cluttered message bubbles: hid repeating per-message toolbars (`[Side thread] [Summary | Normal | Verbose]`) behind hover (`.onHover`).
+- Removed middle vertical scrollbar via `.scrollIndicators(.never)` and added `.defaultScrollAnchor(.bottom)` with smooth animated scroll transitions.
+- Squash-merged into `general-chat-agent`.
+
+**#420: Fix the red test suite on general-chat-agent (33 failures to 3):**
+- Completed on branch `claude/fix-red-test-suite` (PR #420, commit `e5704315`).
+- Fixed 33 test failures and test host crashes across CornerSafariTabsTests, CornerAppPinsTests, CornerBoardLayoutTests, AppScopeCardTests, CornerDockPhaseTests, CornerGeneralChatTests, DockKeyRulesTests, and DockShellWidthTests.
+- Restored intent + lane rule in `FrontmostAppTaskPlan.swift` for read-only questions.
+- Squash-merged into `general-chat-agent`.
+
+**#417: Fit header pin icon and composer in compact app pet chat:**
+- Completed on branch `fix/app-pet-header-pin-and-composer-fit` (PR #417, commit `cb6ac5db`).
+- Fixed composer input field width and trailing padding inside 18pt rounded corner pill.
+- Prevented `appChip` title from collapsing to 0 width with `.layoutPriority(1)` and `.fixedSize(horizontal: true, vertical: false)`.
+- Synchronized transcript and live panel widths via dynamic `transcriptColumnWidth` and `shellWidth`.
+- Pinned header action buttons strip to 23x23 glyphs and 2pt spacing, keeping the Pin icon fully visible.
+- Prevented detail mode picker pills ("Summary", "Normal", "Verbose") from wrapping into multiple lines.
+- Squash-merged into `general-chat-agent`.
 
 **#204 (part): Retire the Mail Question pre-model shortcut into the ladder — PR #403, merged:**
 - Branch `claude/issue-204-retire-mail-question` (PR #403, merged into `general-chat-agent` as `3595f89`).

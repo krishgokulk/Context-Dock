@@ -213,3 +213,124 @@ End-to-end "export as PDF"-style task passes for three app types: scriptable, me
 
 Notes: the full test suite has the same 240 failing suites with and without these changes (pre-existing). Stop holds for 30 seconds. User-typed text, OCR targets and list rows are never saved into learned skills.
 
+---
+
+## 9. Universal Rich Card UI & User-Default Application Integration (2026-11-08)
+
+### 9.1 Core Motivation: Beyond Plain Text
+Responses in App Pets and Context-Dock must never be a wall of plain markdown text. When an action or query completes, DoraX renders rich, glanceable, interactive cards tailored to the entity type—matching the visual fidelity of Apple Intelligence / Siri UI while exceeding its capabilities by enabling direct one-click execution.
+
+### 9.2 The Universal Card System (For ALL Installed Apps)
+
+Every installed application on macOS maps to a standardized SwiftUI card component:
+
+1. **Files, Code & Documents (PDF, Code, Excel, Markdown, Images)**:
+   - Dynamic file icon and target button resolved from the user's default macOS app (`NSWorkspace.shared.urlForApplication(toOpen:)`).
+   - File metadata: size, containing folder (`~`), modification timestamp.
+   - Action buttons: `[ ↗ Open in {Default App} ]` (e.g. VS Code, Xcode, Preview, Excel), `[ 👁 Quick Look ]`, `[ 📂 Reveal in Finder ]`, `[ 🗑 Move to Trash ]`.
+
+2. **Messages & Chats (iMessage, SMS, WhatsApp, Slack, Telegram)**:
+   - Contact avatar / monogram with app badge icon (e.g. green Messages bubble).
+   - Sender name / shortcode and formatted date/time.
+   - 2-line snippet preview with ellipsis.
+   - `Show More` pagination pill for long lists.
+   - Action buttons: `[ ↗ Open in {App} ]`, `[ 💬 Quick Reply ]`, `[ 🗑 Delete ]`.
+
+3. **Web Links & Articles (Safari, Chrome, Arc, Brave)**:
+   - High-res favicon and clean domain label (`nextjs.org`).
+   - Article title and snippet preview.
+   - Action buttons: `[ ↗ Open in {Default Browser} ]` (dynamically queries default HTTP handler: Arc, Chrome, Safari), `[ 📋 Copy Link ]`, `[ 🔖 Save Bookmark ]`.
+
+4. **Mail & Conversations (Mail, Outlook, Mimestream)**:
+   - Sender avatar and status badge (unread / flagged).
+   - Subject line, 2-line preview, and timestamp.
+   - Action buttons: `[ ↗ Open in Mail ]`, `[ 📥 Archive ]`, `[ 🗑 Trash ]`.
+
+5. **Calendar & Meetings (Calendar, Fantastical)**:
+   - Visual date/time chip and meeting title.
+   - Duration, attendee avatars, and direct video link (`Zoom`, `Google Meet`).
+   - Action buttons: `[ 🎥 Join Meeting ]`, `[ 📅 Open in Calendar ]`.
+
+6. **Third-Party Workspace Items (Figma, Notion, Spotify, Obsidian)**:
+   - Direct deep link integration (`slack://...`, `spotify:...`, `xcode://...`).
+   - Action buttons: `[ ↗ Open in {App} ]`.
+
+### 9.3 Dynamic Default App Launching (`NSWorkspace`)
+- When any file URL is surfaced, DoraX inspects `NSWorkspace.shared.urlForApplication(toOpen: fileURL)`.
+  - A `.swift` or `.ts` file surfaces `[ ↗ Open in VS Code ]` (with VS Code icon) if VS Code is the user's default handler, or `[ ↗ Open in Xcode ]` if Xcode is set.
+  - A `.pdf` surfaces `[ ↗ Open in Preview ]` or `[ ↗ Open in Acrobat ]`.
+- For web links, `NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://...")!)` resolves the user's preferred browser (`Arc`, `Chrome`, `Safari`).
+
+### 9.4 Action & Deletion Strategy: Script First vs. UI Lane Fallback
+
+#### Why Siri Refused to Delete in Messages
+Apple sandboxes Siri from write/delete APIs on SMS/iMessage for liability and data-loss prevention reasons. Siri can only advise: *"I can't delete text messages directly. You can delete them by opening Messages and swiping left."*
+
+#### How DoraX Solves This:
+DoraX follows a strict two-stage strategy:
+
+1. **Stage 1: Headless Script / API First (Fast, 0ms, Silent)**:
+   - If the application or macOS provides a programmatic delete or modification interface, DoraX runs it headlessly:
+     - **Files / Folders:** `FileManager.default.trashItem(at:)` — sends to Trash, fully recoverable with `⌘Z`.
+     - **Mail:** AppleScript `tell application "Mail" to delete (messages whose ...)` — executes in 15ms without opening windows.
+     - **Notes:** AppleScript `tell application "Notes" to delete note ...`.
+     - **Calendar:** Native EventKit framework deletes events headlessly.
+     - **Slack / GitHub / APIs:** Direct UTCP / REST API deletion.
+
+2. **Stage 2: Computer Use UI Lane Fallback (When APIs Are Blocked)**:
+   - When macOS intentionally blocks or lacks a programmatic write/delete API (e.g. Messages `chat.db` where direct SQLite writes are rejected by `imagent`, or canvas apps like Figma):
+   - DoraX does not fail or refuse. The **Computer Use Agent** activates, targets the UI element (e.g. swipe left, press Trash icon, or hit Delete key), and completes the task directly in the app.
+
+### 9.5 Full End-to-End Flow Diagram (All Installed Apps)
+
+```mermaid
+flowchart TD
+    subgraph INPUT["1. User Request in Any Frontmost App"]
+        U["User Prompt:<br/>'Find yesterday's invoices and open them'<br/>or 'Clean out automated text messages'"]
+        App["Frontmost App Detected<br/>(e.g. Messages, Finder, Figma, Mail)"]
+        U --> App
+    end
+
+    subgraph ENGINE["2. DoraX Context & Discovery Engine"]
+        App --> Inventory["Load App Inventory:<br/>• AGENT.md<br/>• Per-App Skills<br/>• Scanned sdef Scripting API<br/>• Live Menu Tree<br/>• NSWorkspace Default Apps"]
+        Inventory --> Packet["Construct Turn Context Packet"]
+    end
+
+    subgraph BRAIN["3. AI Provider (Claude / Codex)"]
+        Packet --> LLM["Reasoning & Strategy:<br/>1. Retrieve items<br/>2. Prepare structured card payload"]
+        LLM --> Decision{"Choose Execution Route"}
+    end
+
+    subgraph EXEC["4. Execution Engine"]
+        Decision -->|Scriptable / Local DB| Script["Data Lane (Headless)<br/>Run SQLite / osascript / mdfind"]
+        Decision -->|Non-scriptable UI| UI["UI Lane (Computer Use)<br/>Press Menu / Click AX Element"]
+    end
+
+    subgraph CARDS["5. Universal Card Output Engine"]
+        Script --> CardEngine["Structured Card Builder"]
+        UI --> CardEngine
+        
+        CardEngine --> Resolve["NSWorkspace.shared.urlForApplication(toOpen:)"]
+        Resolve --> RenderCard["Render Interactive SwiftUI Card:<br/>• Monogram/Avatar with App Badge<br/>• Default App Icon (VS Code, Preview, Arc)<br/>• Title, Snippet Preview, Metadata<br/>• [ ↗ Open in {Default App} ] Button<br/>• [ 🗑 Delete / Action ] Button"]
+    end
+
+    subgraph USER_ACTION["6. User Interaction & Execution"]
+        RenderCard --> ClickOpen["User clicks 'Open in {App}' → Native NSWorkspace Launch"]
+        RenderCard --> ClickDelete["User clicks 'Delete' or asks AI to delete"]
+        
+        ClickDelete --> DelCheck{"Script API Available?"}
+        DelCheck -->|Yes| ScriptDel["Headless Delete (FileManager / osascript)"]
+        DelCheck -->|No (e.g. Messages chat.db)| UIDel["Computer Use UI Agent clicks Trash / Swipes"]
+    end
+```
+
+### 9.6 Implementation Deliverables for Task #368
+
+| Deliverable | Description | File Target |
+| :--- | :--- | :--- |
+| **`UniversalEntityCardView.swift`** | Shared SwiftUI card supporting Files, Messages, Mail, URLs, Events, and 3rd-party items. | `Context-Dock/UI/UniversalEntityCardView.swift` |
+| **`DefaultAppResolver.swift`** | High-performance `NSWorkspace` cache for default application icons, names, and URL scheme openers. | `Context-Dock/Services/DefaultAppResolver.swift` |
+| **`CardPayloadGenerator.swift`** | Transforms capability and tool outputs into structured `CapabilityResultTable` / `UniversalCardPayload`. | `Context-Dock/AI/CardPayloadGenerator.swift` |
+| **Delete Action Dispatcher** | Implements the Script-First, UI-Fallback deletion strategy. | `Context-Dock/AI/GeneralAIActionExecutor.swift` |
+
+

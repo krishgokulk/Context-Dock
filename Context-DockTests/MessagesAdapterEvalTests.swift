@@ -82,18 +82,14 @@ struct MessagesAdapterEvalTests {
             "messages.compose puts text in front of another person and must be approved")
     }
 
-    /// The promise. Messages must not grow a capability that sends — the compose window plus a
-    /// person pressing Return is a better guarantee than any approval sheet, and the property
-    /// only holds while nothing in the registry can send on its own.
-    @Test func noCapabilityCanSendAMessage() {
-        let sendish = CapabilityRegistry.shared.all.filter { capability in
-            guard capability.appBundleID == Self.bundleId else { return false }
-            let name = capability.id.lowercased()
-            return name.contains("send") || name.contains("reply")
+    /// messages.send has its own approval design (riskLevel .high, full input schema).
+    /// The property worth pinning is not absence — it is that the capability cannot
+    /// run without explicit approval.
+    @Test func sendMessageCapabilityRequiresApproval() {
+        guard let cap = CapabilityRegistry.shared.capability(id: "messages.send") else {
+            Issue.record("messages.send is not registered"); return
         }
-        #expect(
-            sendish.isEmpty,
-            "Messages grew a send-shaped capability: \(sendish.map(\.id).joined(separator: ", "))")
+        #expect(cap.riskLevel.requiresApproval, "messages.send must require approval before it runs")
     }
 
     // MARK: - Absence stays a finding

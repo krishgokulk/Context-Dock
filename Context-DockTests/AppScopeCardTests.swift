@@ -4,6 +4,7 @@
 // the per-app "run without asking" grants it lists and forgets, and the field staying open
 // while the card hangs over it.
 
+import ApplicationServices
 import Foundation
 import Testing
 
@@ -17,24 +18,25 @@ struct AppScopeCardTests {
     }
 
     @Test("Sees now: the page, the selection and attachments, in that order")
-    func linesInOrder() {
+    func linesInOrder() throws {
         let lines = AppScopeContext.lines(
             isBrowser: true, page: Self.page("https://swift.org"),
             selection: AppChatSelectionScope(kind: .text(characters: 42)),
             attachments: [URL(fileURLWithPath: "/tmp/a.pdf"), URL(fileURLWithPath: "/tmp/b.png"),
                 URL(fileURLWithPath: "/tmp/c.txt")])
         #expect(lines.map(\.title) == ["Swift", "Selection", "Attached"])
+        try #require(lines.count == 3)
         #expect(lines[1].detail == "42 characters of selected text")
         #expect(lines[2].detail == "a.pdf, b.png +1")
         #expect(!lines[0].isRefused)
     }
 
     @Test("A page DoraX will not read is shown as refused, with the guard's reason")
-    func refusedPage() {
+    func refusedPage() throws {
         let lines = AppScopeContext.lines(
             isBrowser: true, page: Self.page("https://www.paypal.com/myaccount", title: "PayPal"),
             selection: nil, attachments: [])
-        #expect(lines.count == 1)
+        try #require(lines.count == 1)
         #expect(lines[0].isRefused)
         #expect(lines[0].symbol == "lock.fill")
     }
@@ -97,15 +99,29 @@ struct AppScopeCardPlacementTests {
 
     @Test("Open, the card is the board's right half and keeps the board tall enough for it")
     func theCardIsTheRightHalf() {
+        let card = CornerBoardPreview.appScope(bundleID: "com.apple.Notes", name: "Notes")
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Notes", bundleID: "com.apple.Notes")
-        #expect(model.boardPreview != .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+        // With a row on the list the panel is that row's, not the card.
+        model.rows = [.command(AXMenuItem(
+            title: "New Note", path: ["File", "New Note"], isEnabled: true,
+            element: AXUIElementCreateSystemWide(), children: []))]
+        #expect(model.boardPreview != card)
 
+        // The chip's card takes the half until the arrows choose a row.
         model.isShowingScopeCard = true
-        #expect(model.boardPreview == .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+        #expect(model.boardPreview == card)
         #expect(model.boardSize.height >= AppScopeBoardMetrics.height)
 
         model.isShowingScopeCard = false
-        #expect(model.boardPreview != .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+        #expect(model.boardPreview != card)
+    }
+
+    @Test("An app with nothing listed still shows its card, so the sheet is never empty")
+    func anEmptyAppSheetShowsItsCard() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        model.rows = []
+        #expect(model.boardPreview == .appScope(bundleID: "com.apple.Notes", name: "Notes"))
     }
 }

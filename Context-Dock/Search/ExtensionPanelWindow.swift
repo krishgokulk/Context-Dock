@@ -620,223 +620,89 @@ struct AIComposerBar: View {
                 ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
             }
 
-            HStack(spacing: 8) {
-            // Provider chip: switching model is part of asking, so it lives in the bar.
-            Menu {
-                ForEach(AIProvider.allCases) { provider in
-                    Button {
-                        settings.selectedAIProvider = provider
-                    } label: {
-                        if provider == settings.selectedAIProvider {
-                            Label(provider.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(provider.displayName)
-                        }
-                    }
-                }
-            } label: {
-                // Icon only by default: the placeholder already says which model this
-                // is, and the name repeated beside it ate half the bar on a narrow panel.
-                if cornerStyle {
-                    HStack(spacing: 6) {
-                        AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
-                        Text(settings.selectedAIProvider.shortName)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.09), in: Capsule())
-                    .contentShape(Capsule())
-                } else {
-                HStack(spacing: 4) {
-                    AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
-                        .foregroundStyle(.primary)
-                    if showsProviderName {
-                        Text(settings.selectedAIProvider.shortName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(height: 22)
-                .contentShape(Rectangle())
+            if cornerStyle {
+                siriComposerRow
+            } else {
+                legacyComposerRow
+            }
+        }
+        .acceptsPastedImages { urls in onPasteImages?(urls) }
+    }
+
+    @ViewBuilder
+    private var siriComposerRow: some View {
+        HStack(spacing: 8) {
+            attachButton
+                .frame(width: 32, height: 32)
+                .background(Color.primary.opacity(0.08), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                .contentShape(Circle())
+
+            HStack(spacing: 7) {
+                providerMenu
+                inputTextField
+                if !attachedAppNames.isEmpty {
+                    attachedAppChips
                 }
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+            )
 
-            TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
-                // The corner grows to three lines and then scrolls inside, as every corner
-                // field does (#189); the window keeps its five.
-                .lineLimit(cornerStyle ? 1...DockFieldLines.maximum : 1...5)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                    onTextHeightChange?(height)
-                }
-                .onSubmit {
-                    // A surface drawing its own picker knows which row is highlighted;
-                    // this bar only knows the order it handed over.
-                    if onCommitSelection?() == true { return }
-                    // "/rem" + Return means "work with that app", not "ask about the
-                    // string /rem".
-                    if let first = slashApps.first {
-                        pickSlashApp(first)
-                        return
-                    }
-                    onSubmit()
-                }
-                .onKeyPress(.leftArrow) {
-                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                          onEmptyLeftArrow?() == true
-                    else { return .ignored }
-                    return .handled
-                }
-                .onKeyPress(.rightArrow) {
-                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                          onEmptyRightArrow?() == true
-                    else { return .ignored }
-                    return .handled
-                }
-                .onKeyPress(.escape) {
-                    onEscape?() == true ? .handled : .ignored
-                }
-                // The two things the header offers that the keyboard could not reach.
-                .onKeyPress(keys: ["p"]) { press in
-                    guard press.modifiers.contains(.command), let onTogglePin else {
-                        return .ignored
-                    }
-                    onTogglePin()
-                    return .handled
-                }
-                .onKeyPress(keys: ["k"]) { press in
-                    guard press.modifiers.contains(.command), let onClear else {
-                        return .ignored
-                    }
-                    onClear()
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    onMoveSelection?(-1) == true ? .handled : .ignored
-                }
-                .onKeyPress(.downArrow) {
-                    onMoveSelection?(1) == true ? .handled : .ignored
-                }
-
-            if let extraAttachMenu {
-                Menu {
-                    Button { onAttachFile() } label: {
-                        Label("Attach Files…", systemImage: "paperclip")
-                    }
-                    Divider()
-                    extraAttachMenu()
-                } label: {
-                    if cornerStyle {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .regular))
-                            .foregroundStyle(.primary.opacity(0.85))
-                            .frame(width: 26, height: 26)
-                            .contentShape(Rectangle())
-                    } else {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
-                            .contentShape(Rectangle())
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-            } else {
-                Button(action: onAttachFile) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle())
+            if isSending, let onStop {
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color.secondary.opacity(0.5), in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Attach a file")
+                .help("Stop generating")
+            } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    if onCommitSelection?() == true { return }
+                    onSubmit()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color.accentColor, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Send (Return)")
+            } else {
+                appPickerButton
+                    .frame(width: 32, height: 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
             }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .animation(.smooth(duration: 0.2), value: text.isEmpty)
+        .animation(.smooth(duration: 0.2), value: isSending)
+    }
 
-            // Every attached app, not just the first: a chat can be scoped to
-            // Reminders AND Safari, and a bar showing one of them reads as though the
-            // other was dropped.
+    @ViewBuilder
+    private var legacyComposerRow: some View {
+        HStack(spacing: 8) {
+            providerMenu
+            inputTextField
+            attachButton
             if !attachedAppNames.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(attachedAppNames.prefix(5), id: \.self) { name in
-                        Button {
-                            onRemoveApp?(name)
-                        } label: {
-                            ZStack {
-                                Group {
-                                    if let icon = AppContextPicker.icon(forAppNamed: name) {
-                                        Image(nsImage: icon)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                    } else {
-                                        Image(systemName: "app.dashed")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(width: 17, height: 17)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                .opacity(hoveredAppName == name ? 0.22 : 1)
-
-                                if hoveredAppName == name {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundStyle(.primary)
-                                }
-                            }
-                            .frame(width: 17, height: 17)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(onRemoveApp == nil)
-                        .help(onRemoveApp == nil ? name : "Remove \(name)")
-                        .onHover { hovering in
-                            guard onRemoveApp != nil else { return }
-                            withAnimation(.easeOut(duration: 0.1)) {
-                                hoveredAppName = hovering ? name : nil
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.accentColor.opacity(0.16), in: Capsule())
+                attachedAppChips
             }
-
-            Button {
-                if usesInlineAppPicker {
-                    ChatSlashAppPicker.openInline(text: &text)
-                } else {
-                    showAppPicker = true
-                }
-            } label: {
-                if cornerStyle {
-                    cornerGlyph("app.dashed")
-                } else {
-                    Image(systemName: "app.dashed")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .help("Work with an app")
-            .popover(isPresented: $showAppPicker, arrowEdge: .bottom) {
-                AppContextPicker(selectedNames: Set(attachedAppNames)) { app in
-                    onAttachApp(app)
-                    showAppPicker = false
-                }
-            }
-
+            appPickerButton
             if let onClear {
                 Button(action: onClear) {
                     Image(systemName: "trash")
@@ -847,7 +713,6 @@ struct AIComposerBar: View {
                 .buttonStyle(.plain)
                 .help("Clear this conversation")
             }
-
             if let onTogglePin {
                 Button(action: onTogglePin) {
                     if cornerStyle {
@@ -862,11 +727,7 @@ struct AIComposerBar: View {
                 .buttonStyle(.plain)
                 .help(isPinned ? "Unpin" : "Keep this open")
             }
-
-            // The Context Dock field's send: shown once something is typed.
-            if cornerStyle, !isSending,
-                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
+            if !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button {
                     if onCommitSelection?() == true { return }
                     onSubmit()
@@ -882,11 +743,8 @@ struct AIComposerBar: View {
                 .help("Send")
                 .transition(.opacity)
             }
-
             if isSending {
                 if let onStop {
-                    // A spinner says "wait". A surface that can cancel should offer that
-                    // instead, or the only way out of a long turn is to sit through it.
                     Button(action: onStop) {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 10, weight: .bold))
@@ -901,21 +759,227 @@ struct AIComposerBar: View {
                     ProgressView().controlSize(.small)
                 }
             }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, drawsChrome ? 10 : 0)
+        .background {
+            if drawsChrome {
+                Capsule()
+                    .fill(Color.primary.opacity(0.06))
+                    .overlay(
+                        Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, drawsChrome ? 10 : 0)
-            .background {
-                if drawsChrome {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.06))
-                        .overlay(
-                            Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+        }
+    }
+
+    @ViewBuilder
+    private var providerMenu: some View {
+        Menu {
+            ForEach(AIProvider.allCases) { provider in
+                Button {
+                    settings.selectedAIProvider = provider
+                } label: {
+                    if provider == settings.selectedAIProvider {
+                        Label(provider.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(provider.displayName)
+                    }
+                }
+            }
+        } label: {
+            if cornerStyle {
+                HStack(spacing: 5) {
+                    AIProviderIcon(provider: settings.selectedAIProvider, size: 15)
+                    Text(settings.selectedAIProvider.shortName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+                .contentShape(Capsule())
+            } else {
+                HStack(spacing: 4) {
+                    AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
+                        .foregroundStyle(.primary)
+                    if showsProviderName {
+                        Text(settings.selectedAIProvider.shortName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 22)
+                .contentShape(Rectangle())
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var inputTextField: some View {
+        TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
+            .lineLimit(cornerStyle ? 1...DockFieldLines.maximum : 1...5)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                onTextHeightChange?(height)
+            }
+            .onSubmit {
+                if onCommitSelection?() == true { return }
+                if let first = slashApps.first {
+                    pickSlashApp(first)
+                    return
+                }
+                onSubmit()
+            }
+            .onKeyPress(.leftArrow) {
+                guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      onEmptyLeftArrow?() == true
+                else { return .ignored }
+                return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      onEmptyRightArrow?() == true
+                else { return .ignored }
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                onEscape?() == true ? .handled : .ignored
+            }
+            .onKeyPress(keys: ["p"]) { press in
+                guard press.modifiers.contains(.command), let onTogglePin else {
+                    return .ignored
+                }
+                onTogglePin()
+                return .handled
+            }
+            .onKeyPress(keys: ["k"]) { press in
+                guard press.modifiers.contains(.command), let onClear else {
+                    return .ignored
+                }
+                onClear()
+                return .handled
+            }
+            .onKeyPress(.upArrow) {
+                onMoveSelection?(-1) == true ? .handled : .ignored
+            }
+            .onKeyPress(.downArrow) {
+                onMoveSelection?(1) == true ? .handled : .ignored
+            }
+    }
+
+    @ViewBuilder
+    private var attachButton: some View {
+        if let extraAttachMenu {
+            Menu {
+                Button { onAttachFile() } label: {
+                    Label("Attach Files…", systemImage: "paperclip")
+                }
+                Divider()
+                extraAttachMenu()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        } else {
+            Button(action: onAttachFile) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Attach a file")
+        }
+    }
+
+    @ViewBuilder
+    private var attachedAppChips: some View {
+        HStack(spacing: 4) {
+            ForEach(attachedAppNames.prefix(5), id: \.self) { name in
+                Button {
+                    onRemoveApp?(name)
+                } label: {
+                    ZStack {
+                        Group {
+                            if let icon = AppContextPicker.icon(forAppNamed: name) {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                            } else {
+                                Image(systemName: "app.dashed")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(width: 17, height: 17)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .opacity(hoveredAppName == name ? 0.22 : 1)
+
+                        if hoveredAppName == name {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .frame(width: 17, height: 17)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(onRemoveApp == nil)
+                .help(onRemoveApp == nil ? name : "Remove \(name)")
+                .onHover { hovering in
+                    guard onRemoveApp != nil else { return }
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        hoveredAppName = hovering ? name : nil
+                    }
                 }
             }
         }
-        .acceptsPastedImages { urls in onPasteImages?(urls) }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color.accentColor.opacity(0.16), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var appPickerButton: some View {
+        Button {
+            if usesInlineAppPicker {
+                ChatSlashAppPicker.openInline(text: &text)
+            } else {
+                showAppPicker = true
+            }
+        } label: {
+            Image(systemName: "app.dashed")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Work with an app")
+        .popover(isPresented: $showAppPicker, arrowEdge: .bottom) {
+            AppContextPicker(selectedNames: Set(attachedAppNames)) { app in
+                onAttachApp(app)
+                showAppPicker = false
+            }
+        }
     }
 
     /// The Context Dock field's round control, for the corner style.
