@@ -37,6 +37,9 @@ struct CapabilityMatchEvalTests {
     @Test func aRequestAboutSomethingElseDoesNotDragNotesIn() {
         // The other half of the fix: loosening the match must not make every sentence look
         // like a note request.
-        #expect(candidateIDs("restart the wifi").isEmpty)
+        // Mac-wide commands (`globalcmd.*`, no bundle id) are candidates in every scope and
+        // may match "restart" or "wifi"; what must not match is a Notes capability.
+        let notes = candidateIDs("restart the wifi").filter { $0.hasPrefix("notes.") }
+        #expect(notes.isEmpty, "Notes was dragged in: \(notes)")
     }
 }

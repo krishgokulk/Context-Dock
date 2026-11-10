@@ -726,6 +726,7 @@ struct AIChatMessageView: View {
     /// Detail mode for live answer rendering: Summary / Normal / Verbose (#331).
     var initialDetailMode: LivePanelDetailMode = .normal
     @State private var detailMode: LivePanelDetailMode = .normal
+    @State private var isHovered = false
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
@@ -1792,7 +1793,7 @@ struct AIChatMessageView: View {
                         }
                     }
                     .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
 
                 // Files the finished answer named, as cards — every surface, every provider.
@@ -1844,45 +1845,51 @@ struct AIChatMessageView: View {
                 }
 
                 if message.role == .assistant, !message.isError, !isStreaming {
-                    HStack(spacing: 6) {
-                        if let mode = message.activeMode {
-                            HStack(spacing: 4) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 8, weight: .bold))
-                                Text(message.modeProvenance ?? mode)
-                                    .font(.system(size: 9.5, weight: .medium))
-                            }
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2.5)
-                            .background(Color.secondary.opacity(0.1), in: Capsule())
-                            .help("Turn executed in \(message.modeProvenance ?? mode) mode")
-                        }
-
-                        if let onBranchSideThread {
-                            Button {
-                                onBranchSideThread(message)
-                            } label: {
+                    if isHovered || detailMode != .normal {
+                        HStack(spacing: 6) {
+                            if let mode = message.activeMode {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "arrow.triangle.branch")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                    Text("Side thread")
-                                        .font(.system(size: 10, weight: .medium))
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text(message.modeProvenance ?? mode)
+                                        .font(.system(size: 9.5, weight: .medium))
                                 }
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2.5)
-                                .background(Color.primary.opacity(0.06), in: Capsule())
+                                .background(Color.secondary.opacity(0.1), in: Capsule())
+                                .help("Turn executed in \(message.modeProvenance ?? mode) mode")
                             }
-                            .buttonStyle(.plain)
-                            .help("Branch a side question from this turn without polluting main thread")
+
+                            if let onBranchSideThread {
+                                Button {
+                                    onBranchSideThread(message)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.triangle.branch")
+                                            .font(.system(size: 9.5, weight: .semibold))
+                                        Text("Side thread")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2.5)
+                                    .background(Color.primary.opacity(0.06), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Branch a side question from this turn without polluting main thread")
+                            }
+
+                            Spacer(minLength: 4)
+
+                            LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-
-                        Spacer(minLength: 4)
-
-                        LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                        .padding(.top, 2)
+                        .transition(.opacity)
                     }
-                    .padding(.top, 2)
                 } else if let mode = message.activeMode {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
@@ -1951,6 +1958,12 @@ struct AIChatMessageView: View {
             // `.assistant` received this spacer, so `.tool` expanded across the row and its
             // compact success bubble appeared centred.
             if message.role != .user { Spacer(minLength: 52) }
+        }
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
         }
         .task(id: turnFilesSource) {
             guard let source = turnFilesSource else {

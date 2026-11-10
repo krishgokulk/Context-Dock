@@ -22,7 +22,8 @@ struct AgentSourceDecision: Equatable {
             return """
                 SOURCE AUTHORITY: This asks about changing live state. Answer only from a live
                 reader: one included below, or a typed read tool you call (for example
-                notes.search or notes.count for Notes). Do not use conversation history, model
+                notes.search or notes.count for Notes; mail.search, mail.unread, mail.read, or
+                mail.currentMessage for Mail). Do not use conversation history, model
                 knowledge, or saved memory as factual evidence. Do not tell the user to search or
                 select things themselves while a read tool for the request exists. If no live
                 reader has the answer, say it was not readable.
@@ -69,8 +70,10 @@ enum AgentSourceAuthority {
             return AgentSourceDecision(
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
         }
-        if let scopeBundleId, ReadOnlyDataDomain(scopeBundleId: scopeBundleId) != nil,
-            asksAboutScopedRecords(q) || ScopedRecordRead.matches(query: q, bundleId: scopeBundleId)
+        if let scopeBundleId, let domain = ReadOnlyDataDomain(scopeBundleId: scopeBundleId),
+            asksAboutScopedRecords(q)
+                || ScopedRecordRead.matches(query: q, bundleId: scopeBundleId)
+                || (domain == .mail && isScopedMailQuestion(q))
         {
             return AgentSourceDecision(
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
@@ -106,6 +109,22 @@ enum AgentSourceAuthority {
             && subjects.contains(where: q.contains)
     }
 
+    private static func isProcedureOrAppQuestion(_ q: String) -> Bool {
+        if q.contains("this app") || q.contains("the app") { return true }
+        let procedurePrefixes = [
+            "how do i ", "how can i ", "how to ", "where do i ", "where is ",
+            "what happens if ", "can i ",
+        ]
+        return procedurePrefixes.contains(where: q.hasPrefix)
+    }
+
+    private static func isScopedMailQuestion(_ q: String) -> Bool {
+        guard !GeneralAIActionResolver.shared.requestsChange(q),
+            !isProcedureOrAppQuestion(q)
+        else { return false }
+        return MailQuestionRouter.isMailboxQuestion(q)
+    }
+
     /// A question about the frontmost app's records that never named them. `isLiveStateQuestion`
     /// wants a freshness word *and* an object noun; here the scope is the noun, so only the
     /// freshness half has to be present. Asked in Reminders, "what do I need to finish today?"
@@ -120,23 +139,18 @@ enum AgentSourceAuthority {
         // Naming the app itself makes it a question about the product, not its records.
         // "what does this app do?" reaches the same signals as "what does this note say?" and
         // wants documentation, not a read of anything.
-        if q.contains("this app") || q.contains("the app") { return false }
-        let procedurePrefixes = [
-            "how do i ", "how can i ", "how to ", "where do i ", "where is ",
-            "what happens if ", "can i ",
-        ]
-        if procedurePrefixes.contains(where: q.hasPrefix) { return false }
+        if isProcedureOrAppQuestion(q) { return false }
         // Two families, both of which name the record set without naming it. When the app in
         // front *is* the records, "how many are there" is as much a read as "what is due".
         // These mirror the read signals ReadOnlyDataRouter already trusts, so the two halves
         // of the decision agree about what counts as a question about someone's own data.
         let agenda = [
-            "today", "tomorrow", "tonight", "this week", "due", "overdue", "pending",
+            "today", "yesterday", "tomorrow", "tonight", "this week", "due", "overdue", "pending",
             "outstanding", "unread", "upcoming", "latest", "recent", "left to do",
             "remaining", "need to finish", "need to do", "right now", "currently",
         ]
         let readSignals = [
-            "how many", "do i have", "any ", "anything", "my ", "show me", "list ",
+            "how many", "do i have", "did i", "any ", "anything", "my ", "show me", "list ",
             "what's on", "whats on",
             // "what's in this note?" named the thing in front of it and still grounded
             // nowhere: no freshness word, no possessive. Asking what is *inside* the open

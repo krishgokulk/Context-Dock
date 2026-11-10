@@ -23,9 +23,14 @@ final class AXObserverManager {
 
     private init() {}
 
+    #if DEBUG
+    var activeObserverCount: Int { pool.count }
+    #endif
+
     // MARK: - Public
 
     func startMonitoring() {
+        guard !AppDelegate.isHostingTests else { return }
         if let front = NSWorkspace.shared.frontmostApplication,
            front.bundleIdentifier != Bundle.main.bundleIdentifier {
             attach(to: front)

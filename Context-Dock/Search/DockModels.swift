@@ -106,19 +106,6 @@ struct SharedResultRowModel: Identifiable {
     var copy: (() -> Void)? = nil
 }
 
-
-struct AIMenuProposal {
-    var path: [String]
-    var title: String
-    var fullPathLabel: String
-    var shortcutChar: String?
-    var shortcutModifiers: Int
-    var menuImage: NSImage?
-    var sourcePID: pid_t
-    var sourceBundleId: String
-    var sourceAppName: String
-}
-
 struct MenuPillGroup: Identifiable {
     let id: String
     let primaryPill: DockPill

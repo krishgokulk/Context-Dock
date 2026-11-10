@@ -3,33 +3,28 @@ import Testing
 
 @testable import Context_Dock
 
-// The Mail scope replied to "hi hello?" with "Attach Mail context with the + button first,
-// then ask again." Seen in the running app, not in any test — the predicate lived on
-// DockCore, which cannot be instantiated, so nothing could reach it.
-//
-// One line caused it: `if rawScopedQuery.contains("?") { return true }`. Every question was a
-// mail question.
+// Question shape says the sentence is asking something; mailbox subject says it is asking
+// about mail. Keeping them separate lets the Mail scope answer ordinary conversation ("hi
+// hello?", "how are you?", "what's 2+2?") directly while grounding real mailbox questions in
+// live Mail readers (`mail.recent`, `mail.read`, `mail.search`, `mail.unread`,
+// `mail.currentMessage`).
 
 struct MailQuestionRouterTests {
 
-    // MARK: - The reported bug
+    // MARK: - Ordinary conversation vs. mailbox questions
 
-    /// A scope is still a chat. None of these wants the inbox read, and refusing to answer
-    /// them until the user attaches a mailbox is the app declining to talk.
-    @Test func ordinaryConversationDoesNotDemandAMailbox() {
+    /// A scope is still a chat. None of these wants the inbox read.
+    @Test func ordinaryConversationIsNotAMailboxQuestion() {
         for query in ["hi hello?", "how are you?", "what's 2+2?", "can you help?", "?"] {
             #expect(
-                !MailQuestionRouter.needsAttachedMailContext(
-                    query: query, isMailContextAttached: false),
-                "\"\(query)\" is not about mail — the chat should just answer it")
+                !MailQuestionRouter.isMailboxQuestion(query),
+                "\"\(query)\" is not about mail — the chat should answer it conversationally")
         }
     }
 
-    // MARK: - Real mailbox questions still ask for context
+    // MARK: - Real mailbox questions route to live Mail readers
 
-    /// The prompt exists for a reason: answering these without the mailbox attached means
-    /// guessing at someone's inbox.
-    @Test func mailboxQuestionsStillAskForContext() {
+    @Test func mailboxQuestionsAreRecognised() {
         for query in [
             "any unread mail?",
             "who sent this message?",
@@ -38,18 +33,8 @@ struct MailQuestionRouterTests {
             "any drafts?",
         ] {
             #expect(
-                MailQuestionRouter.needsAttachedMailContext(
-                    query: query, isMailContextAttached: false),
-                "\"\(query)\" is about the mailbox and needs it attached")
-        }
-    }
-
-    /// Once the mailbox is attached the prompt must never appear again, whatever is asked.
-    @Test func nothingAsksTwiceOnceContextIsAttached() {
-        for query in ["any unread mail?", "hi hello?", "who sent this?"] {
-            #expect(
-                !MailQuestionRouter.needsAttachedMailContext(
-                    query: query, isMailContextAttached: true))
+                MailQuestionRouter.isMailboxQuestion(query),
+                "\"\(query)\" is a question about the mailbox")
         }
     }
 

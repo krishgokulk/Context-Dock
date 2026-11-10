@@ -15,29 +15,32 @@ attach LLDB without opening Xcode.
 
 ## Skills
 
-Installed skills trigger automatically on the matching task:
+Skills trigger automatically on the matching task. **Where** says whether a skill is in this repo
+(`repo`: every session, Mac or cloud) or installed outside the repo on the owner's Mac
+(`Mac only`: a user-level skill or plugin; a cloud session does not have it. Its Codex copy is
+`.agents/skills/<name>.skill`):
 
-| Task | Skill |
-|---|---|
-| Build / run / fix compile errors | build-run-debug |
-| SwiftUI layout, scenes, navigation, state | swiftui-patterns |
-| Add Liquid Glass / modern macOS 26 UI | liquid-glass |
-| Run or debug tests | testing |
-| AppKit bridges (NSWindow, responder chain) | appkit-interop |
-| Window size, placement, toolbar, materials | window-customization |
-| Codesign / entitlement / sandbox errors | codesigning |
-| Notarization / App Store distribution | distribution-signing |
-| OSLog instrumentation | app-telemetry |
-| Swift Package Manager / dependencies | swiftpm |
-| GitHub PRs / issues | github |
-| Address PR review comments | gh-address-comments |
-| Modern SwiftUI API review (deep dive) | swiftui-pro |
-| Swift 6.2 concurrency review (actors, `@concurrent`, isolation) | swift-concurrency-pro |
-| App Intents / Siri / Shortcuts / Spotlight schemas | app-intents |
-| Core Data stack, threading, migrations, CloudKit sync | core-data-expert |
-| SwiftUI accessibility audit (VoiceOver, Dynamic Type) | swiftui-accessibility-auditor |
-| UIKit accessibility audit (iOS/iPadOS) | uikit-accessibility-auditor |
-| AppKit accessibility audit (macOS) | appkit-accessibility-auditor |
+| Task | Skill | Where |
+|---|---|---|
+| Build / run / fix compile errors | build-run-debug | Mac only |
+| SwiftUI layout, scenes, navigation, state | swiftui-patterns | Mac only |
+| Add Liquid Glass / modern macOS 26 UI | liquid-glass | Mac only |
+| Run or debug tests | testing | Mac only |
+| AppKit bridges (NSWindow, responder chain) | appkit-interop | Mac only |
+| Window size, placement, toolbar, materials | window-customization | Mac only |
+| Codesign / entitlement / sandbox errors | codesigning | Mac only |
+| Notarization / App Store distribution | distribution-signing | Mac only |
+| OSLog instrumentation | app-telemetry | Mac only |
+| Swift Package Manager / dependencies | swiftpm | Mac only |
+| GitHub PRs / issues | github | Mac only |
+| Address PR review comments | gh-address-comments | Mac only |
+| Modern SwiftUI API review (deep dive) | swiftui-pro | repo |
+| Swift 6.2 concurrency review (actors, `@concurrent`, isolation) | swift-concurrency-pro | repo |
+| App Intents / Siri / Shortcuts / Spotlight schemas | app-intents | repo |
+| Core Data stack, threading, migrations, CloudKit sync | core-data-expert | repo |
+| SwiftUI accessibility audit (VoiceOver, Dynamic Type) | swiftui-accessibility-auditor | repo |
+| UIKit accessibility audit (iOS/iPadOS) | uikit-accessibility-auditor | repo |
+| AppKit accessibility audit (macOS) | appkit-accessibility-auditor | repo |
 
 `swiftui-pro` overlaps with `swiftui-patterns` (deep API review vs. app architecture);
 `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general

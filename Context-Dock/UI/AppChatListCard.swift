@@ -305,8 +305,15 @@ struct AppChatListCard: View {
             if model.finderPathTrail.isEmpty {
                 contextPill(foot)
                 Spacer(minLength: 0)
+                ProviderContextChip(
+                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
+                    compact: true)
             } else {
                 finderPathPills
+                Spacer(minLength: 0)
+                ProviderContextChip(
+                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
+                    compact: true)
             }
             BoardFooter.pill {
                 BoardFooter.action(foot.verb, keys: ["↩"])
