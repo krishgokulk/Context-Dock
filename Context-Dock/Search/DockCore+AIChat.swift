@@ -2291,6 +2291,9 @@ extension DockCore {
             && !lockedBundleId.isEmpty
             && lockedBundleId != Bundle.main.bundleIdentifier
         let scopedBundleId = shouldKeepLockedChatScope ? lockedBundleId : resolvedBundleId
+        // The app this chat belongs to (an App Pet, a pinned target); empty in Global Context.
+        let chatOwnBundleId = (l2.targetApp?.bundleId ?? l2.chatDraftBundleId)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedAppName = shouldKeepLockedChatScope ? lockedAppName : resolvedAppName
         let initialFinderSelection: [URL] = {
             let id = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
@@ -2518,7 +2521,14 @@ extension DockCore {
 
         let findIntentMustBeExplicit =
             wasContextDockChatActive || scopedHasLinkedCLI || looksLikeQuestion
-        if (!findIntentMustBeExplicit || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
+        // A Mail search in Mail's own chat is answered in the transcript, never by driving
+        // Mail's search field — unless the user explicitly asked for the app's Find.
+        let isInScopeMailSearch =
+            AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: chatOwnBundleId)
+            || (!dockScope.namedByQuery
+                && AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: scopedBundleId))
+        if (!(findIntentMustBeExplicit || isInScopeMailSearch)
+            || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
             let findIntent = resolvedFindIntent(
             for: query,
             dockScope: dockScope,
@@ -2575,11 +2585,12 @@ extension DockCore {
             !shouldSkipCrossAppMailRouting,
             let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
             // In an app's own chat, "search mail from SBI" is a read of that app's records for
-            // the model (issue #204), not a cross-app UI search. From Global Context the same
-            // sentence names its target app and stays cross-app.
-            dockScope.isGlobalScope || isGlobalContextActive
-                || !CrossAppNLHandler.shared.searchesScopedApp(
-                    intent, scopedBundleId: scopedBundleId)
+            // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot
+            // tell the two apart — it is also true inside an App Pet — so the test is whether
+            // the sentence itself named the app.
+            CrossAppNLHandler.shared.claimsTurn(
+                intent, scopedBundleId: scopedBundleId, chatBundleId: chatOwnBundleId,
+                scopeNamedByQuery: dockScope.namedByQuery)
         {
             dockShortcutStep(.crossApp)
             executeCrossAppIntent(intent, userMessage: query)

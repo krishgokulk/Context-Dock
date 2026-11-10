@@ -207,6 +207,18 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
      (commands that take the screen) still counts "from", as before.
   5. The clickable "Search Mail for …" pill strips the ids from what it shows and searches both
      fields for a generic term.
+  6. **Second hand check (2026-11-10): "search mail from uel" in the Mail App Pet still typed
+     "from uel" into Mail's search field.** The §3.1a guard used `isGlobalContextActive`, which
+     is also true inside an App Pet, so the cross-app parser kept the turn. The test is now
+     whether the app is the chat's own (`l2.targetApp` / `l2.chatDraftBundleId`) or was named by
+     the sentence from Global Context (`DockScopeResolution.namedByQuery`):
+     `CrossAppNLHandler.claimsTurn`. App Find gets the same rule for Mail
+     (`AppleLiveDataContext.isInScopeMailSearch`) unless the user explicitly asks for the app's
+     Find. The sentence then reaches the model path, where fix 1 has already run the headless
+     `mailboxSnapshot(senderContains:)` and put the matches in the transcript's prompt. When a
+     Mail search does go cross-app (from Global Context), `searchAppQuery` drops a leading
+     "from " so Mail's field gets the name, not the literal phrase. This supersedes the
+     Global-Context wording in §3.1a.
   Not covered offline: the wiring inside `appleAppsContextBlock` (it scripts Mail); it was
   checked live through the app's ask path.
   Tests: `MailSearchGroundingTests`.

@@ -990,23 +990,62 @@ struct MailboxSearchShortcutRetirementTests {
         }
     }
 
-    /// The cross-app share parser runs next in `handleL2Query`. It reads "search mail …" as a
-    /// search *in* Mail; in Mail's own chat that is not cross-app and is skipped, so the model
-    /// takes the turn. A search of another app from Mail's chat stays cross-app.
+    /// The cross-app parser reads "search mail …" as a search *in* Mail and types the rest
+    /// into Mail's search field. In Mail's own chat it must not take the turn — whether or not
+    /// Global Context is active underneath, which it is inside an App Pet. Typed from Global
+    /// Context, where the sentence named the app, it is cross-app as before.
     @Test func crossAppRoutingDoesNotClaimSearchCommands() {
         let handler = CrossAppNLHandler.shared
         for sentence in Self.retiredCommands {
             guard let intent = handler.parse(sentence.lowercased()) else { continue }
             #expect(
-                handler.searchesScopedApp(intent, scopedBundleId: "com.apple.mail"),
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false),
+                "\"\(sentence)\"")
+            #expect(
+                handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: true),
+                "\"\(sentence)\" from Global Context")
+            // The App Pet's own app wins even when the sentence also named it.
+            #expect(
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", chatBundleId: "com.apple.mail",
+                    scopeNamedByQuery: true),
+                "\"\(sentence)\" in Mail's App Pet")
+        }
+        // A search of another app from Mail's chat, and any non-search intent, still claim.
+        if let other = handler.parse("search notes tax return") {
+            #expect(handler.claimsTurn(other, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+            #expect(!handler.claimsTurn(other, scopedBundleId: "com.apple.Notes", scopeNamedByQuery: false))
+        } else {
+            Issue.record("search notes tax return should parse as a cross-app search")
+        }
+        if let send = handler.parse("send this to salman") {
+            #expect(handler.claimsTurn(send, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+        }
+    }
+
+    /// If a Mail search does go to Mail's search field (from Global Context), the field gets
+    /// the name, not the literal words "from uel", which match nothing.
+    @Test func aCrossAppMailSearchDropsTheWordFrom() {
+        let handler = CrossAppNLHandler.shared
+        #expect(handler.parse("search mail from uel")?.searchQuery == "uel")
+        #expect(handler.parse("find mail from gokula kannan j")?.searchQuery == "gokula kannan j")
+        #expect(handler.parse("search mail quarterly report")?.searchQuery == "quarterly report")
+        #expect(handler.parse("search notes from last week")?.searchQuery == "from last week")
+    }
+
+    /// App Find runs before the cross-app parser and would drive Mail's Mailbox Search.
+    @Test func aMailSearchInMailsOwnChatStaysInTheTranscript() {
+        for sentence in ["search mail from uel", "look for emails from SBI", "search for invoice"] {
+            #expect(
+                AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.mail"),
+                "\"\(sentence)\"")
+            #expect(
+                !AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.Notes"),
                 "\"\(sentence)\"")
         }
-        let other = handler.parse("search notes tax return")
-        #expect(other != nil)
-        if let other {
-            #expect(!handler.searchesScopedApp(other, scopedBundleId: "com.apple.mail"))
-            #expect(handler.searchesScopedApp(other, scopedBundleId: "com.apple.Notes"))
-        }
+        #expect(!AppleLiveDataContext.isInScopeMailSearch("find in this window", scopedBundleId: "com.apple.mail"))
     }
 
     /// A look-up verb is a record read in every record-set app, not only Mail, and a UI

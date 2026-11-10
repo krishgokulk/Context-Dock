@@ -63,6 +63,7 @@ enum AppleLiveDataContext {
         "get", "sent", "received", "attachment", "attachments", "titled", "regarding",
         "morning", "afternoon", "evening", "tonight", "ago", "since", "before", "after",
         "earlier", "anything", "something", "how", "many", "much",
+        "window", "app", "application", "menu", "menus", "command", "commands",
         "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
         "january", "february", "march", "april", "may", "june", "july", "august",
         "september", "october", "november", "december",
@@ -105,6 +106,12 @@ enum AppleLiveDataContext {
             options: .regularExpression) != nil
         guard isLookUp else { return nil }
         return term(lower, maxWords: 2).map { MailSearchIntent(sender: "", term: $0, day: day) }
+    }
+
+    /// A Mail search typed in Mail's own chat. It is answered in the transcript from a headless
+    /// read (the prefetch below); no shortcut may drive Mail's window for it (owner, 2026-10-10).
+    static func isInScopeMailSearch(_ query: String, scopedBundleId: String) -> Bool {
+        scopedBundleId.lowercased() == "com.apple.mail" && mailSearchIntent(for: query) != nil
     }
 
     /// The filters for a `mail.search` / `search_mail` call. The `query` input is not always a
