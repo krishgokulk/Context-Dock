@@ -92,7 +92,11 @@ struct MailAndCalendarRemindersEngineTests {
 
     @Test func outboundGateClassifiesAllNewTools() {
         let registry = AgentToolRegistry.shared
+        // Suites run in parallel against the one shared registry: `ActivityStepTests` and
+        // `UTCPTests` register stub tools in it while this reads it. Those are not product
+        // tools and are not expected in the gate.
         let unclassified = registry.allTools.map(\.name)
+            .filter { !$0.hasPrefix("activity_test_") && $0 != "jira_get_ticket" }
             .filter { !OutboundGate.isClassified(toolName: $0) }
         #expect(unclassified.isEmpty, "All tools must be classified in OutboundGate")
 

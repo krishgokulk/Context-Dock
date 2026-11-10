@@ -155,9 +155,19 @@ struct CornerBoardLayoutTests {
 
     @Test("The model's panel follows the arrows and the window reserves the same board")
     func theModelFollowsTheHighlight() {
-        let model = AppChatPromptModel(conversation: AppChatConversation())
+        // Global has no app card to fall back on, so with nothing listed there is no panel
+        // (an app scope shows its own card there instead).
+        let model = AppChatPromptModel(
+            conversation: AppChatConversation(), globalResultSource: GlobalContextResultSource())
+        model.summonGlobalContext()
+        model.rows = []
         #expect(model.boardPreview == nil)
-        #expect(model.boardSize == AppChatListMetrics.size(
-            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model)))
+        // The board is at least the list; the expanded presentations (board under the field,
+        // centred) reserve a fixed larger card, which depends on the host's settings.
+        let list = AppChatListMetrics.size(
+            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model),
+            header: model.globalSectionHeaders.isEmpty)
+        #expect(model.boardSize.width >= list.width)
+        #expect(model.boardSize.height >= list.height)
     }
 }

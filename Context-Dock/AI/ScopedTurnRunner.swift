@@ -75,6 +75,7 @@ enum ScopedTurnRunner {
         // network and shell (E1c); see ClaudeCodeCLIService+Privacy.swift.
         try await TurnRecorder.run(provider: provider.rawValue) {
             TurnRecorder.current?.notePromptSections(promptSections)
+            ProviderContextUsageStore.shared.startTurn(scope: scope.chatScope, provider: provider)
             return try await ClaudeCodeChat.$scope.withValue(scope.chatScope) {
                 try await runUntraced(
                     query: query, systemPrompt: systemPrompt, scope: scope, provider: provider,

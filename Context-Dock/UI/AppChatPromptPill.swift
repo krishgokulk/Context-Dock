@@ -1121,6 +1121,10 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 4)
 
+            // Provider / context usage chip (#335)
+            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
+                .transition(.opacity)
+
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
             HStack(spacing: 2) {

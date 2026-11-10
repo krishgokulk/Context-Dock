@@ -193,6 +193,11 @@ extension AIProviderService {
         var toolCallsSeen = 0
         var progressTracker = ToolLoopProgressTracker()
         var focusTracker = RoundFocusTracker(message: message)
+        ProviderContextUsageStore.shared.startTurn(
+            scope: chatScope,
+            provider: adapter.provider,
+            model: adapter.model
+        )
         defer {
             AgentTurnDiagnostics.record(
                 model: adapter.model, toolsOffered: allTools.count,
@@ -239,6 +244,23 @@ extension AIProviderService {
             adapter.recordUsage(round: result)
             adapter.noteRound(recorder, round: result, roundStarted: roundStarted)
             recorder?.noteRoundFocus(focus)
+
+            if let usage = result.usage {
+                let input: Int?
+                if adapter.provider == .anthropic {
+                    let parts = [usage.inputTokens, usage.cacheReadTokens, usage.cacheWriteTokens].compactMap { $0 }
+                    input = parts.isEmpty ? nil : parts.reduce(0, +)
+                } else {
+                    input = usage.inputTokens
+                }
+                ProviderContextUsageStore.shared.recordRound(
+                    scope: chatScope,
+                    provider: adapter.provider,
+                    model: adapter.model,
+                    inputTokens: input,
+                    outputTokens: usage.outputTokens
+                )
+            }
 
             switch result.outcome {
             case .refusal(let partial):

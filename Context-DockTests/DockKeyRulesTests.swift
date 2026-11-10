@@ -165,13 +165,20 @@ struct CornerDockKeyRulesTests {
         #expect(model.query == "quit")
     }
 
-    @Test("Esc on a focused row closes the list and keeps the query (C5)")
+    @Test("Esc on a focused row lets go of it and keeps the query; typed text with rows keeps the sheet (C5)")
     func escapeKeepsTheQuery() {
         let model = typedWithFocusedRow()
         #expect(model.applyResultFocusKey(.escape))
         #expect(model.focusedRow == nil)
         #expect(model.query == "quit")
+        // Typed text with matching rows auto-expands the result sheet (486fd230, 2026-11-04),
+        // so Esc steps back to the field's resting shape and the sheet follows the rows.
+        #expect(model.phase == .suggesting)
+        // Once nothing matches the text, the same resting shape is the plain field.
+        model.rows = []
+        model.syncListPhase()
         #expect(model.phase == .prompt)
+        #expect(model.query == "quit")
     }
 
     @Test("Backspace on a focused \"Quit\" row lets go of it: nothing deleted, nothing run (C6)")
@@ -490,9 +497,10 @@ struct CornerDockKeyRulesPart2Tests {
     }
 
     @Test("A second → leaves the first app for the next running one")
-    func rightArrowWalksPastTheFirstApp() {
+    func rightArrowWalksPastTheFirstApp() throws {
         let apps = AppChatPromptModel.orderedAppPills()
         guard apps.count > 1 else { return }  // nothing to walk to on this Mac
+        try #require(apps.count > 1)
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summonGlobalContext()
         #expect(model.scopeIntoFirstRunningApp())
@@ -502,9 +510,10 @@ struct CornerDockKeyRulesPart2Tests {
     }
 
     @Test("← walks back the way → came, and from the first app home to Global")
-    func leftArrowWalksBack() {
+    func leftArrowWalksBack() throws {
         let apps = AppChatPromptModel.orderedAppPills()
         guard apps.count > 1 else { return }  // nothing to walk on this Mac
+        try #require(apps.count > 1)
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summonGlobalContext()
         #expect(model.scopeIntoFirstRunningApp())
