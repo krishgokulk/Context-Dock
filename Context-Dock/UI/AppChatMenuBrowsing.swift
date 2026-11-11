@@ -1613,12 +1613,16 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// What the rest of the top match would be, if the user accepted it: the ghost the dock
-    /// shows after what they have typed.
+    /// What the rest of the row the field points at would be, if the user accepted it: the
+    /// ghost the dock shows after what they have typed. The row arrowed to, once there is
+    /// one — the same row the trailing icon shows (owner 2026-11-11: the icon followed the
+    /// arrows and the ghost stayed on the top match). A focused row whose title does not
+    /// start with what is typed has no ghost, rather than the top match's.
     var globalGhostCompletion: String {
         guard isGlobalScope else { return "" }
         let title: String
-        if let first = rows.first, case .dock = first { title = first.title }
+        if let focused = focusedRow { title = focused.title }
+        else if let first = rows.first, case .dock = first { title = first.title }
         else if let top = globalTopMatch { title = top.title }
         else { return "" }
         let typed = query
