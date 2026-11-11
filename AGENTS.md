@@ -63,7 +63,12 @@ Pure Xcode project — no Makefile, no SPM package at the root.
 ./scripts/build-debug.sh # build only, same DerivedData
 ./scripts/check.sh       # the gate: Debug build + oversized-file warning; --full adds the tests
 ./scripts/test.sh        # whole suite (offline: no API key, no network)
+./scripts/corner.sh bottom  # hand checks: open the Corner (centre|bottom|global|general|cmd|ask|hide|state)
 ```
+
+Agents open the Corner with `scripts/corner.sh`, never synthetic ⌘⌘ / ⌥⌥ — those are read from a
+global key monitor that synthetic events do not reach. It prints the app's own state (scope,
+phase, centred, on screen); DEBUG builds only (`App/DevCornerRemote.swift`).
 
 Why: raw `xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
 agents' build — launching a `~/Library/Developer/Xcode/DerivedData` path has shipped a **stale app**

@@ -332,6 +332,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerCaptureHotkeys()
         #if DEBUG
         registerInspectorHotkey()
+        DevCornerRemote.start()
         #endif
         // Which coding agents are installed, resolved once here rather than when somebody
         // asks. The alternative is a filesystem probe on the path that answers while the user
@@ -1210,6 +1211,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentation.dismiss()
             return
         }
+        openBottomAppChat()
+    }
+
+    /// The bottom dock's field for the app in front — what ⌘⌘ opens in bottom-dock mode.
+    func openBottomAppChat() {
         // From Global or General, straight to the app's Context Dock — not a toggle that
         // would put a visible corner away instead.
         activateAppChatPrompt(toggles: false)
