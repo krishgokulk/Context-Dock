@@ -464,7 +464,7 @@ enum AppAdapterCapabilityCatalog {
         let capabilityID: String?
         if isTopContactsIntent {
             capabilityID = "messages.topContacts"
-        } else if lower.contains("compose") || lower.contains("send message") || lower.contains("send text") || lower.hasPrefix("text ") {
+        } else if lower.contains("compose") || lower.contains("send message") || lower.contains("send text") || lower.hasPrefix("text ") || lower.hasPrefix("message ") || (lower.hasPrefix("send ") && lower.contains(" to ")) {
             capabilityID = "messages.compose"
         } else if lower.contains("search") || lower.contains("find message") || lower.contains("find text") || lower.contains("messages about") {
             capabilityID = "messages.search"
@@ -491,18 +491,47 @@ enum AppAdapterCapabilityCatalog {
         case "messages.recent":
             candidate.inputValues["limit"] = "10"
         case "messages.search":
-            let search = extractSearchText(query, customPrefixes: ["search messages for", "search messages", "find message about", "find message", "messages about"])
+            let search = extractSearchText(
+                query,
+                customPrefixes: [
+                    "search messages for", "search messages from", "search messages",
+                    "find messages from", "find messages about", "find messages",
+                    "find message about", "find message", "messages about",
+                ]
+            )
             guard !search.isEmpty else { return nil }
             candidate.inputValues["query"] = search
             candidate.inputValues["limit"] = "10"
         case "messages.compose":
-            let recipient = textAfterMarker(query, markers: ["text ", "message ", "to "]) ?? ""
-            candidate.inputValues["recipient"] = recipient.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-            candidate.inputValues["body"] = ""
+            if let parsed = parseSendToRecipient(query) {
+                candidate.inputValues["recipient"] = parsed.recipient
+                candidate.inputValues["body"] = parsed.body
+            } else {
+                let recipient = textAfterMarker(query, markers: ["text ", "message ", "to "]) ?? ""
+                candidate.inputValues["recipient"] = recipient.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                candidate.inputValues["body"] = ""
+            }
         default:
             break
         }
         return candidate
+    }
+
+    private static func parseSendToRecipient(_ query: String) -> (recipient: String, body: String)? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("send ") else { return nil }
+        let afterSend = String(trimmed.dropFirst("send ".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let toRange = afterSend.range(of: " to ", options: [.caseInsensitive, .backwards]) else {
+            return nil
+        }
+        let rawBody = String(afterSend[..<toRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”'"))
+        let rawRecipient = String(afterSend[toRange.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard !rawRecipient.isEmpty else { return nil }
+        return (recipient: rawRecipient, body: rawBody)
     }
 
     private static func mailCandidate(
@@ -685,7 +714,7 @@ enum AppAdapterCapabilityCatalog {
             text.removeFirst(prefix.count)
             break
         }
-        for prefix in [" for ", " about ", " containing ", " matching ", " of "] where text.hasPrefix(prefix) {
+        for prefix in [" for ", " from ", " about ", " containing ", " matching ", " of "] where text.hasPrefix(prefix) {
             text.removeFirst(prefix.count)
             break
         }

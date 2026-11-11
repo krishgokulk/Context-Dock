@@ -286,6 +286,7 @@ enum ChatRouteResolver {
         let actionVerbs = mutatingVerbs + [
             "open", "launch", "start", "stop", "show", "list", "export", "copy", "paste",
             "refresh", "reload", "search", "find", "jump", "switch", "toggle",
+            "send", "compose", "draft", "reply",
             // Window verbs. Their absence is why "minimize safari" was not treated as a
             // command at all: with no verb matched the turn never resolved a route, so the
             // menu item that does exactly this was never looked for. They are unambiguous
@@ -298,6 +299,9 @@ enum ChatRouteResolver {
             "turn on", "turn off", "switch on", "switch off", "enable", "disable",
             "uncheck", "untick", "click", "press",
         ]
+        if lowered.hasPrefix("text ") || lowered.hasPrefix("message ") {
+            return true
+        }
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }
 

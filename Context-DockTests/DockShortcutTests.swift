@@ -34,9 +34,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.finder.step == "Shortcut: Finder — matched 'a Finder folder request'")
     }
 
-    @Test func messagesStep() {
-        #expect(DockShortcut.messages.step == "Shortcut: Messages — matched 'message … to someone'")
-    }
 
     @Test func crossAppStep() {
         #expect(DockShortcut.crossApp.step == "Shortcut: Cross-App — matched 'send/open this in another app'")

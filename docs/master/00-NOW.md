@@ -35,6 +35,14 @@ None. (Awaiting owner selection for next task)
 **#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — PR #425, merged:**
 - Branch `claude/issue-204-retire-mailbox-search-f9190a` (PR #425, commit `99fe36cd`).
 
+**Issue #204: P10: Retire the Messages pre-model shortcut into the ladder:**
+- Branch `claude/issue-204-retire-messages` (Issue #204).
+- EGM specification: `docs/superpowers/specs/2026-11-09-issue-204-retire-messages-shortcut.md` (Approved, 0 blocking gaps).
+- Retired pre-model `messagesScopedSemanticIntent` (`DockShortcut.messages`), `CrossAppNLHandler.parseMessagesScopedIntent`, and `makeMessagesSemanticIntentPill` from `DockCore+AIChat.swift`, `DockCore+ContextualActions.swift`, `CrossAppNLHandler.swift`, and `DockShortcut.swift`.
+- Added `DockCore.shouldSkipCrossAppMessagesRouting` so `CrossAppNLHandler` does not hijack in-scope Messages compose/send turns without a cross-app selection payload.
+- Extended `AgentSourceAuthority.decide`, `ReadOnlyDataRouter.domain(for:)`, `FrontmostAppTaskPlan`, `ChatRouteResolver.isActionRequest`, `GeneralAIActionResolver`, and `AppAdapterCapabilityCatalog.messagesCandidate` so Messages questions, searches, and gated compose/send requests route through the shared ladder (`ScopedRoutePolicy` + `CapabilityIndex` + `AppleMessagesMCPCapabilities`).
+- Added Messages chat phrasebook rows and `MessagesShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `DockShortcutTests.swift` and `00-DOCK-PARITY-INVENTORY.md` (row D19).
+
 **#423: Wire bounded proactive Pet behavior into the app (Finder arrival briefing):**
 - Completed on branch `claude/app-pets-bounded-proactive-60b69f` (PR #423, commit `1f8d9e6a`).
 - Added `AppPetArrivalBriefing`: reads newly added files in `~/Downloads` (last 24 hours) upon Finder arrival.
