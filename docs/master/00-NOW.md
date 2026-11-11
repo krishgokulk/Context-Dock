@@ -14,12 +14,19 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (PR #404 Messages rebase, then App Find, one per PR)
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#408** H1c save/undo line + "Made by DoraX" in Settings *(also fix 2 Codex P2 gaps from PR #428: `run_menu_command` replay route in `SolvedSkillMatch.run` and moving external `run_mcp_tool` recording before the `plumbing` guard in `AgentToolRegistry.noteForSolvedSkill`)* → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#407: Task H1b — Solved skills for menu / connector / MCP calls (PR #428, merged; 2 Codex P2 follow-ups):**
+- Completed on branch `claude/issue-407-solved-skills-connectors` (PR #428, commit `de96209f`).
+- Recorded `run_menu_command` calls (`isReadOnly: true`, AX success as verification) and external `run_mcp_tool` calls (`server.tool` key, read-only classified via `MCPToolSafety.isClearlyReadOnly`).
+- Relaxed `!derived.slots.isEmpty` guard in `SolvedSkillCapture.build` for menu-command-only turns (`isMenuCommandOnly`).
+- Added `MenuCommandSkillCaptureTests` and `ExternalMCPSkillCaptureTests` in `MenuConnectorSkillCaptureTests.swift`.
+- **Follow-up fixes owed (Codex review):** (1) `SolvedSkillMatch.run` dispatches `run_menu_command` to `executeWithApproval`, which throws `unknownCapability("run_menu_command")` at runtime because `run_menu_command` is an agent tool, not in `CapabilityRegistry`; (2) `AgentToolRegistry.noteForSolvedSkill` guards `!plumbing.contains(name)` (which includes `"run_mcp_tool"`) before the external `run_mcp_tool` branch.
 
 **#406: Task H1a — Learned recipes from AI scripts (rung 2) + recorder safety:**
 - Completed on branch `claude/learned-recipes-ai-scripts-38e66e` (PR #427, commit `acfd95e1`).
@@ -44,8 +51,8 @@ None. (Awaiting owner selection for next task)
 **#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — PR #425, merged:**
 - Branch `claude/issue-204-retire-mailbox-search-f9190a` (PR #425, commit `99fe36cd`).
 
-**Issue #204: P10: Retire the Messages pre-model shortcut into the ladder:**
-- Branch `claude/issue-204-retire-messages` (Issue #204).
+**Issue #204: P10: Retire the Messages pre-model shortcut into the ladder — PR #404, merged:**
+- Branch `claude/issue-204-retire-messages` (PR #404, commit `d02d94ea`).
 - EGM specification: `docs/superpowers/specs/2026-11-09-issue-204-retire-messages-shortcut.md` (Approved, 0 blocking gaps).
 - Retired pre-model `messagesScopedSemanticIntent` (`DockShortcut.messages`), `CrossAppNLHandler.parseMessagesScopedIntent`, and `makeMessagesSemanticIntentPill` from `DockCore+AIChat.swift`, `DockCore+ContextualActions.swift`, `CrossAppNLHandler.swift`, and `DockShortcut.swift`.
 - Added `DockCore.shouldSkipCrossAppMessagesRouting` so `CrossAppNLHandler` does not hijack in-scope Messages compose/send turns without a cross-app selection payload.
