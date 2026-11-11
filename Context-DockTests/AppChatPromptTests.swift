@@ -456,6 +456,8 @@ struct AppChatPromptTests {
         conversation.messages = [AIChatMessage(role: .user, content: "about Safari")]
         let model = AppChatPromptModel(conversation: conversation)
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        // An open conversation carries over; an open field no longer unfolds one.
+        model.set(.chat)
 
         model.frontmostAppDidChange(
             app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
@@ -557,6 +559,19 @@ struct AppChatPromptTests {
             app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
 
         #expect(model.phase == .dock)
+        #expect(model.appBundleID == "com.microsoft.VSCode")
+    }
+
+    /// Switching apps with the folded badge up used to open the field over the new app.
+    @Test func aFoldedBadgeFollowsTheNewAppWithoutOpening() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.set(.mini)
+
+        model.frontmostAppDidChange(
+            app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
+
+        #expect(model.phase == .mini)
         #expect(model.appBundleID == "com.microsoft.VSCode")
     }
 
