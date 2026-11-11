@@ -228,3 +228,199 @@ struct ExternalMCPSkillCaptureTests {
         #expect(skill == nil)
     }
 }
+
+// MARK: - H1b follow-up: the two runtime gaps left by PR #428
+//
+// 1. An external `run_mcp_tool` read never reached the collector — `run_mcp_tool` is a plumbing
+//    tool, and the plumbing guard returned before the external branch.
+// 2. A saved `run_menu_command` / `server.tool` call replayed through the capability registry,
+//    where neither is a capability, so every replay threw `unknownCapability`.
+
+@MainActor
+struct ExternalMCPCollectorRecordingTests {
+
+    private func scope(_ name: String) -> GeneralChatScope {
+        .app(bundleId: "test.h1b.collector.\(name)")
+    }
+
+    @Test func externalReadReachesTheCollector() {
+        let scope = scope("plain")
+        SolvedSkillToolCallCollector.shared.begin(scope: scope)
+        AgentToolRegistry.noteForSolvedSkill(
+            name: "run_mcp_tool",
+            arguments: [
+                "server": "github", "tool": "list_issues",
+                "arguments": ["owner": "anthropics", "state": "open"],
+            ],
+            verifiedReadBack: true, scope: scope)
+
+        let calls = SolvedSkillToolCallCollector.shared.take(scope: scope)
+        #expect(calls == [
+            SolvedSkillToolCall(
+                capability: "github.list_issues",
+                argTemplate: ["owner": "anthropics", "state": "open"],
+                isReadOnly: true)
+        ])
+    }
+
+    /// The Anthropic streaming path hands values over wrapped in `AIProviderAnyCodable`.
+    @Test func externalReadWithWrappedArgumentsReachesTheCollector() throws {
+        let scope = scope("wrapped")
+        let json = #"{"server":"github","tool":"list_issues","arguments":{"owner":"anthropics"}}"#
+        let wrapped = try JSONDecoder().decode(
+            [String: AIProviderAnyCodable].self, from: Data(json.utf8))
+        SolvedSkillToolCallCollector.shared.begin(scope: scope)
+        AgentToolRegistry.noteForSolvedSkill(
+            name: "run_mcp_tool", arguments: wrapped, verifiedReadBack: true, scope: scope)
+
+        let calls = SolvedSkillToolCallCollector.shared.take(scope: scope)
+        #expect(calls.map(\.capability) == ["github.list_issues"])
+        #expect(calls.first?.argTemplate == ["owner": "anthropics"])
+        #expect(calls.first?.isReadOnly == true)
+    }
+
+    @Test func externalWriteIsRecordedAsNotReadOnly() {
+        let scope = scope("write")
+        SolvedSkillToolCallCollector.shared.begin(scope: scope)
+        AgentToolRegistry.noteForSolvedSkill(
+            name: "run_mcp_tool",
+            arguments: ["server": "github", "tool": "create_issue", "arguments": ["title": "x"]],
+            verifiedReadBack: false, scope: scope)
+        #expect(SolvedSkillToolCallCollector.shared.take(scope: scope).first?.isReadOnly == false)
+    }
+
+    /// DoraX's own tools re-dispatch inside the server; only its capability and menu calls are
+    /// recorded from the outer call, the rest stay plumbing.
+    @Test func otherDoraXToolsStayPlumbing() {
+        let scope = scope("dorax")
+        SolvedSkillToolCallCollector.shared.begin(scope: scope)
+        AgentToolRegistry.noteForSolvedSkill(
+            name: "run_mcp_tool",
+            arguments: ["server": "dorax", "tool": "dorax_frontmost_app", "arguments": [:]],
+            verifiedReadBack: true, scope: scope)
+        #expect(SolvedSkillToolCallCollector.shared.take(scope: scope).isEmpty)
+    }
+}
+
+@MainActor
+struct SolvedSkillReplayRoutingTests {
+
+    private let bundleId = "test.h1b.replay"
+    private var scope: GeneralChatScope { .app(bundleId: bundleId) }
+
+    // ── Route choice (pure) ──────────────────────────────────────────────────────────
+
+    @Test func routeChoice() {
+        #expect(SolvedSkillMatch.replayRoute(for: "run_menu_command", isRegistered: false)
+            == .menuCommand)
+        #expect(SolvedSkillMatch.replayRoute(for: "mail.search", isRegistered: true)
+            == .capability)
+        #expect(SolvedSkillMatch.replayRoute(for: "github.list_issues", isRegistered: false)
+            == .mcpTool(server: "github", tool: "list_issues"))
+        #expect(SolvedSkillMatch.replayRoute(for: "list_issues", isRegistered: false)
+            == .mcpTool(server: "", tool: "list_issues"))
+    }
+
+    // ── Replay ───────────────────────────────────────────────────────────────────────
+
+    /// Records what the replay asked for, in place of the approval card and the tool handlers.
+    @MainActor
+    private final class Spy {
+        var approvals: [String] = []
+        var tools: [(name: String, arguments: [String: Any])] = []
+        var approve = true
+        var linked = true
+
+        var environment: SolvedSkillMatch.ReplayEnvironment {
+            SolvedSkillMatch.ReplayEnvironment(
+                isRegistered: { _ in false },
+                mcpToolIsLinked: { _, _ in self.linked },
+                approve: { plan, _, _ in
+                    self.approvals.append(plan.capability)
+                    return self.approve
+                },
+                runTool: { name, arguments, _ in
+                    self.tools.append((name, arguments))
+                    var result = AgentToolResult(
+                        success: true, output: "tool output", displayCommand: name)
+                    result.verifiedByReadBack = "read back"
+                    return result
+                })
+        }
+    }
+
+    private func skill(_ call: SolvedSkillToolCall) -> SolvedSkill {
+        SolvedSkill(
+            queryTemplate: "q", nonSlotWords: ["q"], slots: [], toolCalls: [call],
+            bundleId: bundleId)
+    }
+
+    @Test func menuSkillReplaysThroughTheMenuTool() async throws {
+        let spy = Spy()
+        let call = SolvedSkillToolCall(
+            capability: "run_menu_command",
+            argTemplate: ["app": "Finder", "path": "Finder > Settings..."], isReadOnly: true)
+        let answer = try #require(await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: spy.environment))
+
+        #expect(spy.tools.map(\.name) == ["run_menu_command"])
+        #expect(spy.tools.first?.arguments["app"] as? String == "Finder")
+        #expect(spy.tools.first?.arguments["path"] as? String == "Finder > Settings...")
+        // The menu tool raises its own plan card; a second card here would ask twice.
+        #expect(spy.approvals.isEmpty)
+        // The read-back, never the tool's model-facing output (#316).
+        #expect(answer.text == "read back")
+        #expect(answer.toolChips == ["run_menu_command"])
+    }
+
+    @Test func externalMCPSkillAsksThenReplaysThroughTheMCPTool() async throws {
+        let spy = Spy()
+        let call = SolvedSkillToolCall(
+            capability: "github.list_issues", argTemplate: ["since": "{day}"], isReadOnly: true)
+        let answer = try #require(await SolvedSkillMatch.run(
+            skill(call), filled: ["day": "today"], scope: scope, environment: spy.environment))
+
+        #expect(spy.approvals == ["github.list_issues"])
+        #expect(spy.tools.map(\.name) == ["run_mcp_tool"])
+        let arguments = try #require(spy.tools.first?.arguments)
+        #expect(arguments["server"] as? String == "github")
+        #expect(arguments["tool"] as? String == "list_issues")
+        #expect(arguments["arguments"] as? [String: String] == ["since": "today"])
+        #expect(answer.text == "tool output")
+    }
+
+    @Test func declinedMCPReplayRunsNothing() async {
+        let spy = Spy()
+        spy.approve = false
+        let call = SolvedSkillToolCall(
+            capability: "github.list_issues", argTemplate: [:], isReadOnly: true)
+        let answer = await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: spy.environment)
+        #expect(answer == nil)
+        #expect(spy.tools.isEmpty)
+    }
+
+    /// A stale id, or a server since unlinked: no card for a call that cannot run.
+    @Test func unlinkedMCPToolNeitherAsksNorRuns() async {
+        let spy = Spy()
+        spy.linked = false
+        let call = SolvedSkillToolCall(
+            capability: "github.list_issues", argTemplate: [:], isReadOnly: true)
+        let answer = await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: spy.environment)
+        #expect(answer == nil)
+        #expect(spy.approvals.isEmpty)
+        #expect(spy.tools.isEmpty)
+    }
+
+    @Test func writeMCPToolIsNeverReplayed() async {
+        let spy = Spy()
+        let call = SolvedSkillToolCall(
+            capability: "github.create_issue", argTemplate: [:], isReadOnly: true)
+        let answer = await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: spy.environment)
+        #expect(answer == nil)
+        #expect(spy.approvals.isEmpty)
+        #expect(spy.tools.isEmpty)
+    }
+}

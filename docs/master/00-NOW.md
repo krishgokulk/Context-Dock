@@ -14,14 +14,22 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#408** H1c save/undo line + "Made by DoraX" in Settings *(also fix 2 Codex P2 gaps from PR #428: `run_menu_command` replay route in `SolvedSkillMatch.run` and moving external `run_mcp_tool` recording before the `plumbing` guard in `AgentToolRegistry.noteForSolvedSkill`)* → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
 
-**#407: Task H1b — Solved skills for menu / connector / MCP calls (PR #428, merged; 2 Codex P2 follow-ups):**
+**#407 follow-up: H1b replay fixes (PR #429):**
+- Fixed the two Codex P2 gaps from PR #428, plus a third found in the hand check.
+- `AgentToolRegistry.noteForSolvedSkill` records external `run_mcp_tool` calls before the plumbing guard.
+- `SolvedSkillMatch.run` routes by call kind: capability, `run_menu_command` tool, or approval-gated external MCP read.
+- The Corner (`DockCore+AIChat`) now replays saved skills before the model stage; it captured them and never tried them.
+- Hand-checked in the Corner and the ⌥⌥ launcher: Finder menu skill and Mail `mail.search` skill both answer with "Used saved skill (no model)". External MCP replay is covered by unit tests only.
+- Not done: a replayed answer shows the capability's raw output, with no result cards or friendly wording.
+
+**#407: Task H1b — Solved skills for menu / connector / MCP calls (PR #428, merged; follow-ups fixed in PR #429):**
 - Completed on branch `claude/issue-407-solved-skills-connectors` (PR #428, commit `de96209f`).
 - Recorded `run_menu_command` calls (`isReadOnly: true`, AX success as verification) and external `run_mcp_tool` calls (`server.tool` key, read-only classified via `MCPToolSafety.isClearlyReadOnly`).
 - Relaxed `!derived.slots.isEmpty` guard in `SolvedSkillCapture.build` for menu-command-only turns (`isMenuCommandOnly`).

@@ -3660,6 +3660,39 @@ extension DockCore {
                 }()
                 let activeContextPrompt = activeContextAssembly.prompt
 
+                // #205/#407: a request this app's chat already solved replays from its saved
+                // typed calls, through their own gates, before the model is asked — the same
+                // step the chat window takes in `AppScopedChatService.send`. This surface
+                // captured skills and never tried them, so a skill learned in the Corner was
+                // paid for again on every repeat. Not with an attachment or a selection: the
+                // saved calls answer the sentence alone. A mismatch or a failed replay falls
+                // through to the model, which repairs the skill.
+                if !scopedBundleId.isEmpty, submittedContextDockFiles.isEmpty,
+                    submittedContextDockText == nil
+                {
+                    let skillScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    let skills = await MainActor.run {
+                        SolvedSkillStore.shared.all(forBundle: scopedBundleId)
+                    }
+                    if let (skill, filled) = SolvedSkillMatch.match(
+                        query: query, bundleId: scopedBundleId, skills: skills),
+                        let saved = await SolvedSkillMatch.run(
+                            skill, filled: filled, scope: skillScope)
+                    {
+                        await MainActor.run {
+                            self.dockTraceStep("Used saved skill (no model)")
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant, content: saved.text,
+                                    mcpToolsRan: saved.toolChips,
+                                    evidenceReceipts: saved.evidenceReceipts,
+                                    trace: self.l2.routerTrace))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
                         query: query,
