@@ -124,6 +124,7 @@ enum SolvedSkillMatch {
 
         var receipts: [DoraXActionReceipt] = []
         var outputs: [String] = []
+        var rows: [ChatResultRow] = []
         // The records the replayed calls read become the answer's cards, as they do on a model
         // turn. Begun here so a row from an earlier turn never rides along.
         ChatResultRowCollector.shared.begin(scope: scope)
@@ -149,7 +150,12 @@ enum SolvedSkillMatch {
             // The receipt keeps the call's own output as evidence; the answer says it plainly.
             receipts.append(
                 DoraXActionReceipt(command: call.capability, output: output, success: true))
-            let reply = plainReply(for: output)
+            // A call that produced cards is answered from those records. Its output is the
+            // listing written for a model — record ids, pipe-separated fields, body previews —
+            // and printing that above the same records as cards said everything twice, badly.
+            let produced = ChatResultRowCollector.shared.take(scope: scope)
+            rows += produced
+            let reply = produced.isEmpty ? plainReply(for: output) : plainReply(rows: produced)
             if !reply.isEmpty { outputs.append(reply) }
         }
 
@@ -157,7 +163,7 @@ enum SolvedSkillMatch {
         return AppScopedChatService.Answer(
             text: outputs.joined(separator: "\n\n"),
             toolChips: skill.toolCalls.map(\.capability),
-            rows: ChatResultRowCollector.shared.take(scope: scope),
+            rows: rows,
             evidenceReceipts: receipts,
             trace: ["Used saved skill (no model)"])
     }
@@ -193,6 +199,21 @@ enum SolvedSkillMatch {
                 + (message.isRead ? "" : " · unread")
         }
         return "\(count) message\(count == 1 ? "" : "s") in \(snapshot.mailboxName)\n\n"
+            + lines.joined(separator: "\n")
+    }
+
+    /// The records a replayed call read, as a short titled list.
+    ///
+    /// Not only a count: a conversation reopened later is restored as text, without its
+    /// cards, and "Found 3 results." over nothing says nothing. Titles and containers are the
+    /// row's own fields, so whatever the capability redacted for the card stays redacted here.
+    nonisolated static func plainReply(rows: [ChatResultRow]) -> String {
+        let shown = 10
+        var lines = rows.prefix(shown).map { row in
+            row.subtitle.isEmpty ? "- **\(row.title)**" : "- **\(row.title)** — \(row.subtitle)"
+        }
+        if rows.count > shown { lines.append("- and \(rows.count - shown) more") }
+        return "\(rows.count) result\(rows.count == 1 ? "" : "s")\n\n"
             + lines.joined(separator: "\n")
     }
 

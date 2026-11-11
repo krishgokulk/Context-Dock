@@ -450,6 +450,8 @@ struct SolvedSkillReplayRoutingTests {
         let answer = try #require(await SolvedSkillMatch.run(
             skill(call), filled: [:], scope: scope, environment: environment))
         #expect(answer.rows == [row])
+        // Answered from the records, not from the call's model-facing listing.
+        #expect(answer.text == "1 result\n\n- **h1b-replay.txt**")
     }
 
     /// A replay that fails hands the turn to the model; its rows must not follow.
@@ -494,6 +496,17 @@ struct SolvedSkillReplyWordingTests {
     @Test func emptyMailListingSaysSo() {
         #expect(SolvedSkillMatch.plainReply(
             for: "Mailbox: Inbox\nNo matching messages found.") == "No matching messages.")
+    }
+
+    /// Titles and containers, so the answer still says something once its cards are gone.
+    @Test func recordsBecomeAShortTitledList() {
+        let rows = (1...12).map {
+            ChatResultRow(
+                kind: .note, id: "n\($0)", title: "Note \($0)", subtitle: $0 == 1 ? "Work" : "")
+        }
+        let reply = SolvedSkillMatch.plainReply(rows: rows)
+        #expect(reply.hasPrefix("12 results\n\n- **Note 1** — Work\n- **Note 2**\n"))
+        #expect(reply.hasSuffix("- **Note 10**\n- and 2 more"))
     }
 
     @Test func anythingElseIsPassedThrough() {
