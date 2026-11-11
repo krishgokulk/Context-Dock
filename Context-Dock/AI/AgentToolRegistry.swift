@@ -572,15 +572,82 @@ final class AgentToolRegistry {
                 verifiedReadBack: verifiedReadBack, scope: scope)
             return
         }
+        // dorax_run_menu_command: DoraX internally re-dispatches as run_menu_command with
+        // scope=nil, so the inner call lands in the wrong solved-skill bucket. Intercept the
+        // outer call here (which still carries the app scope) before the plumbing guard drops it.
+        // On the Anthropic streaming path arguments["server"] and arguments["tool"] are
+        // AIProviderAnyCodable; reach through .value before falling back to a plain String cast.
+        if name == "run_mcp_tool",
+           let serverRaw = arguments["server"],
+           let server = (serverRaw as? AIProviderAnyCodable)?.value as? String
+               ?? serverRaw as? String,
+           server.caseInsensitiveCompare("dorax") == .orderedSame,
+           let toolRaw = arguments["tool"],
+           let toolArg = (toolRaw as? AIProviderAnyCodable)?.value as? String
+               ?? toolRaw as? String, toolArg == "dorax_run_menu_command"
+        {
+            let rawArgs = arguments["arguments"]
+            let innerArgs: [String: Any]
+            if let codable = rawArgs as? [String: AIProviderAnyCodable],
+               let data = try? JSONEncoder().encode(codable) {
+                innerArgs = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            } else {
+                innerArgs = (rawArgs as? [String: Any]) ?? [:]
+            }
+            let app = innerArgs["app"] as? String ?? ""
+            let path = innerArgs["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
+            // Unregistered capability IDs are app-adapter internal actions (the adapter
+            // falls through to them when no registered capability matches). They are
+            // implementation details, not user-intent replay targets — skip them so they
+            // do not pollute the skill collector with spurious isReadOnly:false entries.
+            guard CapabilityRegistry.shared.capability(id: id) != nil else { return }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
             }
             SolvedSkillToolCallCollector.shared.record(
                 capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+        } else if name == "run_menu_command" {
+            // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
+            // so the turn is recorded as read-only here — the gate appears at run time, not now.
+            // Success IS the verification for a menu command (the AX framework found the item).
+            // On the Anthropic streaming path values arrive as AIProviderAnyCodable; reach
+            // through .value before falling back to a plain String cast.
+            let app = (arguments["app"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["app"] as? String ?? ""
+            let path = (arguments["path"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+        } else if name == "run_mcp_tool" {
+            // H1b rung 1: external connector/MCP calls (non-DoraX; DoraX was handled above).
+            // Use the tool name's heuristic to classify read vs. write.
+            let toolName = arguments["tool"] as? String ?? ""
+            let server = arguments["server"] as? String ?? ""
+            var input: [String: String] = [:]
+            if let args = arguments["arguments"] as? [String: Any] {
+                for (k, v) in args { input[k] = (v as? String) ?? String(describing: v) }
+            }
+            let capabilityKey = server.isEmpty ? toolName : "\(server).\(toolName)"
+            SolvedSkillToolCallCollector.shared.record(
+                capability: capabilityKey.isEmpty ? name : capabilityKey, input: input,
+                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
                 verifiedReadBack: verifiedReadBack, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(

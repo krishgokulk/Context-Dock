@@ -73,19 +73,33 @@ enum SolvedSkillCapture {
             !answer.evidenceReceipts.contains(where: { UntrustedContent.containsFence($0.output) })
         else { return nil }
 
+        // Identify menu-command-only turns (rung 3): at least one run_menu_command alongside
+        // at most read-only supporting calls (adapter helpers that are not replay targets).
+        // The app-pet's Finder/etc. adapter may dispatch read capabilities before or after the
+        // menu press; those reads belong to the adapter, not the replay, so they are stripped.
+        let menuCalls = toolCalls.filter { $0.capability == "run_menu_command" }
+        let isMenuCommandOnly = !menuCalls.isEmpty
+            && toolCalls.allSatisfy { $0.capability == "run_menu_command" || $0.isReadOnly }
+        // For menu-command-only turns, replay just the menu commands; supporting reads are
+        // adapter internals and must not appear in the saved skill.
+        let replayCalls = isMenuCommandOnly ? menuCalls : toolCalls
+
         // rule 4: auto-save reads only. A write gates every run, so it is out of this slice;
-        // one non-read-only call, or no call at all, and nothing is saved.
-        guard !toolCalls.isEmpty, toolCalls.allSatisfy(\.isReadOnly) else { return nil }
+        // one non-read-only call, or no replay call at all, and nothing is saved.
+        guard !replayCalls.isEmpty, replayCalls.allSatisfy(\.isReadOnly) else { return nil }
 
         // rule 2: a parameterized skill, never a hard-coded one. Lift the entity values into
         // slots; a query that carries an entity but yields no slot would save a literal, so it
         // is rejected rather than kept. A leftover-value (a proper noun or path remaining after
         // slot extraction that is neither a slot nor a route word) is also a rejection.
+        // Exception: a menu-command-only turn (rung 3) has no entity slots by design — the path
+        // is fixed and self-describing — so the slot requirement is waived for those turns.
         guard let derived = derive(query: query, bundleId: bundleId, context: context),
-            !derived.slots.isEmpty, !derived.hasLeftoverValue
+            (isMenuCommandOnly || !derived.slots.isEmpty),
+            (isMenuCommandOnly || !derived.hasLeftoverValue)
         else { return nil }
 
-        let parameterized = toolCalls.map { call -> SolvedSkillToolCall in
+        let parameterized = replayCalls.map { call -> SolvedSkillToolCall in
             var template = call.argTemplate
             for (slot, value) in derived.values {
                 template = template.mapValues {

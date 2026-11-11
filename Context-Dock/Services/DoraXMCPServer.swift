@@ -1022,11 +1022,12 @@ final class DoraXMCPServer: ObservableObject {
 
             if actionStr == "menu" {
                 let grantedApps: [String: String] = [appName.lowercased(): resolvedBundle]
-                let context = AgentToolContext(
+                var context = AgentToolContext(
                     commandExecutor: { _, _, _ in (false, "Shell unavailable", 1) },
                     userRequest: "Menu command requested via MCP do: \(appName) ▸ \(target)",
                     grantedApps: grantedApps, turn: turn
                 )
+                context.chatScope = self.capabilityTurn?.scope ?? .app(bundleId: resolvedBundle)
                 let result = await AgentToolRegistry.shared.dispatch(
                     name: "run_menu_command",
                     arguments: ["app": appName, "path": target],
@@ -1285,7 +1286,7 @@ final class DoraXMCPServer: ObservableObject {
             {
                 return "Did not run — \(stopped.output)"
             }
-            let context = AgentToolContext(
+            var menuContext = AgentToolContext(
                 // An outside agent gets no shell through this door. It asked for a menu
                 // command; the menu command is what it may have.
                 commandExecutor: { _, _, _ in
@@ -1293,10 +1294,12 @@ final class DoraXMCPServer: ObservableObject {
                 },
                 userRequest: "Menu command requested by a connected coding agent: \(app) ▸ \(path)",
                 grantedApps: grantedApps, turn: turn)
+            menuContext.chatScope = self.capabilityTurn?.scope
+                ?? grantedApps[app.lowercased()].map { .app(bundleId: $0) }
             let result = await AgentToolRegistry.shared.dispatch(
                 name: "run_menu_command",
                 arguments: ["app": app, "path": path],
-                context: context)
+                context: menuContext)
             guard let result else { return "Menu commands are unavailable in this build." }
             return result.success
                 ? (result.output.isEmpty ? "Done — \(app) ▸ \(path)." : result.output)
