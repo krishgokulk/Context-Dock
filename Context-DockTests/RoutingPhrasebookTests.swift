@@ -121,6 +121,7 @@ struct RoutingPhrasebookTests {
     private static let finderFind = menu("Finder", ["File", "Find"])
     private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
     private static let mailCreateDraft = capability("Mail", "mail.createDraft", "Create Mail Draft")
+    private static let mailSearch = capability("Mail", "mail.search", "Search Mail")
 
     // MARK: - The phrasebook
     //
@@ -312,6 +313,22 @@ struct RoutingPhrasebookTests {
                found: [mailCreateDraft], expected: .model),
         Phrase(surface: .mailChat, sentence: "draft an email to alex about the invoice",
                found: [mailCreateDraft], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Mailbox Search shortcut is retired. The search
+        // commands it claimed ("search mail from SBI") are requests with a value, not a command
+        // title, so the model takes them and calls `mail.search` with the sender / subject / query.
+        Phrase(surface: .mailChat, sentence: "search mail from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search for invoice",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "find mail from Gokula kannan J",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "look for emails from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search my inbox for subject payslip",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search mail for \"invoice and receipt\"",
+               found: [mailSearch], expected: .model),
     ]
 
     // MARK: - Running a row
@@ -673,76 +690,6 @@ struct ExactCommandTests {
     }
 }
 
-// MARK: - Mail's Mailbox Search shortcut (issue #195)
-
-/// The Mail scope runs Edit › Find › Mailbox Search before any model reads the sentence.
-/// "check my recent mail from Gokula kannan J and do what it says" clicked it and typed
-/// the leftovers, because the word "from" made it a sender search. Task 17's rule applies
-/// here too: the shortcut claims the turn only when the sentence IS the search command and
-/// its value; everything else goes to the model, which has `mail.search` and `mail.read`.
-@MainActor
-struct MailboxSearchCommandTests {
-
-    @Test func theOwnersSentenceGoesToTheModel() {
-        #expect(
-            MailboxSearchCommand.claims(
-                "check my recent mail from Gokula kannan J and do what it says") == nil)
-    }
-
-    @Test func aBareSenderSearchIsTheCommand() {
-        let parsed = MailboxSearchCommand.claims("search mail from SBI")
-        #expect(parsed == MailboxSearchCommand.Parsed(term: "SBI", field: .sender))
-    }
-
-    @Test func aDateOrASecondClauseMakesItARequest() {
-        let sentences = [
-            "find mail from SBI today",
-            "find my recent mail from SBI",
-            "search mail from SBI and summarize it",
-            "search mail from Gokula kannan J and do what it says",
-            "find the latest email from SBI",
-            "search mail from SBI about the loan",
-            "find unread mail from SBI",
-            "look for mail from SBI this week",
-        ]
-        for sentence in sentences {
-            #expect(MailboxSearchCommand.claims(sentence) == nil, "\"\(sentence)\" is a request")
-        }
-    }
-
-    @Test func theSearchCommandAndItsValue() {
-        let cases: [(String, MailboxSearchCommand.Parsed)] = [
-            ("search for invoice", .init(term: "invoice", field: .any)),
-            ("Search mail for quarterly report", .init(term: "quarterly report", field: .any)),
-            ("find mail from Gokula kannan J", .init(term: "Gokula kannan J", field: .sender)),
-            ("look for emails from SBI", .init(term: "SBI", field: .sender)),
-            ("search my inbox for subject payslip", .init(term: "payslip", field: .subject)),
-            ("please search mail from SBI", .init(term: "SBI", field: .sender)),
-            // The Mail scope may already have stripped its own name from the sentence.
-            ("search from SBI", .init(term: "SBI", field: .sender)),
-            ("search mail for \"invoice and receipt\"", .init(term: "invoice and receipt", field: .any)),
-        ]
-        for (sentence, expected) in cases {
-            #expect(MailboxSearchCommand.claims(sentence) == expected, "\"\(sentence)\"")
-        }
-    }
-
-    @Test func noVerbOrNoValueIsNotTheCommand() {
-        let sentences = [
-            "mail from SBI",
-            "show mail from SBI",
-            "check mail from SBI",
-            "search mail",
-            "find",
-            "is there mail from SBI?",
-            "can you search mail from SBI",
-            "search mail from a sender whose name I forget",
-        ]
-        for sentence in sentences {
-            #expect(MailboxSearchCommand.claims(sentence) == nil, "\"\(sentence)\"")
-        }
-    }
-}
 
 
 // MARK: - Issue 204: Notes reads keep the shortcut's safety and its scope
@@ -995,5 +942,122 @@ struct MailQuestionShortcutRetirementTests {
         #expect(AppleLiveDataContext.wantsMailContext("any unread mail?"))
         #expect(AppleLiveDataContext.wantsMailContext("what's the subject line?"))
         #expect(!AppleLiveDataContext.wantsMailContext("hi hello?"))
+    }
+}
+
+// MARK: - Issue 204: Mailbox Search commands reach the model as data-lane Mail reads
+
+@MainActor
+struct MailboxSearchShortcutRetirementTests {
+
+    /// Every kind of sentence the retired Mailbox Search shortcut took before the model.
+    static let retiredCommands = [
+        "search mail from SBI",
+        "search for invoice",
+        "Search mail for quarterly report",
+        "find mail from Gokula kannan J",
+        "look for emails from SBI",
+        "look up mail from SBI",
+        "search my inbox for subject payslip",
+        "please search mail from SBI",
+        // The Mail scope may already have stripped its own name from the sentence.
+        "search from SBI",
+        "search mail for \"invoice and receipt\"",
+    ]
+
+    /// A search command in Mail scope is a fresh read of Mail's records, never an answer from
+    /// memory or conversation.
+    @Test func searchCommandsAreFreshLiveStateReads() {
+        for sentence in Self.retiredCommands {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.mail")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+        }
+    }
+
+    /// The plan is a data-lane read with Mail's search tool and no UI automation: Mail's
+    /// window is never raised, clicked or typed into (owner, 2026-10-10).
+    @Test func searchCommandsPlanAsDataLaneReads() {
+        for sentence in Self.retiredCommands {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.mail", appName: "Mail")
+            #expect(plan.intent == .read, "\"\(sentence)\"")
+            #expect(!plan.permitsUIAutomation, "\"\(sentence)\"")
+            #expect(plan.complexity != .direct, "\"\(sentence)\" needs a tool round")
+            #expect(plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+        }
+    }
+
+    /// The cross-app parser reads "search mail …" as a search *in* Mail and types the rest
+    /// into Mail's search field. In Mail's own chat it must not take the turn — whether or not
+    /// Global Context is active underneath, which it is inside an App Pet. Typed from Global
+    /// Context, where the sentence named the app, it is cross-app as before.
+    @Test func crossAppRoutingDoesNotClaimSearchCommands() {
+        let handler = CrossAppNLHandler.shared
+        for sentence in Self.retiredCommands {
+            guard let intent = handler.parse(sentence.lowercased()) else { continue }
+            #expect(
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false),
+                "\"\(sentence)\"")
+            #expect(
+                handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: true),
+                "\"\(sentence)\" from Global Context")
+            // The App Pet's own app wins even when the sentence also named it.
+            #expect(
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", chatBundleId: "com.apple.mail",
+                    scopeNamedByQuery: true),
+                "\"\(sentence)\" in Mail's App Pet")
+        }
+        // A search of another app from Mail's chat, and any non-search intent, still claim.
+        if let other = handler.parse("search notes tax return") {
+            #expect(handler.claimsTurn(other, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+            #expect(!handler.claimsTurn(other, scopedBundleId: "com.apple.Notes", scopeNamedByQuery: false))
+        } else {
+            Issue.record("search notes tax return should parse as a cross-app search")
+        }
+        if let send = handler.parse("send this to salman") {
+            #expect(handler.claimsTurn(send, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+        }
+    }
+
+    /// If a Mail search does go to Mail's search field (from Global Context), the field gets
+    /// the name, not the literal words "from uel", which match nothing.
+    @Test func aCrossAppMailSearchDropsTheWordFrom() {
+        let handler = CrossAppNLHandler.shared
+        #expect(handler.parse("search mail from uel")?.searchQuery == "uel")
+        #expect(handler.parse("find mail from gokula kannan j")?.searchQuery == "gokula kannan j")
+        #expect(handler.parse("search mail quarterly report")?.searchQuery == "quarterly report")
+        #expect(handler.parse("search notes from last week")?.searchQuery == "from last week")
+    }
+
+    /// App Find runs before the cross-app parser and would drive Mail's Mailbox Search.
+    @Test func aMailSearchInMailsOwnChatStaysInTheTranscript() {
+        for sentence in ["search mail from uel", "look for emails from SBI", "search for invoice"] {
+            #expect(
+                AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.mail"),
+                "\"\(sentence)\"")
+            #expect(
+                !AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.Notes"),
+                "\"\(sentence)\"")
+        }
+        #expect(!AppleLiveDataContext.isInScopeMailSearch("find in this window", scopedBundleId: "com.apple.mail"))
+    }
+
+    /// A look-up verb is a record read in every record-set app, not only Mail, and a UI
+    /// sentence with the same verb stays an action.
+    @Test func lookUpVerbsAreRecordReads() {
+        #expect(ScopedRecordRead.matches(query: "look for emails from SBI", bundleId: "com.apple.mail"))
+        #expect(ScopedRecordRead.matches(query: "look up notes about tax", bundleId: "com.apple.Notes"))
+        #expect(!ScopedRecordRead.matches(query: "look for the sidebar", bundleId: "com.apple.mail"))
+        #expect(!ScopedRecordRead.matches(query: "look for mail from SBI and reply to it", bundleId: "com.apple.mail"))
+    }
+
+    @Test func mailboxSearchShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("mailboxSearch"))
     }
 }

@@ -23,13 +23,12 @@ enum DockShortcut: String, CaseIterable, Sendable {
     case transformShare
     case finder
     case messages
-    case mailboxSearch
     case crossApp
     case appAction
     case appLaunch
     case safariCommand
 
-    /// The name shown in the step ("Shortcut: Mailbox Search — …").
+    /// The name shown in the step ("Shortcut: App Find — …").
     var displayName: String {
         switch self {
         case .triggerRule: return "Trigger Rule"
@@ -39,7 +38,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .transformShare: return "Transform & Share"
         case .finder: return "Finder"
         case .messages: return "Messages"
-        case .mailboxSearch: return "Mailbox Search"
         case .crossApp: return "Cross-App"
         case .appAction: return "App Action"
         case .appLaunch: return "App Launch"
@@ -58,7 +56,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .transformShare: return "transform this and send it"
         case .finder: return "a Finder folder request"
         case .messages: return "message … to someone"
-        case .mailboxSearch: return "search mail …"
         case .crossApp: return "send/open this in another app"
         case .appAction: return "a global app action"
         case .appLaunch: return "open an app"

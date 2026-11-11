@@ -2905,7 +2905,9 @@ extension DockCore {
             scopedAppName: scopedAppName,
             scopedSearchQuery: scopedSearchQuery,
             isExplicitAppScope: isExplicitAppScope,
-            isGlobalScope: false
+            isGlobalScope: false,
+            namedByQuery: l2.targetApp == nil
+                && (explicitAppTarget != nil || installedMenuTarget != nil)
         )
     }
 

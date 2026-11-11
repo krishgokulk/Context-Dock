@@ -2291,6 +2291,9 @@ extension DockCore {
             && !lockedBundleId.isEmpty
             && lockedBundleId != Bundle.main.bundleIdentifier
         let scopedBundleId = shouldKeepLockedChatScope ? lockedBundleId : resolvedBundleId
+        // The app this chat belongs to (an App Pet, a pinned target); empty in Global Context.
+        let chatOwnBundleId = (l2.targetApp?.bundleId ?? l2.chatDraftBundleId)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedAppName = shouldKeepLockedChatScope ? lockedAppName : resolvedAppName
         let initialFinderSelection: [URL] = {
             let id = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
@@ -2518,7 +2521,14 @@ extension DockCore {
 
         let findIntentMustBeExplicit =
             wasContextDockChatActive || scopedHasLinkedCLI || looksLikeQuestion
-        if (!findIntentMustBeExplicit || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
+        // A Mail search in Mail's own chat is answered in the transcript, never by driving
+        // Mail's search field — unless the user explicitly asked for the app's Find.
+        let isInScopeMailSearch =
+            AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: chatOwnBundleId)
+            || (!dockScope.namedByQuery
+                && AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: scopedBundleId))
+        if (!(findIntentMustBeExplicit || isInScopeMailSearch)
+            || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
             let findIntent = resolvedFindIntent(
             for: query,
             dockScope: dockScope,
@@ -2565,18 +2575,6 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.mail",
-            let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery)
-        {
-            // Only an exact search command ("search mail from SBI") is claimed here; any
-            // other sentence that mentions a sender goes to the model, which has
-            // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
-            // this same function. It runs headless (mail.search); Mail's window is not touched.
-            dockShortcutStep(.mailboxSearch)
-            executeMailMailboxSearch(intent: intent, userMessage: query)
-            return
-        }
-
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
         let shouldSkipCrossAppMailRouting =
@@ -2585,7 +2583,14 @@ extension DockCore {
 
         if !shouldStayInScopedAIChat,
             !shouldSkipCrossAppMailRouting,
-            let intent = CrossAppNLHandler.shared.parse(normalizedQuery)
+            let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
+            // In an app's own chat, "search mail from SBI" is a read of that app's records for
+            // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot
+            // tell the two apart — it is also true inside an App Pet — so the test is whether
+            // the sentence itself named the app.
+            CrossAppNLHandler.shared.claimsTurn(
+                intent, scopedBundleId: scopedBundleId, chatBundleId: chatOwnBundleId,
+                scopeNamedByQuery: dockScope.namedByQuery)
         {
             dockShortcutStep(.crossApp)
             executeCrossAppIntent(intent, userMessage: query)
@@ -3400,7 +3405,8 @@ extension DockCore {
                     )
                 }
                 var appleData = canUseAppleAppsContext
-                    ? await self.appleAppsAndWeatherContext(for: query)
+                    ? await self.appleAppsAndWeatherContext(
+                        for: query, scopeBundleId: scopedBundleId)
                     : ""
                 // The dictionary rung (P13 #208) for the app this chat is scoped to: a cold
                 // cache is awaited so the first question is not answered from an empty
@@ -4115,8 +4121,11 @@ extension DockCore {
     /// Combined Apple-apps data + live weather for a query, ready to append to any chat
     /// system prompt. Used by both General Chat and Context Dock chat so both answer with
     /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
-    func appleAppsAndWeatherContext(for query: String) async -> String {
-        await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+    func appleAppsAndWeatherContext(for query: String, scopeBundleId: String? = nil) async
+        -> String
+    {
+        await AppleLiveDataContext.appleAppsAndWeatherContext(
+            for: query, scopeBundleId: scopeBundleId)
     }
 
     /// Reads the app back after an action and reports what actually moved.
@@ -6336,7 +6345,8 @@ extension DockCore {
             scopedBundleId: scoped.bundleId,
             scopedAppName: scoped.appName
         ) {
-            let appleData = await appleAppsAndWeatherContext(for: query)
+            let appleData = await appleAppsAndWeatherContext(
+                for: query, scopeBundleId: scoped.bundleId)
             if !appleData.isEmpty {
                 systemPrompt += "\n\n" + appleData
             }

@@ -70,13 +70,21 @@ None. (Awaiting owner selection for next task)
 - Prevented detail mode picker pills ("Summary", "Normal", "Verbose") from wrapping into multiple lines.
 - Squash-merged into `general-chat-agent`.
 
+**#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — draft PR #425, hand check owed:**
+- Branch `claude/issue-204-retire-mailbox-search-f9190a` (draft PR #425, base `general-chat-agent`).
+- EGM specification: `docs/superpowers/specs/2026-11-10-issue-204-retire-mailbox-search-shortcut.md`.
+- Deleted the `shouldExecuteMailMailboxSearch` block (`DockShortcut.mailboxSearch`) from `handleL2Query`, the `MailboxSearchCommand` parser and `mailSearchDisplayLabel`. "search mail from SBI" now reaches the model as a data-lane Mail read (`mail.search` / `search_mail`).
+- Two shared rules: `ScopedRecordRead.lookupVerbs` ("look for" / "look up" / "lookup" are record reads in every record-set app) and `CrossAppNLHandler.searchesScopedApp` (a search of the app the chat is scoped to is not cross-app).
+- Follow-up after the hand check: a provider without tools answered "a full Mail search wasn't readable". Mail searches are now prefetched into the prompt (`AppleLiveDataContext.mailSearchIntent`), a bare `query` matches sender or subject, a whole sentence in `query` is parsed, and glue words such as "from" no longer match a route (`ChatRouteResolver.glueWords`). Tests: `MailSearchGroundingTests`.
+- Still open under #204: App Find claims the first find/search sentence of a not-yet-active chat (next retirement PR). PR #404 (Messages) touches neighbouring lines; whichever merges second rebases.
+
 **#204 (part): Retire the Mail Question pre-model shortcut into the ladder — PR #403, merged:**
 - Branch `claude/issue-204-retire-mail-question` (PR #403, merged into `general-chat-agent` as `3595f89`).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-mail-question-shortcut.md` (Approved, 0 blocking gaps).
 - Retired pre-model `answerAttachedMailQuestion` (`DockShortcut.mailQuestion`) and orphaned `MailQuestionRouter.needsAttachedMailContext` / `isMailContextAttached` gate from `DockCore+AIChat.swift` (`handleL2Query`), `DockCore+MailFindActions.swift`, `DockCore+FinderAttachment.swift`, and `DockCore.swift`.
 - Replaced `MailQuestionRouter.needsAttachedMailContext` with `MailQuestionRouter.isMailboxQuestion`, wired into `AgentSourceAuthority.decide` for `com.apple.mail` scope alongside `"yesterday"` / `"did i"` freshness signals, and added `AppleLiveDataContext.wantsMailContext`.
 - Added Mail chat phrasebook rows and `MailQuestionShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `MailQuestionRouterTests.swift`, `DockShortcutTests.swift`, and `00-DOCK-PARITY-INVENTORY.md` (row D18).
-- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MailQuestionShortcutRetirementTests`, `MailQuestionRouterTests`, `DockShortcutTests`, `MailboxSearchCommandTests` — 37/37 pass) green.
+- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MailQuestionShortcutRetirementTests`, `MailQuestionRouterTests`, `DockShortcutTests`, `MailboxSearchCommandTests` — 37/37 pass) green. (`MailboxSearchCommandTests` was later removed with the shortcut, PR #425.)
 
 **#204 (part): Retire the Menu Command pre-model shortcut into the ladder — PR #402, merged:**
 - Branch `claude/issue-204-retire-menu-command` (PR #402, merged into `general-chat-agent` as `4b98162`).

@@ -188,6 +188,9 @@ extension DockCore {
         let scopedSearchQuery: String
         let isExplicitAppScope: Bool
         let isGlobalScope: Bool
+        /// The app was named in the sentence typed from Global Context ("search notes tax
+        /// return"), rather than being the chat's own scope (an App Pet, a pinned target).
+        var namedByQuery: Bool = false
     }
 
     // MARK: - Finder selected-file context pills

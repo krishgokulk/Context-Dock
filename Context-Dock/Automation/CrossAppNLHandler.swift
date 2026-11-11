@@ -669,6 +669,35 @@ final class CrossAppNLHandler {
         return (String(q[qRange]), String(q[aRange]))
     }
 
+    /// Whether the intent is a search of the app the chat is already scoped to. That is not
+    /// cross-app: "search mail from SBI" typed in Mail's chat is a read of Mail's records, which
+    /// the model answers in the data lane (issue #204), not a UI search of Mail's window.
+    func searchesScopedApp(_ intent: CrossAppIntent, scopedBundleId: String) -> Bool {
+        guard intent.action == .searchInApp,
+            let target = intent.targetAppName?.lowercased(),
+            let bundleId = appAliases[target]
+        else { return false }
+        return bundleId.caseInsensitiveCompare(scopedBundleId) == .orderedSame
+    }
+
+    /// Whether a parsed intent takes the turn. In an app's own chat (an App Pet, a pinned
+    /// target), a search of that same app does not: "search mail from uel" in Mail's chat typed
+    /// "from uel" into Mail's search field, raised Mail and found nothing. It stays in the chat
+    /// and is answered from a headless read. Typed from Global Context, where the sentence
+    /// itself named the app, it is cross-app as before.
+    ///
+    /// - Parameters:
+    ///   - chatBundleId: the app the chat itself belongs to (the App Pet, a pinned target);
+    ///     empty in Global Context.
+    ///   - scopeNamedByQuery: `scopedBundleId` was taken from the sentence, not from the chat.
+    func claimsTurn(
+        _ intent: CrossAppIntent, scopedBundleId: String, chatBundleId: String = "",
+        scopeNamedByQuery: Bool
+    ) -> Bool {
+        if searchesScopedApp(intent, scopedBundleId: chatBundleId) { return false }
+        return scopeNamedByQuery || !searchesScopedApp(intent, scopedBundleId: scopedBundleId)
+    }
+
     /// Matches "search {knownApp} {query}" — e.g. "search mail from linkedin"
     /// The first token after "search"/"find" must be a known app alias.
     private func searchAppQuery(_ q: String) -> CrossAppIntent? {
@@ -681,7 +710,12 @@ final class CrossAppNLHandler {
         guard let spaceIdx = rest.firstIndex(of: " ") else { return nil }
 
         let possibleApp = String(rest[rest.startIndex..<spaceIdx]).trimmingCharacters(in: .whitespaces)
-        let searchQuery = String(rest[rest.index(after: spaceIdx)...]).trimmingCharacters(in: .whitespaces)
+        var searchQuery = String(rest[rest.index(after: spaceIdx)...]).trimmingCharacters(in: .whitespaces)
+        // Mail's search field looks for the literal text: "from uel" finds nothing, "uel" does.
+        if appAliases[possibleApp] == "com.apple.mail", searchQuery.hasPrefix("from ") {
+            searchQuery = String(searchQuery.dropFirst("from ".count))
+                .trimmingCharacters(in: .whitespaces)
+        }
 
         guard appAliases[possibleApp] != nil, !searchQuery.isEmpty else { return nil }
         return CrossAppIntent(

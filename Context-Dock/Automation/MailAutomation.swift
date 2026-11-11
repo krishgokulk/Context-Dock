@@ -523,9 +523,47 @@ enum MailAutomation {
     /// `maxScan` is kept for callers but no longer bounds the search: Mail filters with `whose`
     /// across the whole mailbox in about a second, and rejects `whose` on a message range.
     /// `limit` still caps the rows returned.
+    /// How a search request's three text inputs become filters. A bare `query` is matched
+    /// against the sender **or** the subject: it used to be the subject alone, so "SBI" found
+    /// nothing from SBI. `from <name>` in the query is a sender. An explicit field wins.
+    nonisolated static func searchFilters(query: String, sender: String, subject: String)
+        -> (sender: String, subject: String, any: String)
+    {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, sender.isEmpty, subject.isEmpty else {
+            return (sender, subject, "")
+        }
+        if trimmed.lowercased().hasPrefix("from ") {
+            let name = String(trimmed.dropFirst("from ".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return (name, "", "") }
+        }
+        return ("", "", trimmed)
+    }
+
+    /// The AppleScript `whose` test for a mailbox search. Fields are ANDed; `any` is one term
+    /// tried against sender or subject.
+    nonisolated static func whoseClause(
+        hasSender: Bool, hasSubject: Bool, hasAny: Bool, unreadOnly: Bool,
+        wantsToday: Bool, wantsYesterday: Bool
+    ) -> String {
+        var conditions: [String] = []
+        if hasSender { conditions.append("sender contains senderFilter") }
+        if hasSubject { conditions.append("subject contains subjectFilter") }
+        if hasAny { conditions.append("(sender contains anyFilter or subject contains anyFilter)") }
+        if unreadOnly { conditions.append("read status is false") }
+        if wantsToday { conditions.append("(date received ≥ todayStart and date received < todayEnd)") }
+        if wantsYesterday {
+            conditions.append("(date received ≥ yesterdayStart and date received < yesterdayEnd)")
+        }
+        return conditions.isEmpty
+            ? "read status is true or read status is false" : conditions.joined(separator: " and ")
+    }
+
     nonisolated static func mailboxSnapshot(
         senderContains: String = "",
         subjectContains: String = "",
+        anyContains: String = "",
         unreadOnly: Bool = false,
         relativeDay: String = "",
         limit: Int = 20,
@@ -536,22 +574,91 @@ enum MailAutomation {
         let safeLimit = max(1, min(limit, 50))
         let safeMaxScan = max(1, min(maxScan, 500))
 
-        var conditions: [String] = []
-        if !senderContains.isEmpty { conditions.append("sender contains senderFilter") }
-        if !subjectContains.isEmpty { conditions.append("subject contains subjectFilter") }
-        if unreadOnly { conditions.append("read status is false") }
-        if wantsToday { conditions.append("(date received ≥ todayStart and date received < todayEnd)") }
-        if wantsYesterday {
-            conditions.append("(date received ≥ yesterdayStart and date received < yesterdayEnd)")
-        }
-        let whoseClause =
-            conditions.isEmpty ? "read status is true or read status is false" : conditions.joined(separator: " and ")
+        let whoseClause = whoseClause(
+            hasSender: !senderContains.isEmpty, hasSubject: !subjectContains.isEmpty,
+            hasAny: !anyContains.isEmpty, unreadOnly: unreadOnly,
+            wantsToday: wantsToday, wantsYesterday: wantsYesterday)
+
+        // A named sender or term is looked for in every mailbox of every account: a message
+        // that was archived or filed is still mail the user asked about. One query does it —
+        // asking each mailbox in turn took over a minute across forty mailboxes. The copy in an
+        // inbox wins over the same message in "All Mail"; trash, junk and drafts are left out.
+        // With no text filter (unread, today) the selected mailbox or the inbox is read, as before.
+        let searchesEveryMailbox =
+            !senderContains.isEmpty || !subjectContains.isEmpty || !anyContains.isEmpty
+        let selectedMailboxBody = """
+                    set matchedLines to {}
+                    -- Mail filters server-side; scanning the mailbox property by property took ~10 s.
+                    set found to (messages of targetMailbox whose \(whoseClause))
+                    set foundCount to count of found
+                    if foundCount > resultLimit then set foundCount to resultLimit
+                    repeat with i from 1 to foundCount
+                        set msg to item i of found
+                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string) & " | Id: " & ((id of msg) as text)
+                    end repeat
+            """
+        let everyMailboxBody = """
+                    set targetMailboxName to "All Mailboxes"
+                    set matchedLines to {}
+                    set otherLines to {}
+                    set otherIds to {}
+                    set seenIds to {}
+                    set skipped to {"Trash", "Bin", "Junk", "Spam", "Drafts", "Deleted Messages", "Deleted Items"}
+                    set found to my flattenMessages(every message of every mailbox of every account whose \(whoseClause))
+                    set scanCount to count of found
+                    if scanCount > (resultLimit * 4) then set scanCount to (resultLimit * 4)
+                    repeat with i from 1 to scanCount
+                        set msg to item i of found
+                        try
+                            set boxName to (name of (mailbox of msg)) as string
+                            if skipped does not contain boxName then
+                                set mid to ""
+                                try
+                                    set mid to (message id of msg) as string
+                                end try
+                                set lineText to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string)
+                                if boxName is "INBOX" then
+                                    if mid is "" or seenIds does not contain mid then
+                                        if mid is not "" then set end of seenIds to mid
+                                        set end of matchedLines to lineText & " | Id: " & ((id of msg) as text)
+                                    end if
+                                else
+                                    set end of otherLines to lineText & " | Mailbox: " & boxName
+                                    set end of otherIds to mid
+                                end if
+                            end if
+                        end try
+                    end repeat
+                    repeat with i from 1 to (count of otherLines)
+                        set mid to item i of otherIds
+                        if mid is "" or seenIds does not contain mid then
+                            if mid is not "" then set end of seenIds to mid
+                            set end of matchedLines to item i of otherLines
+                        end if
+                    end repeat
+                    if (count of matchedLines) > resultLimit then set matchedLines to items 1 thru resultLimit of matchedLines
+
+            """
 
         let script = """
+            on flattenMessages(l)
+                set out to {}
+                repeat with x in l
+                    set v to contents of x
+                    if class of v is list then
+                        set out to out & my flattenMessages(v)
+                    else
+                        set end of out to v
+                    end if
+                end repeat
+                return out
+            end flattenMessages
+
             tell application "Mail"
                 try
                     set senderFilter to "\(escapeAppleScriptLiteral(senderContains))"
                     set subjectFilter to "\(escapeAppleScriptLiteral(subjectContains))"
+                    set anyFilter to "\(escapeAppleScriptLiteral(anyContains))"
                     set wantsToday to \(wantsToday ? "true" : "false")
                     set wantsYesterday to \(wantsYesterday ? "true" : "false")
                     set wantsUnread to \(unreadOnly ? "true" : "false")
@@ -591,16 +698,7 @@ enum MailAutomation {
                         set targetMailboxName to (name of targetMailbox) as string
                     end try
 
-                    set matchedLines to {}
-                    -- Mail filters server-side; scanning the mailbox property by property took ~10 s.
-                    set found to (messages of targetMailbox whose \(whoseClause))
-                    set foundCount to count of found
-                    if foundCount > resultLimit then set foundCount to resultLimit
-                    repeat with i from 1 to foundCount
-                        set msg to item i of found
-                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string)
-                    end repeat
-
+            \(searchesEveryMailbox ? everyMailboxBody : selectedMailboxBody)
                     if (count of matchedLines) = 0 then return "MAILBOX:" & targetMailboxName & return & "NO_MATCHES"
 
                     set AppleScript's text item delimiters to return
@@ -650,7 +748,11 @@ enum MailAutomation {
             limit: limit,
             maxScan: maxScan
         )
+        return parseSnapshot(summary)
+    }
 
+    /// Reads `mailboxSnapshot`'s text back into rows. A line may end with " | Id: <n>".
+    nonisolated static func parseSnapshot(_ summary: String) -> MailAutomationMailboxSnapshot? {
         let lines = summary
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -686,9 +788,12 @@ enum MailAutomation {
             let dateText = String(dateAndRead[..<readRange.lowerBound]).trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
-            let readText = String(dateAndRead[readRange.upperBound...]).trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
+            // The line may end with " | Id: <n>" or " | Mailbox: <name>".
+            var readText = String(dateAndRead[readRange.upperBound...])
+            if let rest = readText.range(of: " | ") {
+                readText = String(readText[..<rest.lowerBound])
+            }
+            readText = readText.trimmingCharacters(in: .whitespacesAndNewlines)
 
             return MailAutomationMessageSummary(
                 subject: subject.isEmpty ? "(no subject)" : subject,
