@@ -134,10 +134,12 @@ struct MailSearchGroundingTests {
             Mailbox: Inbox
             - Your statement | From: SBI <alerts@sbi.example> | Monday, 9 November 2026 | Read: false | Id: 4812
             - Old line | From: A <a@example.com> | Sunday | Read: true
+            - Filed away | From: B <b@example.com> | Saturday | Read: true | Mailbox: Archive
             """
         let snapshot = MailAutomation.parseSnapshot(summary)
         #expect(snapshot?.mailboxName == "Inbox")
-        #expect(snapshot?.messages.count == 2)
+        #expect(snapshot?.messages.count == 3)
+        #expect(snapshot?.messages[1].isRead == true)
         #expect(snapshot?.messages.first?.subject == "Your statement")
         #expect(snapshot?.messages.first?.isRead == false)
         #expect(snapshot?.messages.last?.isRead == true)

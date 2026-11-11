@@ -219,6 +219,14 @@ after deletion they would plan as `.answer` or `.act` and ground on conversation
      Mail search does go cross-app (from Global Context), `searchAppQuery` drops a leading
      "from " so Mail's field gets the name, not the literal phrase. This supersedes the
      Global-Context wording in §3.1a.
+  7. **All mailboxes (owner, 2026-11-11).** A search with a sender, subject or term looks in
+     every mailbox of every account in one query (`every message of every mailbox of every
+     account whose …`, about 1 s; asking each of 40 mailboxes in turn took 78 s). Trash, Bin,
+     Junk, Spam, Drafts and Deleted Messages are left out; the inbox copy wins over the same
+     message in "All Mail" (by `message id`). Inbox lines end with ` | Id: <n>` (readable by
+     `mail.read`), other lines with ` | Mailbox: <name>`. At most 4× the limit is scanned, and
+     results are not date-sorted across mailboxes. A search with no text filter (unread, today)
+     still reads the selected mailbox or the inbox.
   Not covered offline: the wiring inside `appleAppsContextBlock` (it scripts Mail); it was
   checked live through the app's ask path.
   Tests: `MailSearchGroundingTests`.

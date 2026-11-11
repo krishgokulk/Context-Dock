@@ -146,10 +146,9 @@ enum AppleLiveDataContext {
         }
         return "## Mail — search matches for \"\(label)\" (\(mailbox) mailbox, already searched):\n"
             + UntrustedContent.fenced(body, from: "Mail message headers")
-            + "\nThese are the search results; answer from them. Only headers are listed."
-            // mail.read resolves an id in the inbox only.
-            + (mailbox.lowercased().contains("inbox")
-                ? " To read a message's text, call mail.read with an Id from this list." : "")
+            + "\nThese are the search results; answer from them. Only headers are listed. A line "
+            + "ending in an Id is in the inbox and mail.read can open it by that Id; a line "
+            + "ending in a Mailbox name is filed there."
     }
 
     /// - Parameter scopeBundleId: the app the chat is scoped to. In Mail's own chat a search

@@ -579,7 +579,81 @@ enum MailAutomation {
             hasAny: !anyContains.isEmpty, unreadOnly: unreadOnly,
             wantsToday: wantsToday, wantsYesterday: wantsYesterday)
 
+        // A named sender or term is looked for in every mailbox of every account: a message
+        // that was archived or filed is still mail the user asked about. One query does it —
+        // asking each mailbox in turn took over a minute across forty mailboxes. The copy in an
+        // inbox wins over the same message in "All Mail"; trash, junk and drafts are left out.
+        // With no text filter (unread, today) the selected mailbox or the inbox is read, as before.
+        let searchesEveryMailbox =
+            !senderContains.isEmpty || !subjectContains.isEmpty || !anyContains.isEmpty
+        let selectedMailboxBody = """
+                    set matchedLines to {}
+                    -- Mail filters server-side; scanning the mailbox property by property took ~10 s.
+                    set found to (messages of targetMailbox whose \(whoseClause))
+                    set foundCount to count of found
+                    if foundCount > resultLimit then set foundCount to resultLimit
+                    repeat with i from 1 to foundCount
+                        set msg to item i of found
+                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string) & " | Id: " & ((id of msg) as text)
+                    end repeat
+            """
+        let everyMailboxBody = """
+                    set targetMailboxName to "All Mailboxes"
+                    set matchedLines to {}
+                    set otherLines to {}
+                    set otherIds to {}
+                    set seenIds to {}
+                    set skipped to {"Trash", "Bin", "Junk", "Spam", "Drafts", "Deleted Messages", "Deleted Items"}
+                    set found to my flattenMessages(every message of every mailbox of every account whose \(whoseClause))
+                    set scanCount to count of found
+                    if scanCount > (resultLimit * 4) then set scanCount to (resultLimit * 4)
+                    repeat with i from 1 to scanCount
+                        set msg to item i of found
+                        try
+                            set boxName to (name of (mailbox of msg)) as string
+                            if skipped does not contain boxName then
+                                set mid to ""
+                                try
+                                    set mid to (message id of msg) as string
+                                end try
+                                set lineText to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string)
+                                if boxName is "INBOX" then
+                                    if mid is "" or seenIds does not contain mid then
+                                        if mid is not "" then set end of seenIds to mid
+                                        set end of matchedLines to lineText & " | Id: " & ((id of msg) as text)
+                                    end if
+                                else
+                                    set end of otherLines to lineText & " | Mailbox: " & boxName
+                                    set end of otherIds to mid
+                                end if
+                            end if
+                        end try
+                    end repeat
+                    repeat with i from 1 to (count of otherLines)
+                        set mid to item i of otherIds
+                        if mid is "" or seenIds does not contain mid then
+                            if mid is not "" then set end of seenIds to mid
+                            set end of matchedLines to item i of otherLines
+                        end if
+                    end repeat
+                    if (count of matchedLines) > resultLimit then set matchedLines to items 1 thru resultLimit of matchedLines
+
+            """
+
         let script = """
+            on flattenMessages(l)
+                set out to {}
+                repeat with x in l
+                    set v to contents of x
+                    if class of v is list then
+                        set out to out & my flattenMessages(v)
+                    else
+                        set end of out to v
+                    end if
+                end repeat
+                return out
+            end flattenMessages
+
             tell application "Mail"
                 try
                     set senderFilter to "\(escapeAppleScriptLiteral(senderContains))"
@@ -624,16 +698,7 @@ enum MailAutomation {
                         set targetMailboxName to (name of targetMailbox) as string
                     end try
 
-                    set matchedLines to {}
-                    -- Mail filters server-side; scanning the mailbox property by property took ~10 s.
-                    set found to (messages of targetMailbox whose \(whoseClause))
-                    set foundCount to count of found
-                    if foundCount > resultLimit then set foundCount to resultLimit
-                    repeat with i from 1 to foundCount
-                        set msg to item i of found
-                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string) & " | Id: " & ((id of msg) as text)
-                    end repeat
-
+            \(searchesEveryMailbox ? everyMailboxBody : selectedMailboxBody)
                     if (count of matchedLines) = 0 then return "MAILBOX:" & targetMailboxName & return & "NO_MATCHES"
 
                     set AppleScript's text item delimiters to return
@@ -723,9 +788,10 @@ enum MailAutomation {
             let dateText = String(dateAndRead[..<readRange.lowerBound]).trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
+            // The line may end with " | Id: <n>" or " | Mailbox: <name>".
             var readText = String(dateAndRead[readRange.upperBound...])
-            if let idRange = readText.range(of: " | Id: ") {
-                readText = String(readText[..<idRange.lowerBound])
+            if let rest = readText.range(of: " | ") {
+                readText = String(readText[..<rest.lowerBound])
             }
             readText = readText.trimmingCharacters(in: .whitespacesAndNewlines)
 
