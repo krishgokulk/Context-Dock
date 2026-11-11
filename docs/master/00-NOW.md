@@ -27,7 +27,8 @@ None. (Awaiting owner selection for next task)
 - `SolvedSkillMatch.run` routes by call kind: capability, `run_menu_command` tool, or approval-gated external MCP read.
 - The Corner (`DockCore+AIChat`) now replays saved skills before the model stage; it captured them and never tried them.
 - Hand-checked in the Corner and the ⌥⌥ launcher: Finder menu skill and Mail `mail.search` skill both answer with "Used saved skill (no model)". External MCP replay is covered by unit tests only.
-- Not done: a replayed answer shows the capability's raw output, with no result cards or friendly wording.
+- Replies polished in PR #430: a replay returns its result rows (cards in the Corner and the chat window) and answers with a short titled list of those records; a Mail listing is laid out as subject / sender · date · unread. Hand-checked in the bottom dock for Finder, Mail and Notes; the ⌥⌥ launcher was not.
+- Not done: no Mail result card (belongs to Rich Cards, #418). A conversation reopened after switching apps is restored as text only, without cards or chips, on model turns too.
 
 **#407: Task H1b — Solved skills for menu / connector / MCP calls (PR #428, merged; follow-ups fixed in PR #429):**
 - Completed on branch `claude/issue-407-solved-skills-connectors` (PR #428, commit `de96209f`).

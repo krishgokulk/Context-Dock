@@ -124,6 +124,10 @@ enum SolvedSkillMatch {
 
         var receipts: [DoraXActionReceipt] = []
         var outputs: [String] = []
+        var rows: [ChatResultRow] = []
+        // The records the replayed calls read become the answer's cards, as they do on a model
+        // turn. Begun here so a row from an earlier turn never rides along.
+        ChatResultRowCollector.shared.begin(scope: scope)
 
         for call in skill.toolCalls {
             let input = call.argTemplate.mapValues { template -> String in
@@ -138,19 +142,79 @@ enum SolvedSkillMatch {
                 environment: environment)
             else {
                 SolvedSkillStore.shared.markRun(id: skill.id, success: false)
+                // The model answers this turn instead; a half-finished replay's rows must not
+                // appear under its answer.
+                _ = ChatResultRowCollector.shared.take(scope: scope)
                 return nil
             }
+            // The receipt keeps the call's own output as evidence; the answer says it plainly.
             receipts.append(
                 DoraXActionReceipt(command: call.capability, output: output, success: true))
-            if !output.isEmpty { outputs.append(output) }
+            // A call that produced cards is answered from those records. Its output is the
+            // listing written for a model — record ids, pipe-separated fields, body previews —
+            // and printing that above the same records as cards said everything twice, badly.
+            let produced = ChatResultRowCollector.shared.take(scope: scope)
+            rows += produced
+            let reply = produced.isEmpty ? plainReply(for: output) : plainReply(rows: produced)
+            if !reply.isEmpty { outputs.append(reply) }
         }
 
         SolvedSkillStore.shared.markRun(id: skill.id, success: true)
         return AppScopedChatService.Answer(
             text: outputs.joined(separator: "\n\n"),
             toolChips: skill.toolCalls.map(\.capability),
+            rows: rows,
             evidenceReceipts: receipts,
             trace: ["Used saved skill (no model)"])
+    }
+
+    // MARK: - Reply wording (pure)
+
+    /// A replayed call's output in the words a person would be shown.
+    ///
+    /// With a model in the loop, a capability's output is raw material and the model writes
+    /// the answer. A replay has no model, so the raw material was the answer: a mailbox
+    /// listing arrived as `- subject | From: … | Read: false | Mailbox: …`. Mail's listing is
+    /// the one structured format with a parser already (`MailAutomation.parseSnapshot`), so it
+    /// is laid out here; anything else is passed through as it came.
+    nonisolated static func plainReply(for output: String) -> String {
+        guard let snapshot = MailAutomation.parseSnapshot(output) else { return output }
+        guard !snapshot.messages.isEmpty else {
+            // Only when the listing itself says so; a header over lines this cannot read is
+            // not an empty mailbox.
+            return output.contains("No matching messages found.")
+                ? "No matching messages." : output
+        }
+        let count = snapshot.messages.count
+        let lines = snapshot.messages.map { message -> String in
+            // "Name <address>" reads as the name; a bare address stays as it is.
+            var sender = message.sender
+            if let bracket = sender.range(of: " <"), sender.hasSuffix(">") {
+                sender = String(sender[..<bracket.lowerBound])
+            }
+            // Seconds are noise in a list of mail.
+            let date = message.dateText.replacingOccurrences(
+                of: #"(\d{1,2}:\d{2}):\d{2}"#, with: "$1", options: .regularExpression)
+            return "- **\(message.subject)**\n  \(sender) · \(date)"
+                + (message.isRead ? "" : " · unread")
+        }
+        return "\(count) message\(count == 1 ? "" : "s") in \(snapshot.mailboxName)\n\n"
+            + lines.joined(separator: "\n")
+    }
+
+    /// The records a replayed call read, as a short titled list.
+    ///
+    /// Not only a count: a conversation reopened later is restored as text, without its
+    /// cards, and "Found 3 results." over nothing says nothing. Titles and containers are the
+    /// row's own fields, so whatever the capability redacted for the card stays redacted here.
+    nonisolated static func plainReply(rows: [ChatResultRow]) -> String {
+        let shown = 10
+        var lines = rows.prefix(shown).map { row in
+            row.subtitle.isEmpty ? "- **\(row.title)**" : "- **\(row.title)** — \(row.subtitle)"
+        }
+        if rows.count > shown { lines.append("- and \(rows.count - shown) more") }
+        return "\(rows.count) result\(rows.count == 1 ? "" : "s")\n\n"
+            + lines.joined(separator: "\n")
     }
 
     /// One saved call, through its route. The user-facing output, or nil if it did not run.

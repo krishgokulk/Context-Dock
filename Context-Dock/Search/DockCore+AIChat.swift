@@ -3681,9 +3681,17 @@ extension DockCore {
                     {
                         await MainActor.run {
                             self.dockTraceStep("Used saved skill (no model)")
+                            // The same mapper as the model stage below: what the replayed
+                            // calls read is drawn as cards, not only described.
+                            let rows = ChatResultRowMapper.map(saved.rows)
                             l2.chatMessages.append(
                                 AIChatMessage(
                                     role: .assistant, content: saved.text,
+                                    appLaunches: rows.apps,
+                                    recentFiles: rows.files,
+                                    noteResults: rows.notes,
+                                    reminderResults: rows.reminders,
+                                    pageLinks: rows.links,
                                     mcpToolsRan: saved.toolChips,
                                     evidenceReceipts: saved.evidenceReceipts,
                                     trace: self.l2.routerTrace))
