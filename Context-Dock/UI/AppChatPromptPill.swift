@@ -1326,7 +1326,10 @@ struct AppChatPromptPill: View {
                             model.runReturnRow(runsTopRow: true)
                             return
                         }
-                        // Finder's Ask AI row, and every app's composer: the question.
+                        if model.returnRunsTopRow, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
+                        // Finder's Ask AI row, questions, and every app's composer: the question.
                         model.submit()
                     }
                     // Space is always a space: the result sheet stays open while typing, so a

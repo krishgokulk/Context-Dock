@@ -1825,6 +1825,38 @@ extension AppChatPromptModel {
         }
     }
 
+    /// True when pressing Return without arrowing into the list should ask AI instead of
+    /// running the top row (Finder's Ask AI row, or a natural-language question in an app Pet).
+    var skipsTopRowOnBareReturn: Bool {
+        showsAskAIRow || (!isGlobalScope && !isCLIScope && Self.isQuestionShapedQuery(query))
+    }
+
+    /// Whether Return in this scope runs the top matching row when nothing is arrowed to.
+    /// Keeps App Pets consistent with what `AppChatListCard` highlights and `boardFoot`
+    /// promises (e.g. typing "qui" / "min" runs Quit / Minimize instead of asking AI),
+    /// while natural-language questions, Finder's Ask AI, attachments, and active chats ask AI.
+    var returnRunsTopRow: Bool {
+        if isSearchField { return true }
+        guard phase != .chat, !skipsTopRowOnBareReturn, attachments.isEmpty, !rows.isEmpty else {
+            return false
+        }
+        return !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func isQuestionShapedQuery(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.contains("?") { return true }
+        let lower = trimmed.lowercased()
+        let prefixes = [
+            "what ", "which ", "who ", "when ", "where ", "why ", "how ",
+            "is ", "are ", "was ", "were ", "do ", "does ", "did ",
+            "can ", "could ", "would ", "should ", "tell ", "explain ",
+            "describe ", "summarize ", "summarise ", "analyse ", "analyze ",
+        ]
+        return prefixes.contains { lower.hasPrefix($0) }
+    }
+
     /// Runs whichever row the keyboard is on. Returns false when there is none, so Enter
     /// falls through to asking the question the user typed.
     @discardableResult
