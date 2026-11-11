@@ -712,11 +712,18 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
-        .onTapGesture {
-            if model.phase == .dock {
-                _ = model.expandFromDock(seeding: nil)
-                CornerDockController.shared.requestComposerFocus()
-            }
+        // Only catch empty-background taps while resting as a dock so centred open fields
+        // remain natively draggable by window background.
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if model.phase == .dock {
+                        _ = model.expandFromDock(seeding: nil)
+                        CornerDockController.shared.requestComposerFocus()
+                    }
+                }
+                .allowsHitTesting(model.phase == .dock)
         }
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
