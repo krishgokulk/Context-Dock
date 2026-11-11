@@ -86,7 +86,8 @@ enum SolvedSkillCapture {
         let isMenuCommandOnly = !toolCalls.isEmpty
             && toolCalls.allSatisfy { $0.capability == "run_menu_command" }
         guard let derived = derive(query: query, bundleId: bundleId, context: context),
-            (isMenuCommandOnly || !derived.slots.isEmpty), !derived.hasLeftoverValue
+            (isMenuCommandOnly || !derived.slots.isEmpty),
+            (isMenuCommandOnly || !derived.hasLeftoverValue)
         else { return nil }
 
         let parameterized = toolCalls.map { call -> SolvedSkillToolCall in

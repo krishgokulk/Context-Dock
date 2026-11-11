@@ -89,6 +89,24 @@ struct MenuCommandSkillCaptureTests {
         #expect(build(answer: inReceipt) == nil)
     }
 
+    // ── App name proper noun in query does not block capture ──────────────────────
+    // "open preferences in Finder" — "Finder" is a proper noun that would normally
+    // set hasLeftoverValue:true, but menu turns bypass that check (the app name is
+    // implicit in the bundleId scope, not an unparameterised entity).
+
+    @Test func menuQueryWithAppNameProperNounIsCaptured() throws {
+        let call = SolvedSkillToolCall(
+            capability: "run_menu_command",
+            argTemplate: ["app": "Finder", "path": "Finder > Settings..."],
+            isReadOnly: true)
+        let skill = try #require(SolvedSkillCapture.build(
+            query: "open preferences in Finder",
+            answer: answer(), toolCalls: [call],
+            bundleId: finderBundleId, verifiedReadBack: true))
+        #expect(skill.toolCalls.first?.argTemplate["app"] == "Finder")
+        #expect(skill.slots.isEmpty)
+    }
+
     // ── Matching: zero-slot skills match correctly ──────────────────────────────────
 
     @Test func zeroSlotMenuSkillMatchesIdenticalQuery() throws {
