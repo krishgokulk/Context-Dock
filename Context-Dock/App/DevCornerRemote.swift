@@ -77,6 +77,7 @@ enum DevCornerRemote {
             "focus": "\(presentation.surfaceFocus)",
             "onScreen": controller.isCornerChatVisible && !controller.isAutoHidden,
             "phase": "\(prompt.phase)",
+            "shellWidth": Double(DockShellWidth.current),
             "app": prompt.appName,
             "query": prompt.query,
             "writtenAt": ISO8601DateFormatter().string(from: Date()),

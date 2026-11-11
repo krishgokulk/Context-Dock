@@ -560,6 +560,19 @@ struct AppChatPromptTests {
         #expect(model.appBundleID == "com.microsoft.VSCode")
     }
 
+    /// Switching apps with the folded badge up used to open the field over the new app.
+    @Test func aFoldedBadgeFollowsTheNewAppWithoutOpening() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.set(.mini)
+
+        model.frontmostAppDidChange(
+            app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
+
+        #expect(model.phase == .mini)
+        #expect(model.appBundleID == "com.microsoft.VSCode")
+    }
+
     @Test func switchingFrontmostAppKeepsThePromptAndUpdatesItsScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Safari", bundleID: "com.apple.Safari")

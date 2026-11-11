@@ -1096,6 +1096,7 @@ final class AppChatPromptModel: ObservableObject {
         // A resting dock stays resting: it follows the new app without opening. The next app
         // coming forward as one quits popped the field open (owner 2026-10-14).
         let wasResting = phase == .dock
+        let wasMini = phase == .mini
         query = ""
         attachments = []
         appName = name
@@ -1112,6 +1113,10 @@ final class AppChatPromptModel: ObservableObject {
             set(.dock)
             return
         }
+        // A folded badge is resting too: it follows the new app without opening. Switching
+        // apps with the badge up popped the field — or a whole conversation — open over the
+        // app the user had just gone to (owner 2026-11-11). Its own clock still puts it away.
+        if wasMini { return }
         set(hasPresentedConversation ? .chat : restingInputPhase)
         if isPinned || isPointerInside {
             cancel()
