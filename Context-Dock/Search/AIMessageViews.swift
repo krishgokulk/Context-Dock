@@ -452,6 +452,10 @@ struct AIChatMessage: Identifiable, Equatable {
     /// One row per thing the turn ran, recorded where it executed. Not persisted: like
     /// `trace`, it describes the turn that produced the answer.
     var activity: [ActivityStep] = []
+    /// Auto-saved read skill this turn produced. Surface shows "Saved as a skill · Undo".
+    var savedSkill: SolvedSkill? = nil
+    /// Write-turn skill offer waiting for user confirmation. Surface shows "Save as a skill?".
+    var pendingWriteSkillOffer: SolvedSkill? = nil
 
     /// True when the turn that produced this message executed something: a recorded step, a
     /// receipt, or a tool chip other than the routing lookup (which is only a search).
@@ -1744,6 +1748,12 @@ struct AIChatMessageView: View {
                 if !message.evidenceReceipts.isEmpty {
                     evidenceReceiptView
                 }
+                if let skill = message.savedSkill {
+                    SavedSkillRow(skill: skill)
+                }
+                if let offer = message.pendingWriteSkillOffer {
+                    WriteSkillOfferRow(skill: offer)
+                }
                 subjectiveEvaluationView
                 // Detect extension proposal in structuredData
                 if let sd = message.structuredData, message.role == .assistant,
@@ -2878,6 +2888,65 @@ struct CodeBlockView: View {
             return [.appContext(appName)]
         }
         return [.always]
+    }
+}
+
+// MARK: - Saved Skill Rows
+
+private struct SavedSkillRow: View {
+    let skill: SolvedSkill
+    @State private var dismissed = false
+
+    var body: some View {
+        if !dismissed {
+            HStack(spacing: 4) {
+                Text("Saved as a skill: \(skill.queryTemplate)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Button("Undo") {
+                    SolvedSkillStore.shared.delete(skill.id)
+                    dismissed = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+private struct WriteSkillOfferRow: View {
+    let skill: SolvedSkill
+    @State private var answered = false
+
+    var body: some View {
+        if !answered {
+            HStack(spacing: 8) {
+                Text("Save as a skill?")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Button("Save") {
+                    SolvedSkillStore.shared.save(skill)
+                    answered = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                Button("No") {
+                    answered = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+        }
     }
 }
 

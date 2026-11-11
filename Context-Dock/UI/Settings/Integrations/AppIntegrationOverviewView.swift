@@ -12,6 +12,7 @@ struct AppIntegrationCapabilitiesView: View {
     let onRemoveCapability: (AdapterAction) -> Void
 
     @ObservedObject private var skillStore = SkillStore.shared
+    @ObservedObject private var solvedSkillStore = SolvedSkillStore.shared
     @ObservedObject private var apiStore = APIConnectionStore.shared
     @ObservedObject private var mcpManager = MCPServerManager.shared
     @ObservedObject private var packageManager = TerminalPackageManager.shared
@@ -32,6 +33,7 @@ struct AppIntegrationCapabilitiesView: View {
                 discoveredCLIsSection
                 liveMenuSection
                 skillsSection
+                madeByDoraXSection
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(20)
@@ -542,6 +544,70 @@ struct AppIntegrationCapabilitiesView: View {
     }
 
     // MARK: - Skills
+
+    private var madeByDoraXSection: some View {
+        let learnedSkills = solvedSkillStore.skills.filter { $0.bundleId == summary.bundleID }
+        return Group {
+            if !learnedSkills.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Made by DoraX · \(learnedSkills.count)")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Read skills DoraX learned from your usage of \(summary.appName).")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(learnedSkills.enumerated()), id: \.element.id) { index, skill in
+                            if index > 0 { Divider() }
+                            HStack(spacing: 10) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.teal)
+                                    .frame(width: 22)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(skill.queryTemplate)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        Text("\(skill.runCount) run\(skill.runCount == 1 ? "" : "s")")
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.secondary)
+                                        if skill.runCount > 0 {
+                                            Text("·")
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(.secondary)
+                                            let rate = Int(Double(skill.successCount) / Double(skill.runCount) * 100)
+                                            Text("\(rate)% success")
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+
+                                Spacer(minLength: 8)
+
+                                Button(role: .destructive) {
+                                    solvedSkillStore.delete(skill.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.plain)
+                                .help("Delete this learned skill")
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(NSColor.controlBackgroundColor)))
+                }
+            }
+        }
+    }
 
     private var skillsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
