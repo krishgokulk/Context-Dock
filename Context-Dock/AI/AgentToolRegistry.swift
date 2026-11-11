@@ -582,6 +582,32 @@ final class AgentToolRegistry {
             SolvedSkillToolCallCollector.shared.record(
                 capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
                 verifiedReadBack: verifiedReadBack, scope: scope)
+        } else if name == "run_menu_command" {
+            // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
+            // so the turn is recorded as read-only here — the gate appears at run time, not now.
+            // Success IS the verification for a menu command (the AX framework found the item).
+            let app = arguments["app"] as? String ?? ""
+            let path = arguments["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+        } else if name == "run_mcp_tool" {
+            // H1b rung 1: external connector/MCP calls (non-DoraX; DoraX was handled above).
+            // Use the tool name's heuristic to classify read vs. write.
+            let toolName = arguments["tool"] as? String ?? ""
+            let server = arguments["server"] as? String ?? ""
+            var input: [String: String] = [:]
+            if let args = arguments["arguments"] as? [String: Any] {
+                for (k, v) in args { input[k] = (v as? String) ?? String(describing: v) }
+            }
+            let capabilityKey = server.isEmpty ? toolName : "\(server).\(toolName)"
+            SolvedSkillToolCallCollector.shared.record(
+                capability: capabilityKey.isEmpty ? name : capabilityKey, input: input,
+                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
+                verifiedReadBack: verifiedReadBack, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(
                 capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,

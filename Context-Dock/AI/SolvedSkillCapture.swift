@@ -81,8 +81,12 @@ enum SolvedSkillCapture {
         // slots; a query that carries an entity but yields no slot would save a literal, so it
         // is rejected rather than kept. A leftover-value (a proper noun or path remaining after
         // slot extraction that is neither a slot nor a route word) is also a rejection.
+        // Exception: a menu-command-only turn (rung 3) has no entity slots by design — the path
+        // is fixed and self-describing — so the slot requirement is waived for those turns.
+        let isMenuCommandOnly = !toolCalls.isEmpty
+            && toolCalls.allSatisfy { $0.capability == "run_menu_command" }
         guard let derived = derive(query: query, bundleId: bundleId, context: context),
-            !derived.slots.isEmpty, !derived.hasLeftoverValue
+            (isMenuCommandOnly || !derived.slots.isEmpty), !derived.hasLeftoverValue
         else { return nil }
 
         let parameterized = toolCalls.map { call -> SolvedSkillToolCall in
