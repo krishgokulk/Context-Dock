@@ -273,14 +273,14 @@ enum SolvedSkillCapture {
 
         // ── 4. Leftover-value check ──────────────────────────────────────────────────────
         //
-        // A proper noun or path that remains after slot extraction and is not a route/command
-        // word blocks the save (§8 rule 3). This catches entities that should have been
-        // parameterised but were not (e.g. a file name when no file is in context, a person's
-        // name in a non-sender scope, a path literal).
-        let remainingWords = words.filter { !slotLowerValues.contains($0.lowercased()) }
-        let hasLeftoverValue = remainingWords.contains { word in
-            (isProperNoun(word) || looksLikePath(word) || looksLikeEmailOrAddress(word))
-                && !nonSlotWords.contains(word.lowercased())
+        // A proper noun (other than a leading sentence starter), path, or email address that
+        // remains after slot extraction blocks the save (§8 rule 3). This catches entities
+        // that should have been parameterised but were not (e.g. a file name when no file is
+        // in context, a person's name in a non-sender scope, a path literal).
+        let hasLeftoverValue = words.enumerated().contains { index, word in
+            guard !slotLowerValues.contains(word.lowercased()) else { return false }
+            return looksLikePath(word) || looksLikeEmailOrAddress(word)
+                || (index > 0 && isProperNoun(word))
         }
 
         return (template, nonSlotWords, slots, values, hasLeftoverValue)
