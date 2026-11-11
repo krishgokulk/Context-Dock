@@ -110,4 +110,73 @@ struct CornerHeadlessExecutionTests {
         #expect(size.width > 0)
         #expect(size.height > 0)
     }
+
+    @Test func centredDragOffsetRoundTripsAndNeverMovesBottomCenterDock() {
+        let visible = CGRect(x: 60, y: 0, width: 1452, height: 945)
+        let full = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let size = CornerDockLayout.panelSize(for: .center, panelWidth: 1512)
+
+        let defaultOrigin = CornerDockController.calculatePanelOrigin(
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size,
+            anchor: .center,
+            isCentred: true,
+            centredOffsetX: 0,
+            centredOffsetY: 0
+        )
+
+        // Dragged up and to the right: offset round-trips back to the exact dragged origin.
+        let draggedOrigin = CGPoint(x: defaultOrigin.x + 140, y: defaultOrigin.y + 180)
+        let savedOffset = CornerDockController.centredOffset(
+            forPanelOrigin: draggedOrigin,
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size
+        )
+        let reopenedOrigin = CornerDockController.calculatePanelOrigin(
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size,
+            anchor: .center,
+            isCentred: true,
+            centredOffsetX: savedOffset.x,
+            centredOffsetY: savedOffset.y
+        )
+        #expect(abs(reopenedOrigin.x - draggedOrigin.x) < 0.5)
+        #expect(abs(reopenedOrigin.y - draggedOrigin.y) < 0.5)
+
+        // Extreme drag is clamped inside visibleScreenFrame (respecting a left-side macOS Dock).
+        let clampedOrigin = CornerDockController.clampedCentredPanelOrigin(
+            proposedOrigin: CGPoint(x: defaultOrigin.x - 2000, y: defaultOrigin.y + 2000),
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size
+        )
+        let barTop = clampedOrigin.y + size.height - CornerDockLayout.pad
+        let barLeft = clampedOrigin.x + (size.width - DockShellWidth.field) / 2
+        #expect(barTop <= visible.maxY - 12 + 0.5)
+        #expect(barLeft >= visible.minX + 12 - 0.5)
+
+        // Bottom-center dock ignores any saved centred offset.
+        let bottomDefault = CornerDockController.calculatePanelOrigin(
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size,
+            anchor: .center,
+            isCentred: false,
+            centredOffsetX: 0,
+            centredOffsetY: 0
+        )
+        let bottomWithSavedOffset = CornerDockController.calculatePanelOrigin(
+            visibleScreenFrame: visible,
+            fullScreenFrame: full,
+            panelSize: size,
+            anchor: .center,
+            isCentred: false,
+            centredOffsetX: savedOffset.x,
+            centredOffsetY: savedOffset.y
+        )
+        #expect(bottomDefault == bottomWithSavedOffset)
+    }
 }

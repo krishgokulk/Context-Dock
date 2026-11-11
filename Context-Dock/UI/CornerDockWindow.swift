@@ -15,6 +15,61 @@ import SwiftUI
 
 final class CornerDockPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    /// The shell window is taller than the screen (~1500pt) so boards never clip, and in
+    /// centred mode the bar sits at its top edge. Constrain only the visible bar within the
+    /// screen's visible frame so native AppKit dragging is smooth up to every edge.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        let controller = CornerDockController.shared
+        guard controller.isCentredMode else { return frameRect }
+        let targetScreen = screen
+            ?? NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? self.screen
+            ?? NSScreen.main
+        guard let targetScreen else { return frameRect }
+        let origin = CornerDockController.clampedCentredPanelOrigin(
+            proposedOrigin: frameRect.origin,
+            visibleScreenFrame: targetScreen.visibleFrame,
+            fullScreenFrame: targetScreen.frame,
+            panelSize: frameRect.size
+        )
+        return NSRect(origin: origin, size: frameRect.size)
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown,
+           event.clickCount == 1,
+           CornerDockController.shared.isCentredMode,
+           let hit = contentView?.hitTest(event.locationInWindow),
+           Self.isEmptyTextInput(hit)
+        {
+            let start = NSEvent.mouseLocation
+            while let next = nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: .distantFuture,
+                inMode: .eventTracking,
+                dequeue: true
+            ) {
+                if next.type == .leftMouseUp {
+                    super.sendEvent(event)
+                    super.sendEvent(next)
+                    return
+                }
+                let now = NSEvent.mouseLocation
+                if hypot(now.x - start.x, now.y - start.y) >= 4 {
+                    performDrag(with: event)
+                    return
+                }
+            }
+        }
+        super.sendEvent(event)
+    }
+
+    private static func isEmptyTextInput(_ view: NSView) -> Bool {
+        if let tv = view as? NSTextView { return tv.string.isEmpty }
+        if let tf = view as? NSTextField { return tf.stringValue.isEmpty }
+        return false
+    }
 }
 
 /// Hosts the shell. Mouse events are answered only where a pill actually is, so the
@@ -80,6 +135,10 @@ final class CornerDockController: NSObject {
     /// and in between while sliding.
     private var shownPanelOrigin: NSPoint = .zero
     private var dockScreenFrame: CGRect = .zero
+    /// Guards `handlePanelDidMove()` while `position()` moves the panel programmatically.
+    private var isPositioningPanel = false
+    /// Suppresses `AppSettings.objectWillChange` repositioning while persisting a user drag.
+    private var isSavingCentredDragPosition = false
     /// The pointer has been on the dock since it last came up. Leaving it then is the
     /// macOS Dock's quick hide; never having come near it — the dock was raised by a hotkey —
     /// waits out the idle delay instead.
@@ -184,6 +243,13 @@ final class CornerDockController: NSObject {
 
         panel = p
         hostView = host
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: p, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handlePanelDidMove()
+            }
+        }
         position()
     }
 
@@ -453,9 +519,10 @@ final class CornerDockController: NSObject {
         // `position` writes the same origin when nothing moved.
         AppSettings.shared.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
-                self?.position()
-                self?.refresh()
-                self?.syncEdgeWatch()
+                guard let self, !self.isSavingCentredDragPosition else { return }
+                self.position()
+                self.refresh()
+                self.syncEdgeWatch()
             }
         }.store(in: &sinks)
         syncEdgeWatch()
@@ -645,6 +712,77 @@ final class CornerDockController: NSObject {
         )
     }
 
+    static func centredDefaultOrigin(
+        visibleScreenFrame: CGRect,
+        fullScreenFrame: CGRect,
+        panelSize: CGSize
+    ) -> CGPoint {
+        let pad = CornerDockLayout.pad
+        let screenW = fullScreenFrame.width
+        let screenX = fullScreenFrame.minX
+        let defaultX = (screenW - panelSize.width) / 2 + screenX
+        let defaultY = visibleScreenFrame.minY + visibleScreenFrame.height * 0.62 + pad - panelSize.height
+        return CGPoint(x: defaultX, y: defaultY)
+    }
+
+    static func clampCentredOffset(
+        x: CGFloat,
+        y: CGFloat,
+        visibleScreenFrame: CGRect,
+        fullScreenFrame: CGRect
+    ) -> CGPoint {
+        let defaultBarTop = visibleScreenFrame.minY + visibleScreenFrame.height * 0.62
+        let maxOffsetY = max(0, visibleScreenFrame.maxY - defaultBarTop - 12)
+        let minOffsetY = min(0, (visibleScreenFrame.minY + AppChatPromptMetrics.inputHeight + 16) - defaultBarTop)
+        let clampedOffsetY = min(max(minOffsetY, y), maxOffsetY)
+
+        let halfBar = DockShellWidth.field / 2
+        let defaultCenterX = fullScreenFrame.midX
+        let minOffsetX = min(0, (visibleScreenFrame.minX + halfBar + 12) - defaultCenterX)
+        let maxOffsetX = max(0, (visibleScreenFrame.maxX - halfBar - 12) - defaultCenterX)
+        let clampedOffsetX = min(max(minOffsetX, x), maxOffsetX)
+        return CGPoint(x: clampedOffsetX, y: clampedOffsetY)
+    }
+
+    static func centredOffset(
+        forPanelOrigin origin: CGPoint,
+        visibleScreenFrame: CGRect,
+        fullScreenFrame: CGRect,
+        panelSize: CGSize
+    ) -> CGPoint {
+        let defaultOrigin = centredDefaultOrigin(
+            visibleScreenFrame: visibleScreenFrame,
+            fullScreenFrame: fullScreenFrame,
+            panelSize: panelSize
+        )
+        return clampCentredOffset(
+            x: origin.x - defaultOrigin.x,
+            y: origin.y - defaultOrigin.y,
+            visibleScreenFrame: visibleScreenFrame,
+            fullScreenFrame: fullScreenFrame
+        )
+    }
+
+    static func clampedCentredPanelOrigin(
+        proposedOrigin: CGPoint,
+        visibleScreenFrame: CGRect,
+        fullScreenFrame: CGRect,
+        panelSize: CGSize
+    ) -> CGPoint {
+        let defaultOrigin = centredDefaultOrigin(
+            visibleScreenFrame: visibleScreenFrame,
+            fullScreenFrame: fullScreenFrame,
+            panelSize: panelSize
+        )
+        let clamped = clampCentredOffset(
+            x: proposedOrigin.x - defaultOrigin.x,
+            y: proposedOrigin.y - defaultOrigin.y,
+            visibleScreenFrame: visibleScreenFrame,
+            fullScreenFrame: fullScreenFrame
+        )
+        return CGPoint(x: defaultOrigin.x + clamped.x, y: defaultOrigin.y + clamped.y)
+    }
+
     static func calculatePanelOrigin(
         visibleScreenFrame: CGRect,
         fullScreenFrame: CGRect,
@@ -658,15 +796,18 @@ final class CornerDockController: NSObject {
         let margin: CGFloat = 20
 
         if isCentred {
-            let screenW = fullScreenFrame.width
-            let screenX = fullScreenFrame.minX
-            let defaultX = (screenW - panelSize.width) / 2 + screenX
-            let defaultY = visibleScreenFrame.minY + visibleScreenFrame.height * 0.62 + pad - panelSize.height
-            let maxOffsetY = max(0, visibleScreenFrame.maxY - (visibleScreenFrame.minY + visibleScreenFrame.height * 0.62 + pad) - 40)
-            let minOffsetY = -(visibleScreenFrame.height * 0.45)
-            let clampedOffsetY = min(max(minOffsetY, centredOffsetY), maxOffsetY)
-            let clampedOffsetX = min(max(-screenW * 0.4, centredOffsetX), screenW * 0.4)
-            return CGPoint(x: defaultX + clampedOffsetX, y: defaultY + clampedOffsetY)
+            let defaultOrigin = centredDefaultOrigin(
+                visibleScreenFrame: visibleScreenFrame,
+                fullScreenFrame: fullScreenFrame,
+                panelSize: panelSize
+            )
+            let clamped = clampCentredOffset(
+                x: centredOffsetX,
+                y: centredOffsetY,
+                visibleScreenFrame: visibleScreenFrame,
+                fullScreenFrame: fullScreenFrame
+            )
+            return CGPoint(x: defaultOrigin.x + clamped.x, y: defaultOrigin.y + clamped.y)
         }
 
         let x: CGFloat
@@ -690,6 +831,9 @@ final class CornerDockController: NSObject {
 
         let isCentredMode = chatPresentation.isCentred || AppSettings.shared.launcherPresentationMode == .centerScreen
 
+        isPositioningPanel = true
+        defer { isPositioningPanel = false }
+
         let wanted = CornerDockLayout.panelSize(
             for: anchor, panelWidth: visible.width - 2 * margin + 2 * pad)
         if panel.frame.size != wanted {
@@ -711,6 +855,32 @@ final class CornerDockController: NSObject {
         shownPanelOrigin = origin
         dockScreenFrame = fullScreen
         panel.setFrameOrigin(isCentredMode ? shownPanelOrigin : (isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin))
+    }
+
+    /// Saves the centred launcher's dragged position whenever AppKit moves the panel,
+    /// without firing `position()` back mid-drag. Bottom-docked panels are never movable.
+    private func handlePanelDidMove() {
+        guard !isPositioningPanel, let panel, isCentredMode else { return }
+        let screen = panel.screen
+            ?? NSScreen.screens.first { $0.frame.intersects(panel.frame) }
+            ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let fullScreen = screen?.frame ?? visible
+        let origin = panel.frame.origin
+        let offset = Self.centredOffset(
+            forPanelOrigin: origin,
+            visibleScreenFrame: visible,
+            fullScreenFrame: fullScreen,
+            panelSize: panel.frame.size
+        )
+        shownPanelOrigin = origin
+        dockScreenFrame = fullScreen
+        isSavingCentredDragPosition = true
+        AppSettings.shared.centredLauncherOffsetX = Double(offset.x)
+        AppSettings.shared.centredLauncherOffsetY = Double(offset.y)
+        DispatchQueue.main.async { [weak self] in
+            self?.isSavingCentredDragPosition = false
+        }
     }
 
     // MARK: - Auto-hide
@@ -991,12 +1161,6 @@ final class CornerDockController: NSObject {
             rects.append(overlayRect)
         }
 
-        // Nothing moved, nothing to do. The models this follows republish on every
-        // keystroke — the draft is `@Published` — and without this the corner recomputed
-        // its geometry on each one for a card whose size had not changed.
-        if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
-            return
-        }
         // Centred or in Notch mode, the field and its sheet are one card: the gap between them and the card's
         // margin answer the pointer too, or a click there fell through to the app beneath.
         if (isCentredMode || chatPresentation.isCentred || anchor == .notch), let field = slots.prompt {
@@ -1019,15 +1183,25 @@ final class CornerDockController: NSObject {
             )
             rects.append(collar)
         }
+
+        // Nothing moved, nothing to do. The models this follows republish on every
+        // keystroke — the draft is `@Published` — and without this the corner recomputed
+        // its geometry on each one for a card whose size had not changed.
+        if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
+            return
+        }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
         syncMouseTransparency()
 
         let shouldShow = !rects.isEmpty
         if shouldShow {
-            if isCentredMode || !panel.isVisible {
+            if !panel.isVisible {
                 position()
                 panel.orderFrontRegardless()
+            } else if panel.isMovable != isCentredMode || panel.isMovableByWindowBackground != isCentredMode {
+                panel.isMovable = isCentredMode
+                panel.isMovableByWindowBackground = isCentredMode
             }
             if isCentredMode {
                 panel.alphaValue = 1

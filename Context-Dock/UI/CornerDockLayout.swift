@@ -60,7 +60,7 @@ enum CornerDockLayout {
     /// The tallest single surface the shell holds: the clipboard card and the App Chat
     /// prompt with a full suggestion list are both about this.
     static let cardHeight: CGFloat = 620
-    static let pillHeight: CGFloat = 56
+    static let pillHeight: CGFloat = AppChatPromptMetrics.inputHeight
 
     /// Big enough for the worst case: one surface fully expanded with the other's pill
     /// stacked above it. The window never resizes — the morph happens inside it — so this

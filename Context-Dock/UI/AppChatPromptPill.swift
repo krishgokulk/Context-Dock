@@ -14,11 +14,11 @@ import SwiftUI
 
 enum AppChatPromptMetrics {
     static let width: CGFloat = 372
-    static let inputHeight: CGFloat = 56
+    static let inputHeight: CGFloat = DockShellWidth.fieldHeight
     static let suggestionRowHeight: CGFloat = 34
     static let summaryHeight: CGFloat = 30
     /// Just the app's icon.
-    static let miniSize = CGSize(width: 52, height: 44)
+    static let miniSize = CGSize(width: dockIconSize, height: dockIconSize)
     /// Attached files, as chips with a thumbnail — taller than the old bare capsules, and
     /// shared with General so one attachment is the same object in both modes.
     static let attachmentRowHeight: CGFloat = 46
@@ -209,11 +209,9 @@ enum AppChatPromptMetrics {
             fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: appBarPillWidth(for: model),
-            shellWidth: (CornerDockController.shared.chatPresentation.isCentred
-                || AppSettings.shared.launcherPresentationMode == .centerScreen
-                || CornerDockController.shared.showsBoardUnderField)
-                ? DockShellWidth.current
-                : (model.fitsField && !model.showsTabBar && !model.showsLivePanel ? nil : DockShellWidth.current),
+            // One size for every field, centred or at the bottom (Siri's, owner
+            // 2026-11-11); the chat grows to show its answer.
+            shellWidth: phase == .chat ? DockShellWidth.results : DockShellWidth.current,
             fieldLines: model.fieldLines)
     }
 
@@ -636,12 +634,12 @@ struct AppChatPromptPill: View {
     /// Chat-card width with the sidebar hidden: just the transcript column, matching
     /// what the transcript already occupies when the panel is open.
     private var compactChatWidth: CGFloat {
-        let full = DockShellWidth.current
+        let full = DockShellWidth.results
         return max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
     }
 
     private var transcriptColumnWidth: CGFloat {
-        let full = DockShellWidth.current
+        let full = DockShellWidth.results
         return model.showsLivePanel ? (full - CornerLivePanelLayout.panelWidth(card: full)) : compactChatWidth
     }
 
@@ -714,11 +712,18 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
-        .onTapGesture {
-            if model.phase == .dock {
-                _ = model.expandFromDock(seeding: nil)
-                CornerDockController.shared.requestComposerFocus()
-            }
+        // Only catch empty-background taps while resting as a dock so centred open fields
+        // remain natively draggable by window background.
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if model.phase == .dock {
+                        _ = model.expandFromDock(seeding: nil)
+                        CornerDockController.shared.requestComposerFocus()
+                    }
+                }
+                .allowsHitTesting(model.phase == .dock)
         }
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
@@ -921,7 +926,7 @@ struct AppChatPromptPill: View {
                             liveActivity: conversation.liveActivity,
                             activityByMessageID: conversation.activityByMessageID,
                             density: .compact)
-                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.results))
                             .padding(.vertical, 8)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
@@ -969,7 +974,7 @@ struct AppChatPromptPill: View {
                 if splitsChatComposer {
                     CornerSplitStrip(
                         model: model,
-                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.current),
+                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.results),
                         inset: true)
                         .transition(.opacity)
                 }
@@ -1246,7 +1251,7 @@ struct AppChatPromptPill: View {
                 if model.isClipboardScope {
                     if clipboard.query.isEmpty {
                         Text("Type to filter entries…")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                             .foregroundStyle(.secondary.opacity(0.6))
                             .lineLimit(1)
                     }
@@ -1265,7 +1270,7 @@ struct AppChatPromptPill: View {
                             .foregroundStyle(.secondary.opacity(0.45))
                         Spacer(minLength: 0)
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .lineLimit(1)
                     .allowsHitTesting(false)
                 }
@@ -1283,7 +1288,7 @@ struct AppChatPromptPill: View {
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                         model.inputFrame = $0
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
@@ -1321,7 +1326,10 @@ struct AppChatPromptPill: View {
                             model.runReturnRow(runsTopRow: true)
                             return
                         }
-                        // Finder's Ask AI row, and every app's composer: the question.
+                        if model.returnRunsTopRow, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
+                        // Finder's Ask AI row, questions, and every app's composer: the question.
                         model.submit()
                     }
                     // Space is always a space: the result sheet stays open while typing, so a
@@ -1889,7 +1897,7 @@ struct AppChatPromptPill: View {
             // field the same way. It leaves when the app is there and the placeholder comes
             // back, which is the whole of the announcement.
             Text(running)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)
                 .transition(.opacity)
@@ -1900,11 +1908,11 @@ struct AppChatPromptPill: View {
                 Text("— press Enter to send…")
                     .foregroundStyle(.secondary.opacity(0.45))
             }
-            .font(.system(size: 14, weight: .medium))
+            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
             .lineLimit(1)
         } else {
             Text("\(AppChatListCard.placeholder(for: model))…")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)
         }

@@ -165,7 +165,8 @@ enum CornerGeneralChatMetrics {
         return CGSize(
             // The shell's one width (#189): General stands exactly as wide as Global and
             // every app's Context Dock, so switching mode changes only what is inside.
-            width: DockShellWidth.current,
+            // Grows past the field only once there is an answer to show.
+            width: model.messages.isEmpty ? DockShellWidth.current : DockShellWidth.results,
             height: height(
                 messageCount: model.messages.count,
                 isSending: model.isSending,
