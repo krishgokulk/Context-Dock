@@ -22,10 +22,15 @@ enum SolvedSkillMatch {
     // MARK: - Match (pure)
 
     /// The skill whose shape this request fits, with its slots filled from the request, or nil.
-    nonisolated static func match(query: String, bundleId: String, skills: [SolvedSkill])
-        -> (SolvedSkill, filled: [String: String])?
+    nonisolated static func match(
+        query: String,
+        bundleId: String,
+        skills: [SolvedSkill],
+        context: SlotDerivationContext = .empty
+    ) -> (SolvedSkill, filled: [String: String])?
     {
-        guard let derived = SolvedSkillCapture.derive(query: query) else { return nil }
+        guard let derived = SolvedSkillCapture.derive(
+            query: query, bundleId: bundleId, context: context) else { return nil }
 
         for skill in skills where skill.bundleId == bundleId {
             // Same words, nothing looser. A superset or a near-miss would run the recorded
