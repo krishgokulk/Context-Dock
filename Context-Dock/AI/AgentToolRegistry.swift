@@ -572,6 +572,33 @@ final class AgentToolRegistry {
                 verifiedReadBack: verifiedReadBack, scope: scope)
             return
         }
+        // dorax_run_menu_command: DoraX internally re-dispatches as run_menu_command with
+        // scope=nil, so the inner call lands in the wrong solved-skill bucket. Intercept the
+        // outer call here (which still carries the app scope) before the plumbing guard drops it.
+        // Mirror the AIProviderAnyCodable JSON round-trip from the dispatch bridge.
+        if name == "run_mcp_tool",
+           let server = arguments["server"] as? String,
+           server.caseInsensitiveCompare("dorax") == .orderedSame,
+           let toolArg = arguments["tool"] as? String, toolArg == "dorax_run_menu_command"
+        {
+            let rawArgs = arguments["arguments"]
+            let innerArgs: [String: Any]
+            if let codable = rawArgs as? [String: AIProviderAnyCodable],
+               let data = try? JSONEncoder().encode(codable) {
+                innerArgs = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            } else {
+                innerArgs = (rawArgs as? [String: Any]) ?? [:]
+            }
+            let app = innerArgs["app"] as? String ?? ""
+            let path = innerArgs["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
