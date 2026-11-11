@@ -127,10 +127,13 @@ struct DockShellWidthTests {
                     fieldIcons: M.matchIconBaseCount, shellWidth: width)
                 // Compact: exactly what is drawn, and never past the launcher's width —
                 // what does not fit is `+N`.
-                let drawn = M.dockSearchStubSpan + 2 * M.dockInset
-                    + CGFloat(max(1, layout.shownRunning + (layout.overflow > 0 ? 1 : 0)))
-                    * (M.dockIconSize + M.dockIconGap) - M.dockIconGap
-                    + layout.trailingRegion
+                // With no app to draw, the folded field stands alone: no slot is held.
+                let slots = layout.shownRunning + (layout.overflow > 0 ? 1 : 0)
+                let apps = slots > 0
+                    ? M.dockSearchStubSpan + CGFloat(slots) * (M.dockIconSize + M.dockIconGap)
+                        - M.dockIconGap
+                    : M.dockIconSize
+                let drawn = 2 * M.dockInset + apps + layout.trailingRegion
                 #expect(abs(drawn - layout.width) < 0.001, "running \(running), tools \(tools)")
                 #expect(layout.width <= width)
                 #expect(layout.shownRunning + layout.overflow == running)
