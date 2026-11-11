@@ -89,6 +89,40 @@ struct MenuCommandSkillCaptureTests {
         #expect(build(answer: inReceipt) == nil)
     }
 
+    // ── Adapter read calls alongside run_menu_command are stripped, not saved ─────
+    // A real Finder adapter turn dispatches read capabilities before/after the menu
+    // press. Only the run_menu_command call must appear in the saved skill; the reads
+    // are adapter internals, not replay targets.
+
+    @Test func menuTurnWithAdapterReadCallsIsCaptured() throws {
+        let readCall = SolvedSkillToolCall(
+            capability: "finder.read_frontmost_window",
+            argTemplate: [:],
+            isReadOnly: true)
+        let menuCall = menuCall(app: "Finder", path: "Finder > Settings...")
+        let skill = try #require(SolvedSkillCapture.build(
+            query: "open finder preferences",
+            answer: answer(), toolCalls: [readCall, menuCall, readCall],
+            bundleId: finderBundleId, verifiedReadBack: true))
+        // Only run_menu_command calls are saved; adapter reads are stripped.
+        #expect(skill.toolCalls.count == 1)
+        #expect(skill.toolCalls.first?.capability == "run_menu_command")
+        #expect(skill.toolCalls.first?.argTemplate["path"] == "Finder > Settings...")
+    }
+
+    @Test func menuTurnWithAdapterWriteCallIsNotCaptured() {
+        let writeCall = SolvedSkillToolCall(
+            capability: "finder.activate_something",
+            argTemplate: [:],
+            isReadOnly: false)
+        let call = menuCall(app: "Finder", path: "Finder > Settings...")
+        // A non-read-only supporting call must block capture (rule 4).
+        #expect(SolvedSkillCapture.build(
+            query: "open finder preferences",
+            answer: answer(), toolCalls: [writeCall, call],
+            bundleId: finderBundleId, verifiedReadBack: true) == nil)
+    }
+
     // ── App name proper noun in query does not block capture ──────────────────────
     // "open preferences in Finder" — "Finder" is a proper noun that would normally
     // set hasLeftoverValue:true, but menu turns bypass that check (the app name is
