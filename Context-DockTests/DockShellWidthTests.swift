@@ -53,7 +53,9 @@ struct DockShellWidthTests {
     @Test("General Chat, Global and an app read the one live width")
     func liveSurfacesReadTheOneWidth() {
         let live = W.current
-        #expect(live >= W.base)
+        // Siri's field width everywhere, centred or at the bottom; the results width only
+        // with a board under the field (owner 2026-11-11).
+        #expect([W.results, W.field].contains(live))
         #expect(CornerGeneralChatMetrics.size(for: GeneralChatWindowModel()).width == live)
         // A fresh model is Global Context; its board and its shell share the width.
         let global = AppChatPromptModel(conversation: AppChatConversation())
@@ -70,7 +72,7 @@ struct DockShellWidthTests {
         // The Dock's bar, inside its 660 window: the two shells' bars are one size.
         #expect(W.base == 600)
         #expect(W.dockWindowWidth == 660)
-        #expect(M.fieldHeight(global: true) == 56 && M.fieldHeight(global: false) == 56)
+        #expect(M.fieldHeight(global: true) == W.fieldHeight && M.fieldHeight(global: false) == W.fieldHeight)
         #expect(W.pinSpan == M.dockIconSize + M.dockIconGap)
         let fixed = (0...30).filter { W.width(pins: $0, screenBudget: budget) == W.base }
         #expect(fixed.first == 0)

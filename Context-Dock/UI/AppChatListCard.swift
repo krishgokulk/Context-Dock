@@ -166,7 +166,7 @@ struct AppChatListCard: View {
                             // reads — so a list showing none of them chosen was a list
                             // disagreeing with what its own Return key was about to do.
                             // Under Finder's Ask AI row, nothing chosen is that row.
-                            let effectiveFocus = model.showsAskAIRow
+                            let effectiveFocus = model.skipsTopRowOnBareReturn
                                 ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
                             if model.showsAskAIRow {
                                 askAIRow(isFocused: model.focusedMenuIndex == nil)

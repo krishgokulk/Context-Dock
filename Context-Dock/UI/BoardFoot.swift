@@ -180,7 +180,7 @@ extension AppChatPromptModel {
     /// The row Return takes — the highlighted one, else the top one (the list draws that
     /// row as chosen) — read by the board's foot.
     var boardFoot: BoardFoot {
-        let row = showsAskAIRow ? focusedRow : (focusedRow ?? rows.first)
+        let row = skipsTopRowOnBareReturn ? focusedRow : (focusedRow ?? rows.first)
         return BoardFoot.foot(
             for: row, scopeName: isGlobalScope ? Self.globalScopeName : appName,
             scopeBundleID: appBundleID, isGlobal: isGlobalScope, cliCommand: cliCommand,

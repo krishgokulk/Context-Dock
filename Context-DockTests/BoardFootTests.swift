@@ -105,4 +105,42 @@ struct BoardFootTests {
         #expect(foot.kind == "Application")
         #expect(foot.verb == "Open")
     }
+
+    @Test func appPetReturnRunsMatchedCommandAndAsksAIForQuestions() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "System Settings", bundleID: "com.apple.systempreferences")
+        var didQuit = false
+        let quitPill = DockPill(id: "quit-settings", name: "Quit System Settings", icon: "xmark.circle", badge: "Menu", execute: {
+            didQuit = true
+        })
+
+        // Typing "qui" in an App Pet shows Quit at the top: Return runs it instead of sending "qui" to AI.
+        model.query = "qui"
+        model.rows = [.dock(quitPill)]
+        model.focusedMenuIndex = nil
+        #expect(!model.skipsTopRowOnBareReturn)
+        #expect(model.returnRunsTopRow)
+        #expect(model.boardFoot.verb == "Quit")
+        #expect(model.runReturnRow(runsTopRow: model.returnRunsTopRow))
+        #expect(didQuit)
+
+        // Question-shaped queries in an App Pet do not hijack Return even if a menu row shares a word.
+        model.query = "what is on my screen"
+        model.rows = [command(["Window", "Minimize"])]
+        model.focusedMenuIndex = nil
+        #expect(model.skipsTopRowOnBareReturn)
+        #expect(!model.returnRunsTopRow)
+        #expect(model.boardFoot.verb == "Ask AI")
+
+        // Arrow-focusing a row in the list still overrides and runs that row.
+        model.focusedMenuIndex = 0
+        #expect(model.boardFoot.verb == "Run")
+
+        // Active conversation (.chat) does not hijack Return.
+        model.focusedMenuIndex = nil
+        model.query = "qui"
+        model.rows = [command(["System Settings", "Quit System Settings"])]
+        model.forceOpenChat()
+        #expect(!model.returnRunsTopRow)
+    }
 }

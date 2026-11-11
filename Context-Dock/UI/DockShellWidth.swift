@@ -24,6 +24,15 @@ enum DockShellWidth {
     /// bar — with room to spare.
     static let base: CGFloat = 600
 
+    /// Siri's bar (owner 2026-11-11: "make our dock size same as siri"): every field —
+    /// Global Context, every app's Pet, General Chat — at the bottom and centred alike is
+    /// this one size, measured against Siri's "Search or Ask" bar on the owner's Mac.
+    static let field: CGFloat = 520
+    static let fieldHeight: CGFloat = 86
+    /// The shell grows past the field only to show results: a board under the field, a
+    /// list of results, an answer in the chat.
+    static let results: CGFloat = 680
+
     /// What one more pin costs: one dock icon and the gap after it — what the strip draws
     /// for it.
     static var pinSpan: CGFloat { AppChatPromptMetrics.dockIconSize + AppChatPromptMetrics.dockIconGap }
@@ -58,15 +67,7 @@ enum DockShellWidth {
     /// the boards above them.
     @MainActor
     static var current: CGFloat {
-        if CornerDockController.shared.showsBoardUnderField {
-            return 680
-        }
-        let isCentredMode = CornerDockController.shared.chatPresentation.isCentred
-            || AppSettings.shared.launcherPresentationMode == .centerScreen
-        if isCentredMode {
-            return 460
-        }
-        return DockStripPlan.shellWidth
+        CornerDockController.shared.showsBoardUnderField ? results : field
     }
 }
 
@@ -76,9 +77,11 @@ enum DockShellWidth {
 enum DockFieldLines {
     static let maximum = 3
 
-    /// One line of the fields' 14-point medium text.
+    /// The fields' text size: Siri's bar's, to go with its size (owner 2026-11-11).
+    static let fontSize: CGFloat = 20
+    /// One line of the fields' medium text.
     static let lineHeight: CGFloat = ceil(
-        NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: 14, weight: .medium)))
+        NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: fontSize, weight: .medium)))
 
     /// How many lines a text view of this height holds, between one and `maximum`. Rounded,
     /// so a few points of inset either way do not tip it into the next line.
