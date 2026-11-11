@@ -14,12 +14,26 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#405** H0 general slot deriver → **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim. None `ready` until the owner labels it.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (PR #404 Messages rebase, then App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#405: Task H0 — General slot deriver for Agent Harness Model:**
+- Completed on branch `claude/issue-405-agent-harness-deriver-961df4` (PR #426, commit `fa28deaf`).
+- Implemented §8 rule 3 of `docs/superpowers/specs/2026-11-09-agent-harness-model.md`:
+  - Added `SlotDerivationContext` carrying `selectedText`, `selectedFilePaths`, `appName`.
+  - Context slots derived first: `{file}` (single-file ref words "this"/"it" + file basename), `{files}` (multi-file "these"/"them"), `{selection}` (text, when no file slot), `{app}` (app name word).
+  - Word slots second: `{day}` everywhere; `{sender}` scoped to Mail/Messages only (`com.apple.mail`, `com.apple.MobileSMS`), preventing product names in Finder from being treated as senders ("convert this to Word" ≠ `{sender}`).
+  - Leftover-value check: flags path literals, email addresses, and non-leading proper nouns not covered by slots or route words to prevent hardcoding literals.
+  - `SolvedSkillMatch.match`: accepts turn context and forwards to `derive`.
+- Added 15 unit tests in `SlotDeriverH0Tests` covering all H0 derivation and leftover rules (3,369 total passing tests).
+- Squash-merged into `general-chat-agent`.
+
+**#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — PR #425, merged:**
+- Branch `claude/issue-204-retire-mailbox-search-f9190a` (PR #425, commit `99fe36cd`).
 
 **#423: Wire bounded proactive Pet behavior into the app (Finder arrival briefing):**
 - Completed on branch `claude/app-pets-bounded-proactive-60b69f` (PR #423, commit `1f8d9e6a`).
