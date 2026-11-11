@@ -14,12 +14,21 @@ None. (Awaiting owner selection for next task)
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#406** H1a learned recipes from AI scripts + recorder safety → **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#407** H1b solved skills for menu/connector/MCP calls → **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (PR #404 Messages rebase, then App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#406: Task H1a — Learned recipes from AI scripts (rung 2) + recorder safety:**
+- Completed on branch `claude/learned-recipes-ai-scripts-38e66e` (PR #427, commit `acfd95e1`).
+- Implemented §8 rules 1-4 of `docs/superpowers/specs/2026-11-09-agent-harness-model.md`:
+  - Added `AIScriptSkillRecorder`: Rule 1 (verify-discard on failure), Rule 2 (untrusted-turn guard discards if web/email content read), Rule 3 (templated naming via H0 slot deriver, leftover entities block save), Rule 4 (reads auto-save, writes queue offer in memory).
+  - Updated `ComputerUseSkillRecorder`: added `startTurn(userQuery:)`, `markUntrusted(bundleID:)`, and Rule 3 templated naming.
+  - Hooked into `DockCore+AIChat.swift`: checks command outputs and final response for fences, classifies commands via `TerminalCommandClassifier`, and records non-verification shell commands.
+  - Added 10 tests across `AIScriptSkillRecorderTests` and `ComputerUseSkillRecorderTests` (3,379 total passing tests).
+- Squash-merged into `general-chat-agent`.
 
 **#405: Task H0 — General slot deriver for Agent Harness Model:**
 - Completed on branch `claude/issue-405-agent-harness-deriver-961df4` (PR #426, commit `fa28deaf`).
