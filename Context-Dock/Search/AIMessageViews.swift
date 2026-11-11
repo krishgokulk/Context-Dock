@@ -2903,6 +2903,8 @@ private struct SavedSkillRow: View {
                 Text("Saved as a skill: \(skill.queryTemplate)")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
                 Text("·")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
