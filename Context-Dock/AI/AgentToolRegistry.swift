@@ -575,11 +575,16 @@ final class AgentToolRegistry {
         // dorax_run_menu_command: DoraX internally re-dispatches as run_menu_command with
         // scope=nil, so the inner call lands in the wrong solved-skill bucket. Intercept the
         // outer call here (which still carries the app scope) before the plumbing guard drops it.
-        // Mirror the AIProviderAnyCodable JSON round-trip from the dispatch bridge.
+        // On the Anthropic streaming path arguments["server"] and arguments["tool"] are
+        // AIProviderAnyCodable; reach through .value before falling back to a plain String cast.
         if name == "run_mcp_tool",
-           let server = arguments["server"] as? String,
+           let serverRaw = arguments["server"],
+           let server = (serverRaw as? AIProviderAnyCodable)?.value as? String
+               ?? serverRaw as? String,
            server.caseInsensitiveCompare("dorax") == .orderedSame,
-           let toolArg = arguments["tool"] as? String, toolArg == "dorax_run_menu_command"
+           let toolRaw = arguments["tool"],
+           let toolArg = (toolRaw as? AIProviderAnyCodable)?.value as? String
+               ?? toolRaw as? String, toolArg == "dorax_run_menu_command"
         {
             let rawArgs = arguments["arguments"]
             let innerArgs: [String: Any]
@@ -618,8 +623,12 @@ final class AgentToolRegistry {
             // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
             // so the turn is recorded as read-only here — the gate appears at run time, not now.
             // Success IS the verification for a menu command (the AX framework found the item).
-            let app = arguments["app"] as? String ?? ""
-            let path = arguments["path"] as? String ?? ""
+            // On the Anthropic streaming path values arrive as AIProviderAnyCodable; reach
+            // through .value before falling back to a plain String cast.
+            let app = (arguments["app"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["app"] as? String ?? ""
+            let path = (arguments["path"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["path"] as? String ?? ""
             var input: [String: String] = [:]
             if !app.isEmpty { input["app"] = app }
             if !path.isEmpty { input["path"] = path }
