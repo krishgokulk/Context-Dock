@@ -575,6 +575,11 @@ final class AgentToolRegistry {
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
+            // Unregistered capability IDs are app-adapter internal actions (the adapter
+            // falls through to them when no registered capability matches). They are
+            // implementation details, not user-intent replay targets — skip them so they
+            // do not pollute the skill collector with spurious isReadOnly:false entries.
+            guard CapabilityRegistry.shared.capability(id: id) != nil else { return }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
