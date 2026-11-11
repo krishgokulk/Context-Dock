@@ -160,11 +160,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 !$0.isTerminated
                     && !($0.bundleIdentifier ?? "").isEmpty
                     && $0.bundleIdentifier != ownBundleID
+                    && !isSystemAgentUI($0)
             }
     }
 
     private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
-        guard let app, !app.isTerminated else { return nil }
+        guard let app, !app.isTerminated, !Self.isSystemAgentUI(app) else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
         if let bundleID = app.bundleIdentifier, !bundleID.isEmpty, bundleID != ownBundleID {
             return app
@@ -508,6 +509,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
         recordFrontmostApp(resolvedApp)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
+    }
+
+    /// A system agent putting up a dialog — a permission prompt (UserNotificationCenter), a
+    /// password sheet (SecurityAgent), Control Centre — is not an app the user went to. One
+    /// coming forward made the Corner an "App Pet" for the dialog (owner 2026-11-11).
+    static func isSystemAgentUI(_ app: NSRunningApplication) -> Bool {
+        isSystemAgentUI(
+            bundlePath: app.bundleURL?.path, isRegularApp: app.activationPolicy == .regular)
+    }
+
+    /// Apple's own background agents: shipped in the system, with no Dock icon. Finder,
+    /// System Settings and the rest are regular apps and stay Pets.
+    static func isSystemAgentUI(bundlePath: String?, isRegularApp: Bool) -> Bool {
+        guard !isRegularApp, let bundlePath else { return false }
+        return bundlePath.hasPrefix("/System/Library/") || bundlePath.hasPrefix("/usr/libexec/")
     }
 
     /// The system Screenshot agent, or the `screencapture` tool we spawn ourselves.

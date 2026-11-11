@@ -334,8 +334,13 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let natural = dockSearchStubSpan + 2 * dockInset
-            + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
+        // No apps to show (running apps turned off, nothing pinned): the folded field stands
+        // alone, with no slot held for an app that is not drawn. A slot was held for "Finder
+        // is always running", and showed as a hairline and blank glass (owner 2026-11-11).
+        let appSlots = pinnedApps + runningSlots
+        let natural = 2 * dockInset
+            + (appSlots > 0 ? dockSearchStubSpan + runWidth(appSlots) : dockIconSize)
+            + pinsWidth + toolsWidth
         if shellWidth != nil {
             // Wider than the shell only when the pins alone overrun the screen: they are
             // never dropped.
