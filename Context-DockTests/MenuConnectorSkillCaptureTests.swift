@@ -144,15 +144,18 @@ struct ExternalMCPSkillCaptureTests {
     // ── A read MCP call with an entity slot is captured ───────────────────────────
 
     @Test func externalMCPReadWithSlotIsCaptured() throws {
-        let query = "list issues in anthropics/claude-code"
+        // Use a day-word query so a {day} slot is derived; a slash-containing token
+        // triggers looksLikePath and would block capture via hasLeftoverValue.
+        let query = "list github issues today"
         let call = SolvedSkillToolCall(
             capability: "github.list_issues",
-            argTemplate: ["owner": "anthropics", "repo": "claude-code"],
+            argTemplate: ["since": "today"],
             isReadOnly: true)
         let skill = try #require(SolvedSkillCapture.build(
             query: query, answer: answer(), toolCalls: [call],
             bundleId: bundleId, verifiedReadBack: true))
         #expect(skill.toolCalls.first?.isReadOnly == true)
+        #expect(skill.toolCalls.first?.argTemplate["since"] == "{day}")
     }
 
     // ── A write MCP call blocks capture (rule 4, deferred to #205 slice) ─────────
