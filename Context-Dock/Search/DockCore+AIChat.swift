@@ -5738,6 +5738,25 @@ extension DockCore {
                             + (AgentAnswerVerifier.noActionChip(executed: executed).map { [$0] } ?? [])
                         aiMode.pendingEvidenceReceipts = executed.map(DoraXActionReceipt.init)
                         aiMode.pendingSubjectiveEvaluation = subjectiveEvaluation
+                        // H1a rung-2 recipe recording: check for untrusted content in
+                        // any tool output or the final response, then record each
+                        // non-verification shell command that ran this turn.
+                        let turnHasUntrustedOutput =
+                            executed.contains { UntrustedContent.containsFence($0.output) }
+                            || UntrustedContent.containsFence(finalResponse)
+                        let aiScriptContext = AIScriptContext(
+                            bundleID: "",
+                            appName: "General",
+                            userQuery: query,
+                            slotContext: .empty,
+                            hasUntrustedContent: turnHasUntrustedOutput)
+                        for cmd in executed where !cmd.isVerification {
+                            let isRead = TerminalCommandClassifier.shared
+                                .classify(cmd.command).shouldAutoExecute
+                            AIScriptSkillRecorder.shared.record(
+                                command: cmd.command, success: cmd.success,
+                                context: aiScriptContext, isRead: isRead)
+                        }
                     }
                     return await recoveredFromProtocolOnly(finalResponse, query: query)
                 }

@@ -31,17 +31,33 @@ final class ComputerUseSkillRecorder {
         var goal: String = ""
         var steps: [LearnedStep] = []
         var lastSucceeded = true
+        var userQuery: String = ""
+        var hasUntrustedContent: Bool = false
     }
 
     private var runs: [String: Run] = [:]
+    private var currentTurnQuery: String = ""
 
     private init() {}
 
     // MARK: Recording
 
+    /// Call once per AI turn, before any `succeeded` or `failed` calls, to record
+    /// the user's query for templated naming (Rule 3 / H1a).
+    func startTurn(userQuery: String) {
+        currentTurnQuery = userQuery
+    }
+
+    /// Mark the current run as having been exposed to untrusted content.
+    /// Causes `finish()` to discard it rather than save (Rule 2 / H1a).
+    func markUntrusted(bundleID: String) {
+        runs[bundleID]?.hasUntrustedContent = true
+    }
+
     func succeeded(bundleID: String, appName: String, goal: String, step: String) {
         var run = runs[bundleID] ?? Run(appName: appName)
         if run.goal.isEmpty { run.goal = goal.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if run.userQuery.isEmpty { run.userQuery = currentTurnQuery }
         if run.steps.last?.text != step { run.steps.append(LearnedStep(text: step)) }
         run.lastSucceeded = true
         runs[bundleID] = run
@@ -59,8 +75,10 @@ final class ComputerUseSkillRecorder {
     @discardableResult
     func finish(bundleID: String, store: SkillStore = .shared) -> AdapterSkill? {
         guard let run = runs.removeValue(forKey: bundleID), run.lastSucceeded,
+            !run.hasUntrustedContent,  // Rule 2: untrusted-turn guard
             let skill = Self.makeSkill(
-                bundleID: bundleID, appName: run.appName, goal: run.goal, steps: run.steps)
+                bundleID: bundleID, appName: run.appName, goal: run.goal, steps: run.steps,
+                userQuery: run.userQuery)
         else { return nil }
 
         // Same task done again updates its skill rather than piling up copies.
@@ -95,11 +113,23 @@ final class ComputerUseSkillRecorder {
     // MARK: Skill
 
     nonisolated static func makeSkill(
-        bundleID: String, appName: String, goal: String, steps: [LearnedStep]
+        bundleID: String, appName: String, goal: String, steps: [LearnedStep],
+        userQuery: String = ""
     ) -> AdapterSkill? {
         guard steps.count >= minimumSteps else { return nil }
-        let seed = goal.isEmpty ? steps[0].text : goal
-        let title = String(seed.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Rule 3: use slot-derived template from user query when available and clean.
+        let title: String
+        if !userQuery.isEmpty,
+           let derived = SolvedSkillCapture.derive(query: userQuery, bundleId: bundleID),
+           !derived.hasLeftoverValue,
+           !derived.template.isEmpty
+        {
+            title = String(derived.template.prefix(48))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            let seed = goal.isEmpty ? steps[0].text : goal
+            title = String(seed.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !title.isEmpty else { return nil }
 
         let numbered = steps.enumerated().map { "\($0.offset + 1). \($0.element.text)" }
