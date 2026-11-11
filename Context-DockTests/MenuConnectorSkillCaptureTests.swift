@@ -423,4 +423,81 @@ struct SolvedSkillReplayRoutingTests {
         #expect(spy.approvals.isEmpty)
         #expect(spy.tools.isEmpty)
     }
+
+    // ── Cards ────────────────────────────────────────────────────────────────────────
+
+    private func fileRow() -> ChatResultRow {
+        let url = URL(fileURLWithPath: "/tmp/h1b-replay.txt")
+        return ChatResultRow(kind: .file, id: url.path, title: "h1b-replay.txt", url: url)
+    }
+
+    /// What a replayed call read is handed back as rows, so the answer gets its cards.
+    @Test func replayCarriesTheRowsItsCallsProduced() async throws {
+        let spy = Spy()
+        var environment = spy.environment
+        let row = fileRow()
+        let scope = scope
+        environment.runTool = { name, _, _ in
+            ChatResultRowCollector.shared.add([row], scope: scope)
+            return AgentToolResult(success: true, output: "ok", displayCommand: name)
+        }
+        // A row left by an earlier turn must not ride along.
+        ChatResultRowCollector.shared.add(
+            [ChatResultRow(kind: .link, id: "stale", title: "stale")], scope: scope)
+        let call = SolvedSkillToolCall(
+            capability: "run_menu_command", argTemplate: ["app": "Finder", "path": "x"],
+            isReadOnly: true)
+        let answer = try #require(await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: environment))
+        #expect(answer.rows == [row])
+    }
+
+    /// A replay that fails hands the turn to the model; its rows must not follow.
+    @Test func failedReplayLeavesNoRowsBehind() async {
+        let spy = Spy()
+        var environment = spy.environment
+        let row = fileRow()
+        let scope = scope
+        environment.runTool = { name, _, _ in
+            ChatResultRowCollector.shared.add([row], scope: scope)
+            return AgentToolResult(success: false, output: "no", displayCommand: name)
+        }
+        let call = SolvedSkillToolCall(
+            capability: "run_menu_command", argTemplate: [:], isReadOnly: true)
+        let answer = await SolvedSkillMatch.run(
+            skill(call), filled: [:], scope: scope, environment: environment)
+        #expect(answer == nil)
+        #expect(ChatResultRowCollector.shared.take(scope: scope).isEmpty)
+    }
+}
+
+// MARK: - Replay wording
+
+struct SolvedSkillReplyWordingTests {
+
+    @Test func mailListingIsLaidOutForAPerson() {
+        let raw = """
+            Mailbox: All Mailboxes
+            - Team offsite agenda | From: Example Sender <sender@example.com> | Wednesday, 11 November 2026 at 16:05:17 | Read: false | Mailbox: All Mail
+            - Invoice | From: billing@example.com | Tuesday, 10 November 2026 at 09:30:00 | Read: true | Id: 42
+            """
+        #expect(SolvedSkillMatch.plainReply(for: raw) == """
+            2 messages in All Mailboxes
+
+            - **Team offsite agenda**
+              Example Sender · Wednesday, 11 November 2026 at 16:05 · unread
+            - **Invoice**
+              billing@example.com · Tuesday, 10 November 2026 at 09:30
+            """)
+    }
+
+    @Test func emptyMailListingSaysSo() {
+        #expect(SolvedSkillMatch.plainReply(
+            for: "Mailbox: Inbox\nNo matching messages found.") == "No matching messages.")
+    }
+
+    @Test func anythingElseIsPassedThrough() {
+        #expect(SolvedSkillMatch.plainReply(for: "3 open issues") == "3 open issues")
+        #expect(SolvedSkillMatch.plainReply(for: "") == "")
+    }
 }
