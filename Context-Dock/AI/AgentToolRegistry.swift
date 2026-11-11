@@ -551,7 +551,9 @@ final class AgentToolRegistry {
     /// Hands a successful call to the solved-skill collector (#205). Lookups and read-backs are
     /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
     /// read-only so it keeps the turn from being saved.
-    private static func noteForSolvedSkill(
+    ///
+    /// Internal rather than private so the recording rules can be tested without a provider.
+    static func noteForSolvedSkill(
         name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
     ) {
         // run_mcp_tool wraps dorax_run_capability which carries a DoraX capability_id.
@@ -604,6 +606,26 @@ final class AgentToolRegistry {
                 isReadOnly: true, verifiedReadBack: true, scope: scope)
             return
         }
+        // H1b rung 1: external connector/MCP calls. `run_mcp_tool` is a plumbing tool (it has
+        // no activity row of its own), so this must come before the plumbing guard — below it,
+        // an external read was dropped and never became a skill. DoraX's remaining tools
+        // dispatch their own inner calls and stay plumbing.
+        if name == "run_mcp_tool" {
+            let server = unwrappedArgument(arguments["server"]) as? String ?? ""
+            let toolName = unwrappedArgument(arguments["tool"]) as? String ?? ""
+            guard !toolName.isEmpty, server.caseInsensitiveCompare("dorax") != .orderedSame
+            else { return }
+            var input: [String: String] = [:]
+            for (key, value) in unwrappedArgument(arguments["arguments"]) as? [String: Any] ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            // The tool name's heuristic classifies read vs. write, as the tool's own gate does.
+            SolvedSkillToolCallCollector.shared.record(
+                capability: server.isEmpty ? toolName : "\(server).\(toolName)", input: input,
+                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
@@ -635,24 +657,23 @@ final class AgentToolRegistry {
             SolvedSkillToolCallCollector.shared.record(
                 capability: "run_menu_command", input: input,
                 isReadOnly: true, verifiedReadBack: true, scope: scope)
-        } else if name == "run_mcp_tool" {
-            // H1b rung 1: external connector/MCP calls (non-DoraX; DoraX was handled above).
-            // Use the tool name's heuristic to classify read vs. write.
-            let toolName = arguments["tool"] as? String ?? ""
-            let server = arguments["server"] as? String ?? ""
-            var input: [String: String] = [:]
-            if let args = arguments["arguments"] as? [String: Any] {
-                for (k, v) in args { input[k] = (v as? String) ?? String(describing: v) }
-            }
-            let capabilityKey = server.isEmpty ? toolName : "\(server).\(toolName)"
-            SolvedSkillToolCallCollector.shared.record(
-                capability: capabilityKey.isEmpty ? name : capabilityKey, input: input,
-                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
-                verifiedReadBack: verifiedReadBack, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(
                 capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,
                 scope: scope)
+        }
+    }
+
+    /// A tool argument with the Anthropic streaming path's `AIProviderAnyCodable` wrapping
+    /// removed, all the way down.
+    private static func unwrappedArgument(_ raw: Any?) -> Any? {
+        switch raw {
+        case let boxed as AIProviderAnyCodable: return unwrappedArgument(boxed.value)
+        case let object as [String: AIProviderAnyCodable]:
+            return object.mapValues { unwrappedArgument($0.value) ?? () }
+        case let list as [AIProviderAnyCodable]:
+            return list.map { unwrappedArgument($0.value) ?? () }
+        default: return raw
         }
     }
 
