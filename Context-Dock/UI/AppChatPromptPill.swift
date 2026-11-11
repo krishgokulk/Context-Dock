@@ -798,8 +798,11 @@ struct AppChatPromptPill: View {
                 : .easeIn(duration: 0.12)
         }
         let full = AppChatPromptMetrics.dockMorphDuration
+        // In as the field goes out (its fade is `full * 0.22`), not a beat later: with running
+        // apps off and nothing pinned the strip is one icon, and the wait between the two
+        // fades showed as an empty glass shell (owner 2026-11-11).
         return model.phase == .dock
-            ? .easeOut(duration: full * 0.42).delay(full * 0.42)
+            ? .easeOut(duration: full * 0.42).delay(full * 0.2)
             : .easeIn(duration: full * 0.3)
     }
 
