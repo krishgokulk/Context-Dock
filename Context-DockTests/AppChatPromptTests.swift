@@ -456,6 +456,8 @@ struct AppChatPromptTests {
         conversation.messages = [AIChatMessage(role: .user, content: "about Safari")]
         let model = AppChatPromptModel(conversation: conversation)
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        // An open conversation carries over; an open field no longer unfolds one.
+        model.set(.chat)
 
         model.frontmostAppDidChange(
             app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")

@@ -40,11 +40,22 @@ struct CornerAnswerPhaseTests {
         #expect(model.phase == .chat)
     }
 
+    @Test("An open field stays a field when the app in front changes")
+    func anOpenFieldDoesNotUnfoldTheNewAppsConversation() {
+        let (model, conversation) = scopedModel()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "older")]
+        model.frontmostAppDidChange(
+            app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+        #expect(model.phase != .chat)
+        #expect(model.appBundleID == "com.apple.Safari")
+    }
+
     @Test("An empty conversation nobody asked into is still a field")
     func anEmptyConversationWithoutAQuestionDrops() {
         let (model, conversation) = scopedModel()
         conversation.messages = [AIChatMessage(role: .assistant, content: "older")]
-        // Arriving in a scope that already has a conversation shows it…
+        // With a conversation open, arriving in a scope that already has one shows it…
+        model.set(.chat)
         model.frontmostAppDidChange(
             app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
         #expect(model.phase == .chat)
