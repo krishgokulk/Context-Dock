@@ -113,7 +113,11 @@ struct AppPetProactivityTests {
             petSettings: enabledSettings,
             isProactivityGloballyEnabled: true
         )
-        let result3 = ProactivityEvaluator.evaluate(suggestion: suggestion, context: context3)
+        // No quiet hours: this test is about the switches, and the default 22–8 window made
+        // it fail on any run started at night (CI at 00:24 UTC).
+        let result3 = ProactivityEvaluator.evaluate(
+            suggestion: suggestion, context: context3,
+            policy: ProactivityBudgetPolicy(quietHourStart: nil, quietHourEnd: nil))
         #expect(result3 == .allowed)
 
         // Asking for routineProposal when only arrivalBriefing is enabled fails
@@ -435,7 +439,10 @@ struct AppPetProactivityTests {
         #expect(executedAction == false)
 
         // Propose suggestion into coordinator
-        let result = coordinator.proposeSuggestion(suggestion: suggestion)
+        // No quiet hours, so the time of the run does not decide the proposal.
+        let result = coordinator.proposeSuggestion(
+            suggestion: suggestion,
+            policy: ProactivityBudgetPolicy(quietHourStart: nil, quietHourEnd: nil))
         guard case .success(let active) = result else {
             Issue.record("Suggestion should be accepted")
             return
@@ -485,7 +492,10 @@ struct AppPetProactivityTests {
         store.isGlobalProactivityEnabled = true
 
         let suggestion = makeSampleSuggestion(petID: petID)
-        _ = coordinator.proposeSuggestion(suggestion: suggestion)
+        // No quiet hours, so the time of the run does not decide the proposal.
+        _ = coordinator.proposeSuggestion(
+            suggestion: suggestion,
+            policy: ProactivityBudgetPolicy(quietHourStart: nil, quietHourEnd: nil))
         #expect(coordinator.activeSuggestions.count == 1)
 
         // Dismissing suggestion with 1 hour mute
