@@ -633,7 +633,9 @@ final class AgentToolRegistry {
             // falls through to them when no registered capability matches). They are
             // implementation details, not user-intent replay targets — skip them so they
             // do not pollute the skill collector with spurious isReadOnly:false entries.
-            guard CapabilityRegistry.shared.capability(id: id) != nil else { return }
+            guard CapabilityRegistry.shared.capability(id: id) != nil else {
+                return
+            }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
