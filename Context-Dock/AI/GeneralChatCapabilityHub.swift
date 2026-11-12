@@ -751,6 +751,14 @@ final class GeneralChatCapabilityHub {
                         toolName: "run_mcp_tool", arguments: [:], output: result,
                         succeeded: true, turn: turn)
                 }
+                // #408: provider-issued read-only MCP tools (read_data, etc.) are verified
+                // read-backs; record them so captureIfEligible can produce SavedSkillRow.
+                SolvedSkillToolCallCollector.shared.record(
+                    capability: tool,
+                    input: invocation.arguments,
+                    isReadOnly: true,
+                    verifiedReadBack: true,
+                    scope: chatScope)
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
                 return ToolCallResult(
