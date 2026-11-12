@@ -6,6 +6,7 @@ import Foundation
 //
 // Pure: a synthesized Answer and tool calls in, a CaptureOutcome out. No provider, no disk.
 
+@MainActor
 struct SavedSkillUXTests {
 
     private let mail = "com.apple.mail"
