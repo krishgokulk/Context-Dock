@@ -10,16 +10,19 @@
 
 ## In progress
 
-**#409 H2** — learned skills: job key, conflict order, staleness (branch `claude/general-chat-agent-h2-cded81`, 2026-11-12).
+**#410 H3** — selection-type scope: stored field + persistence migration for `AdapterSkill` and `SolvedSkill` (branch `claude/skills-h3-selection-type-scope`, 2026-11-12).
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ (in progress) → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#409 H2: learned skills — job key, conflict order, staleness (PR #434):**
+- `AI/LearnedSkillJob.swift`: job key = sorted non-slot words + slot names; conflict order user/pack › solved › recipe; staleness on app-version change or two consecutive failures; relearn on next success. Ladder rung 0 names the matching skill. Squash-merged 2026-11-12.
 
 **#408 H1c: saved-skill turn UX + "Made by DoraX" in Settings (PR #431):**
 - A read turn that saves a skill shows "Saved as a skill: … · Undo"; a write turn offers "Save as a skill?".
