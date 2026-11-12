@@ -39,35 +39,35 @@ struct SavedSkillUXTests {
     // MARK: - Read path
 
     @Test func readEligibleTurnReturnsSavedSkill() {
-        let outcome = SolvedSkillCapture.captureIfEligible(
+        let skill = SolvedSkillCapture.build(
             query: "unread mail from SBI today",
-            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
-            toolCalls: [readCall()])
-        #expect(outcome.savedSkill != nil)
-        #expect(outcome.pendingWriteSkillOffer == nil)
+            toolCalls: [readCall()],
+            bundleId: mail,
+            verifiedReadBack: true)
+        #expect(skill != nil)
     }
 
     @Test func savedSkillQueryTemplateContainsSlots() throws {
-        let outcome = SolvedSkillCapture.captureIfEligible(
+        let skill = try #require(SolvedSkillCapture.build(
             query: "unread mail from SBI today",
-            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
-            toolCalls: [readCall()])
-        let skill = try #require(outcome.savedSkill)
+            toolCalls: [readCall()],
+            bundleId: mail,
+            verifiedReadBack: true))
         #expect(skill.queryTemplate.contains("{sender}") || skill.queryTemplate.contains("{day}"))
     }
 
     // MARK: - Write path
 
     @Test func writeEligibleTurnReturnsPendingOffer() {
-        let outcome = SolvedSkillCapture.captureIfEligible(
+        let offer = SolvedSkillCapture.buildWriteOffer(
             query: "archive mail from SBI today",
-            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
-            toolCalls: [writeCall()])
-        #expect(outcome.pendingWriteSkillOffer != nil)
-        #expect(outcome.savedSkill == nil)
+            toolCalls: [writeCall()],
+            bundleId: mail,
+            verifiedReadBack: true)
+        #expect(offer != nil)
     }
 
     @Test func buildWriteOfferSkipsReadOnlyGuard() {
@@ -90,32 +90,32 @@ struct SavedSkillUXTests {
         #expect(offer == nil)
     }
 
-    // MARK: - Non-app scope
+    // MARK: - Non-app scope (build requires a bundleId; empty string guards it)
 
-    @Test func nonAppScopeReturnsEmptyOutcome() {
-        let outcome = SolvedSkillCapture.captureIfEligible(
+    @Test func nonAppScopeProducesNoSkill() {
+        let skill = SolvedSkillCapture.build(
             query: "unread mail from SBI today",
-            scope: .general,
             answer: verifiedAnswer(),
-            toolCalls: [readCall()])
-        #expect(outcome.savedSkill == nil)
-        #expect(outcome.pendingWriteSkillOffer == nil)
+            toolCalls: [readCall()],
+            bundleId: "",
+            verifiedReadBack: true)
+        #expect(skill == nil)
     }
 
     // MARK: - Unverified read-back
 
-    @Test func unverifiedReadBackProducesNeitherOutcome() {
+    @Test func unverifiedReadBackProducesNoSkill() {
         let noVerification = AppScopedChatService.Answer(
             text: "Done", toolChips: [],
             evidenceReceipts: [
                 DoraXActionReceipt(command: "mail.search", output: "3 messages", success: true)
             ])
-        let outcome = SolvedSkillCapture.captureIfEligible(
+        let skill = SolvedSkillCapture.build(
             query: "unread mail from SBI today",
-            scope: .app(bundleId: mail),
             answer: noVerification,
-            toolCalls: [readCall()])
-        #expect(outcome.savedSkill == nil)
-        #expect(outcome.pendingWriteSkillOffer == nil)
+            toolCalls: [readCall()],
+            bundleId: mail,
+            verifiedReadBack: false)
+        #expect(skill == nil)
     }
 }
