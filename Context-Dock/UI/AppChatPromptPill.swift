@@ -966,19 +966,28 @@ struct AppChatPromptPill: View {
             // field gets over a result board (Part B), inside the chat card. One HStack in
             // every phase with the composer first, so the TextField keeps its identity.
             HStack(alignment: .bottom, spacing: 8) {
-                inputRow
-                    // In a conversation the field is a rounded composer inset in the card, the
-                    // way Claude's sits under its chat (owner 2026-10-05), rather than a row
-                    // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
-                    // its identity, and with it focus, as the phase changes.
-                    .background {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.primary.opacity(0.07))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
-                            .opacity(model.phase == .chat ? 1 : 0)
+                // The field row, and under it in an App Pet conversation Claude's lower row —
+                // app chip, provider chip, "+" (owner 2026-11-12). The VStack stands in every
+                // phase so the TextField's place in the tree, and with it focus, never moves.
+                VStack(alignment: .leading, spacing: 0) {
+                    inputRow
+                    if showsComposerToolbar {
+                        composerToolbar
+                            .transition(.opacity)
                     }
+                }
+                // In a conversation the field is a rounded composer inset in the card, the
+                // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                // its identity, and with it focus, as the phase changes.
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                        .opacity(model.phase == .chat ? 1 : 0)
+                }
                 if splitsChatComposer {
                     CornerSplitStrip(
                         model: model,
@@ -1134,9 +1143,13 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 4)
 
-            // Provider / context usage chip (#335)
-            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
-                .transition(.opacity)
+            // Provider / context usage chip (#335). In an App Pet conversation it lives in
+            // the composer's lower row, by the field, as Claude's model picker does (owner
+            // 2026-11-12) — drawn once, never in both places.
+            if !showsComposerToolbar {
+                ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
+                    .transition(.opacity)
+            }
 
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
@@ -1250,7 +1263,10 @@ struct AppChatPromptPill: View {
                 // A tool or a command keeps its way back; an app is its own Context Dock,
                 // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
-            } else {
+            } else if !showsComposerToolbar {
+                // In an App Pet conversation the chip leads the composer's lower row instead
+                // (owner 2026-11-12) — the only branch the toolbar can reach, since it never
+                // shows for the clipboard, Global or a scope stepped into from it.
                 appChip
                     .layoutPriority(1)
             }
@@ -1576,7 +1592,11 @@ struct AppChatPromptPill: View {
             // Global Context and the scopes entered from it are search fields rather than
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
-                attachMenu
+                // In an App Pet conversation "+" sits in the composer's lower row, beside
+                // the provider chip, as Claude's does (owner 2026-11-12).
+                if !showsComposerToolbar {
+                    attachMenu
+                }
                 // The pin right after "+", in every app (owner 2026-09-28): it sat at the far
                 // end, past the app's bar, and appeared and vanished with the pointer. Beside
                 // "+" it is always there, so nothing after it shifts when it would have come
@@ -1776,6 +1796,24 @@ struct AppChatPromptPill: View {
         .help("Add context")
     }
 
+    /// The App Pet composer's lower row, as Claude lays out its composer (owner 2026-11-12):
+    /// who the chat is with (the app chip — its ⌄ still hides the conversation), which
+    /// provider answers (the same `ProviderContextChip` the header carried — one picker,
+    /// mounted where the user is typing), and "+" at the end.
+    private var composerToolbar: some View {
+        HStack(spacing: 8) {
+            appChip
+                .layoutPriority(1)
+            ProviderContextChip(scope: .app(bundleId: model.appBundleID))
+            Spacer(minLength: 4)
+            attachMenu
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .padding(.bottom, 6)
+        .frame(height: AppChatComposerToolbar.rowHeight)
+    }
+
     /// The app the question is about, named rather than implied.
     /// In Global Context the leading chip is the top match, not the scope — the same thing
     /// the dock's global bar shows, so three letters and a glance tell the user what Tab
@@ -1884,6 +1922,14 @@ struct AppChatPromptPill: View {
     /// instead, and the panel belongs to the header's toggle.
     private var chipIsOpen: Bool {
         model.phase != .chat && model.isShowingScopeCard
+    }
+
+    /// An App Pet conversation: the composer gets Claude's lower row — app chip, provider
+    /// chip, "+" — and the header gives up its provider chip (owner 2026-11-12).
+    private var showsComposerToolbar: Bool {
+        AppChatComposerToolbar.shows(
+            phase: model.phase, isSearchField: model.isSearchField,
+            isClipboardScope: model.isClipboardScope, appBundleID: model.appBundleID)
     }
 
     private var chipIconShown: Bool { model.phase != .dock }
