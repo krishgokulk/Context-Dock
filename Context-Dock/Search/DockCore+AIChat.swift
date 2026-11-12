@@ -2254,6 +2254,41 @@ extension DockCore {
     /// Pure: whether a query may start an installed extension whose trigger words it matches.
     static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
 
+    /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
+    /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
+    /// `AppleMessagesMCPCapabilities`). Genuine cross-app contextual share payloads (`"send this file
+    /// to Salman"`) or explicit requests naming another destination channel/app still pass through.
+    nonisolated static func shouldSkipCrossAppMessagesRouting(
+        scopedBundleId: String, rawScopedQuery: String
+    ) -> Bool {
+        guard scopedBundleId.caseInsensitiveCompare("com.apple.MobileSMS") == .orderedSame else {
+            return false
+        }
+        if MailQuestionRouter.isQuestionShaped(rawScopedQuery) {
+            return true
+        }
+        let tokens = Set(
+            rawScopedQuery.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+        )
+        let contextualSharePayloadTokens: Set<String> = [
+            "this", "that", "selected", "selection", "file", "files", "link", "page", "url",
+            "document", "documents", "pdf", "image",
+        ]
+        if !tokens.isDisjoint(with: contextualSharePayloadTokens) {
+            return false
+        }
+        let otherChannelOrAppTokens: Set<String> = [
+            "email", "mail", "airdrop", "safari", "notes", "reminders", "calendar", "finder",
+            "xcode", "slack",
+        ]
+        if !tokens.isDisjoint(with: otherChannelOrAppTokens) {
+            return false
+        }
+        return true
+    }
+
     func handleL2Query(_ query: String, isSelectionQuestion: Bool = false) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
@@ -2291,6 +2326,9 @@ extension DockCore {
             && !lockedBundleId.isEmpty
             && lockedBundleId != Bundle.main.bundleIdentifier
         let scopedBundleId = shouldKeepLockedChatScope ? lockedBundleId : resolvedBundleId
+        // The app this chat belongs to (an App Pet, a pinned target); empty in Global Context.
+        let chatOwnBundleId = (l2.targetApp?.bundleId ?? l2.chatDraftBundleId)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedAppName = shouldKeepLockedChatScope ? lockedAppName : resolvedAppName
         let initialFinderSelection: [URL] = {
             let id = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
@@ -2518,7 +2556,14 @@ extension DockCore {
 
         let findIntentMustBeExplicit =
             wasContextDockChatActive || scopedHasLinkedCLI || looksLikeQuestion
-        if (!findIntentMustBeExplicit || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
+        // A Mail search in Mail's own chat is answered in the transcript, never by driving
+        // Mail's search field — unless the user explicitly asked for the app's Find.
+        let isInScopeMailSearch =
+            AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: chatOwnBundleId)
+            || (!dockScope.namedByQuery
+                && AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: scopedBundleId))
+        if (!(findIntentMustBeExplicit || isInScopeMailSearch)
+            || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
             let findIntent = resolvedFindIntent(
             for: query,
             dockScope: dockScope,
@@ -2552,40 +2597,27 @@ extension DockCore {
             return
         }
 
-        if dockScope.scopedBundleId == "com.apple.MobileSMS",
-            let intent = messagesScopedSemanticIntent(for: rawScopedSearchQuery)
-        {
-            dockShortcutStep(.messages)
-            executeCrossAppIntent(
-                intent,
-                userMessage: query,
-                unresolvedMessage:
-                    "❌ Couldn't resolve that Messages recipient. Try: message send \"hi\" to [name]"
-            )
-            return
-        }
-
-        if dockScope.scopedBundleId == "com.apple.mail",
-            let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery)
-        {
-            // Only an exact search command ("search mail from SBI") is claimed here; any
-            // other sentence that mentions a sender goes to the model, which has
-            // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
-            // this same function. It runs headless (mail.search); Mail's window is not touched.
-            dockShortcutStep(.mailboxSearch)
-            executeMailMailboxSearch(intent: intent, userMessage: query)
-            return
-        }
-
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
         let shouldSkipCrossAppMailRouting =
             dockScope.scopedBundleId == "com.apple.mail"
             && isQuestionStyleMailQuery(rawScopedSearchQuery)
+        let shouldSkipCrossAppMessagesRouting = Self.shouldSkipCrossAppMessagesRouting(
+            scopedBundleId: dockScope.scopedBundleId,
+            rawScopedQuery: rawScopedSearchQuery
+        )
 
         if !shouldStayInScopedAIChat,
             !shouldSkipCrossAppMailRouting,
-            let intent = CrossAppNLHandler.shared.parse(normalizedQuery)
+            !shouldSkipCrossAppMessagesRouting,
+            let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
+            // In an app's own chat, "search mail from SBI" is a read of that app's records for
+            // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot
+            // tell the two apart — it is also true inside an App Pet — so the test is whether
+            // the sentence itself named the app.
+            CrossAppNLHandler.shared.claimsTurn(
+                intent, scopedBundleId: scopedBundleId, chatBundleId: chatOwnBundleId,
+                scopeNamedByQuery: dockScope.namedByQuery)
         {
             dockShortcutStep(.crossApp)
             executeCrossAppIntent(intent, userMessage: query)
@@ -3400,7 +3432,8 @@ extension DockCore {
                     )
                 }
                 var appleData = canUseAppleAppsContext
-                    ? await self.appleAppsAndWeatherContext(for: query)
+                    ? await self.appleAppsAndWeatherContext(
+                        for: query, scopeBundleId: scopedBundleId)
                     : ""
                 // The dictionary rung (P13 #208) for the app this chat is scoped to: a cold
                 // cache is awaited so the first question is not answered from an empty
@@ -3627,6 +3660,88 @@ extension DockCore {
                 }()
                 let activeContextPrompt = activeContextAssembly.prompt
 
+                // #205/#407: a request this app's chat already solved replays from its saved
+                // typed calls, through their own gates, before the model is asked — the same
+                // step the chat window takes in `AppScopedChatService.send`. This surface
+                // captured skills and never tried them, so a skill learned in the Corner was
+                // paid for again on every repeat. Not with an attachment or a selection: the
+                // saved calls answer the sentence alone. A mismatch or a failed replay falls
+                // through to the model, which repairs the skill.
+                if !scopedBundleId.isEmpty, submittedContextDockFiles.isEmpty,
+                    submittedContextDockText == nil
+                {
+                    let skillScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    let skills = await MainActor.run {
+                        SolvedSkillStore.shared.all(forBundle: scopedBundleId)
+                    }
+                    if let (skill, filled) = SolvedSkillMatch.match(
+                        query: query, bundleId: scopedBundleId, skills: skills),
+                        let saved = await SolvedSkillMatch.run(
+                            skill, filled: filled, scope: skillScope)
+                    {
+                        await MainActor.run {
+                            self.dockTraceStep("Used saved skill (no model)")
+                            // The same mapper as the model stage below: what the replayed
+                            // calls read is drawn as cards, not only described.
+                            let rows = ChatResultRowMapper.map(saved.rows)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant, content: saved.text,
+                                    appLaunches: rows.apps,
+                                    recentFiles: rows.files,
+                                    noteResults: rows.notes,
+                                    reminderResults: rows.reminders,
+                                    pageLinks: rows.links,
+                                    mcpToolsRan: saved.toolChips,
+                                    evidenceReceipts: saved.evidenceReceipts,
+                                    trace: self.l2.routerTrace))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
+                // H3 #410: selection-scoped skills fire only when files are attached. The block
+                // above intentionally skips when files are present (a saved call recorded without
+                // a file should not replay under a different file). Selection-scoped skills are the
+                // inverse — they were saved with a selection/file and expect one here.
+                if !scopedBundleId.isEmpty, !submittedContextDockFiles.isEmpty {
+                    let skillScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    let selContext = SlotDerivationContext(
+                        selectedText: submittedContextDockText,
+                        selectedFilePaths: submittedContextDockFiles.map(\.path),
+                        appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName)
+                    let selSkills = await MainActor.run {
+                        SolvedSkillStore.shared.allEligible(
+                            forBundle: scopedBundleId, context: selContext)
+                        .filter { $0.selectionType != nil }
+                    }
+                    if let (skill, filled) = SolvedSkillMatch.match(
+                        query: query, bundleId: scopedBundleId,
+                        skills: selSkills, context: selContext),
+                        let saved = await SolvedSkillMatch.run(
+                            skill, filled: filled, scope: skillScope)
+                    {
+                        await MainActor.run {
+                            self.dockTraceStep("Used saved skill (no model)")
+                            let rows = ChatResultRowMapper.map(saved.rows)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant, content: saved.text,
+                                    appLaunches: rows.apps,
+                                    recentFiles: rows.files,
+                                    noteResults: rows.notes,
+                                    reminderResults: rows.reminders,
+                                    pageLinks: rows.links,
+                                    mcpToolsRan: saved.toolChips,
+                                    evidenceReceipts: saved.evidenceReceipts,
+                                    trace: self.l2.routerTrace))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
                         query: query,
@@ -3750,7 +3865,7 @@ extension DockCore {
                             text: finalResponse, toolChips: [])
                         captureAnswer.evidenceReceipts =
                             browserPageReceipts + executed.map(DoraXActionReceipt.init)
-                        SolvedSkillCapture.captureIfEligible(
+                        let captureOutcome = SolvedSkillCapture.captureIfEligible(
                             query: query, scope: captureScope, answer: captureAnswer,
                             toolCalls: SolvedSkillToolCallCollector.shared.take(scope: captureScope))
                         // The records this turn's capabilities actually read, drawn as cards
@@ -3772,6 +3887,8 @@ extension DockCore {
                                 + executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,
                             trace: self.l2.routerTrace)
+                        msg.savedSkill = captureOutcome.savedSkill
+                        msg.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
                         if !activeContextPrompt.isEmpty {
@@ -4115,8 +4232,11 @@ extension DockCore {
     /// Combined Apple-apps data + live weather for a query, ready to append to any chat
     /// system prompt. Used by both General Chat and Context Dock chat so both answer with
     /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
-    func appleAppsAndWeatherContext(for query: String) async -> String {
-        await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+    func appleAppsAndWeatherContext(for query: String, scopeBundleId: String? = nil) async
+        -> String
+    {
+        await AppleLiveDataContext.appleAppsAndWeatherContext(
+            for: query, scopeBundleId: scopeBundleId)
     }
 
     /// Reads the app back after an action and reports what actually moved.
@@ -5729,6 +5849,25 @@ extension DockCore {
                             + (AgentAnswerVerifier.noActionChip(executed: executed).map { [$0] } ?? [])
                         aiMode.pendingEvidenceReceipts = executed.map(DoraXActionReceipt.init)
                         aiMode.pendingSubjectiveEvaluation = subjectiveEvaluation
+                        // H1a rung-2 recipe recording: check for untrusted content in
+                        // any tool output or the final response, then record each
+                        // non-verification shell command that ran this turn.
+                        let turnHasUntrustedOutput =
+                            executed.contains { UntrustedContent.containsFence($0.output) }
+                            || UntrustedContent.containsFence(finalResponse)
+                        let aiScriptContext = AIScriptContext(
+                            bundleID: "",
+                            appName: "General",
+                            userQuery: query,
+                            slotContext: .empty,
+                            hasUntrustedContent: turnHasUntrustedOutput)
+                        for cmd in executed where !cmd.isVerification {
+                            let isRead = TerminalCommandClassifier.shared
+                                .classify(cmd.command).shouldAutoExecute
+                            AIScriptSkillRecorder.shared.record(
+                                command: cmd.command, success: cmd.success,
+                                context: aiScriptContext, isRead: isRead)
+                        }
                     }
                     return await recoveredFromProtocolOnly(finalResponse, query: query)
                 }
@@ -6336,7 +6475,8 @@ extension DockCore {
             scopedBundleId: scoped.bundleId,
             scopedAppName: scoped.appName
         ) {
-            let appleData = await appleAppsAndWeatherContext(for: query)
+            let appleData = await appleAppsAndWeatherContext(
+                for: query, scopeBundleId: scoped.bundleId)
             if !appleData.isEmpty {
                 systemPrompt += "\n\n" + appleData
             }

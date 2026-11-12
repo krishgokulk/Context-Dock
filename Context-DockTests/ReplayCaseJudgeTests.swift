@@ -224,7 +224,7 @@ struct ReplayCaseJudgeTests {
             result.printSummary(label: "judge-agreement")
         }
         #expect(result.agreementRate >= 0.90,
-            "Judge agreed on \(result.agreed)/\(result.total) (\(String(format: "%.0f%%", result.agreementRate * 100))). Need ≥ 90%.")
+            "Judge agreed on \(result.agreed)/\(result.total) (\(String(format: "%.0f%%", result.agreementRate * 100))). Need ≥ 90%. Disagreed: \(result.disagreements.map { "\($0.id) hand=\($0.expected) judge=\($0.actual) \($0.signals)" })")
     }
 
     @Test func twentyCasesArePresent() {

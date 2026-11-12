@@ -920,6 +920,7 @@ final class GeneralAIActionResolver {
     private static let executeStarts = [
         "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
         "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
+        "compose ", "draft ", "text ", "message ",
         "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
     ]
 

@@ -1,9 +1,16 @@
 // Context-DockTests/CornerSafariTabsTests.swift
 //
-// Safari's open tabs in its Context Dock (inventory D13; owner 2026-09-25): the field folds
-// away at rest into a bar of the app's own things — its open tabs, never Global's pins — the
-// way Global Context folds into its running apps, and expands back; "+N" for the rest. From the loader
-// the Dock uses (`SafariTabManager`) through the shared `BrowserTabList`.
+// Safari's open tabs in its Context Dock (inventory D13; owner 2026-09-25). An app scope has
+// the app bar only once the user has pinned something for that app (owner 2026-11-03, "compact
+// pill for unpinned app scopes"); then the field folds away at rest into a bar of the app's own
+// things — its pins, then its open tabs, never Global's pins — the way Global Context folds into
+// its running apps, and expands back; "+N" for the rest. Without a pin the scope is the compact
+// pill: no bar, no dock height, no fold, the running apps in its strip, and Safari's tabs live
+// in the chat sheet. From the loader the Dock uses (`SafariTabManager`) through the shared
+// `BrowserTabList`.
+//
+// The `scope()` helper pins one thing for the app by default, which is what gives it the bar;
+// `pinned: false` is the compact pill.
 //
 // Nothing here depends on Safari running: the tab source, refresh and switch are injected. (The first version read the scope's rows only after a running-app check, and so
 // passed on a Mac with Safari open and failed on CI.)
@@ -24,13 +31,16 @@ struct CornerSafariTabsTests {
 
     private func scope(
         tabs: [SafariTab]? = nil, switched: ((SafariTab) -> Void)? = nil,
-        bundleID: String = "com.apple.Safari", name: String = "Safari"
+        bundleID: String = "com.apple.Safari", name: String = "Safari", pinned: Bool = true
     ) -> AppChatPromptModel {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         // Its own pins: the test host shares the developer's, and a Safari pin of theirs
         // would put something in this bar that the tests did not.
-        model.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+        let store = DockPinStore(fileURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
+        // The bar exists only for an app with a pin (owner 2026-11-03).
+        if pinned { store.pin(.appAction(id: "bar"), title: "Pinned", app: bundleID) }
+        model.dockPins = store
         let source = tabs ?? self.tabs
         model.tabSource = { source }
         model.refreshTabCache = { _ in }
@@ -64,12 +74,27 @@ struct CornerSafariTabsTests {
         #expect(open == DockShellWidth.current)
     }
 
-    @Test("The open tabs are the bar's icons, all of them, in order")
+    @Test("Without a pin Safari is the compact pill: no bar, no dock, no fold, the running apps in the strip")
+    func anUnpinnedSafariIsTheCompactPill() {
+        let model = scope(pinned: false)
+        #expect(!model.showsTabBar && !model.usesDockShell && !model.usesDockHeight)
+        #expect(!model.canRestAsDock)
+        model.set(.prompt)
+        #expect(!model.foldToDock())
+        #expect(model.phase == .prompt)
+        // Safari's tabs are in the chat sheet, never icons beside the input.
+        #expect(!model.stripIcons.contains { model.isTabIcon($0.id) })
+        #expect(!model.globalMatchIcons.contains { model.isTabIcon($0.id) })
+        #expect(model.stripIcons.map(\.title) == ["Finder"])
+    }
+
+    @Test("With a pin, the bar leads with the pin and then the open tabs, all of them, in order")
     func theTabsAreTheStripIcons() {
         let model = scope()
-        #expect(model.stripIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
-        #expect(model.globalMatchIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
-        #expect(!model.stripIcons.map(\.id).contains { !model.isTabIcon($0) })
+        #expect(model.stripIcons.map(\.title) == ["Pinned", "Inbox", "Pull requests", "Swift Forums"])
+        #expect(model.globalMatchIcons.map(\.title)
+            == ["Pinned", "Inbox", "Pull requests", "Swift Forums"])
+        #expect(model.stripIcons.dropFirst().allSatisfy { model.isTabIcon($0.id) })
         // Pills, not rows: the list is the app's own commands.
         #expect(!model.rows.contains {
             if case .dock(let pill) = $0 { return pill.id.hasPrefix("safari-tab:") }
@@ -100,19 +125,20 @@ struct CornerSafariTabsTests {
         let model = scope(tabs: many)
         // The room: a compact few, whatever the screen.
         #expect(model.globalMatchIcons.count == AppChatPromptModel.appBarVisibleIcons)
-        // The content: every tab, which the pill scrolls through.
-        #expect(model.allRunningIcons.count == 60)
-        #expect(model.stripIcons.count == 60)
+        // The content: the pin and every tab, which the pill scrolls through.
+        #expect(model.allRunningIcons.count == 61)
+        #expect(model.stripIcons.count == 61)
         // The field keeps room for the Safari chip as well as the pill.
         #expect(model.promptIconCount
             == model.globalMatchIcons.count + AppChatPromptMetrics.appFieldChromeSlots)
     }
 
     @Test("Choosing a tab, in the strip or the pill, switches Safari to it")
-    func aTabSwitches() {
+    func aTabSwitches() throws {
         var switched: [String] = []
         let model = scope(switched: { switched.append($0.title) })
-        model.openGlobalMatchIcon(model.globalMatchIcons[2])
+        let icon = try #require(model.globalMatchIcons.first { $0.title == "Swift Forums" })
+        model.openGlobalMatchIcon(icon)
         #expect(switched == ["Swift Forums"])
     }
 
@@ -124,10 +150,10 @@ struct CornerSafariTabsTests {
         #expect(BrowserTabList.matching(tabs, query: "github pull").map(\.title) == ["Pull requests"])
     }
 
-    @Test("Other browsers have the app's bar but show no tabs")
+    @Test("Other browsers have the app's bar once pinned, but show no tabs")
     func onlySafariShowsTabs() {
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
-        // Every app's Context Dock has the bar (owner 2026-10-08); Chrome's holds no tabs.
+        // A pinned app's Context Dock has the bar (owner 2026-11-03); Chrome's holds no tabs.
         #expect(chrome.showsTabBar && chrome.usesDockShell)
         #expect(!chrome.stripIcons.contains { chrome.isTabIcon($0.id) })
         #expect(!BrowserTabList.listsTabs(bundleID: "com.google.Chrome"))
@@ -141,16 +167,18 @@ struct CornerSafariTabsTests {
             == "page cmds, menu cmds")
     }
 
-    @Test("Every app's Context Dock is Global's height; without tabs it fits its field")
+    @Test("A pinned app's Context Dock is Global's height; an unpinned one is the compact pill")
     func contextDockHeightAndFit() {
         let textEdit = scope(bundleID: "com.apple.TextEdit", name: "TextEdit")
-        // Every app's Context Dock rests as a dock now (owner 2026-10-08); Finder's file
-        // search does not.
+        // A pinned app's Context Dock rests as a dock (owner 2026-10-08, pins only since
+        // 2026-11-03); Finder's file search does not.
         #expect(textEdit.usesDockHeight && textEdit.usesDockShell)
-        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25),
-        // and in front it rests and folds like any app's (owner 2026-10-08).
+        // Finder too once pinned: in front it rests and folds like any app's.
         let finder = scope(bundleID: "com.apple.finder", name: "Finder")
         #expect(finder.usesDockHeight && finder.usesDockShell)
+        // Unpinned, either is the compact pill (owner 2026-11-03).
+        let bare = scope(bundleID: "com.apple.TextEdit", name: "TextEdit", pinned: false)
+        #expect(!bare.usesDockHeight && !bare.usesDockShell)
         let fitted = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, running: 12, pinned: 3,
             fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)
@@ -168,16 +196,17 @@ struct CornerSafariTabsTests {
         let model = scope()
         model.query = "summarise this"
         model.queryChanged()
-        #expect(model.globalMatchIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
+        #expect(model.globalMatchIcons.map(\.title)
+            == ["Pinned", "Inbox", "Pull requests", "Swift Forums"])
         #expect(AppChatPromptMetrics.appFieldTrailingReserve(typed: true)
             > AppChatPromptMetrics.appFieldTrailingReserve(typed: false))
     }
 
     @Test("Safari tabs remain tabs on strip click, and pinned non-running apps remain explicit launches")
-    func safariTabsRemainTabsAndOfflinePinsRemainExplicitLaunches() {
+    func safariTabsRemainTabsAndOfflinePinsRemainExplicitLaunches() throws {
         var switched: [String] = []
         let model = scope(switched: { switched.append($0.title) })
-        let tabIcon = model.stripIcons[0]
+        let tabIcon = try #require(model.stripIcons.first { $0.title == "Inbox" })
         let tabSlot = DockAppSlot(
             bundleID: tabIcon.id,
             title: tabIcon.title,

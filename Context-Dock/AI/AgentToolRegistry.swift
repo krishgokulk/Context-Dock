@@ -551,7 +551,9 @@ final class AgentToolRegistry {
     /// Hands a successful call to the solved-skill collector (#205). Lookups and read-backs are
     /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
     /// read-only so it keeps the turn from being saved.
-    private static func noteForSolvedSkill(
+    ///
+    /// Internal rather than private so the recording rules can be tested without a provider.
+    static func noteForSolvedSkill(
         name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
     ) {
         // run_mcp_tool wraps dorax_run_capability which carries a DoraX capability_id.
@@ -572,20 +574,111 @@ final class AgentToolRegistry {
                 verifiedReadBack: verifiedReadBack, scope: scope)
             return
         }
+        // dorax_run_menu_command: DoraX internally re-dispatches as run_menu_command with
+        // scope=nil, so the inner call lands in the wrong solved-skill bucket. Intercept the
+        // outer call here (which still carries the app scope) before the plumbing guard drops it.
+        // On the Anthropic streaming path arguments["server"] and arguments["tool"] are
+        // AIProviderAnyCodable; reach through .value before falling back to a plain String cast.
+        if name == "run_mcp_tool",
+           let serverRaw = arguments["server"],
+           let server = (serverRaw as? AIProviderAnyCodable)?.value as? String
+               ?? serverRaw as? String,
+           server.caseInsensitiveCompare("dorax") == .orderedSame,
+           let toolRaw = arguments["tool"],
+           let toolArg = (toolRaw as? AIProviderAnyCodable)?.value as? String
+               ?? toolRaw as? String, toolArg == "dorax_run_menu_command"
+        {
+            let rawArgs = arguments["arguments"]
+            let innerArgs: [String: Any]
+            if let codable = rawArgs as? [String: AIProviderAnyCodable],
+               let data = try? JSONEncoder().encode(codable) {
+                innerArgs = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            } else {
+                innerArgs = (rawArgs as? [String: Any]) ?? [:]
+            }
+            let app = innerArgs["app"] as? String ?? ""
+            let path = innerArgs["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+            return
+        }
+        // H1b rung 1: external connector/MCP calls. `run_mcp_tool` is a plumbing tool (it has
+        // no activity row of its own), so this must come before the plumbing guard — below it,
+        // an external read was dropped and never became a skill. DoraX's remaining tools
+        // dispatch their own inner calls and stay plumbing.
+        if name == "run_mcp_tool" {
+            let server = unwrappedArgument(arguments["server"]) as? String ?? ""
+            let toolName = unwrappedArgument(arguments["tool"]) as? String ?? ""
+            guard !toolName.isEmpty, server.caseInsensitiveCompare("dorax") != .orderedSame
+            else { return }
+            var input: [String: String] = [:]
+            for (key, value) in unwrappedArgument(arguments["arguments"]) as? [String: Any] ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            // The tool name's heuristic classifies read vs. write, as the tool's own gate does.
+            SolvedSkillToolCallCollector.shared.record(
+                capability: server.isEmpty ? toolName : "\(server).\(toolName)", input: input,
+                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
+            // Unregistered capability IDs are app-adapter internal actions (the adapter
+            // falls through to them when no registered capability matches). They are
+            // implementation details, not user-intent replay targets — skip them so they
+            // do not pollute the skill collector with spurious isReadOnly:false entries.
+            guard CapabilityRegistry.shared.capability(id: id) != nil else {
+                return
+            }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
             }
+            let isReadOnly = !changesSomething(capabilityID: id)
+            // A successful read-only capability is a verified read-back — align with
+            // GeneralChatCapabilityHub.execute() which uses verifiedReadBack: isReadOnly.
             SolvedSkillToolCallCollector.shared.record(
-                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
-                verifiedReadBack: verifiedReadBack, scope: scope)
+                capability: id, input: input, isReadOnly: isReadOnly,
+                verifiedReadBack: verifiedReadBack || isReadOnly, scope: scope)
+        } else if name == "run_menu_command" {
+            // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
+            // so the turn is recorded as read-only here — the gate appears at run time, not now.
+            // Success IS the verification for a menu command (the AX framework found the item).
+            // On the Anthropic streaming path values arrive as AIProviderAnyCodable; reach
+            // through .value before falling back to a plain String cast.
+            let app = (arguments["app"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["app"] as? String ?? ""
+            let path = (arguments["path"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(
                 capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,
                 scope: scope)
+        }
+    }
+
+    /// A tool argument with the Anthropic streaming path's `AIProviderAnyCodable` wrapping
+    /// removed, all the way down.
+    private static func unwrappedArgument(_ raw: Any?) -> Any? {
+        switch raw {
+        case let boxed as AIProviderAnyCodable: return unwrappedArgument(boxed.value)
+        case let object as [String: AIProviderAnyCodable]:
+            return object.mapValues { unwrappedArgument($0.value) ?? () }
+        case let list as [AIProviderAnyCodable]:
+            return list.map { unwrappedArgument($0.value) ?? () }
+        default: return raw
         }
     }
 
@@ -2673,18 +2766,18 @@ final class AgentToolRegistry {
             required: []
         ) { arguments, _ in
             let query = arguments["query"] as? String ?? ""
-            var sender = arguments["sender"] as? String ?? ""
-            var subject = arguments["subject"] as? String ?? ""
             let unreadOnly = arguments["unread_only"] as? Bool ?? false
             let limit = arguments["limit"] as? Int ?? 20
-            if !query.isEmpty && sender.isEmpty && subject.isEmpty {
-                subject = query
-            }
+            let filters = await AppleLiveDataContext.mailSearchFilters(
+                query: query, sender: arguments["sender"] as? String ?? "",
+                subject: arguments["subject"] as? String ?? "", day: "")
+            let sender = filters.sender
             let output = await withCheckedContinuation { cont in
                 DispatchQueue.global(qos: .userInitiated).async {
                     cont.resume(returning: MailAutomation.mailboxSnapshot(
-                        senderContains: sender, subjectContains: subject,
-                        unreadOnly: unreadOnly, relativeDay: "", limit: limit))
+                        senderContains: filters.sender, subjectContains: filters.subject,
+                        anyContains: filters.any,
+                        unreadOnly: unreadOnly, relativeDay: filters.day, limit: limit))
                 }
             }
             return AgentToolResult(success: true, output: output, displayCommand: "search_mail(\(query.isEmpty ? sender : query))")

@@ -1,5 +1,11 @@
 # DoraX control-plane audit
 
+> **Status: Historical audit (2026-09, Gate A baseline).** Keep for reference.
+> Post-audit completions:
+> - `LegacySettingsContent.swift` permissions moved to `PermissionsSettingsPage.swift` and `Settings ▸ Extensions`.
+> - `UserGlobalExtensionStore` is exposed to AI models via `ExtensionAgentTools.swift` (closing item 9f).
+> - Audit items 9d, 9i, 9j, 9k in §10d are fixed and verified by tests.
+
 Read-only inventory of how an executable request travels from intent to receipt.
 No code changed *by the audit*; steps 1 and 2 of §7 have since been applied and their
 rows are marked **done** below. Produced as **Gate A** input: nothing about bounded loops, graph

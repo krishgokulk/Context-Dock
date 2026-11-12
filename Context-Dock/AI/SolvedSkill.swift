@@ -51,6 +51,23 @@ struct SolvedSkill: Codable, Equatable, Identifiable {
     var createdAt: Date = Date()
     var runCount: Int = 0
     var successCount: Int = 0
+    /// Replays that failed since the last one that worked. Optional so skills saved before H2
+    /// still decode. A failing skill is replaced by the model's next capture from any rung.
+    var consecutiveFailures: Int? = nil
+    /// A `SkillSelectionType` raw value when this skill is scoped to a selection type (H3 #410).
+    /// nil means not selection-scoped. Optional so skills saved before H3 still decode.
+    var selectionType: String? = nil
+
+    /// The parsed selection scope, if any.
+    var selectionScope: SkillSelectionType? {
+        guard let raw = selectionType else { return nil }
+        return SkillSelectionType(rawValue: raw)
+    }
+
+    /// True when this skill is selection-scoped and the context satisfies it.
+    func matchesSelection(_ context: SlotDerivationContext) -> Bool {
+        selectionScope?.matches(context: context) ?? false
+    }
 }
 
 // MARK: - Store
@@ -75,15 +92,21 @@ final class SolvedSkillStore: ObservableObject {
         load()
     }
 
-    /// Saves under the request's shape, replacing any skill with the same template in the same
-    /// app — a re-captured shape is the newer truth, not a second entry to match against.
-    func save(_ skill: SolvedSkill) {
-        skills.removeAll {
-            $0.bundleId == skill.bundleId
-                && $0.queryTemplate.caseInsensitiveCompare(skill.queryTemplate) == .orderedSame
-        }
-        skills.insert(skill, at: 0)
+    /// Saves under the skill's job key (H2 #409), in the conflict order of spec §8 rule 4: a
+    /// user-installed or pack skill for the same job keeps it and nothing is saved; a
+    /// lower-rung solved skill that still works keeps it too; otherwise this skill replaces
+    /// the solved skill and any learned recipe filed under the key. Returns whether it saved.
+    @discardableResult
+    func save(_ skill: SolvedSkill) -> Bool {
+        let userKeys = LearnedSkillJob.userHeldKeys(
+            bundleId: skill.bundleId, in: SkillStore.shared.skills)
+        guard let merged = LearnedSkillJob.merging(
+            solved: skill, into: skills, userKeys: userKeys)
+        else { return false }
+        skills = merged
         persist()
+        SkillStore.shared.removeLearned(jobKey: skill.jobKey, bundleId: skill.bundleId)
+        return true
     }
 
     func delete(_ id: UUID) {
@@ -95,10 +118,32 @@ final class SolvedSkillStore: ObservableObject {
         skills.filter { $0.bundleId == bundleId }
     }
 
+    /// All skills eligible for the given turn: the bundle's own skills plus any
+    /// selection-scoped skills whose type matches the derivation context (H3 #410).
+    /// Selection-scoped skills cross app boundaries — a PDF skill captured in one app
+    /// fires in any app that has a PDF attached.
+    func allEligible(forBundle bundleId: String, context: SlotDerivationContext) -> [SolvedSkill] {
+        SolvedSkillStore.eligible(from: skills, forBundle: bundleId, context: context)
+    }
+
+    /// Pure, nonisolated helper so tests can filter directly without a store instance.
+    nonisolated static func eligible(
+        from skills: [SolvedSkill],
+        forBundle bundleId: String,
+        context: SlotDerivationContext
+    ) -> [SolvedSkill] {
+        skills.filter { skill in
+            (skill.bundleId == bundleId && skill.selectionType == nil)
+                || skill.matchesSelection(context)
+        }
+    }
+
     func markRun(id: UUID, success: Bool) {
         guard let index = skills.firstIndex(where: { $0.id == id }) else { return }
         skills[index].runCount += 1
         if success { skills[index].successCount += 1 }
+        skills[index].consecutiveFailures =
+            success ? 0 : (skills[index].consecutiveFailures ?? 0) + 1
         persist()
     }
 

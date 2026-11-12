@@ -18,6 +18,7 @@ struct AppIntegrationAgentView: View {
     @State private var problems: [String] = []
     @State private var savedAt: Date?
     @State private var saveError: String?
+    @State private var briefsOnArrival = false
 
     private var isDirty: Bool { text != loadedText }
 
@@ -25,6 +26,7 @@ struct AppIntegrationAgentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 nativeServers
+                proactivity
                 editor
                 declared
             }
@@ -58,6 +60,39 @@ struct AppIntegrationAgentView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color(NSColor.controlBackgroundColor)))
+            }
+        }
+    }
+
+    /// The one switch for this app's proactive Pet behavior (#343). Off until switched on, and
+    /// offered only where there is something this build can actually brief on.
+    @ViewBuilder
+    private var proactivity: some View {
+        if AppPetArrivalBriefing.supports(bundleID: summary.bundleID) {
+            section(
+                title: "Proactive suggestions",
+                caption: "Off by default. Read-only, at most three a day, never while you type "
+                    + "or between 10 pm and 8 am. A suggestion never acts on its own."
+            ) {
+                Toggle(isOn: $briefsOnArrival) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Brief me when \(summary.appName) comes forward")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("Counts files added to Downloads in the last 24 hours.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor)))
+                .onChange(of: briefsOnArrival) { _, on in
+                    AppPetArrivalBriefing.shared.setOn(on, bundleID: summary.bundleID)
+                }
             }
         }
     }
@@ -258,6 +293,7 @@ struct AppIntegrationAgentView: View {
         loadedText = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         text = loadedText
         saveError = nil
+        briefsOnArrival = AppPetArrivalBriefing.shared.isOn(bundleID: summary.bundleID)
         revalidate()
     }
 

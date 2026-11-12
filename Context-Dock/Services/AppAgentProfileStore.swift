@@ -32,6 +32,15 @@ final class AppAgentProfileStore: ObservableObject {
         if let root {
             self.root = root
         } else {
+            // The test host is a copy of the app. Reading the developer's own profiles made
+            // plans differ per Mac (a Messages profile with a CLI offered `run_command` to a
+            // question), so under XCTest the store starts empty in a folder of its own.
+            let env = ProcessInfo.processInfo.environment
+            if env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil {
+                self.root = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("context-dock-test-apps-\(UUID().uuidString)", isDirectory: true)
+                return
+            }
             let base = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Context-Dock/apps", isDirectory: true)

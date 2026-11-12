@@ -384,6 +384,14 @@ private struct ActionBubbleCard: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+        .contextMenu {
+            if let suggestionID = bubble.suggestionID {
+                Button("Mute This Pet for a Day", systemImage: "bell.slash") {
+                    AppPetSuggestionCoordinator.shared.dismissSuggestion(
+                        id: suggestionID, mutePetFor: 86_400)
+                }
+            }
+        }
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.ultraThinMaterial)

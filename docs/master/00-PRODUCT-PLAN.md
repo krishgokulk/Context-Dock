@@ -161,11 +161,11 @@ harness. A detached Pet must reuse those contracts rather than introduce a secon
 A tool that controls other apps must be *more* trustworthy than a normal app.
 
 1. **Developer ID + notarization.** Replace the Apple Development identity in `ship.sh`. No
-   more `xattr -cr` in the README. (Also closes the `get-task-allow` issue in `FOUND.md`.)
+   more `xattr -cr` in the README. (Also closes the `get-task-allow` issue in `docs/history/FOUND.md`.)
 2. **Signed updates.** Replace the raw-DMG updater with Sparkle 2 (EdDSA-signed appcast), or
    at minimum verify a SHA-256 from the manifest **and** the Developer ID signature before
    opening. Today anyone who can push to `main` can ship code to every user.
-3. **Close `FOUND.md`.** Item 5 (argv execution in `TerminalAIBridge`), item 7 escalation
+3. **Close `docs/history/FOUND.md`.** Item 5 (argv execution in `TerminalAIBridge`), item 7 escalation
    (high-risk action with `requiresApproval: false`), MCP cache key.
 4. **Security review of the four sharp tools:** `run_command`, `send_keys`, `spawn_worker`,
    L2 scripts. Approval is the only gate — test that it cannot be skipped.

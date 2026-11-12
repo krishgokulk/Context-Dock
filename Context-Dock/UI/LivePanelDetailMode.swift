@@ -149,6 +149,8 @@ struct LivePanelDetailModePicker: View {
                             .font(.system(size: compact ? 8.5 : 9.5, weight: mode == item ? .bold : .regular))
                         Text(item.rawValue)
                             .font(.system(size: compact ? 9.5 : 10.5, weight: mode == item ? .semibold : .medium))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.horizontal, compact ? 6 : 8)
                     .padding(.vertical, compact ? 2.5 : 3.5)

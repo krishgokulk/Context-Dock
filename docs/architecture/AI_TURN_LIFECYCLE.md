@@ -1,8 +1,9 @@
 # How one answer happens, start to finish
 
-Written 2026-09-22 from the code; product target updated 2026-10-27 for #327. If you read one file
+Written 2026-09-22 from the code; updated 2026-11-09 for #327 and 1.0 engine architecture. If you read one file
 to understand DoraX's AI, read this one together with the
-[App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
+[App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md) and
+[Agent Harness Model](../superpowers/specs/2026-11-09-agent-harness-model.md).
 
 The question this answers: **a person types something and an answer appears — what happened in
 between, what could have stopped it, and how do I tell which of those actually did?**
@@ -25,14 +26,15 @@ reason the pipeline is hard to see: it is not a line, it is a ladder with an exi
         │
         ▼
  ┌────────────────────────────────────────────────────────────────┐
- │ 1. CHEAP LOCAL ANSWERS         "is X installed?"               │──► ends here
- │ 2. SCOPE GATE                  needs a Pet this chat lacks     │──► pause (preview + connect)
- │ 3. SCOPE SUGGESTION            names no app but needs one      │──► ends here (ask which)
- │ 4. WORKBENCH INTENT            a saved multi-step recipe       │──► ends here
- │ 5. CLAUDE CODE BRIDGE          delegation to the CLI agent     │──► ends here
- │ 6. TASK GRAPH                  2+ Pets, or "several steps"     │──► runs one combined plan
- │ 7. ROUTE RESOLUTION            one app, several ways to do it  │──► ends here (ask / run)
- │ 8. OBSERVED MENU ANSWER        the answer is a menu we read    │──► ends here
+ │ 1.  CHEAP LOCAL ANSWERS        "is X installed?"               │──► ends here
+ │ 2.  SCOPE GATE                 needs a Pet this chat lacks     │──► pause (preview + connect)
+ │ 3.  SCOPE SUGGESTION           names no app but needs one      │──► ends here (ask which)
+ │ 4.  WORKBENCH INTENT           a saved multi-step recipe       │──► ends here
+ │ 4b. SOLVED SKILL MATCH         previously verified read skill  │──► ends here (0ms, no model)
+ │ 5.  CLAUDE CODE BRIDGE         delegation to the CLI agent     │──► ends here
+ │ 6.  TASK GRAPH                 2+ Pets, or "several steps"     │──► runs one combined plan
+ │ 7.  ROUTE RESOLUTION           one app, several ways to do it  │──► ends here (ask / run)
+ │ 8.  OBSERVED MENU ANSWER       the answer is a menu we read    │──► ends here
  └────────────────────────────────────────────────────────────────┘
         │  nothing above claimed it
         ▼
@@ -46,15 +48,16 @@ reason the pipeline is hard to see: it is not a line, it is a ladder with an exi
         ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ 13. PROVIDER TURN                                              │
- │     tools?  ─ yes ─► tool loop: call → run → feed back → repeat │
- │              ─ no ─► prose directive loop: {"menu_call": …}     │
+ │     unified runToolLoop<A: ToolLoopAdapter> (budget, TurnFocus, │
+ │     2-round no-progress stop); tools or directive bridge       │
  └────────────────────────────────────────────────────────────────┘
         │
         ▼
  ┌────────────────────────────────────────────────────────────────┐
  │ 14. AFTER THE ANSWER                                           │
  │     recover a directive written as prose · verify claims ·      │
- │     offer a route / a worker / Computer Use · collect rows      │
+ │     offer a route / a worker / Computer Use · collect rows ·    │
+ │     auto-capture SolvedSkill for verified reads (#205)          │
  └────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -93,10 +96,13 @@ approval**: a Safari Pet may not read Messages, and connecting Messages does not
 The question needs *some* app and named none ("who do I talk to most") — DoraX asks which, rather
 than answering from nothing.
 
-### 4–5. Recipes and delegation
+### 4–5. Recipes, solved skills and delegation
 
-A saved multi-step workflow (`WorkbenchIntent`) runs. A coding-shaped request goes to the Claude
-Code CLI, which has its own tools and reports every one of them back as steps.
+A saved multi-step workflow (`WorkbenchIntent`) runs. Before prompt assembly, `SolvedSkillMatch.match`
+checks whether the scoped app has a matching verified read skill (#205); if so, `SolvedSkillMatch.run`
+executes the tool call via `GeneralAIActionExecutor.shared.execute` and returns the verified answer in
+0ms without invoking the model. A coding-shaped request goes to the Claude Code CLI, which has its
+own tools and reports every one of them back as steps.
 
 ### 6. The Combined Chat task graph
 
@@ -134,7 +140,9 @@ compacted toward the question (`MarkItDownService.compact`).
 
 ### 13. The provider turn
 
-Two shapes, chosen by whether the provider takes tool schemas:
+Executed through the unified tool loop harness `runToolLoop<A: ToolLoopAdapter>` (E6a #154 / E6b #155),
+with strict `ToolLoopBudget` enforcement (max 8 rounds, 60s wall clock, and a 2-round no-progress
+circuit breaker), plus per-round `TurnFocus` guidance (`inspect` → `act` → `verify` → `answer`, E7a #156):
 
 - **Tools** (OpenAI, Anthropic, Gemini, and the bridges): the model calls a tool, DoraX runs it
   through the approval gates, feeds the real result back, repeats to a round cap.
@@ -148,6 +156,8 @@ Two shapes, chosen by whether the provider takes tool schemas:
 A directive the model printed instead of calling gets recovered and run. Claims are checked
 against what actually ran. Rows are collected into cards. When nothing linked could do the job,
 DoraX offers — a route, a specialist worker, or Computer Use with the exact item named.
+Verified single-tool read turns are captured by `SolvedSkillCapture` (#205) for instant replay on
+future turns.
 
 ---
 
@@ -173,13 +183,16 @@ DoraX offers — a route, a specialist worker, or Computer Use with the exact it
 1. **The step rows** in the chat — the live account.
 2. **Evidence receipts** on the message — what ran, with its real output.
 3. **The Console panel** — every command and its output for this conversation.
-4. **The turn log**, when you need the provider and the exact tool list:
+4. **The turn log and trace**, when you need the provider, exact tool list, or OpenTelemetry-compatible turn span:
    ```bash
    defaults write com.krishgokul.ContextDock doraxTurnLogEnabled -bool YES
    tail -f ~/Library/Application\ Support/Context-Dock/turns.log
    ```
-   It records the two facts that settle most "why did it not do that" questions: which provider
-   ran the turn and whether it carries tools, and the exact tool names sent.
+   Or inspect structured JSON turn traces written by `TurnRecorder.swift`:
+   ```bash
+   tail -f ~/Library/Logs/Context-Dock/turn.trace
+   ```
+   It records provider, prompt size, tool counts, `dorax.stop_reason`, `dorax.cancelled`, `dorax.focus`, and `dorax.round.focus`.
 5. **`dorax_ask` over MCP** — ask DoraX a question from outside and get back the answer, the
    steps, the receipts, and which approvals it decided to ask for. It runs unattended: every
    approval is refused, so nothing is written, and what you assert on is *which approval was

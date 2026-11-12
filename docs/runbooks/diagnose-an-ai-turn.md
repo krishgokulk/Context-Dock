@@ -1,6 +1,6 @@
 # Runbook — diagnose an AI turn
 
-Status: current · Last checked: 2026-10-02 · Describes: the turn log in the app's chat pipeline
+Status: current · Last checked: 2026-11-09 · Describes: the turn log in the app's chat pipeline
 
 **OSLog is not reliable here.** On the development Mac, notice-level logging from third-party
 processes is not persisted — a marker emitted from a separate process under this app's
@@ -31,13 +31,16 @@ the turn cost and did. Field names follow the OpenTelemetry GenAI conventions wh
 |---|---|
 | `gen_ai.provider.name`, `gen_ai.request.model` | Provider and model the turn ran on |
 | `dorax.tools.sent`, `dorax.tools.called` | Tools offered (no repeats) and called (in order) |
-| `dorax.rounds[]` | Per round: `gen_ai.usage.input_tokens` (all input, cached included), `…cache_read.input_tokens`, `…cache_creation.input_tokens`, `…output_tokens`, tool calls, finish reason, streamed, duration |
+| `dorax.rounds[]` | Per round: `gen_ai.usage.input_tokens` (all input, cached included), `…cache_read.input_tokens`, `…cache_creation.input_tokens`, `…output_tokens`, tool calls, finish reason, streamed, duration, `dorax.round.focus` |
 | `gen_ai.usage.*` at the top | Totals over the rounds that reported them; absent means unknown, not zero |
 | `dorax.prompt.section_chars` | Characters per prompt section: `system`, `history`, `message`, `tools` (schema JSON), and the scoped sections (`identity`, `memory`, …) |
 | `dorax.verifier.fires` | Answer checks that sent the model back (`evidence_sufficiency`, `answer_verifier.*`, `fresh_result_evaluator`) |
 | `dorax.fallbacks` | Lesser paths taken (`stream_to_buffered`, `on_device_plain_path`) |
 | `dorax.passes` | Provider calls in the turn; a verifier pass is a second one |
 | `dorax.time_to_first_token`, `gen_ai.client.operation.duration` | Seconds to the first streamed fragment (or first response), and in total |
+| `dorax.stop_reason` | Why the loop stopped (`answer`, `toolBudgetExceeded`, `noProgress`, `maxRounds`, `timeout`) |
+| `dorax.cancelled` | True if the turn was cancelled by user Esc or focus change |
+| `dorax.focus` | TurnFocus progression across rounds (`inspect` → `act` → `verify` → `answer`) |
 
 It never carries the question, the answer or any prompt text. A streamed OpenAI-shaped round
 reports no usage, so its counts are absent.

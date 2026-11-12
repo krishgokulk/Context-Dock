@@ -272,8 +272,8 @@ should come last, because remembering the wrong thing is worse than remembering 
 
 ## 6. How we will know it worked
 
-Not "it feels smarter". The eval suite already has the shape (`AgentRoutingEvalTests`,
-`PromptAssemblyEvalTests`). Add, as cases, every failure this session actually produced:
+Not "it feels smarter". The eval suite already has the shape (`RoutingPhrasebookTests`,
+`ScopedPromptAssemblyEvalTests`). Add, as cases, every failure this session actually produced:
 
 - `is this page related to our contextdock project…` → an answer, no action offered
 - `find my bookmarks note and summarise that` → Notes, not Find My, not browser bookmarks
@@ -297,11 +297,13 @@ Inside DoraX:
 ### 7.2 Why We Do NOT Need Pre-Written Scripts For Every App Feature
 The legacy approach of writing hand-coded scripts, plugins, and CLI wrappers for every macOS app feature led to bloated catalogs and brittle "install brew tool" dead ends. 
 
-Instead, modern frontier models possess sufficient reasoning to **find their own path** via the **3-Tier Escalation Ladder**:
-1. **Tier 1: Built-in & Direct UTCP (Instant, Zero Latency):** If a fast local framework, SQLite reader, or direct UTCP API exists, DoraX executes it directly headlessly.
-2. **Tier 2: Agentic Script Synthesis ("Code Mode"):** If no pre-built tool exists, DoraX provides the frontmost app's scripting dictionary (`sdef` / JXA / AppleScript). Claude/Codex/Gemini writes on-the-fly code to accomplish the task. DoraX validates and executes the script inside a sandboxed runner.
-3. **Tier 3: Autonomous Computer Use (UI Fallback):** For proprietary, web, or non-scriptable canvas apps (e.g., Figma, WhatsApp), the AI operates the app's interface directly using live `NSMenu` hierarchies and Accessibility (`ax_snapshot`, `press_menu`, `ax_click`, `ax_type`).
-4. **Skill Auto-Capture (Phase 5):** When the AI succeeds at a multi-step Tier 2 or Tier 3 task, DoraX automatically captures the recipe into `SkillStore.shared.skills(for: bundleId)`. The next time the user asks the same thing, DoraX executes the learned recipe instantly without repeating the exploratory loop.
+Instead, modern frontier models possess sufficient reasoning to **find their own path** via the **5-Rung Escalation Ladder** (`2026-11-09-agent-harness-model.md`):
+1. **Rung 0: Solved Skills (0ms, 0 tokens):** If a verified read was previously solved, replay via `SolvedSkillMatch` (#205 / PR #367).
+2. **Rung 1: Built-in & Direct Data / UTCP (Instant, Headless):** Fast local framework, direct SQLite/IPC, or direct HTTP/Process UTCP API without UI activation.
+3. **Rung 2: Agentic Script Synthesis ("Code Mode"):** If no direct capability exists, provide the app's scripting dictionary (`sdef` / JXA / AppleScript). Claude/Codex/Gemini writes on-the-fly code executed in a sandboxed runner.
+4. **Rung 3: Menu Command ("Click Mode"):** On-demand lookup via `find_menu_command` (#411) and execution via `press_menu` without dumping hundreds of menu items into prompts.
+5. **Rung 4: Autonomous Computer Use (UI Fallback):** For non-scriptable apps, operate the app's interface directly via Accessibility (`ax_click`, `ax_type`) with user consent.
+6. **Skill Auto-Capture:** Successful Computer Use runs are saved by `ComputerUseSkillRecorder`; successful read runs are captured by `SolvedSkillCapture`.
 
 ### 7.3 Why UTCP Replaces Heavy MCP Background Daemons
 - **The MCP Problem:** Model Context Protocol servers run as independent Node.js or Python background daemons. Running 5–10 MCP daemons consumes hundreds of megabytes of RAM, drains battery, and introduces IPC failure points.
@@ -324,10 +326,10 @@ To prevent a fragmented sprawl of disconnected scripts, MCP servers, shortcuts, 
 ```
 
 1. **Downwards to macOS (Sense & Act):**
-   - **Sense:** DoraX inspects the frontmost app to read window titles, URLs, selections, and live `NSMenu` items.
-   - **Act:** Dispatches actions via the cleanest channel available (native UTCP HTTP → AppleScript/JXA → Accessibility `AXUIElement`).
+   - **Sense:** DoraX inspects the frontmost app to read window titles, URLs, selections, and AX tree.
+   - **Act:** Dispatches actions via the cleanest channel available (native data read → AppleScript/JXA → Accessibility `AXUIElement`).
 2. **Upwards to the AI Provider (The Context Envelope):**
-   - DoraX bundles the app's identity, `AGENT.md` rules, learned `SKILL.md` workflows, live menu items, and available UTCP direct tools into a single normalized prompt context.
+   - DoraX bundles the app's identity, `AGENT.md` rules, learned `SKILL.md` workflows, and available direct tools into a single normalized prompt context. Menu hierarchies are searched on demand (`find_menu_command`) rather than dumped into prompt tokens.
    - The AI never deals with macOS-specific IPC intricacies; it only sees clean tool definitions and markdown context.
 3. **Execution Normalization:**
    - When the AI returns a decision, DoraX maps it into one of three execution lanes:

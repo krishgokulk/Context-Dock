@@ -72,6 +72,10 @@ enum AppScopedChatService {
         var activeMode: String? = nil
         /// Mode provenance string for this turn (e.g. "Safari: Research") (#341).
         var modeProvenance: String? = nil
+        /// Set when this turn was auto-saved as a read skill. Surfaces show "Saved as a skill · Undo".
+        var savedSkill: SolvedSkill? = nil
+        /// Set when this turn has write calls and qualifies for a save offer. Surfaces show "Save as a skill?".
+        var pendingWriteSkillOffer: SolvedSkill? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -1427,10 +1431,13 @@ enum AppScopedChatService {
         }
         // #205: a verified read the model just solved is kept, so the next one like it skips the
         // model. Taken here, after the answer is assembled, so every provider pass is included.
-        SolvedSkillCapture.captureIfEligible(
+        let captureOutcome = SolvedSkillCapture.captureIfEligible(
             query: query, scope: scope, answer: answer,
             toolCalls: SolvedSkillToolCallCollector.shared.take(scope: scope))
-        return answer
+        var tagged = answer
+        tagged.savedSkill = captureOutcome.savedSkill
+        tagged.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
+        return tagged
     }
 
     private static func sendUntraced(
@@ -1570,14 +1577,23 @@ enum AppScopedChatService {
         // #205 (D1): a read DoraX already solved with the model runs again from its saved typed
         // calls, through the same executor and gates, before the model is asked. Any mismatch or
         // failure returns nil and the turn carries on to the model, which repairs the skill.
-        if skillOverride == nil, case .app(let bundleId) = scope,
-            let (skill, filled) = SolvedSkillMatch.match(
+        // H3 #410: selection-scoped skills cross app boundaries — eligible() merges the bundle's
+        // own skills with any selection-type skills whose type matches the current attachments.
+        if skillOverride == nil, case .app(let bundleId) = scope {
+            let selContext = SlotDerivationContext(
+                selectedText: nil,
+                selectedFilePaths: attachments.map(\.path),
+                appName: appName)
+            let eligibleSkills = await SolvedSkillStore.shared.allEligible(
+                forBundle: bundleId, context: selContext)
+            if let (skill, filled) = SolvedSkillMatch.match(
                 query: query, bundleId: bundleId,
-                skills: SolvedSkillStore.shared.all(forBundle: bundleId)),
-            let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
-        {
-            log.notice("stage: saved skill")
-            return answer
+                skills: eligibleSkills, context: selContext),
+               let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
+            {
+                log.notice("stage: saved skill")
+                return answer
+            }
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from
@@ -2195,8 +2211,10 @@ enum AppScopedChatService {
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
         log.notice("stage: live apple data")
+        let scopedMailBundleId: String? = { if case .app(let id) = scope { return id }; return nil }()
         var liveAppleData = await withTimeout(seconds: 8, fallback: "") {
-            await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+            await AppleLiveDataContext.appleAppsAndWeatherContext(
+                for: query, scopeBundleId: scopedMailBundleId)
         }
         // A provider with no tools cannot ask for the dictionary read that holds a value the
         // live facts lack (volume, repeat), and answered from the window title instead.

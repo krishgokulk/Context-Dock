@@ -292,6 +292,18 @@ final class CornerDockController: NSObject {
             }
         }
 
+        // An app coming forward is the Pet's one chance to brief (#343), whether or not the
+        // dock is showing: the line is waiting in the strip when it next opens.
+        ContextDockEnvironment.shared.frontmostAppUpdates
+            .sink { [weak self] appInfo in
+                Task { @MainActor in
+                    await AppPetArrivalBriefing.shared.appCameForward(
+                        bundleID: appInfo.bundleID,
+                        isUserTyping: !(self?.prompt.query.isEmpty ?? true))
+                }
+            }
+            .store(in: &sinks)
+
         ContextDockEnvironment.shared.frontmostAppUpdates
             .sink { [weak self] appInfo in
                 Task { @MainActor in
@@ -939,6 +951,10 @@ final class CornerDockController: NSObject {
                 isAutoHidden = false
                 self.panel?.alphaValue = 1
                 self.panel?.ignoresMouseEvents = false
+                // And where it shows: the slide left the frame below the screen edge, and
+                // nothing slides it back once `isAutoHidden` is already false — the next
+                // summon reported an open field that was drawn off screen.
+                self.panel?.setFrameOrigin(shownPanelOrigin)
             }
             pointerVisitedDock = false
             return

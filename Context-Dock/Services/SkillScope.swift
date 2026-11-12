@@ -85,18 +85,59 @@ extension DoraXSurface {
     }
 }
 
+/// The file or content type a selection-scoped skill applies to (H3 #410).
+///
+/// Stored as the raw value in `AdapterSkill.selectionType` and `SolvedSkill.selectionType`.
+/// Empty string / nil means "not selection-scoped". A new case here is a new raw-value string,
+/// so old stores that lack the field still decode fine (they fall through to .empty / nil).
+enum SkillSelectionType: String, Codable, CaseIterable, Sendable {
+    /// Any plain-text selection with no attached file path.
+    case text
+    /// A PDF file.
+    case pdf
+    /// An image file (PNG, JPEG, GIF, HEIC, WebP, TIFF, BMP).
+    case image
+    /// Any file, regardless of type.
+    case file
+
+    /// True when the derivation context satisfies this selection type.
+    func matches(context: SlotDerivationContext) -> Bool {
+        switch self {
+        case .text:
+            return context.selectedText != nil && context.selectedFilePaths.isEmpty
+        case .file:
+            return !context.selectedFilePaths.isEmpty
+        case .pdf:
+            return context.selectedFilePaths.contains {
+                $0.lowercased().hasSuffix(".pdf")
+            }
+        case .image:
+            let imageExts: Set<String> = [
+                "png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp",
+            ]
+            return context.selectedFilePaths.contains {
+                imageExts.contains(
+                    URL(fileURLWithPath: $0).pathExtension.lowercased())
+            }
+        }
+    }
+}
+
 /// A skill's audience. Derived, never stored twice: the fields on `AdapterSkill` are the
 /// storage, and this reads them so a skill cannot claim two scopes at once.
 enum SkillScope: Equatable, Sendable {
     case app(bundleId: String)
     case surface(DoraXSurface)
     case global
+    /// The skill applies whenever the user's selection or attachment matches this type.
+    case selection(SkillSelectionType)
 
     var label: String {
         switch self {
         case .app(let bundleId): bundleId
         case .surface(let surface): surface.displayName
         case .global: "Everywhere"
+        case .selection(let t): "Selection: \(t.rawValue.capitalized)"
         }
     }
 }
@@ -105,10 +146,11 @@ extension AdapterSkill {
 
     /// The one audience this skill has.
     ///
-    /// A named surface wins over a bundle id: a skill can be written for the clipboard scope
-    /// while carrying the bundle id of whatever app the user exported it from, and the
-    /// surface is the thing they asked for.
+    /// Selection type wins first (H3 #410): a skill may carry a bundle id from the app it was
+    /// exported from, but its selection scope is what the user asked for. Surface wins over
+    /// bundle id for the same reason.
     var scope: SkillScope {
+        if let selType = SkillSelectionType(rawValue: selectionType) { return .selection(selType) }
         if let surface = DoraXSurface(rawValue: surfaceId) { return .surface(surface) }
         let bundleId = adapterBundleId.trimmingCharacters(in: .whitespaces)
         if bundleId.isEmpty || bundleId == doraxGlobalSkillBundleID { return .global }
@@ -116,12 +158,14 @@ extension AdapterSkill {
     }
 
     /// Whether this skill steers the given surface. Global skills steer every surface; an
-    /// app skill steers none of them — it belongs to a scoped chat about that app.
+    /// app skill or a selection-scoped skill steers none — the latter applies to any app
+    /// whose selection matches, not to a surface's prompt.
     func steers(_ surface: DoraXSurface) -> Bool {
         switch scope {
         case .surface(let own): own == surface
         case .global: true
         case .app: false
+        case .selection: false
         }
     }
 }

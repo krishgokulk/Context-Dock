@@ -167,26 +167,42 @@ struct CornerGeneralChatTests {
     }
 
     @Test func snapshotUsesTheModelsLiveState() {
+        // The app comes from the test, not the Mac (see the slash-pick test below).
+        let adapter = AppAdapter(
+            id: "test.zqterminal", appName: "Zqterminal", bundleId: "test.zqterminal",
+            icon: "app", actions: [])
+        AppAdapterManager.shared.adapters.append(adapter)
+        defer { AppAdapterManager.shared.removeInMemoryAdapter(bundleId: adapter.bundleId) }
+
         let model = GeneralChatWindowModel()
-        model.input = "/terminal"
+        model.input = "/zqterm"
         model.attachments = [URL(fileURLWithPath: "/tmp/log.txt")]
 
         let snapshot = CornerGeneralChatSnapshot(model: model)
 
-        #expect(snapshot.draft == "/terminal")
+        #expect(snapshot.draft == "/zqterm")
         #expect(snapshot.attachmentNames == ["log.txt"])
-        #expect(snapshot.slashApps.first?.name == "Terminal")
+        #expect(snapshot.slashApps.first?.name == "Zqterminal")
     }
 
     @Test func pickingSlashAppScopesWithoutSendingText() {
+        // The app comes from the test, not the Mac: an adapter-configured app is in the
+        // directory the "/" picker reads, so this does not depend on which apps are
+        // installed or running where the suite runs.
+        let adapter = AppAdapter(
+            id: "test.zqmessenger", appName: "Zqmessenger", bundleId: "test.zqmessenger",
+            icon: "app", actions: [])
+        AppAdapterManager.shared.adapters.append(adapter)
+        defer { AppAdapterManager.shared.removeInMemoryAdapter(bundleId: adapter.bundleId) }
+
         let model = GeneralChatWindowModel()
-        model.input = "/message"
+        model.input = "/zqmess"
 
         let picked = CornerGeneralChatSnapshot.pickLeadingSlashApp(in: model)
 
         #expect(picked)
         #expect(model.input.isEmpty)
-        #expect(model.scopeAppNames.contains("Messages"))
-        #expect(!model.messages.contains { $0.content == "/message" })
+        #expect(model.scopeAppNames.contains("Zqmessenger"))
+        #expect(!model.messages.contains { $0.content == "/zqmess" })
     }
 }

@@ -84,7 +84,7 @@ enum ReadOnlyDataRouter {
             return .contacts
         }
         let map: [(ReadOnlyDataDomain, [String])] = [
-            (.messages, ["message", "imessage", "text from", "texts", "unread text"]),
+            (.messages, ["message", "imessage", "text from", "text me", "texted me", "texts", "unread text"]),
             (.contacts, ["contact", "phone number", "email address of"]),
             (.mail, ["email", "mail", "inbox"]),
             (.calendar, ["calendar", "event", "meeting", "schedule", "appointment"]),

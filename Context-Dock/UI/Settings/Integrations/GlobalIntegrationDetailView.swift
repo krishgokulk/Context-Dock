@@ -13,6 +13,7 @@ struct GlobalIntegrationDetailView: View {
     @ObservedObject private var commandsRegistry = SystemCommandsRegistryObserver.shared
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    @ObservedObject private var solvedSkillStore = SolvedSkillStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -248,11 +249,79 @@ struct GlobalIntegrationDetailView: View {
                 }
 
                 mcpNote
+                globalMadeByDoraXSection
             }
             .frame(maxWidth: 760, alignment: .leading)
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var globalMadeByDoraXSection: some View {
+        // Global learned skills are those with no bundle id (cross-app) plus selection-scoped
+        // skills (H3 #410), which also apply across apps whenever the selection type matches.
+        let learnedSkills = solvedSkillStore.skills.filter {
+            $0.bundleId.isEmpty || $0.selectionType != nil
+        }
+        if !learnedSkills.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Made by DoraX · \(learnedSkills.count)")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Read skills DoraX learned from your cross-app usage.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(Array(learnedSkills.enumerated()), id: \.element.id) { index, skill in
+                        if index > 0 { Divider() }
+                        HStack(spacing: 10) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.teal)
+                                .frame(width: 22)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(skill.queryTemplate)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text("\(skill.runCount) run\(skill.runCount == 1 ? "" : "s")")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                    if skill.runCount > 0 {
+                                        Text("·")
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.secondary)
+                                        let rate = Int(Double(skill.successCount) / Double(skill.runCount) * 100)
+                                        Text("\(rate)% success")
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Button(role: .destructive) {
+                                solvedSkillStore.delete(skill.id)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Delete this learned skill")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor)))
+            }
+        }
     }
 
     private func globalCLISubtitle(_ package: TerminalPackage) -> String {

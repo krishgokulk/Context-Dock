@@ -452,6 +452,10 @@ struct AIChatMessage: Identifiable, Equatable {
     /// One row per thing the turn ran, recorded where it executed. Not persisted: like
     /// `trace`, it describes the turn that produced the answer.
     var activity: [ActivityStep] = []
+    /// Auto-saved read skill this turn produced. Surface shows "Saved as a skill · Undo".
+    var savedSkill: SolvedSkill? = nil
+    /// Write-turn skill offer waiting for user confirmation. Surface shows "Save as a skill?".
+    var pendingWriteSkillOffer: SolvedSkill? = nil
 
     /// True when the turn that produced this message executed something: a recorded step, a
     /// receipt, or a tool chip other than the routing lookup (which is only a search).
@@ -726,6 +730,7 @@ struct AIChatMessageView: View {
     /// Detail mode for live answer rendering: Summary / Normal / Verbose (#331).
     var initialDetailMode: LivePanelDetailMode = .normal
     @State private var detailMode: LivePanelDetailMode = .normal
+    @State private var isHovered = false
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
@@ -1743,6 +1748,12 @@ struct AIChatMessageView: View {
                 if !message.evidenceReceipts.isEmpty {
                     evidenceReceiptView
                 }
+                if let skill = message.savedSkill {
+                    SavedSkillRow(skill: skill)
+                }
+                if let offer = message.pendingWriteSkillOffer {
+                    WriteSkillOfferRow(skill: offer)
+                }
                 subjectiveEvaluationView
                 // Detect extension proposal in structuredData
                 if let sd = message.structuredData, message.role == .assistant,
@@ -1792,7 +1803,7 @@ struct AIChatMessageView: View {
                         }
                     }
                     .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
 
                 // Files the finished answer named, as cards — every surface, every provider.
@@ -1844,45 +1855,51 @@ struct AIChatMessageView: View {
                 }
 
                 if message.role == .assistant, !message.isError, !isStreaming {
-                    HStack(spacing: 6) {
-                        if let mode = message.activeMode {
-                            HStack(spacing: 4) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 8, weight: .bold))
-                                Text(message.modeProvenance ?? mode)
-                                    .font(.system(size: 9.5, weight: .medium))
-                            }
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2.5)
-                            .background(Color.secondary.opacity(0.1), in: Capsule())
-                            .help("Turn executed in \(message.modeProvenance ?? mode) mode")
-                        }
-
-                        if let onBranchSideThread {
-                            Button {
-                                onBranchSideThread(message)
-                            } label: {
+                    if isHovered || detailMode != .normal {
+                        HStack(spacing: 6) {
+                            if let mode = message.activeMode {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "arrow.triangle.branch")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                    Text("Side thread")
-                                        .font(.system(size: 10, weight: .medium))
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text(message.modeProvenance ?? mode)
+                                        .font(.system(size: 9.5, weight: .medium))
                                 }
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2.5)
-                                .background(Color.primary.opacity(0.06), in: Capsule())
+                                .background(Color.secondary.opacity(0.1), in: Capsule())
+                                .help("Turn executed in \(message.modeProvenance ?? mode) mode")
                             }
-                            .buttonStyle(.plain)
-                            .help("Branch a side question from this turn without polluting main thread")
+
+                            if let onBranchSideThread {
+                                Button {
+                                    onBranchSideThread(message)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.triangle.branch")
+                                            .font(.system(size: 9.5, weight: .semibold))
+                                        Text("Side thread")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                    }
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2.5)
+                                    .background(Color.primary.opacity(0.06), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Branch a side question from this turn without polluting main thread")
+                            }
+
+                            Spacer(minLength: 4)
+
+                            LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
-
-                        Spacer(minLength: 4)
-
-                        LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                        .padding(.top, 2)
+                        .transition(.opacity)
                     }
-                    .padding(.top, 2)
                 } else if let mode = message.activeMode {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
@@ -1951,6 +1968,12 @@ struct AIChatMessageView: View {
             // `.assistant` received this spacer, so `.tool` expanded across the row and its
             // compact success bubble appeared centred.
             if message.role != .user { Spacer(minLength: 52) }
+        }
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
         }
         .task(id: turnFilesSource) {
             guard let source = turnFilesSource else {
@@ -2865,6 +2888,67 @@ struct CodeBlockView: View {
             return [.appContext(appName)]
         }
         return [.always]
+    }
+}
+
+// MARK: - Saved Skill Rows
+
+private struct SavedSkillRow: View {
+    let skill: SolvedSkill
+    @State private var dismissed = false
+
+    var body: some View {
+        if !dismissed {
+            HStack(spacing: 4) {
+                Text("Saved as a skill: \(skill.queryTemplate)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+                Text("·")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Button("Undo") {
+                    SolvedSkillStore.shared.delete(skill.id)
+                    dismissed = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+private struct WriteSkillOfferRow: View {
+    let skill: SolvedSkill
+    @State private var answered = false
+
+    var body: some View {
+        if !answered {
+            HStack(spacing: 8) {
+                Text("Save as a skill?")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Button("Save") {
+                    SolvedSkillStore.shared.save(skill)
+                    answered = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                Button("No") {
+                    answered = true
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+        }
     }
 }
 

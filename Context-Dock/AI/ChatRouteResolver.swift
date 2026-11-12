@@ -286,6 +286,7 @@ enum ChatRouteResolver {
         let actionVerbs = mutatingVerbs + [
             "open", "launch", "start", "stop", "show", "list", "export", "copy", "paste",
             "refresh", "reload", "search", "find", "jump", "switch", "toggle",
+            "send", "compose", "draft", "reply",
             // Window verbs. Their absence is why "minimize safari" was not treated as a
             // command at all: with no verb matched the turn never resolved a route, so the
             // menu item that does exactly this was never looked for. They are unambiguous
@@ -298,6 +299,9 @@ enum ChatRouteResolver {
             "turn on", "turn off", "switch on", "switch off", "enable", "disable",
             "uncheck", "untick", "click", "press",
         ]
+        if lowered.hasPrefix("text ") || lowered.hasPrefix("message ") {
+            return true
+        }
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }
 
@@ -327,11 +331,22 @@ enum ChatRouteResolver {
     }
 
     /// True when the text shares a word with the request.
+    ///
+    /// A glue word is not a shared word. Asked "any mails from uel?", Mail's "Read an email's
+    /// full body (the latest one, or by id from mail.recent)" matched on "from" alone and was
+    /// run: the newest message was read and reported as "not from UEL".
     nonisolated static func termsMatch(_ haystack: String, terms: Set<String>) -> Bool {
         let words = Set(
             haystack.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
-        return !words.isDisjoint(with: terms)
+        return !words.isDisjoint(with: terms.subtracting(glueWords))
     }
+
+    /// Words that carry no intent and are everywhere: "and" is what let "Open and Close
+    /// Window" clear the bar for "…and open it".
+    nonisolated static let glueWords: Set<String> = [
+        "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
+        "me", "my", "this", "that", "then", "please", "from",
+    ]
 
     /// A stricter test for commands that take the screen.
     ///
@@ -342,12 +357,9 @@ enum ChatRouteResolver {
     /// must be words the user said — short commands ("Open", "New Folder") still match
     /// on one or two, while a four-word command needs real overlap.
     nonisolated static func commandStronglyMatches(_ command: String, terms: Set<String>) -> Bool {
-        // Glue words carry no intent and are everywhere: "and" is what let "Open and
-        // Close Window" clear the bar for "…and open it".
-        let glue: Set<String> = [
-            "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
-            "me", "my", "this", "that", "then", "please",
-        ]
+        // "from" stays a counted word here: dropping it would let one shared word drive
+        // "Remove from Sidebar" or "Import from File".
+        let glue = glueWords.subtracting(["from"])
         let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
             .filter { !glue.contains($0) }

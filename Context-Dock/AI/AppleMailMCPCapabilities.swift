@@ -86,15 +86,12 @@ enum AppleMailMCPCapabilities {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
                 }
                 let query = request.input["query"] ?? ""
-                var sender = request.input["sender"] ?? ""
-                var subject = request.input["subject"] ?? ""
+                let filters = await AppleLiveDataContext.mailSearchFilters(
+                    query: query, sender: request.input["sender"] ?? "",
+                    subject: request.input["subject"] ?? "", day: request.input["day"] ?? "")
+                let (sender, subject, day) = (filters.sender, filters.subject, filters.day)
                 let unreadOnly = (request.input["unreadOnly"] ?? "").lowercased() == "true"
-                let day = request.input["day"] ?? ""
                 let limit = max(1, min(Int(request.input["limit"] ?? "20") ?? 20, 50))
-
-                if !query.isEmpty && sender.isEmpty && subject.isEmpty {
-                    subject = query
-                }
 
                 // A search with no filter at all is mail.recent wearing a different name, and
                 // scanning the mailbox to say so is slow enough for the user to notice.
@@ -105,6 +102,7 @@ enum AppleMailMCPCapabilities {
                     DispatchQueue.global(qos: .userInitiated).async {
                         continuation.resume(returning: MailAutomation.mailboxSnapshot(
                             senderContains: sender, subjectContains: subject,
+                            anyContains: filters.any,
                             unreadOnly: unreadOnly, relativeDay: day, limit: limit))
                     }
                 }

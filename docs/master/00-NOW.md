@@ -10,31 +10,145 @@
 
 ## In progress
 
-**Issue #204: P10: Retire the Mail Question pre-model shortcut into the ladder:**
-- Branch `claude/issue-204-retire-mail-question` (PR #403, stacked on PR #402 `claude/issue-204-retire-menu-command`).
+**#410 H3** — selection-type scope: stored field + persistence migration for `AdapterSkill` and `SolvedSkill` (branch `claude/skills-h3-selection-type-scope`, 2026-11-12).
+
+## Queued (next)
+
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
+- **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
+- Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
+
+## Done (most recent first)
+
+**#409 H2: learned skills — job key, conflict order, staleness (PR #434):**
+- `AI/LearnedSkillJob.swift`: job key = sorted non-slot words + slot names; conflict order user/pack › solved › recipe; staleness on app-version change or two consecutive failures; relearn on next success. Ladder rung 0 names the matching skill. Squash-merged 2026-11-12.
+
+**#408 H1c: saved-skill turn UX + "Made by DoraX" in Settings (PR #431):**
+- A read turn that saves a skill shows "Saved as a skill: … · Undo"; a write turn offers "Save as a skill?".
+- Settings › Extensions › Apps › the app (and the Global tab) lists learned skills under "Made by DoraX" with run count, success rate and delete.
+- Hand-checked in the Mail App Chat (Saved row visible); merged 2026-11-12.
+
+**#407 follow-up: H1b replay fixes (PR #429):**
+- Fixed the two Codex P2 gaps from PR #428, plus a third found in the hand check.
+- `AgentToolRegistry.noteForSolvedSkill` records external `run_mcp_tool` calls before the plumbing guard.
+- `SolvedSkillMatch.run` routes by call kind: capability, `run_menu_command` tool, or approval-gated external MCP read.
+- The Corner (`DockCore+AIChat`) now replays saved skills before the model stage; it captured them and never tried them.
+- Hand-checked in the Corner and the ⌥⌥ launcher: Finder menu skill and Mail `mail.search` skill both answer with "Used saved skill (no model)". External MCP replay is covered by unit tests only.
+- Replies polished in PR #430: a replay returns its result rows (cards in the Corner and the chat window) and answers with a short titled list of those records; a Mail listing is laid out as subject / sender · date · unread. Hand-checked in the bottom dock for Finder, Mail and Notes; the ⌥⌥ launcher was not.
+- Not done: no Mail result card (belongs to Rich Cards, #418). A conversation reopened after switching apps is restored as text only, without cards or chips, on model turns too.
+
+**#407: Task H1b — Solved skills for menu / connector / MCP calls (PR #428, merged; follow-ups fixed in PR #429):**
+- Completed on branch `claude/issue-407-solved-skills-connectors` (PR #428, commit `de96209f`).
+- Recorded `run_menu_command` calls (`isReadOnly: true`, AX success as verification) and external `run_mcp_tool` calls (`server.tool` key, read-only classified via `MCPToolSafety.isClearlyReadOnly`).
+- Relaxed `!derived.slots.isEmpty` guard in `SolvedSkillCapture.build` for menu-command-only turns (`isMenuCommandOnly`).
+- Added `MenuCommandSkillCaptureTests` and `ExternalMCPSkillCaptureTests` in `MenuConnectorSkillCaptureTests.swift`.
+- **Follow-up fixes owed (Codex review):** (1) `SolvedSkillMatch.run` dispatches `run_menu_command` to `executeWithApproval`, which throws `unknownCapability("run_menu_command")` at runtime because `run_menu_command` is an agent tool, not in `CapabilityRegistry`; (2) `AgentToolRegistry.noteForSolvedSkill` guards `!plumbing.contains(name)` (which includes `"run_mcp_tool"`) before the external `run_mcp_tool` branch.
+
+**#406: Task H1a — Learned recipes from AI scripts (rung 2) + recorder safety:**
+- Completed on branch `claude/learned-recipes-ai-scripts-38e66e` (PR #427, commit `acfd95e1`).
+- Implemented §8 rules 1-4 of `docs/superpowers/specs/2026-11-09-agent-harness-model.md`:
+  - Added `AIScriptSkillRecorder`: Rule 1 (verify-discard on failure), Rule 2 (untrusted-turn guard discards if web/email content read), Rule 3 (templated naming via H0 slot deriver, leftover entities block save), Rule 4 (reads auto-save, writes queue offer in memory).
+  - Updated `ComputerUseSkillRecorder`: added `startTurn(userQuery:)`, `markUntrusted(bundleID:)`, and Rule 3 templated naming.
+  - Hooked into `DockCore+AIChat.swift`: checks command outputs and final response for fences, classifies commands via `TerminalCommandClassifier`, and records non-verification shell commands.
+  - Added 10 tests across `AIScriptSkillRecorderTests` and `ComputerUseSkillRecorderTests` (3,379 total passing tests).
+- Squash-merged into `general-chat-agent`.
+
+**#405: Task H0 — General slot deriver for Agent Harness Model:**
+- Completed on branch `claude/issue-405-agent-harness-deriver-961df4` (PR #426, commit `fa28deaf`).
+- Implemented §8 rule 3 of `docs/superpowers/specs/2026-11-09-agent-harness-model.md`:
+  - Added `SlotDerivationContext` carrying `selectedText`, `selectedFilePaths`, `appName`.
+  - Context slots derived first: `{file}` (single-file ref words "this"/"it" + file basename), `{files}` (multi-file "these"/"them"), `{selection}` (text, when no file slot), `{app}` (app name word).
+  - Word slots second: `{day}` everywhere; `{sender}` scoped to Mail/Messages only (`com.apple.mail`, `com.apple.MobileSMS`), preventing product names in Finder from being treated as senders ("convert this to Word" ≠ `{sender}`).
+  - Leftover-value check: flags path literals, email addresses, and non-leading proper nouns not covered by slots or route words to prevent hardcoding literals.
+  - `SolvedSkillMatch.match`: accepts turn context and forwards to `derive`.
+- Added 15 unit tests in `SlotDeriverH0Tests` covering all H0 derivation and leftover rules (3,369 total passing tests).
+- Squash-merged into `general-chat-agent`.
+
+**#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — PR #425, merged:**
+- Branch `claude/issue-204-retire-mailbox-search-f9190a` (PR #425, commit `99fe36cd`).
+
+**Issue #204: P10: Retire the Messages pre-model shortcut into the ladder — PR #404, merged:**
+- Branch `claude/issue-204-retire-messages` (PR #404, commit `d02d94ea`).
+- EGM specification: `docs/superpowers/specs/2026-11-09-issue-204-retire-messages-shortcut.md` (Approved, 0 blocking gaps).
+- Retired pre-model `messagesScopedSemanticIntent` (`DockShortcut.messages`), `CrossAppNLHandler.parseMessagesScopedIntent`, and `makeMessagesSemanticIntentPill` from `DockCore+AIChat.swift`, `DockCore+ContextualActions.swift`, `CrossAppNLHandler.swift`, and `DockShortcut.swift`.
+- Added `DockCore.shouldSkipCrossAppMessagesRouting` so `CrossAppNLHandler` does not hijack in-scope Messages compose/send turns without a cross-app selection payload.
+- Extended `AgentSourceAuthority.decide`, `ReadOnlyDataRouter.domain(for:)`, `FrontmostAppTaskPlan`, `ChatRouteResolver.isActionRequest`, `GeneralAIActionResolver`, and `AppAdapterCapabilityCatalog.messagesCandidate` so Messages questions, searches, and gated compose/send requests route through the shared ladder (`ScopedRoutePolicy` + `CapabilityIndex` + `AppleMessagesMCPCapabilities`).
+- Added Messages chat phrasebook rows and `MessagesShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `DockShortcutTests.swift` and `00-DOCK-PARITY-INVENTORY.md` (row D19).
+
+**#423: Wire bounded proactive Pet behavior into the app (Finder arrival briefing):**
+- Completed on branch `claude/app-pets-bounded-proactive-60b69f` (PR #423, commit `1f8d9e6a`).
+- Added `AppPetArrivalBriefing`: reads newly added files in `~/Downloads` (last 24 hours) upon Finder arrival.
+- Added per-app switch under Settings › Apps › Finder › Agent (off by default).
+- Added `Mute for a day` (24h cooldown) and `Dismiss` actions on the prompt strip suggestion row and detached Pet bubble context menu.
+- Added daily headless monitoring scan budget (24 scans, 5s limit, backoff after 3 consecutive no-progress scans).
+- Added 7 deterministic unit tests in `AppPetArrivalBriefingTests` (3,326 total tests passing).
+- Verified live on macOS with visual screenshot in `docs/screenshots/issue-343-bounded-proactive/settings_window.png`.
+- Squash-merged into `general-chat-agent`.
+
+**#424: Clean up stale #333 queue entry:**
+- Completed on branch `claude/issue-333-ui-ux-queue-61d8f9` (PR #424, commit `4bfb517a`).
+- Closed stale queue entry in `00-NOW.md` for Issue #333 (Side Thread), which had landed in PR #376 (`3c29998c`).
+- Squash-merged into `general-chat-agent`.
+
+**#422: Provider / context usage chip (meter per turn):**
+- Completed on branch `claude/issue-335-context-chip` (PR #422, commit `287bc7a5`).
+- Added `ProviderContextUsageStore` tracking per-scope turn context occupancy against `ProviderContextBudget.maxContextTokens`.
+- Replaced rather than summed prompt tokens across multi-round tool loops to prevent artificial context inflation. Resets on turn start and scope changes.
+- Added compact, shared-shell `ProviderContextChip` displaying provider icon, compact model name, miniature meter track, and context percentage (`—%` when unknown), with a popup menu to switch the active provider.
+- Integrated into `AppChatPromptPill`, `CornerGeneralChatView`, `AppChatListCard`, and `CornerLivePanel`.
+- Added 7 offline unit tests in `Context-DockTests/ProviderContextUsageChipTests.swift`.
+- Visual verification and screenshots saved in `docs/screenshots/issue-335-context-chip/`.
+- Squash-merged into `general-chat-agent`.
+
+**#421: Unify General Chat into Siri-style seamless liquid-glass UI:**
+- Completed on branch `fix/general-chat-siri-ui` (PR #421).
+- Unified board transcript and composer into one continuous liquid-glass container (`cornerRadius: 26`) with a specular gradient rim border.
+- Fixed centred results layout bug: expanded transcript to full width (`maxWidth: .infinity`) when live panel is closed.
+- Refactored corner composer to Siri 3-piece layout: frosted circular `+` button on left, recessed capsule input in center, and circular action/send button on right.
+- De-cluttered message bubbles: hid repeating per-message toolbars (`[Side thread] [Summary | Normal | Verbose]`) behind hover (`.onHover`).
+- Removed middle vertical scrollbar via `.scrollIndicators(.never)` and added `.defaultScrollAnchor(.bottom)` with smooth animated scroll transitions.
+- Squash-merged into `general-chat-agent`.
+
+**#420: Fix the red test suite on general-chat-agent (33 failures to 3):**
+- Completed on branch `claude/fix-red-test-suite` (PR #420, commit `e5704315`).
+- Fixed 33 test failures and test host crashes across CornerSafariTabsTests, CornerAppPinsTests, CornerBoardLayoutTests, AppScopeCardTests, CornerDockPhaseTests, CornerGeneralChatTests, DockKeyRulesTests, and DockShellWidthTests.
+- Restored intent + lane rule in `FrontmostAppTaskPlan.swift` for read-only questions.
+- Squash-merged into `general-chat-agent`.
+
+**#417: Fit header pin icon and composer in compact app pet chat:**
+- Completed on branch `fix/app-pet-header-pin-and-composer-fit` (PR #417, commit `cb6ac5db`).
+- Fixed composer input field width and trailing padding inside 18pt rounded corner pill.
+- Prevented `appChip` title from collapsing to 0 width with `.layoutPriority(1)` and `.fixedSize(horizontal: true, vertical: false)`.
+- Synchronized transcript and live panel widths via dynamic `transcriptColumnWidth` and `shellWidth`.
+- Pinned header action buttons strip to 23x23 glyphs and 2pt spacing, keeping the Pin icon fully visible.
+- Prevented detail mode picker pills ("Summary", "Normal", "Verbose") from wrapping into multiple lines.
+- Squash-merged into `general-chat-agent`.
+
+**#204 (part): Retire the Mailbox Search pre-model shortcut into the ladder — draft PR #425, hand check owed:**
+- Branch `claude/issue-204-retire-mailbox-search-f9190a` (draft PR #425, base `general-chat-agent`).
+- EGM specification: `docs/superpowers/specs/2026-11-10-issue-204-retire-mailbox-search-shortcut.md`.
+- Deleted the `shouldExecuteMailMailboxSearch` block (`DockShortcut.mailboxSearch`) from `handleL2Query`, the `MailboxSearchCommand` parser and `mailSearchDisplayLabel`. "search mail from SBI" now reaches the model as a data-lane Mail read (`mail.search` / `search_mail`).
+- Two shared rules: `ScopedRecordRead.lookupVerbs` ("look for" / "look up" / "lookup" are record reads in every record-set app) and `CrossAppNLHandler.searchesScopedApp` (a search of the app the chat is scoped to is not cross-app).
+- Follow-up after the hand check: a provider without tools answered "a full Mail search wasn't readable". Mail searches are now prefetched into the prompt (`AppleLiveDataContext.mailSearchIntent`), a bare `query` matches sender or subject, a whole sentence in `query` is parsed, and glue words such as "from" no longer match a route (`ChatRouteResolver.glueWords`). Tests: `MailSearchGroundingTests`.
+- Still open under #204: App Find claims the first find/search sentence of a not-yet-active chat (next retirement PR). PR #404 (Messages) touches neighbouring lines; whichever merges second rebases.
+
+**#204 (part): Retire the Mail Question pre-model shortcut into the ladder — PR #403, merged:**
+- Branch `claude/issue-204-retire-mail-question` (PR #403, merged into `general-chat-agent` as `3595f89`).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-mail-question-shortcut.md` (Approved, 0 blocking gaps).
 - Retired pre-model `answerAttachedMailQuestion` (`DockShortcut.mailQuestion`) and orphaned `MailQuestionRouter.needsAttachedMailContext` / `isMailContextAttached` gate from `DockCore+AIChat.swift` (`handleL2Query`), `DockCore+MailFindActions.swift`, `DockCore+FinderAttachment.swift`, and `DockCore.swift`.
 - Replaced `MailQuestionRouter.needsAttachedMailContext` with `MailQuestionRouter.isMailboxQuestion`, wired into `AgentSourceAuthority.decide` for `com.apple.mail` scope alongside `"yesterday"` / `"did i"` freshness signals, and added `AppleLiveDataContext.wantsMailContext`.
 - Added Mail chat phrasebook rows and `MailQuestionShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `MailQuestionRouterTests.swift`, `DockShortcutTests.swift`, and `00-DOCK-PARITY-INVENTORY.md` (row D18).
-- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MailQuestionShortcutRetirementTests`, `MailQuestionRouterTests`, `DockShortcutTests`, `MailboxSearchCommandTests` — 37/37 pass) green.
+- Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MailQuestionShortcutRetirementTests`, `MailQuestionRouterTests`, `DockShortcutTests`, `MailboxSearchCommandTests` — 37/37 pass) green. (`MailboxSearchCommandTests` was later removed with the shortcut, PR #425.)
 
-**Issue #204: P10: Retire the Menu Command pre-model shortcut into the ladder:**
-- Branch `claude/issue-204-retire-menu-command` (PR #402, ready for review).
+**#204 (part): Retire the Menu Command pre-model shortcut into the ladder — PR #402, merged:**
+- Branch `claude/issue-204-retire-menu-command` (PR #402, merged into `general-chat-agent` as `4b98162`).
 - EGM specification: `docs/superpowers/specs/2026-11-08-issue-204-retire-menu-command-shortcut.md` (Approved, 0 blocking gaps).
 - Retired pre-model `MenuIntentRouter` (`DockShortcut.menuCommand`) block from `DockCore+AIChat.swift` (`handleL2Query`) and removed `skipMenuRouter: Bool` recursion parameter.
 - Deleted dead `AIMenuProposal` / `pendingAIMenuProposal` / `pendingAIProposal` pill-sheet state across `DockModels.swift`, `FeatureViewModels.swift`, `DockCore+StateBridges.swift`, and `DockCore+ContextualActions.swift`.
 - Removed `MenuIntentRouter` class from `MenuIntentRouter.swift` while preserving `MenuPick` and `MenuPickRule`.
 - Added phrasebook rows and `MenuCommandShortcutRetirementTests` in `Context-DockTests/RoutingPhrasebookTests.swift`; updated `DockShortcutTests.swift` and `00-DOCK-PARITY-INVENTORY.md` (row D17).
 - Gate `./scripts/check.sh` and targeted test suites (`RoutingPhrasebookTests`, `MenuCommandShortcutRetirementTests`, `DockShortcutTests`, `MenuPickRuleTests` — 39/39 pass) green.
-
-## Queued (next)
-
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (one per PR)
-- Labs (E9–E16 App Pets memory/orchestration) or UI/UX queue (e.g., #343 App Pets bounded proactive nudge)
-- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
-- **#398** App Intents / Siri AI: expose Dock actions (OpenAppPet, SwitchScope, SummariseContext) — Labs / post-1.0, macOS 27.3+
-
-## Done (most recent first)
 
 **#77: Corner tests with no synthetic window or dock dependency:**
 - Completed on branch `claude/issue-77-test-host-corner-decoupling` (PR #401, Issue #77).
@@ -56,6 +170,12 @@
 - Removed dead launcher-open warming in `MenuWarmCacheService.swift`.
 - Added swift-testing unit test suite `Context-DockTests/DockEngineHeadlessTests.swift` (4/4 pass).
 - Check gate `./scripts/check.sh` clean pass.
+
+**UI bug: Live sidepanel toggle clipping (PR #400):**
+- Fixed message bubbles being clipped/cut when toggling the live sidepanel in App Pet and General Chat.
+- Root cause: `transcript.frame(maxWidth: .infinity)` let content expand when the panel exited layout, while the outer `clipShape` was still animating to `compactChatWidth`, clipping the right edge mid-transition.
+- Fix: pin transcript to `compactChatWidth` in `AppChatPromptPill.swift` and to `size.width - panelWidth` in `CornerGeneralChatView.swift`.
+- PR #400, squash-merged into `general-chat-agent` (2026-11-08).
 
 **#83: Extract SelectionActionSource out of DockCore:**
 - Completed on branch `claude/issue-83-selection-action-source` (PR #396, commit `fda8804f`, Issue #83).
@@ -250,8 +370,6 @@
 - Verified Safety HUD lifecycle (`ComputerUseSession.shared.began`), emergency Stop (Esc key monitor), and 30-second stop cooldown.
 - 16/16 tests passing in `Context-DockTests/ComputerUseAcceptance3AppTypesTests.swift`. Clean gate build `./scripts/check.sh` passed.
 
-## Done (most recent first)
-
 **Task #369 Part 2: Expand 5-Tool Engine to Apple Mail & Reminders/Calendar (Apps #4 & #5) + Native MCP Server Dogfooding:**
 - Completed and merged via PR #369 (`2ca630e`).
 - Apple Mail: Headless reads (`mail.unread`, `mail.search` with query support), drafted send (`mail.send`, `send_mail`) with `AICapabilityApprovalCenter` outbound confirmation card, automatic contact resolution (`resolveRecipient`), headless AppleScript dispatch, and verified read-back against Sent mailbox history (`verifySentMail`).
@@ -275,17 +393,13 @@
 - Milestone 5 (Native MCP Server Bridge): Exposed the 5 universal tools (`look`, `do`, `script`, `read_data`, `ask`) over Context-Dock's native MCP server (`context-dock`). External agents and CLIs (e.g. Claude Code) can invoke Mac capabilities natively over standard JSON-RPC HTTP transport (`127.0.0.1:8213/mcp`). Updated registration command and added one-click copy buttons in Settings › AI Providers. Verified by `DoraXMCPCapabilityToolTests`.
 
 **Task #368: Unified Frontmost App Agent & Autonomous Computer Use Escalation (Phases 1-4):**
-- Completed, PR #368 open into `general-chat-agent` awaiting owner review and merge.
+- Completed and merged via PR #368 into `general-chat-agent`.
 - Spec: `docs/superpowers/specs/2026-11-03-unified-frontmost-app-agent-and-computer-use.md`.
 - Phase 1 (Context Assembler Unification): Injects frontmost app's AGENT.md, per-app skills (`SkillScope.app`), and live menu commands snapshot into user-selected AI Provider's turn context. Ambient app discovery for General Chat & App Pet turns; non-blocking fallback to `run_menu_command` and `operate_app`. Verified by `FrontmostAppAgentPhase1Tests` (6/6 pass).
 - Phase 2 (Autonomous Scripting Tool): Sandboxed `run_synthesized_script` capability allowing Claude/Codex to execute on-the-fly AppleScript/JXA with `AICapabilityApprovalCenter` approval gating and `AGENT.md` safety verification; `read_app_dictionary` tool to inspect sdef classes, properties, and commands. Verified by `SynthesizedScriptToolTests` (8/8 pass).
 - Phase 3 (Seamless Computer Use Cascading): Deprecated blocking "Install CLI" cards in favor of autonomous escalation with optional accelerators; enhanced `ComputerUseTargetResolver` with hierarchy/path segment delimiter parsing (`>`, `▸`, `›`, `/`, `|`) and full-path token matching; added `AXUIFocusHelper` for one-shot search field focusing and direct text entry; verified with `ComputerUseEscalationPhase3Tests` (7/7 pass).
 - Phase 4 (End-to-End Verification Across 3-Tier Escalation Ladder): Verified Tier 1 Apple Native App headless / data lane planning and context assembly, Tier 2 Scriptable Third-Party App sdef inspection and synthesized scripting execution, Tier 3 Non-Scriptable UI App fallback escalation to live menu commands and Computer Use, and ambient context isolation across app switches. Verified by `FrontmostAppAgentE2ETests` (4/4 pass).
 - Gate `./scripts/check.sh` clean build passed. Full test suite (25/25 tests) passed.
-
-**Task #205: App agent plan P11 — Curated capabilities / routes for remaining system scopes:**
-- Completed, PR #367 open awaiting owner review and merge.
-- Curated tool catalog, parameter schemas, and route fallback for remaining core macOS system scopes.
 
 **Task #343: App Pets Stage 6 — Bounded proactive behavior (2026-11-02):**
 - Completed and merged (#366).
@@ -468,24 +582,24 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · ~~#208 P13~~ (#312, merged 2026-10-26) · ~~#205 P11~~ (#367 in review) · **#368 Unified Frontmost App Agent & Autonomous Computer Use** (subsumes #204 & #206; eliminates manual tool install requirements and hardcoded keyword routers via 3-tier escalation: Headless → AI Scripting → Computer Use).
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · ~~#200 P6~~ · ~~#201 P7~~ · ~~#202/#203 P8/P9~~ (#309 + #311, merged 2026-10-22) · ~~#208 P13~~ (#312, merged 2026-10-26) · ~~#205 P11~~ (#367, merged) · ~~#368 Unified Frontmost App Agent & Autonomous Computer Use~~ (closed 2026-11-03) · **#204 P10** (retire remaining pre-model shortcuts in `DockCore+AIChat.swift`, one per PR: Notes #314/#315, Menu Command #402, Mail Question #403 merged; remaining shortcuts queued) · **#405–#413 Agent Harness Model (H0–H6)**.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
-2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
-3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
-4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first) · **#397** Foundation Models native image input (after E5)
-5. **#154 E6a → #155 E6b → #156 E7a · #157 E7b**
-6. **#158 E8a → #159 E8b → #160 E8c** (#160 `needs-owner`: which model grades the replays)
+2. ~~#147~~ Drop Shelf becomes an icon at the end of the dock, in every app (UI) — closed 2026-10-04
+3. ~~#165 E1b~~ (closed 2026-10-04) outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
+4. ~~#151 E3~~ Prompt order (closed 2026-11-07) · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first) · **#397** Foundation Models native image input (after E5)
+5. ~~#154 E6a → #155 E6b → #156 E7a · #157 E7b~~ (merged: #383, #389, #390, #391; closed 2026-11-07/08)
+6. ~~#158 E8a → #159 E8b~~ (merged: #392, #393) → #160 E8c: built in #394 with a deterministic heuristic judge; **issue left open** for the owner (is that enough for 1.0, or add a model judge?)
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
-Labs, after 1.0: E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5). **#398** App Intents / Siri AI (macOS 27.3+, opens discoverability via "Hey Siri, open Context-Dock for Xcode" — post-1.0).
+Labs, after 1.0: ~~E9 / E9a~~ (#340 / PR #361), ~~E9b `/mods`~~ (#341 / PR #362), ~~E17 CLI learner~~ (#202 / PR #309), ~~E18 / E19 proactive watch mode~~ (#343 / PR #366); remaining: E10–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model). **#398** App Intents / Siri AI (macOS 27.3+, opens discoverability via "Hey Siri, open Context-Dock for Xcode" — post-1.0).
 
 **#327 owner-verified (2026-10-27, “okay. perfect”):** write a staged implementation plan and split it into issues in
 this order: naming/scope model → conversation promotion/participant consent → three-tier memory →
 `/mods` → detached Pet presentation → proactive Pet behavior. Each stage reuses the existing
 Corner, stores, capability index and shared executor; no second engine or registry.
 Plan written: [`2026-10-27-app-pets-rollout.md`](../superpowers/plans/2026-10-27-app-pets-rollout.md).
-Implementation issues: ~~#338 identity/scope~~ (#356, merged 2026-10-30) → ~~#339 promotion/consent~~ (#360, merged 2026-10-30) → ~~#340 memory~~ (#361, merged 2026-10-30) →
-**#341** `/mods` → **#342** detached presentation → **#343** proactive behavior. #341 is the next stage in the App Pets rollout lane.
+Implementation issues (all 6 stages complete): ~~#338 identity/scope~~ (#356, merged 2026-10-30) → ~~#339 promotion/consent~~ (#360, merged 2026-10-30) → ~~#340 memory~~ (#361, merged 2026-10-30) →
+~~#341 `/mods`~~ (#362, closed 2026-10-31) → ~~#342 detached presentation~~ (#364, closed 2026-11-01) → ~~#343 proactive behavior~~ (#366, merged 2026-11-02).
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
@@ -501,7 +615,7 @@ Also open: cloud sessions must never merge their own PR (#114 merged before revi
 Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30); #148, #163, #164, #170, #174 (2026-10-04); #187 (#184, incl. #175's injection test) (2026-10-06).
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
-## Done
+## Done — earlier log (2026-09 to 2026-10, table)
 
 | Date | Task | PR |
 |---|---|---|
@@ -634,8 +748,14 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-28 | **Pet presentation & expansion lifecycle:** clicking/double-clicking the floating desktop mascot jumps directly to Tier 3 (Expanded Window); action receipt bubbles stay pinned until explicitly closed with ✕; micro-bar ✏️ expands into inline input `[+] [Start new chat] [↑]` without opening a window (spec: `docs/superpowers/specs/2026-10-28-pet-presentation-and-expansion-lifecycle.md`). |
 | 2026-11-05 | **Two-Sided Normalized Adapter Architecture & Settings Consolidation:** Documented in `FRONTMOST_AGENT.md` (§7) and `CAPABILITY_LAYER.md`. DoraX acts as the governor and sandbox between frontmost apps and AI providers (Claude Code / Codex / Gemini), replacing fragmented manual scripts with the 3-Tier Escalation Ladder (built-in/UTCP → synthesized scripting → Computer Use UI automation). Settings UI consolidated via Task #373 (`docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`). |
 | 2026-11-08 | **Apple API opportunities noted (not yet owner-confirmed):** (1) Foundation Models native image input (macOS 26.4+) — `OnDeviceToolBridge` already uses `FoundationModels` but falls back to Vision OCR for images; native multimodal is now available. Filed as **#397**, queued after E5b (#153). (2) Siri AI / App Intents (macOS 27.3 dev preview) — expose OpenAppPet, SwitchScope, SummariseContext as App Intents so Siri AI can invoke them. Filed as **#398**, Labs / post-1.0. Neither is `ready` until the owner labels it so. |
+| 2026-11-09 | **Agent harness model (owner direction, details pending approval):** the AI provider is only the brain; Context-Dock is the harness ("our version of the Claude app"): it builds context from the frontmost app and selection, offers skills by name and a small tool core, runs tools, asks approval, verifies and **learns**. Menu commands stay, with two jobs: knowledge (titles, never pressed to know) and action as rung 3, above Computer Use and below saved skill / direct data / AI-written script, except in the UI lane where the menu goes first. A route that worked is saved as a skill (script, direct call or menu path, not only clicks) and tried first next time, on-device too (learn online, replay offline). Spec: `docs/superpowers/specs/2026-11-09-agent-harness-model.md`. Proposed work H1–H6 is not filed until the owner approves the spec and its §13 questions. |
+| 2026-11-09 | **Agent harness spec approved** ("Confirm, do best that fits our app"): `docs/superpowers/specs/2026-11-09-agent-harness-model.md` rev. 3, Goldfish review 4 = 0 blocking. Owner confirmed: (13.1) read skills auto-save with "Saved as a skill · Undo", write/send/delete skills are offered ("Save as a skill?"), per #205 rule 4; (13.2) a replayed skill is approved like a fresh run, with existing "always allow" honoured and delete/send never standing, per SAFETY.md; (13.5) learned skills are listed in the app's Resources (Global tab for global ones) under "Made by DoraX", replacing #205 rule 6's "Settings › Plugins". (13.3, delegated) the menu browser stays as a power-user view. Filed **#405–#413** (H0–H6); none `ready` until labelled. |
+| 2026-11-09 | **Unified Spotlight-Pet Surface approved** ("Yes make it prefect"): dissolves the modal ⌘ toggle between Global Context and App Pet into a single, context-biased intent bar. Queries simultaneously evaluate frontmost menus (boosted +500), global apps, system commands, files, and clipboard clips. High-confidence commands display inline ghost completion and run instantly on ↵. Natural-language questions apply a -100 penalty to incidental file keyword collisions, boosting [ 🤖 Ask Pet ] and [ 🌐 Search Web ] to the top. Spec: `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`. |
+| 2026-11-09 | **Docs audit cleanup (owner: "do 1–5, delete CONTEXT.md, … do the best thing"):** `CONTEXT.md` and its generator `generate-context.sh` deleted (a June snapshot naming 24 removed files and the retired layer rule). `docs/ENGINEERING_TODO.md` deleted (99% duplicate of `docs/history/ENGINEERING_TODO.md`; TODOs live in #69–#74). `CHANGES.md` (journal stalled 2026-07-21), `FOUND.md`, `PRERELEASE_AUDIT.md`, `ARCHITECTURE_RELEASE.md` moved to `docs/history/`. Kanban Pro's `.github/copilot-instructions.md` and `ORGANOGRAM.md` (auto-generated on project load; swept into git by #371; left for triage on 2026-10-27) untracked and gitignored, so Kanban Pro keeps writing them locally and GitHub Copilot stops reading Kanban rules as repo instructions. `docs/engineering/codebase.md` refreshed against the code; `CLAUDE.md` skills table marks Mac-only skills. |
+| 2026-11-12 | **App Pet composer, Claude-style:** in an App Pet conversation the provider chip moves from the header to a lower row inside the composer — `[App ⌄] [Provider · meter ⌄] … [+]` under the field row — so switching provider is one click where the user types. The header no longer draws it there. Global Context, scopes stepped into from it, the clipboard board and every pre-chat phase keep the single Siri-size field row. Rule: `AppChatComposerToolbar`. General Chat's composer is not changed by this decision. |
 
 ## Open decisions (owner)
 
+- #160 E8c: PR #394 grades replays with a deterministic heuristic judge, not a model. Is that enough for 1.0? (If yes, close #160.)
 - E5: in on-device-only mode, may DoraX *offer* a cloud model when a task is too big, or never mention it? Needed before #152.
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?

@@ -10,7 +10,7 @@ import Foundation
 enum ScopedRecordRead {
     /// Words that ask the app to do something rather than to look something up.
     static let actionWords = [
-        "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
+        "create ", "draft ", "compose ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
         "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
         "quit ", "enable ", "disable ", "export ",
         // Switching a setting or pressing a control. "turn on the spelling option" had none of
@@ -18,6 +18,10 @@ enum ScopedRecordRead {
         "turn on ", "turn off ", "switch on ", "switch off ", "toggle ", "uncheck ", "untick ",
         "click ", "press ",
     ]
+
+    /// Verbs that ask for a look-up. "look for"/"look up" were only understood by Mail's retired
+    /// Mailbox Search shortcut (issue #204); they are the same read in every record-set app.
+    static let lookupVerbs = ["find ", "search ", "list ", "look for ", "look up ", "lookup "]
 
     static func hasExplicitAction(_ query: String) -> Bool {
         let lower = query.lowercased()
@@ -28,7 +32,7 @@ enum ScopedRecordRead {
         let lower = query.lowercased()
         return ReadOnlyDataDomain(scopeBundleId: bundleId) != nil
             && RequestLane.decide(query) == .data
-            && ["find ", "search ", "list "].contains(where: lower.contains)
+            && lookupVerbs.contains(where: lower.contains)
             && !hasExplicitAction(query)
     }
 }
@@ -148,7 +152,7 @@ struct FrontmostAppTaskPlan: Equatable {
         let hasAction = !asksOnly
             && (actionWords.contains(where: lower.contains)
                 || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery)))
-        let hasRead = readWords.contains(where: lower.contains)
+        let hasRead = readsScopeRecords || readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 
         let isBrowser = ScopedAppPromptBuilder.isBrowserBundle(bundleId)
@@ -218,16 +222,13 @@ struct FrontmostAppTaskPlan: Equatable {
         }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
 
-        // Universal App Pet principle: an app-scoped pet is NEVER starved of its app's
-        // control and vision tools by brittle keyword matchers. The model is the brain;
-        // Context-Dock is the safe native body. The safety guards (consent store,
-        // approval cards, emergency stop HUD, destructive denylist) govern execution.
-        if !bundleId.isEmpty {
-            tools.formUnion([
-                "find_menu_command", "run_menu_command", "send_keys", "window_control",
-                "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",
-            ])
-        } else if hasAction {
+        // The UI lane is for action turns only (AGENTS.md: behaviour is decided by intent +
+        // lane, never by scope; #357). 52c7a575 offered these on every app-scoped turn, so a
+        // question such as "how many tabs are open?" was handed run_menu_command again.
+        // operate_app is offered on action turns even when Computer Use is switched off for
+        // this app, because its refusal *is* the offer: it tells the model to ask the user
+        // for permission in one line.
+        if hasAction {
             tools.formUnion([
                 "find_menu_command", "run_menu_command", "send_keys", "window_control",
                 "operate_app", "ax_snapshot", "ax_act", "read_app_dictionary", "run_synthesized_script",

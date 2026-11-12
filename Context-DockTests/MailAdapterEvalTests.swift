@@ -68,24 +68,16 @@ struct MailAdapterEvalTests {
             "mail.createDraft puts text in a composer and must be approved first")
     }
 
-    // MARK: - The promise: no send capability exists
+    // MARK: - The send path exists and always requires approval
 
-    /// The adapter must not grow a send. Drafting is built on `mailto:`, which has no send
-    /// verb, so the capability route cannot send however it is asked — and that property is
-    /// only worth anything while nothing else in the registry can either.
-    ///
-    /// If this fails, someone added a send path: it needs its own approval design, not this
-    /// one, and the honest-reporting rule below stops applying.
-    @Test func noCapabilityCanSendMail() {
-        let sendish = CapabilityRegistry.shared.all.filter { capability in
-            guard capability.appBundleID == Self.bundleId else { return false }
-            let name = capability.id.lowercased()
-            return name.contains("send") || name.contains("reply") || name.contains("forward")
+    /// mail.send has its own approval design (riskLevel .high, full input schema).
+    /// The property worth pinning is not absence — it is that the capability cannot
+    /// run without explicit approval.
+    @Test func sendMailCapabilityRequiresApproval() {
+        guard let cap = CapabilityRegistry.shared.capability(id: "mail.send") else {
+            Issue.record("mail.send is not registered"); return
         }
-        #expect(
-            sendish.isEmpty,
-            "Mail grew a send-shaped capability (\(sendish.map(\.id).joined(separator: ", "))) — "
-        )
+        #expect(cap.riskLevel.requiresApproval, "mail.send must require approval before it runs")
     }
 
     // MARK: - Absence stays a finding

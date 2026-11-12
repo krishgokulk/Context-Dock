@@ -948,12 +948,6 @@ extension DockCore {
     }
 
 
-    func messagesScopedSemanticIntent(for scopedQuery: String) -> CrossAppIntent? {
-        let normalized = scopedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return nil }
-        return CrossAppNLHandler.shared.parseMessagesScopedIntent(normalized)
-    }
-
     func rawDockQuery(matching normalizedQuery: String) -> String {
         let rawQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawQuery.isEmpty,
@@ -1104,51 +1098,6 @@ extension DockCore {
             return nil
         }
         return String(value[captureRange])
-    }
-
-    func makeMessagesSemanticIntentPill(
-        fullQuery: String,
-        rawScopedQuery: String,
-        scopedBundleId: String,
-        scopedAppName: String
-    ) -> DockPill? {
-        guard let intent = messagesScopedSemanticIntent(for: rawScopedQuery),
-            let recipientName = intent.recipientName?.trimmingCharacters(
-                in: .whitespacesAndNewlines),
-            let messageBody = intent.messageBody?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !recipientName.isEmpty,
-            !messageBody.isEmpty
-        else { return nil }
-
-        let rawUserQuery = rawDockQuery(matching: fullQuery)
-        let bodyLabel = messageIntentDisplayText(messageBody, limit: 36)
-        let recipientLabel = messageIntentDisplayText(recipientName, limit: 26)
-
-        var pill = DockPill(
-            id: "messages-intent-send-\(normalizedDockPillText(rawScopedQuery))",
-            name: "Send \"\(bodyLabel)\" to \(recipientLabel)",
-            icon: "message.fill",
-            accentColorName: "green",
-            badge: "Conversation",
-            execute: {
-                self.executeCrossAppIntent(
-                    intent,
-                    userMessage: rawUserQuery,
-                    unresolvedMessage:
-                        "❌ Couldn't resolve that Messages recipient. Try: message send \"hi\" to [name]"
-                )
-            }
-        )
-        pill.sourceBundleId = scopedBundleId
-        pill.sourceAppName = scopedAppName
-        pill.rankingKind = "semanticIntent"
-        pill.trackingIdentifier =
-            "messages-intent:\(normalizedDockPillText(recipientName)):\(normalizedDockPillText(messageBody))"
-        pill.searchTerms = [
-            scopedAppName, "messages", "message", "send", recipientName, messageBody,
-            "conversation",
-        ]
-        return pill
     }
 
     func makeMailSemanticSearchPill(
@@ -2905,7 +2854,9 @@ extension DockCore {
             scopedAppName: scopedAppName,
             scopedSearchQuery: scopedSearchQuery,
             isExplicitAppScope: isExplicitAppScope,
-            isGlobalScope: false
+            isGlobalScope: false,
+            namedByQuery: l2.targetApp == nil
+                && (explicitAppTarget != nil || installedMenuTarget != nil)
         )
     }
 
@@ -3889,15 +3840,6 @@ extension DockCore {
                 isExplicitAppScope: isExplicitAppScope
             )
         }
-        let messagesSemanticIntentPill =
-            scopedBundleId == "com.apple.MobileSMS"
-            ? makeMessagesSemanticIntentPill(
-                fullQuery: q,
-                rawScopedQuery: rawScopedSearchQuery,
-                scopedBundleId: scopedBundleId,
-                scopedAppName: scopedAppName
-            )
-            : nil
         let mailSemanticSearchPill =
             scopedBundleId == "com.apple.mail"
             ? makeMailSemanticSearchPill(
@@ -4204,10 +4146,6 @@ extension DockCore {
 
         if let chatWithAppPill {
             pills.append(chatWithAppPill)
-        }
-
-        if let messagesSemanticIntentPill {
-            pills.append(messagesSemanticIntentPill)
         }
 
         if let mailSemanticSearchPill {

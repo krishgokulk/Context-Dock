@@ -306,8 +306,15 @@ struct AppChatListCard: View {
             if model.finderPathTrail.isEmpty {
                 contextPill(foot)
                 Spacer(minLength: 0)
+                ProviderContextChip(
+                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
+                    compact: true)
             } else {
                 finderPathPills
+                Spacer(minLength: 0)
+                ProviderContextChip(
+                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
+                    compact: true)
             }
             BoardFooter.pill {
                 BoardFooter.action(foot.verb, keys: ["↩"])
@@ -803,11 +810,34 @@ struct AppChatListCard: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: AppChatListMetrics.iconSize)
-            Text(suggestion.title)
-                .font(.system(size: 15, weight: .medium))
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(suggestion.title)
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(1)
+                if let detail = suggestion.detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 4)
+            // A proactive Pet suggestion (#343) is never stuck on screen: dismiss it, or mute
+            // the Pet until tomorrow.
+            if let id = suggestion.proactiveID {
+                Button("Mute for a day", systemImage: "bell.slash") {
+                    AppPetSuggestionCoordinator.shared.dismissSuggestion(id: id, mutePetFor: 86_400)
+                }
+                .help("Mute this Pet's suggestions for a day")
+                Button("Dismiss", systemImage: "xmark") {
+                    AppPetSuggestionCoordinator.shared.dismissSuggestion(id: id)
+                }
+                .help("Dismiss this suggestion")
+            }
         }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
     }

@@ -57,14 +57,30 @@ struct DockShellWidthTests {
         // with a board under the field (owner 2026-11-11).
         #expect([W.results, W.field].contains(live))
         #expect(CornerGeneralChatMetrics.size(for: GeneralChatWindowModel()).width == live)
-        // A fresh model is Global Context; its board and its shell share the width.
+        // Global Context: its board and its shell share the width.
         let global = AppChatPromptModel(conversation: AppChatConversation())
+        global.summonGlobalContext()
         #expect(M.boardWidth(for: global) == live)
         #expect(M.shellSize(for: global, phase: .dock).width <= live)
         #expect(M.shellSize(for: global, phase: .prompt).width == live)
-        global.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
-        #expect(M.boardWidth(for: global) == live)
-        #expect(M.shellSize(for: global, phase: .prompt).width == live)
+        // An app with a pin has the bar and takes the same width (owner 2026-11-03).
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        app.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
+        app.dockPins.pin(.appAction(id: "bar"), title: "Pinned", app: "com.apple.TextEdit")
+        app.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(app.showsTabBar)
+        #expect(M.boardWidth(for: app) == live)
+        #expect(M.shellSize(for: app, phase: .prompt).width == live)
+        // Without one it is the compact pill: fitted to its content, never wider than the
+        // shell, and its board as wide as its field.
+        let pill = AppChatPromptModel(conversation: AppChatConversation())
+        pill.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
+        pill.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(!pill.showsTabBar)
+        #expect(M.shellSize(for: pill, phase: .prompt).width <= live)
+        #expect(M.boardWidth(for: pill) == M.shellSize(for: pill, phase: .prompt).width)
     }
 
     @Test("The launcher's width holds for a handful of pins, then grows a pin's span per pin, then caps")
@@ -111,10 +127,13 @@ struct DockShellWidthTests {
                     fieldIcons: M.matchIconBaseCount, shellWidth: width)
                 // Compact: exactly what is drawn, and never past the launcher's width —
                 // what does not fit is `+N`.
-                let drawn = M.dockSearchStubSpan + 2 * M.dockInset
-                    + CGFloat(max(1, layout.shownRunning + (layout.overflow > 0 ? 1 : 0)))
-                    * (M.dockIconSize + M.dockIconGap) - M.dockIconGap
-                    + layout.trailingRegion
+                // With no app to draw, the folded field stands alone: no slot is held.
+                let slots = layout.shownRunning + (layout.overflow > 0 ? 1 : 0)
+                let apps = slots > 0
+                    ? M.dockSearchStubSpan + CGFloat(slots) * (M.dockIconSize + M.dockIconGap)
+                        - M.dockIconGap
+                    : M.dockIconSize
+                let drawn = 2 * M.dockInset + apps + layout.trailingRegion
                 #expect(abs(drawn - layout.width) < 0.001, "running \(running), tools \(tools)")
                 #expect(layout.width <= width)
                 #expect(layout.shownRunning + layout.overflow == running)

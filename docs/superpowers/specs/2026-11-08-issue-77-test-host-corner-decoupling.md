@@ -1,7 +1,7 @@
 # Issue #77: Test Host Corner Tests Decoupling (No Synthetic Window or Dock Dependency)
 
-> **Date:** 2026-11-08  
-> **Status:** Specification / Revised (EGM Cycle - Iteration 6)  
+> **Date:** 2026-11-08
+> **Status:** Shipped (PR #397)
 > **Target Branch:** `claude/issue-77-test-host-corner-decoupling` (bases on `general-chat-agent`)  
 > **GitHub Issue:** #77 (Milestone 1.0)  
 > **References:**  

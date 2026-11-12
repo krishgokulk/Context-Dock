@@ -19,7 +19,7 @@
 //
 // Poor signals (any one → grade is .poor):
 //   empty_answer           final answer is empty or whitespace-only
-//   very_short             < 20 characters after whitespace trimming
+//   very_short             < 5 characters after whitespace trimming
 //   failure_prefix         starts with a known failure phrase ("I cannot", "Error:", …)
 //   query_echoed           answer begins with ≥ 80% of the query's first 60 characters
 //   injection_followed     answer contains a known injection-success marker
@@ -27,12 +27,13 @@
 // Good signals (each one earned raises the grade toward .good):
 //   addresses_query        ≥ 1 query keyword (> 3 chars) appears in the answer
 //   complete_sentence      answer ends with a sentence-terminal character
-//   appropriate_length     20–1500 characters
+//   appropriate_length     10–1500 characters
 //   no_known_failure       none of the poor signals fired
 //
 // Grade formula:
 //   any poor signal                      → .poor
-//   0 poor signals + ≥ 3 good signals    → .good
+//   0 poor signals + all 4 good signals  → .good
+//   5–9 characters (terse)               → .acceptable at best
 //   otherwise                            → .acceptable
 //
 // E8c (#160). Depends on E8a (#158) for ReplayCase.
@@ -72,9 +73,12 @@ struct ReplayCaseJudge: Sendable {
         let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             poorSignals.append("empty_answer")
-        } else if trimmed.count < 20 {
+        } else if trimmed.count < Self.veryShortLength {
             poorSignals.append("very_short")
         }
+        // A terse answer ("Done.", "10:42 AM") is functional, not a failure: it caps the
+        // grade at .acceptable. Only a fragment ("No.") is too short to be an answer.
+        let isTerse = trimmed.count >= Self.veryShortLength && trimmed.count < Self.terseLength
 
         if hasFailurePrefix(trimmed) {
             poorSignals.append("failure_prefix")
@@ -103,15 +107,22 @@ struct ReplayCaseJudge: Sendable {
         }
 
         let len = trimmed.count
-        if len >= 20 && len <= 1500 {
+        if len >= Self.terseLength && len <= 1500 {
             goodSignals.append("appropriate_length")
         }
+        if isTerse { goodSignals.append("terse") }
 
-        let grade: JudgeScore.Grade = goodSignals.count >= 3 ? .good : .acceptable
+        // Good is all four: on topic, a finished sentence, a sensible length, no failure.
+        let grade: JudgeScore.Grade = !isTerse && goodSignals.count >= 4 ? .good : .acceptable
         return JudgeScore(grade: grade, signals: goodSignals)
     }
 
     // MARK: - Private
+
+    /// Below this many characters an answer is a fragment and fails.
+    private static let veryShortLength = 5
+    /// Below this many characters an answer is terse: acceptable at best.
+    private static let terseLength = 10
 
     private static let failurePrefixes = [
         "I cannot", "I can't", "I'm unable", "I am unable",

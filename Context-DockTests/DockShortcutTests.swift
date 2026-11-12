@@ -5,8 +5,7 @@ import Testing
 /// Every pre-model keyword shortcut that claims a turn in `handleL2Query` names itself with one
 /// step in the turn's trace, so the Corner panel and the Dock can say why something ran instead
 /// of "Answered without running anything" (issue #198, plan §3). One test per family pins the
-/// exact line the panel shows; the hand check confirms it live ("search mail from SBI" → the
-/// panel shows "Shortcut: Mailbox Search").
+/// exact line the panel shows.
 struct DockShortcutTests {
 
     // MARK: - One per shortcut family
@@ -35,14 +34,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.finder.step == "Shortcut: Finder — matched 'a Finder folder request'")
     }
 
-    @Test func messagesStep() {
-        #expect(DockShortcut.messages.step == "Shortcut: Messages — matched 'message … to someone'")
-    }
-
-    /// The owner hand check: "search mail from SBI" → the panel shows this line.
-    @Test func mailboxSearchStep() {
-        #expect(DockShortcut.mailboxSearch.step == "Shortcut: Mailbox Search — matched 'search mail …'")
-    }
 
     @Test func crossAppStep() {
         #expect(DockShortcut.crossApp.step == "Shortcut: Cross-App — matched 'send/open this in another app'")

@@ -250,11 +250,14 @@ struct CornerDockStrip: View {
                     .overlay(alignment: .center) {
                         let glyphEdge: CGFloat = 10
                         let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.18))
-                            .frame(width: 1, height: M.dockIconSize * 0.7)
-                            .offset(x: (glyphEdge + appEdge) / 2)
-                            .allowsHitTesting(false)
+                        // Only with apps after it: alone it divided the icon from nothing.
+                        if !self.plan.composition.apps.isEmpty || self.plan.layout.overflow > 0 {
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.18))
+                                .frame(width: 1, height: M.dockIconSize * 0.7)
+                                .offset(x: (glyphEdge + appEdge) / 2)
+                                .allowsHitTesting(false)
+                        }
                     }
                     // The field's own magnifier opens on this exact spot; this one hands over.
                     // An app bar's icon hands over only once it has landed on the chip.

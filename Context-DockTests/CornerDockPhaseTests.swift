@@ -194,6 +194,10 @@ struct CornerDockPhaseTests {
         // rather than running its top menu row (owner 2026-10-09).
         #expect(!model.isSearchField)
         let (finder, _) = globalModel()
+        // Its own pins: the test host shares the developer's, and a Finder pin of theirs
+        // would give this scope the bar it is asserted not to have.
+        finder.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(finder.isAppStepIn)
         #expect(!finder.isSearchField)
@@ -260,6 +264,10 @@ struct CornerDockPhaseTests {
     /// asks; ↓ chooses the first file or command (owner 2026-10-09).
     @Test func finderListsUnderAnAskAIRow() {
         let (finder, _) = globalModel()
+        // Its own pins: the test host shares the developer's, and a Finder pin of theirs
+        // would give this scope the bar it is asserted not to have.
+        finder.dockPins = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(!finder.showsAskAIRow)
         finder.query = "report"
