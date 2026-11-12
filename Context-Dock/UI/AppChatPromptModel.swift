@@ -664,7 +664,9 @@ final class AppChatPromptModel: ObservableObject {
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
         if !AppDelegate.isHostingTests {
             if isGlobalScope {
-                if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                let menuOwner = AppDelegate.shared?.menuBarOwningUserFacingApplication()
+                let previousApp = AppDelegate.shared?.previousFrontmostApp
+                if let app = menuOwner ?? previousApp,
                     app.bundleIdentifier != ownBundleID
                 {
                     selectionReader.refreshLightweight(from: app)
