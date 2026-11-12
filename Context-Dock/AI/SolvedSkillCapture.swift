@@ -214,7 +214,9 @@ enum SolvedSkillCapture {
             query: query, answer: answer, toolCalls: toolCalls, bundleId: bundleId,
             verifiedReadBack: verifiedReadBack, context: context)
         {
-            SolvedSkillStore.shared.save(skill)
+            // A stronger skill may already hold this job (H2); then nothing was saved and
+            // the turn must not claim "Saved as a skill".
+            guard SolvedSkillStore.shared.save(skill) else { return .init() }
             return CaptureOutcome(savedSkill: skill)
         }
         if let offer = buildWriteOffer(

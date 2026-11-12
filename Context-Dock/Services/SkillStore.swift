@@ -6,6 +6,7 @@
 //  are NOT executable permissions — no capability runs from a Skill. Optional,
 //  versioned, editable, import/exportable.
 
+import AppKit
 import Combine
 import Foundation
 
@@ -28,15 +29,33 @@ struct AdapterSkill: Identifiable, Codable, Equatable {
     /// `skills.read` when a turn needs it. Pinning is the user saying "this one always
     /// applies" and paying for it — and it still only applies inside the skill's own scope.
     var isPinned: Bool
+    /// The job a learned recipe does: `LearnedSkillJob`'s *(scope, slot-lifted request
+    /// shape)* key (H2 #409). Empty for a skill the user or a pack wrote, whose key is read
+    /// from its name instead (`effectiveJobKey`).
+    var jobKey: String
+    /// The route-ladder rung a learned recipe came from (2 script, 4 Computer Use); 0 for a
+    /// skill that was not learned.
+    var rung: Int
+    /// The version of the app a learned recipe was learned on. A different version retires it.
+    var learnedAppVersion: String
+    /// Failed runs of this job since the recipe last worked. Two retire it.
+    var consecutiveFailures: Int
+    /// True when DoraX disabled this recipe (version change or two failures), as opposed to
+    /// the user turning it off. The next success for the same job relearns it.
+    var isStale: Bool
 
     init(id: String = UUID().uuidString, adapterBundleId: String, name: String,
          summary: String = "", instructions: String, version: String = "1.0",
          isEnabled: Bool = true, updatedAt: Date = Date(), surfaceId: String = "",
-         isPinned: Bool = false) {
+         isPinned: Bool = false, jobKey: String = "", rung: Int = 0,
+         learnedAppVersion: String = "", consecutiveFailures: Int = 0,
+         isStale: Bool = false) {
         self.id = id; self.adapterBundleId = adapterBundleId; self.name = name
         self.summary = summary; self.instructions = instructions; self.version = version
         self.isEnabled = isEnabled; self.updatedAt = updatedAt; self.surfaceId = surfaceId
         self.isPinned = isPinned
+        self.jobKey = jobKey; self.rung = rung; self.learnedAppVersion = learnedAppVersion
+        self.consecutiveFailures = consecutiveFailures; self.isStale = isStale
     }
 
     /// Decoded by hand for one reason: `surfaceId` is newer than the store on disk. The
@@ -54,6 +73,13 @@ struct AdapterSkill: Identifiable, Codable, Equatable {
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         surfaceId = try container.decodeIfPresent(String.self, forKey: .surfaceId) ?? ""
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        jobKey = try container.decodeIfPresent(String.self, forKey: .jobKey) ?? ""
+        rung = try container.decodeIfPresent(Int.self, forKey: .rung) ?? 0
+        learnedAppVersion =
+            try container.decodeIfPresent(String.self, forKey: .learnedAppVersion) ?? ""
+        consecutiveFailures =
+            try container.decodeIfPresent(Int.self, forKey: .consecutiveFailures) ?? 0
+        isStale = try container.decodeIfPresent(Bool.self, forKey: .isStale) ?? false
     }
 
     /// Parse a web `SKILL.md` (Claude / Osaurus style — YAML frontmatter + markdown body)
@@ -214,6 +240,74 @@ final class SkillStore: ObservableObject {
     func setEnabled(_ enabled: Bool, id: String) {
         guard let idx = skills.firstIndex(where: { $0.id == id }) else { return }
         skills[idx].isEnabled = enabled
+        if enabled, skills[idx].isStale {
+            // The user overruled a retirement: the recipe starts clean on today's version,
+            // or the next prompt would retire it again.
+            skills[idx].isStale = false
+            skills[idx].consecutiveFailures = 0
+            skills[idx].learnedAppVersion = Self.appVersion(skills[idx].adapterBundleId)
+        }
+        save()
+    }
+
+    // MARK: - Learned recipes (H2 #409: one job, one key)
+
+    /// The installed version of an app, or "" when it cannot be read. A closure so a test
+    /// can stand in for the disk.
+    static var appVersion: (_ bundleId: String) -> String = { bundleId in
+        guard !bundleId.isEmpty,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
+            let info = Bundle(url: url)?.infoDictionary
+        else { return "" }
+        return info["CFBundleShortVersionString"] as? String
+            ?? info["CFBundleVersion"] as? String ?? ""
+    }
+
+    /// Files a recipe that just succeeded under its job key. Returns what was stored, or nil
+    /// when a user/pack skill, a solved skill or a lower-rung recipe already holds the job.
+    @discardableResult
+    func saveLearned(_ skill: AdapterSkill) -> AdapterSkill? {
+        let solvedKeys = Set(
+            SolvedSkillStore.shared.all(forBundle: skill.adapterBundleId).map(\.jobKey))
+        var incoming = skill
+        incoming.updatedAt = Date()
+        guard let merged = LearnedSkillJob.merging(
+            recipe: incoming, into: skills, solvedKeys: solvedKeys)
+        else { return nil }
+        skills = merged
+        save()
+        return merged.last
+    }
+
+    /// A run for this job failed; two in a row disable its recipe.
+    func noteLearnedFailure(jobKey: String, bundleId: String) {
+        guard let updated = LearnedSkillJob.notingFailure(
+            jobKey: jobKey, bundleId: bundleId, in: skills)
+        else { return }
+        skills = updated
+        save()
+    }
+
+    /// A solved skill took this job: its recipes go (solved skill › learned recipe).
+    func removeLearned(jobKey: String, bundleId: String) {
+        guard let updated = LearnedSkillJob.removingRecipes(
+            jobKey: jobKey, bundleId: bundleId, from: skills)
+        else { return }
+        skills = updated
+        save()
+    }
+
+    /// Disables the app's recipes learned on another version of it. Called where the app's
+    /// skills are put in front of the model, so a stale recipe is never offered.
+    func retireStaleRecipes(for bundleId: String) {
+        guard skills.contains(where: {
+            $0.adapterBundleId == bundleId && $0.isLearned && $0.isEnabled
+                && !$0.learnedAppVersion.isEmpty
+        }) else { return }
+        guard let updated = LearnedSkillJob.retiringVersionChanged(
+            bundleId: bundleId, currentVersion: Self.appVersion(bundleId), in: skills)
+        else { return }
+        skills = updated
         save()
     }
 
@@ -225,6 +319,7 @@ final class SkillStore: ObservableObject {
     /// registry was designed around — as decoration. Progressive disclosure is the default
     /// now, and pinning is the user's opt-out of it.
     func instructionsBlock(for bundleId: String) -> String {
+        retireStaleRecipes(for: bundleId)
         let active = skills(for: bundleId).filter { $0.isEnabled && !$0.instructions.isEmpty }
         guard !active.isEmpty else { return "" }
         let pinned = active.filter(\.isPinned)
@@ -241,7 +336,8 @@ final class SkillStore: ObservableObject {
                 ADAPTER SKILLS (available for this app — names and summaries only):
                 \(rows.joined(separator: "\n"))
                 Read one with the skills.read capability, by name, when the turn needs its \
-                rules. Do not guess at a skill's contents from its summary.
+                rules. Do not guess at a skill's contents from its summary. A skill here that \
+                matches the request is rung 0: read it and follow it before any other route.
                 """)
         }
         if !pinned.isEmpty {
@@ -258,6 +354,7 @@ final class SkillStore: ObservableObject {
     /// without requiring manual CLI tool installation or interactive retrieval.
     func perAppSkillsPromptBlock(for bundleId: String) -> String {
         guard !bundleId.isEmpty else { return "" }
+        retireStaleRecipes(for: bundleId)
         let active = skills(for: bundleId).filter { $0.isEnabled && !$0.instructions.isEmpty }
         guard !active.isEmpty else { return "" }
 

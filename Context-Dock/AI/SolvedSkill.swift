@@ -51,6 +51,9 @@ struct SolvedSkill: Codable, Equatable, Identifiable {
     var createdAt: Date = Date()
     var runCount: Int = 0
     var successCount: Int = 0
+    /// Replays that failed since the last one that worked. Optional so skills saved before H2
+    /// still decode. A failing skill is replaced by the model's next capture from any rung.
+    var consecutiveFailures: Int? = nil
 }
 
 // MARK: - Store
@@ -75,15 +78,21 @@ final class SolvedSkillStore: ObservableObject {
         load()
     }
 
-    /// Saves under the request's shape, replacing any skill with the same template in the same
-    /// app — a re-captured shape is the newer truth, not a second entry to match against.
-    func save(_ skill: SolvedSkill) {
-        skills.removeAll {
-            $0.bundleId == skill.bundleId
-                && $0.queryTemplate.caseInsensitiveCompare(skill.queryTemplate) == .orderedSame
-        }
-        skills.insert(skill, at: 0)
+    /// Saves under the skill's job key (H2 #409), in the conflict order of spec §8 rule 4: a
+    /// user-installed or pack skill for the same job keeps it and nothing is saved; a
+    /// lower-rung solved skill that still works keeps it too; otherwise this skill replaces
+    /// the solved skill and any learned recipe filed under the key. Returns whether it saved.
+    @discardableResult
+    func save(_ skill: SolvedSkill) -> Bool {
+        let userKeys = LearnedSkillJob.userHeldKeys(
+            bundleId: skill.bundleId, in: SkillStore.shared.skills)
+        guard let merged = LearnedSkillJob.merging(
+            solved: skill, into: skills, userKeys: userKeys)
+        else { return false }
+        skills = merged
         persist()
+        SkillStore.shared.removeLearned(jobKey: skill.jobKey, bundleId: skill.bundleId)
+        return true
     }
 
     func delete(_ id: UUID) {
@@ -99,6 +108,8 @@ final class SolvedSkillStore: ObservableObject {
         guard let index = skills.firstIndex(where: { $0.id == id }) else { return }
         skills[index].runCount += 1
         if success { skills[index].successCount += 1 }
+        skills[index].consecutiveFailures =
+            success ? 0 : (skills[index].consecutiveFailures ?? 0) + 1
         persist()
     }
 
