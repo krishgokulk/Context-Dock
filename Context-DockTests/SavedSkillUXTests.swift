@@ -40,7 +40,7 @@ struct SavedSkillUXTests {
     @Test func readEligibleTurnReturnsSavedSkill() {
         let outcome = SolvedSkillCapture.captureIfEligible(
             query: "unread mail from SBI today",
-            scope: .app(mail),
+            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
             toolCalls: [readCall()])
         #expect(outcome.savedSkill != nil)
@@ -50,7 +50,7 @@ struct SavedSkillUXTests {
     @Test func savedSkillQueryTemplateContainsSlots() throws {
         let outcome = SolvedSkillCapture.captureIfEligible(
             query: "unread mail from SBI today",
-            scope: .app(mail),
+            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
             toolCalls: [readCall()])
         let skill = try #require(outcome.savedSkill)
@@ -62,7 +62,7 @@ struct SavedSkillUXTests {
     @Test func writeEligibleTurnReturnsPendingOffer() {
         let outcome = SolvedSkillCapture.captureIfEligible(
             query: "archive mail from SBI today",
-            scope: .app(mail),
+            scope: .app(bundleId: mail),
             answer: verifiedAnswer(),
             toolCalls: [writeCall()])
         #expect(outcome.pendingWriteSkillOffer != nil)
@@ -94,7 +94,7 @@ struct SavedSkillUXTests {
     @Test func nonAppScopeReturnsEmptyOutcome() {
         let outcome = SolvedSkillCapture.captureIfEligible(
             query: "unread mail from SBI today",
-            scope: .global,
+            scope: .general,
             answer: verifiedAnswer(),
             toolCalls: [readCall()])
         #expect(outcome.savedSkill == nil)
@@ -111,7 +111,7 @@ struct SavedSkillUXTests {
             ])
         let outcome = SolvedSkillCapture.captureIfEligible(
             query: "unread mail from SBI today",
-            scope: .app(mail),
+            scope: .app(bundleId: mail),
             answer: noVerification,
             toolCalls: [readCall()])
         #expect(outcome.savedSkill == nil)
