@@ -25,7 +25,7 @@ enum SelectionScopeMetrics {
 
     /// Answering: the selection shrinks to one line, the answer takes the room the rows had.
     static let compactPreviewHeight: CGFloat = 22
-    static let answerHeight: CGFloat = 300
+    static let answerHeight: CGFloat = 320
     static let resultActionsHeight: CGFloat = 36
     /// The Computer Use question, when a row needs it.
     static let consentHeight: CGFloat = 62
