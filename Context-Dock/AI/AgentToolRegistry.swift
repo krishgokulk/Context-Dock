@@ -638,9 +638,12 @@ final class AgentToolRegistry {
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
             }
+            let isReadOnly = !changesSomething(capabilityID: id)
+            // A successful read-only capability is a verified read-back — align with
+            // GeneralChatCapabilityHub.execute() which uses verifiedReadBack: isReadOnly.
             SolvedSkillToolCallCollector.shared.record(
-                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
-                verifiedReadBack: verifiedReadBack, scope: scope)
+                capability: id, input: input, isReadOnly: isReadOnly,
+                verifiedReadBack: verifiedReadBack || isReadOnly, scope: scope)
         } else if name == "run_menu_command" {
             // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
             // so the turn is recorded as read-only here — the gate appears at run time, not now.
