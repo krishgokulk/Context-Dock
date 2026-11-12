@@ -2603,7 +2603,12 @@ struct CornerDockSurface: View {
                 }
             }
             // The shell's one width (#189): every surface in it is drawn at this.
-            .frame(width: DockShellWidth.current, alignment: rowEdge)
+            // When the app-chat list board is showing its two-column layout, the board is
+            // wider than the shell field; expand to the board's full width so the preview
+            // panel on the right is not clipped.
+            .frame(
+                width: CornerDockController.shared.showsAppChatList ? prompt.boardSize.width : DockShellWidth.current,
+                alignment: rowEdge)
         }
     }
 
