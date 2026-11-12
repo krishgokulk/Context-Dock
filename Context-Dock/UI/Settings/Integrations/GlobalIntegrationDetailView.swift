@@ -259,7 +259,11 @@ struct GlobalIntegrationDetailView: View {
 
     @ViewBuilder
     private var globalMadeByDoraXSection: some View {
-        let learnedSkills = solvedSkillStore.skills.filter { $0.bundleId.isEmpty }
+        // Global learned skills are those with no bundle id (cross-app) plus selection-scoped
+        // skills (H3 #410), which also apply across apps whenever the selection type matches.
+        let learnedSkills = solvedSkillStore.skills.filter {
+            $0.bundleId.isEmpty || $0.selectionType != nil
+        }
         if !learnedSkills.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {

@@ -1577,14 +1577,23 @@ enum AppScopedChatService {
         // #205 (D1): a read DoraX already solved with the model runs again from its saved typed
         // calls, through the same executor and gates, before the model is asked. Any mismatch or
         // failure returns nil and the turn carries on to the model, which repairs the skill.
-        if skillOverride == nil, case .app(let bundleId) = scope,
-            let (skill, filled) = SolvedSkillMatch.match(
+        // H3 #410: selection-scoped skills cross app boundaries — eligible() merges the bundle's
+        // own skills with any selection-type skills whose type matches the current attachments.
+        if skillOverride == nil, case .app(let bundleId) = scope {
+            let selContext = SlotDerivationContext(
+                selectedText: nil,
+                selectedFilePaths: attachments.map(\.path),
+                appName: appName)
+            let eligibleSkills = await SolvedSkillStore.shared.allEligible(
+                forBundle: bundleId, context: selContext)
+            if let (skill, filled) = SolvedSkillMatch.match(
                 query: query, bundleId: bundleId,
-                skills: SolvedSkillStore.shared.all(forBundle: bundleId)),
-            let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
-        {
-            log.notice("stage: saved skill")
-            return answer
+                skills: eligibleSkills, context: selContext),
+               let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
+            {
+                log.notice("stage: saved skill")
+                return answer
+            }
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from

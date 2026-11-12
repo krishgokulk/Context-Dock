@@ -32,7 +32,11 @@ enum SolvedSkillMatch {
         guard let derived = SolvedSkillCapture.derive(
             query: query, bundleId: bundleId, context: context) else { return nil }
 
-        for skill in skills where skill.bundleId == bundleId {
+        for skill in skills {
+            // A skill matches by bundle id (same app) or by selection scope (H3 #410: any app
+            // whose current selection/attachment satisfies the skill's declared type).
+            guard skill.bundleId == bundleId || skill.matchesSelection(context) else { continue }
+
             // Same words, nothing looser. A superset or a near-miss would run the recorded
             // calls under a request they do not answer.
             guard skill.nonSlotWords == derived.nonSlotWords else { continue }
@@ -118,9 +122,10 @@ enum SolvedSkillMatch {
         _ skill: SolvedSkill, filled: [String: String], scope: GeneralChatScope,
         environment: ReplayEnvironment = .live
     ) async -> AppScopedChatService.Answer? {
-        // The thread's boundary, as `run_capability` enforces it: a skill never replays
-        // under another app's chat.
-        guard case .app(let bundleId) = scope, skill.bundleId == bundleId else { return nil }
+        // The thread's boundary: a skill replays under the app it was captured for, OR it is
+        // selection-scoped (H3 #410) and the caller already verified the context matches.
+        guard case .app(let bundleId) = scope,
+              skill.bundleId == bundleId || skill.selectionScope != nil else { return nil }
 
         var receipts: [DoraXActionReceipt] = []
         var outputs: [String] = []

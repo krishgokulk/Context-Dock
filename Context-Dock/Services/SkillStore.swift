@@ -43,19 +43,24 @@ struct AdapterSkill: Identifiable, Codable, Equatable {
     /// True when DoraX disabled this recipe (version change or two failures), as opposed to
     /// the user turning it off. The next success for the same job relearns it.
     var isStale: Bool
+    /// A `SkillSelectionType` raw value when this skill is scoped to a selection type rather
+    /// than to an app or surface (H3 #410). Empty string means not selection-scoped.
+    /// Decoded with `decodeIfPresent` so stores written before H3 load unchanged.
+    var selectionType: String
 
     init(id: String = UUID().uuidString, adapterBundleId: String, name: String,
          summary: String = "", instructions: String, version: String = "1.0",
          isEnabled: Bool = true, updatedAt: Date = Date(), surfaceId: String = "",
          isPinned: Bool = false, jobKey: String = "", rung: Int = 0,
          learnedAppVersion: String = "", consecutiveFailures: Int = 0,
-         isStale: Bool = false) {
+         isStale: Bool = false, selectionType: String = "") {
         self.id = id; self.adapterBundleId = adapterBundleId; self.name = name
         self.summary = summary; self.instructions = instructions; self.version = version
         self.isEnabled = isEnabled; self.updatedAt = updatedAt; self.surfaceId = surfaceId
         self.isPinned = isPinned
         self.jobKey = jobKey; self.rung = rung; self.learnedAppVersion = learnedAppVersion
         self.consecutiveFailures = consecutiveFailures; self.isStale = isStale
+        self.selectionType = selectionType
     }
 
     /// Decoded by hand for one reason: `surfaceId` is newer than the store on disk. The
@@ -80,6 +85,7 @@ struct AdapterSkill: Identifiable, Codable, Equatable {
         consecutiveFailures =
             try container.decodeIfPresent(Int.self, forKey: .consecutiveFailures) ?? 0
         isStale = try container.decodeIfPresent(Bool.self, forKey: .isStale) ?? false
+        selectionType = try container.decodeIfPresent(String.self, forKey: .selectionType) ?? ""
     }
 
     /// Parse a web `SKILL.md` (Claude / Osaurus style — YAML frontmatter + markdown body)
@@ -156,11 +162,24 @@ final class SkillStore: ObservableObject {
 
     private init() { load() }
 
-    /// An app's own skills. A skill written for a surface is excluded even when it carries
-    /// this bundle id — it was exported from somewhere, and the surface is what it steers.
+    /// An app's own skills. A skill written for a surface or for a selection type is excluded
+    /// even when it carries this bundle id — it was exported from somewhere, and its scope
+    /// (surface or selection type) is what it steers.
     func skills(for bundleId: String) -> [AdapterSkill] {
-        skills.filter { $0.adapterBundleId == bundleId && $0.surfaceId.isEmpty }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        skills.filter {
+            $0.adapterBundleId == bundleId && $0.surfaceId.isEmpty && $0.selectionType.isEmpty
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Skills whose selection-type scope matches the given derivation context.
+    /// These skills apply in any app, not just the one they were exported from.
+    func skills(matchingSelection context: SlotDerivationContext) -> [AdapterSkill] {
+        skills.filter {
+            guard let selType = SkillSelectionType(rawValue: $0.selectionType) else { return false }
+            return $0.isEnabled && selType.matches(context: context)
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// The skills that steer one product surface: the ones written for it, plus the global

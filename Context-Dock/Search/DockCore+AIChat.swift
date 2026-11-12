@@ -3701,6 +3701,47 @@ extension DockCore {
                     }
                 }
 
+                // H3 #410: selection-scoped skills fire only when files are attached. The block
+                // above intentionally skips when files are present (a saved call recorded without
+                // a file should not replay under a different file). Selection-scoped skills are the
+                // inverse — they were saved with a selection/file and expect one here.
+                if !scopedBundleId.isEmpty, !submittedContextDockFiles.isEmpty {
+                    let skillScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    let selContext = SlotDerivationContext(
+                        selectedText: submittedContextDockText,
+                        selectedFilePaths: submittedContextDockFiles.map(\.path),
+                        appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName)
+                    let selSkills = await MainActor.run {
+                        SolvedSkillStore.shared.allEligible(
+                            forBundle: scopedBundleId, context: selContext)
+                        .filter { $0.selectionType != nil }
+                    }
+                    if let (skill, filled) = SolvedSkillMatch.match(
+                        query: query, bundleId: scopedBundleId,
+                        skills: selSkills, context: selContext),
+                        let saved = await SolvedSkillMatch.run(
+                            skill, filled: filled, scope: skillScope)
+                    {
+                        await MainActor.run {
+                            self.dockTraceStep("Used saved skill (no model)")
+                            let rows = ChatResultRowMapper.map(saved.rows)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant, content: saved.text,
+                                    appLaunches: rows.apps,
+                                    recentFiles: rows.files,
+                                    noteResults: rows.notes,
+                                    reminderResults: rows.reminders,
+                                    pageLinks: rows.links,
+                                    mcpToolsRan: saved.toolChips,
+                                    evidenceReceipts: saved.evidenceReceipts,
+                                    trace: self.l2.routerTrace))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
                         query: query,

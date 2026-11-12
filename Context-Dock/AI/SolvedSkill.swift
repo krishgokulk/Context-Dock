@@ -54,6 +54,20 @@ struct SolvedSkill: Codable, Equatable, Identifiable {
     /// Replays that failed since the last one that worked. Optional so skills saved before H2
     /// still decode. A failing skill is replaced by the model's next capture from any rung.
     var consecutiveFailures: Int? = nil
+    /// A `SkillSelectionType` raw value when this skill is scoped to a selection type (H3 #410).
+    /// nil means not selection-scoped. Optional so skills saved before H3 still decode.
+    var selectionType: String? = nil
+
+    /// The parsed selection scope, if any.
+    var selectionScope: SkillSelectionType? {
+        guard let raw = selectionType else { return nil }
+        return SkillSelectionType(rawValue: raw)
+    }
+
+    /// True when this skill is selection-scoped and the context satisfies it.
+    func matchesSelection(_ context: SlotDerivationContext) -> Bool {
+        selectionScope?.matches(context: context) ?? false
+    }
 }
 
 // MARK: - Store
@@ -102,6 +116,26 @@ final class SolvedSkillStore: ObservableObject {
 
     func all(forBundle bundleId: String) -> [SolvedSkill] {
         skills.filter { $0.bundleId == bundleId }
+    }
+
+    /// All skills eligible for the given turn: the bundle's own skills plus any
+    /// selection-scoped skills whose type matches the derivation context (H3 #410).
+    /// Selection-scoped skills cross app boundaries — a PDF skill captured in one app
+    /// fires in any app that has a PDF attached.
+    func allEligible(forBundle bundleId: String, context: SlotDerivationContext) -> [SolvedSkill] {
+        SolvedSkillStore.eligible(from: skills, forBundle: bundleId, context: context)
+    }
+
+    /// Pure, nonisolated helper so tests can filter directly without a store instance.
+    nonisolated static func eligible(
+        from skills: [SolvedSkill],
+        forBundle bundleId: String,
+        context: SlotDerivationContext
+    ) -> [SolvedSkill] {
+        skills.filter { skill in
+            (skill.bundleId == bundleId && skill.selectionType == nil)
+                || skill.matchesSelection(context)
+        }
     }
 
     func markRun(id: UUID, success: Bool) {
