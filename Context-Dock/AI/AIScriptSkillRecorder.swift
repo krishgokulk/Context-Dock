@@ -49,7 +49,8 @@ final class AIScriptSkillRecorder {
         appName: String,
         userQuery: String,
         slotContext: SlotDerivationContext = .empty,
-        hasUntrustedContent: Bool = false
+        hasUntrustedContent: Bool = false,
+        appVersion: String = ""
     ) -> AdapterSkill? {
         // Rule 1: verified success only.
         guard success else { return nil }
@@ -82,7 +83,13 @@ final class AIScriptSkillRecorder {
             name: namePrefix + title,
             summary: "How DoraX ran a script for \"\(title)\""
                 + (appName.isEmpty ? "." : " in \(appName)."),
-            instructions: body)
+            instructions: body,
+            // H2: filed under the job, not the name.
+            jobKey: LearnedSkillJob.key(
+                scope: bundleID, nonSlotWords: derived.nonSlotWords,
+                slotNames: derived.slots.map(\.name)),
+            rung: LearnedSkillJob.Rung.script,
+            learnedAppVersion: appVersion)
     }
 
     // MARK: - Runtime record (store side effects)
@@ -95,6 +102,15 @@ final class AIScriptSkillRecorder {
         isRead: Bool,
         store: SkillStore = .shared
     ) {
+        // H2 staleness: a failed script counts against the recipe for the same job.
+        if !success,
+            let key = LearnedSkillJob.key(
+                query: context.userQuery, bundleId: context.bundleID,
+                context: context.slotContext)
+        {
+            store.noteLearnedFailure(jobKey: key, bundleId: context.bundleID)
+            return
+        }
         guard let skill = Self.makeRecipe(
             command: command,
             success: success,
@@ -102,21 +118,13 @@ final class AIScriptSkillRecorder {
             appName: context.appName,
             userQuery: context.userQuery,
             slotContext: context.slotContext,
-            hasUntrustedContent: context.hasUntrustedContent
+            hasUntrustedContent: context.hasUntrustedContent,
+            appVersion: SkillStore.appVersion(context.bundleID)
         ) else { return }
 
         if isRead {
-            // Rule 4: reads auto-save.
-            var saved = skill
-            if let existing = store.skills(for: context.bundleID)
-                .first(where: { $0.name == skill.name })
-            {
-                saved = AdapterSkill(
-                    id: existing.id, adapterBundleId: context.bundleID, name: skill.name,
-                    summary: skill.summary, instructions: skill.instructions,
-                    isEnabled: existing.isEnabled, isPinned: existing.isPinned)
-            }
-            store.upsert(saved)
+            // Rule 4: reads auto-save, under the job key and its conflict order (H2).
+            store.saveLearned(skill)
         } else {
             // Rule 4: writes queue "Save as a skill?" offer.
             pendingOffer = PendingOffer(skill: skill, bundleID: context.bundleID, store: store)
@@ -126,16 +134,7 @@ final class AIScriptSkillRecorder {
     func acceptOffer() {
         guard let offer = pendingOffer else { return }
         pendingOffer = nil
-        var saved = offer.skill
-        if let existing = offer.store.skills(for: offer.bundleID)
-            .first(where: { $0.name == offer.skill.name })
-        {
-            saved = AdapterSkill(
-                id: existing.id, adapterBundleId: offer.bundleID, name: offer.skill.name,
-                summary: offer.skill.summary, instructions: offer.skill.instructions,
-                isEnabled: existing.isEnabled, isPinned: existing.isPinned)
-        }
-        offer.store.upsert(saved)
+        offer.store.saveLearned(offer.skill)
     }
 
     func discardOffer() {

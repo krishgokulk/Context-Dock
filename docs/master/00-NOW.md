@@ -10,16 +10,21 @@
 
 ## In progress
 
-**#408 H1c** — save/undo line in the turn + "Made by DoraX" group in Settings (branch `claude/skill-save-ui-settings-2a5748`, 2026-11-11).
+**#409 H2** — learned skills: job key, conflict order, staleness (branch `claude/general-chat-agent-h2-cded81`, 2026-11-12).
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ (in progress) → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#408 H1c: saved-skill turn UX + "Made by DoraX" in Settings (PR #431):**
+- A read turn that saves a skill shows "Saved as a skill: … · Undo"; a write turn offers "Save as a skill?".
+- Settings › Extensions › Apps › the app (and the Global tab) lists learned skills under "Made by DoraX" with run count, success rate and delete.
+- Hand-checked in the Mail App Chat (Saved row visible); merged 2026-11-12.
 
 **#407 follow-up: H1b replay fixes (PR #429):**
 - Fixed the two Codex P2 gaps from PR #428, plus a third found in the hand check.
