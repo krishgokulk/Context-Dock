@@ -72,6 +72,10 @@ enum AppScopedChatService {
         var activeMode: String? = nil
         /// Mode provenance string for this turn (e.g. "Safari: Research") (#341).
         var modeProvenance: String? = nil
+        /// Set when this turn was auto-saved as a read skill. Surfaces show "Saved as a skill · Undo".
+        var savedSkill: SolvedSkill? = nil
+        /// Set when this turn has write calls and qualifies for a save offer. Surfaces show "Save as a skill?".
+        var pendingWriteSkillOffer: SolvedSkill? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -1427,10 +1431,13 @@ enum AppScopedChatService {
         }
         // #205: a verified read the model just solved is kept, so the next one like it skips the
         // model. Taken here, after the answer is assembled, so every provider pass is included.
-        SolvedSkillCapture.captureIfEligible(
+        let captureOutcome = SolvedSkillCapture.captureIfEligible(
             query: query, scope: scope, answer: answer,
             toolCalls: SolvedSkillToolCallCollector.shared.take(scope: scope))
-        return answer
+        var tagged = answer
+        tagged.savedSkill = captureOutcome.savedSkill
+        tagged.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
+        return tagged
     }
 
     private static func sendUntraced(

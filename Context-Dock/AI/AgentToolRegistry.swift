@@ -633,14 +633,19 @@ final class AgentToolRegistry {
             // falls through to them when no registered capability matches). They are
             // implementation details, not user-intent replay targets — skip them so they
             // do not pollute the skill collector with spurious isReadOnly:false entries.
-            guard CapabilityRegistry.shared.capability(id: id) != nil else { return }
+            guard CapabilityRegistry.shared.capability(id: id) != nil else {
+                return
+            }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
             }
+            let isReadOnly = !changesSomething(capabilityID: id)
+            // A successful read-only capability is a verified read-back — align with
+            // GeneralChatCapabilityHub.execute() which uses verifiedReadBack: isReadOnly.
             SolvedSkillToolCallCollector.shared.record(
-                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
-                verifiedReadBack: verifiedReadBack, scope: scope)
+                capability: id, input: input, isReadOnly: isReadOnly,
+                verifiedReadBack: verifiedReadBack || isReadOnly, scope: scope)
         } else if name == "run_menu_command" {
             // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
             // so the turn is recorded as read-only here — the gate appears at run time, not now.

@@ -10,11 +10,11 @@
 
 ## In progress
 
-None. (Awaiting owner selection for next task)
+**#408 H1c** — save/undo line in the turn + "Made by DoraX" group in Settings (branch `claude/skill-save-ui-settings-2a5748`, 2026-11-11).
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): **#408** H1c save/undo line + "Made by DoraX" in Settings → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → **#409** H2 job key, conflicts, staleness → **#410** H3 selection-type scope → **#411** H4 menus tightened (after #204) → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
 - Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (App Find, one per PR)
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)

@@ -64,14 +64,18 @@ enum SolvedSkillCapture {
         // rule 1: a verified read-back this turn, and nothing that failed.
         guard verifiedReadBack,
             !answer.evidenceReceipts.contains(where: { !$0.success })
-        else { return nil }
+        else {
+            return nil
+        }
 
         // rule 3: nothing shaped by untrusted text is auto-saved. A fence in any receipt's
         // output, or in the answer itself, means the turn read email or a web page — the skill
         // could be the attacker's, not the user's.
         guard !UntrustedContent.containsFence(answer.text),
             !answer.evidenceReceipts.contains(where: { UntrustedContent.containsFence($0.output) })
-        else { return nil }
+        else {
+            return nil
+        }
 
         // Identify menu-command-only turns (rung 3): at least one run_menu_command alongside
         // at most read-only supporting calls (adapter helpers that are not replay targets).
@@ -86,7 +90,9 @@ enum SolvedSkillCapture {
 
         // rule 4: auto-save reads only. A write gates every run, so it is out of this slice;
         // one non-read-only call, or no replay call at all, and nothing is saved.
-        guard !replayCalls.isEmpty, replayCalls.allSatisfy(\.isReadOnly) else { return nil }
+        guard !replayCalls.isEmpty, replayCalls.allSatisfy(\.isReadOnly) else {
+            return nil
+        }
 
         // rule 2: a parameterized skill, never a hard-coded one. Lift the entity values into
         // slots; a query that carries an entity but yields no slot would save a literal, so it
@@ -97,7 +103,9 @@ enum SolvedSkillCapture {
         guard let derived = derive(query: query, bundleId: bundleId, context: context),
             (isMenuCommandOnly || !derived.slots.isEmpty),
             (isMenuCommandOnly || !derived.hasLeftoverValue)
-        else { return nil }
+        else {
+            return nil
+        }
 
         let parameterized = replayCalls.map { call -> SolvedSkillToolCall in
             var template = call.argTemplate
@@ -125,23 +133,97 @@ enum SolvedSkillCapture {
             bundleId: bundleId)
     }
 
+    // MARK: - Write-offer build (pure, never saves)
+
+    /// Builds a skill from a turn that includes write calls — identical to `build()` except
+    /// rule 4's `isReadOnly` check is skipped so non-read calls are eligible.
+    /// The caller decides whether to save; this function NEVER saves.
+    nonisolated static func buildWriteOffer(
+        query: String,
+        answer: AppScopedChatService.Answer,
+        toolCalls: [SolvedSkillToolCall],
+        bundleId: String,
+        verifiedReadBack: Bool,
+        context: SlotDerivationContext = .empty
+    ) -> SolvedSkill? {
+        guard verifiedReadBack,
+            !answer.evidenceReceipts.contains(where: { !$0.success })
+        else { return nil }
+
+        guard !UntrustedContent.containsFence(answer.text),
+            !answer.evidenceReceipts.contains(where: { UntrustedContent.containsFence($0.output) })
+        else { return nil }
+
+        let menuCalls = toolCalls.filter { $0.capability == "run_menu_command" }
+        let isMenuCommandOnly = !menuCalls.isEmpty
+            && toolCalls.allSatisfy { $0.capability == "run_menu_command" || $0.isReadOnly }
+        let replayCalls = isMenuCommandOnly ? menuCalls : toolCalls
+
+        // rule 4 skipped for write offer: only require non-empty replay calls
+        guard !replayCalls.isEmpty else { return nil }
+
+        guard let derived = derive(query: query, bundleId: bundleId, context: context),
+            (isMenuCommandOnly || !derived.slots.isEmpty),
+            (isMenuCommandOnly || !derived.hasLeftoverValue)
+        else { return nil }
+
+        let parameterized = replayCalls.map { call -> SolvedSkillToolCall in
+            var template = call.argTemplate
+            for (slot, value) in derived.values {
+                template = template.mapValues {
+                    $0.replacingOccurrences(of: value, with: "{\(slot)}", options: [.caseInsensitive])
+                }
+            }
+            return SolvedSkillToolCall(
+                capability: call.capability, argTemplate: template, isReadOnly: call.isReadOnly)
+        }
+
+        guard derived.slots.allSatisfy({ slot in
+            parameterized.contains { $0.argTemplate.values.contains { $0.contains("{\(slot.name)}") } }
+        }) else { return nil }
+
+        return SolvedSkill(
+            queryTemplate: derived.template,
+            nonSlotWords: derived.nonSlotWords,
+            slots: derived.slots,
+            toolCalls: parameterized,
+            bundleId: bundleId)
+    }
+
+    // MARK: - Capture outcome
+
+    struct CaptureOutcome {
+        var savedSkill: SolvedSkill? = nil
+        var pendingWriteSkillOffer: SolvedSkill? = nil
+    }
+
     // MARK: - Capture (wired)
 
     @MainActor
+    @discardableResult
     static func captureIfEligible(
         query: String,
         scope: GeneralChatScope,
         answer: AppScopedChatService.Answer,
         toolCalls: [SolvedSkillToolCall],
         context: SlotDerivationContext = .empty
-    ) {
-        guard case .app(let bundleId) = scope, !bundleId.isEmpty else { return }
-        guard let skill = build(
+    ) -> CaptureOutcome {
+        guard case .app(let bundleId) = scope, !bundleId.isEmpty else { return .init() }
+        let verifiedReadBack = SolvedSkillToolCallCollector.shared.hadVerifiedReadBack(scope: scope)
+        if let skill = build(
             query: query, answer: answer, toolCalls: toolCalls, bundleId: bundleId,
-            verifiedReadBack: SolvedSkillToolCallCollector.shared.hadVerifiedReadBack(scope: scope),
-            context: context)
-        else { return }
-        SolvedSkillStore.shared.save(skill)
+            verifiedReadBack: verifiedReadBack, context: context)
+        {
+            SolvedSkillStore.shared.save(skill)
+            return CaptureOutcome(savedSkill: skill)
+        }
+        if let offer = buildWriteOffer(
+            query: query, answer: answer, toolCalls: toolCalls, bundleId: bundleId,
+            verifiedReadBack: verifiedReadBack, context: context)
+        {
+            return CaptureOutcome(pendingWriteSkillOffer: offer)
+        }
+        return .init()
     }
 
     // MARK: - Deterministic slot derivation (pure)

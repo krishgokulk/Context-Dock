@@ -3824,7 +3824,7 @@ extension DockCore {
                             text: finalResponse, toolChips: [])
                         captureAnswer.evidenceReceipts =
                             browserPageReceipts + executed.map(DoraXActionReceipt.init)
-                        SolvedSkillCapture.captureIfEligible(
+                        let captureOutcome = SolvedSkillCapture.captureIfEligible(
                             query: query, scope: captureScope, answer: captureAnswer,
                             toolCalls: SolvedSkillToolCallCollector.shared.take(scope: captureScope))
                         // The records this turn's capabilities actually read, drawn as cards
@@ -3846,6 +3846,8 @@ extension DockCore {
                                 + executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,
                             trace: self.l2.routerTrace)
+                        msg.savedSkill = captureOutcome.savedSkill
+                        msg.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
                         if !activeContextPrompt.isEmpty {
