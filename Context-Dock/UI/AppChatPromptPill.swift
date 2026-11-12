@@ -1005,6 +1005,10 @@ struct AppChatPromptPill: View {
             .padding(.horizontal, model.phase == .chat ? 10 : 0)
             .padding(.top, model.phase == .chat ? 6 : 0)
             .padding(.bottom, model.phase == .chat ? 10 : 0)
+            // With the live panel showing but no app strip beside the composer, the composer
+            // stays under the transcript column only — not under the panel (design: "the
+            // composer stands under the transcript", line above). Without this, the pill
+            // stretched full-card-width and appeared visually detached from the transcript.
             .frame(
                 maxWidth: (model.phase == .chat && model.showsLivePanel && !splitsChatComposer)
                     ? transcriptColumnWidth : .infinity,

@@ -671,7 +671,9 @@ final class AppChatPromptModel: ObservableObject {
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
         if !AppDelegate.isHostingTests {
             if isGlobalScope {
-                if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                let menuOwner = AppDelegate.shared?.menuBarOwningUserFacingApplication()
+                let previousApp = AppDelegate.shared?.previousFrontmostApp
+                if let app = menuOwner ?? previousApp,
                     app.bundleIdentifier != ownBundleID
                 {
                     selectionReader.refreshLightweight(from: app)
@@ -687,10 +689,11 @@ final class AppChatPromptModel: ObservableObject {
             }
         }
         let context = selectionReader.current
-        let scopedTo =
-            isGlobalScope
-            ? (context.bundleId == ownBundleID ? "" : context.bundleId)
-            : appBundleID
+        // The Corner just took AX focus — the reader holds our own empty context.
+        // Don't clear any existing selection; the observation sink will update it
+        // once the async refresh delivers the prior app's selection.
+        if isGlobalScope, context.bundleId == ownBundleID { return }
+        let scopedTo = isGlobalScope ? context.bundleId : appBundleID
         applySelection(from: context, scopedTo: scopedTo)
     }
 

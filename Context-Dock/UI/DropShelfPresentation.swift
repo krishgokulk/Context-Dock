@@ -47,8 +47,8 @@ enum DockTools {
     ) -> [DockToolKind] {
         var tools: [DockToolKind] = []
         if clipboard { tools.append(.clipboard) }
-        if selection { tools.append(.selection) }
         if feedback { tools.append(.feedback) }
+        if selection { tools.append(.selection) }
         if shelf { tools.append(.shelf) }
         return tools
     }

@@ -354,6 +354,10 @@ struct CornerDockStrip: View {
                     }
                 }
             }
+            // In prompt phase the strip fills the full shell width; a Spacer pushes the
+            // trailing tools to the right edge regardless of how many app icons exist.
+            // In dock phase the strip is compact (no Spacer: it would expand the pill).
+            if !isDock { Spacer(minLength: 0) }
             if plan.layout.tools > 0 {
                 appBarToolsDivider
                 // The corner's own cards, not the field's scope chips: a dock icon opens a

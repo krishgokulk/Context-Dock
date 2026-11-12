@@ -41,7 +41,7 @@ final class CornerDockPanel: NSPanel {
            event.clickCount == 1,
            CornerDockController.shared.isCentredMode,
            let hit = contentView?.hitTest(event.locationInWindow),
-           Self.isEmptyTextInput(hit)
+           Self.canStartDrag(hit)
         {
             let start = NSEvent.mouseLocation
             while let next = nextEvent(
@@ -65,10 +65,18 @@ final class CornerDockPanel: NSPanel {
         super.sendEvent(event)
     }
 
-    private static func isEmptyTextInput(_ view: NSView) -> Bool {
-        if let tv = view as? NSTextView { return tv.string.isEmpty }
-        if let tf = view as? NSTextField { return tf.stringValue.isEmpty }
-        return false
+    private static func canStartDrag(_ view: NSView) -> Bool {
+        // Walk up: a button stops the drag (let the click through); a text field stops
+        // the drag only if it has content; hitting nothing specific allows dragging only
+        // when the result board is not open (background drag covers that case already).
+        var candidate: NSView? = view
+        while let v = candidate {
+            if v is NSButton { return false }
+            if let tv = v as? NSTextView { return tv.string.isEmpty }
+            if let tf = v as? NSTextField { return tf.stringValue.isEmpty }
+            candidate = v.superview
+        }
+        return !CornerDockController.shared.showsAppChatList
     }
 }
 

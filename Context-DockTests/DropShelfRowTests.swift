@@ -58,15 +58,15 @@ struct DropShelfRowTests {
     func aBusyScopeEndsWithTheShelf() {
         let row = DockTools.row(
             showsTabBar: false, clipboard: true, selection: true, feedback: true)
-        #expect(row == [.clipboard, .selection, .feedback, .shelf])
-        #expect(row.last == .shelf)
+        #expect(row == [.clipboard, .feedback, .selection, .shelf])
+#expect(row.last == .shelf)
     }
 
     @Test("An app's bar shows the last action's result too, and still ends with the shelf")
     func anAppBarEndsWithTheShelf() {
         let row = DockTools.row(
             showsTabBar: true, clipboard: true, selection: true, feedback: true)
-        #expect(row == [.clipboard, .selection, .feedback, .shelf])
+        #expect(row == [.clipboard, .feedback, .selection, .shelf])
     }
 
     @Test("Whatever else shows, the shelf is last and there is exactly one")

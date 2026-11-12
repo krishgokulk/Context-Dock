@@ -18,7 +18,8 @@ import SwiftUI
 enum AppChatListMetrics {
     /// The board stands exactly as wide as the field below it: the shell's one width (#189).
     static var width: CGFloat { DockShellWidth.current }
-    static let rowHeight: CGFloat = 40
+    static let rowHeight: CGFloat = 52
+    static let iconSize: CGFloat = 36
     static let headerHeight: CGFloat = 22
     /// Room above and below the rows.
     static let verticalPadding: CGFloat = 6
@@ -564,23 +565,23 @@ struct AppChatListCard: View {
     /// An app "/" can jump to: its icon and name, and whether it is open. One that is not
     /// still works — its scope runs on its adapters, CLI tools and skills, unlaunched.
     private func appRow(_ entry: ChatAppEntry, isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Group {
                 if let icon = entry.icon {
                     Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
                 } else {
-                    Image(systemName: "app.dashed").font(.system(size: 16))
+                    Image(systemName: "app.dashed").font(.system(size: 20))
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 22, height: 22)
-            .frame(width: 28, height: 28)
-            VStack(alignment: .leading, spacing: 1) {
+            .frame(width: AppChatListMetrics.iconSize - 6, height: AppChatListMetrics.iconSize - 6)
+            .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .lineLimit(1)
                 Text(entry.isRunning ? "Running" : "Not open · works without launching")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary.opacity(0.75))
                     .lineLimit(1)
             }
@@ -606,17 +607,17 @@ struct AppChatListCard: View {
     /// Finder's first row: what is typed, as a question to the AI. Return takes it until the
     /// arrows choose a file or command (owner 2026-10-09).
     private func askAIRow(isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 28, height: 28)
-            VStack(alignment: .leading, spacing: 1) {
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Ask AI")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .lineLimit(1)
                 Text(model.query.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary.opacity(0.75))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -696,19 +697,19 @@ struct AppChatListCard: View {
     private func globalRow(_ doc: GlobalSearchService.SearchDocument, isFocused: Bool)
         -> some View
     {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(0.08))
-                    .frame(width: 26, height: 26)
+                    .frame(width: AppChatListMetrics.iconSize - 2, height: AppChatListMetrics.iconSize - 2)
                 CornerResultIcon(url: pageURL(doc), fallback: doc.icon,
                     symbol: GlobalContextRow.symbol(for: doc))
             }
-            .frame(width: 28, height: 28)
+            .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(doc.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .lineLimit(1)
                 // Said once, on the right (#258 G2): "Application" under the name repeated it.
                 let subtitle = GlobalContextRow.subtitle(for: doc)
@@ -716,7 +717,7 @@ struct AppChatListCard: View {
                 // Highlighted, the right says ↩, so the line under the name stays.
                 if isFocused || (subtitle != foot.kind && !(foot.isRunningApp && subtitle == "Running")) {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary.opacity(0.75))
                         .lineLimit(1)
                 }
@@ -758,26 +759,26 @@ struct AppChatListCard: View {
         // (owner 2026-10-17).
         let isShowMore = pill.rankingKind == GlobalResultSection.showMoreKind
         let subtitle = pill.menuContext ?? pill.badge ?? pill.sourceAppName
-        return HStack(spacing: 10) {
+        return HStack(spacing: 12) {
             Group {
                 if isShowMore {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 } else {
                     CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
                 }
             }
-            .frame(width: 28, height: 28)
-            VStack(alignment: .leading, spacing: 1) {
+            .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(pill.name)
-                    .font(.system(size: isShowMore ? 12 : 13, weight: .medium))
+                    .font(.system(size: isShowMore ? 13 : 15, weight: .medium))
                     .foregroundStyle(isShowMore ? .secondary : .primary)
                     .lineLimit(1)
                 // A row with no second line sits centred, not over an empty one.
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 4)
@@ -804,14 +805,14 @@ struct AppChatListCard: View {
 
     /// The opening offer for an app with no adapter and nothing cached yet.
     private func suggestionRow(_ suggestion: AppChatSuggestion) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: suggestion.icon)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 28)
+                .frame(width: AppChatListMetrics.iconSize)
             VStack(alignment: .leading, spacing: 1) {
                 Text(suggestion.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .lineLimit(1)
                 if let detail = suggestion.detail {
                     Text(detail)
@@ -844,23 +845,23 @@ struct AppChatListCard: View {
     /// An action the app's adapter declares: curated, so it says what it does rather than
     /// where it lives.
     private func actionRow(_ action: AdapterAction, isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.accentColor.opacity(0.16))
-                    .frame(width: 26, height: 26)
+                    .frame(width: AppChatListMetrics.iconSize - 2, height: AppChatListMetrics.iconSize - 2)
                 Image(systemName: action.icon.isEmpty ? "bolt.fill" : action.icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Color.accentColor)
             }
-            .frame(width: 28, height: 28)
+            .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(action.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .lineLimit(1)
                 Text(action.description.isEmpty ? model.appName : action.description)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary.opacity(0.75))
                     .lineLimit(1)
             }
