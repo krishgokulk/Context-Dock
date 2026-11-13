@@ -3500,10 +3500,6 @@ extension DockCore {
                     let perApp = SkillStore.shared.perAppSkillsPromptBlock(for: targetAppBundleID)
                     return perApp.isEmpty ? SkillStore.shared.instructionsBlock(for: targetAppBundleID) : perApp
                 }
-                let liveMenuBlock = await MainActor.run {
-                    AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
-                        bundleIdentifier: targetAppBundleID, appName: targetAppDisplayName, query: query)
-                }
                 // Always-present identity + tool inventory: WHICH app this chat is
                 // scoped to and every integration it can use. Without this the model
                 // claims it "cannot see which app is open".
@@ -3647,7 +3643,7 @@ extension DockCore {
                     prompt.set(.liveAppData, appleData)
                     prompt.set(.mcp, mcpBlock)
                     prompt.set(.capabilities, scopedModelCandidates)
-                    prompt.set(.liveMenu, liveMenuBlock)
+                    prompt.append(.sourceRule, RequestLane.menuRouteInstruction(for: query))
                     prompt.set(.skills, skillsBlock)
                     prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)

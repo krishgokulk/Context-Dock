@@ -39,6 +39,18 @@ extension RequestLane {
     /// click; the data lane never does (plan §2a rule 1). Pass to
     /// `AXMenuReader.clickMenuItem(activatesApp:)`.
     var activatesAppForMenuClick: Bool { self == .ui }
+
+    /// Routing instruction for the model prompt. UI-lane requests prefer run_menu_command as the
+    /// first route; data-lane requests prefer direct capabilities and scripts over menus.
+    /// §6–7 of docs/superpowers/specs/2026-11-09-agent-harness-model.md (H4).
+    static func menuRouteInstruction(for request: String) -> String {
+        switch decide(request) {
+        case .ui:
+            return "MENU ROUTE: This is an interface request. Prefer run_menu_command as the first route. Use find_menu_command to locate the exact item if the path is not known, then run it."
+        case .data:
+            return "MENU ROUTE: This is a data request. Prefer direct capabilities, connectors, MCP tools, and scripts. Do not press a menu when a direct or script route exists."
+        }
+    }
 }
 
 /// The two things the data lane may do to an app. Nothing here can bring an app forward.
