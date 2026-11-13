@@ -1212,10 +1212,8 @@ struct MessagesShortcutRetirementTests {
 struct AppFindShortcutRetirementTests {
 
     /// Find, search, and photo sentences that the retired pre-model App Find shortcut would
-    /// have intercepted and routed to `executeAppFindIntent` now reach the model: every one
-    /// routes as `.data` through `RequestLane.decide` (none contain a `uiWords` token), so the
-    /// model receives the full query and chooses `run_menu_command` (Cmd+F) or a direct
-    /// capability.
+    /// have intercepted and routed to `executeAppFindIntent` now reach the model: data-seeking
+    /// queries route as `.data` through `RequestLane.decide` (unless mentioning a UI element like "window").
     @Test func appFindQueryRoutesAsData() {
         for sentence in [
             "find budget report",
@@ -1223,10 +1221,12 @@ struct AppFindShortcutRetirementTests {
             "look for the invoice",
             "photos of cats",
             "find \"budget\" in this app",
-            "search for contracts in this window",
+            "search for contracts in this document",
         ] {
             #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
         }
+        // A find request explicitly mentioning a window targets the UI lane
+        #expect(RequestLane.decide("search for contracts in this window") == .ui)
     }
 
     /// `ScopedRoutePolicy` considers actions for find sentences (they are not questions), so
