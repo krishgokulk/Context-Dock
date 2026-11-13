@@ -2554,26 +2554,6 @@ extension DockCore {
             l2.chatContextKey = currentKey == "none" ? l2.chatContextKey : currentKey
         }
 
-        let findIntentMustBeExplicit =
-            wasContextDockChatActive || scopedHasLinkedCLI || looksLikeQuestion
-        // A Mail search in Mail's own chat is answered in the transcript, never by driving
-        // Mail's search field — unless the user explicitly asked for the app's Find.
-        let isInScopeMailSearch =
-            AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: chatOwnBundleId)
-            || (!dockScope.namedByQuery
-                && AppleLiveDataContext.isInScopeMailSearch(query, scopedBundleId: scopedBundleId))
-        if (!(findIntentMustBeExplicit || isInScopeMailSearch)
-            || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
-            let findIntent = resolvedFindIntent(
-            for: query,
-            dockScope: dockScope,
-            rawScopedQuery: rawScopedSearchQuery
-        ) {
-            dockShortcutStep(.appFind)
-            executeAppFindIntent(findIntent)
-            return
-        }
-
         if !shouldStayInScopedAIChat, let transformIntent = transformShareIntent(for: query) {
             dockShortcutStep(.transformShare)
             executeTransformShareIntent(transformIntent, userMessage: query)

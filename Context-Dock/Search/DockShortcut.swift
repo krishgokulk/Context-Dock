@@ -19,7 +19,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
     case triggerRule
     case systemCommand
     case githubInstall
-    case appFind
     case transformShare
     case finder
     case crossApp
@@ -33,7 +32,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .triggerRule: return "Trigger Rule"
         case .systemCommand: return "System Command"
         case .githubInstall: return "GitHub Install"
-        case .appFind: return "App Find"
         case .transformShare: return "Transform & Share"
         case .finder: return "Finder"
         case .crossApp: return "Cross-App"
@@ -50,7 +48,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .triggerRule: return "a saved trigger phrase"
         case .systemCommand: return "a built-in system command"
         case .githubInstall: return "link a GitHub tool"
-        case .appFind: return "find … in this app"
         case .transformShare: return "transform this and send it"
         case .finder: return "a Finder folder request"
         case .crossApp: return "send/open this in another app"

@@ -1205,3 +1205,40 @@ struct MessagesShortcutRetirementTests {
         #expect(ReadOnlyDataRouter.domain(for: "did Salman text me yesterday?") == .messages)
     }
 }
+
+// MARK: - Issue 204: App Find shortcut retirement
+
+@MainActor
+struct AppFindShortcutRetirementTests {
+
+    /// Find, search, and photo sentences that the retired pre-model App Find shortcut would
+    /// have intercepted and routed to `executeAppFindIntent` now reach the model: data-seeking
+    /// queries route as `.data` through `RequestLane.decide` (unless mentioning a UI element like "window").
+    @Test func appFindQueryRoutesAsData() {
+        for sentence in [
+            "find budget report",
+            "search for the passport pdf",
+            "look for the invoice",
+            "photos of cats",
+            "find \"budget\" in this app",
+            "search for contracts in this document",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+        // A find request explicitly mentioning a window targets the UI lane
+        #expect(RequestLane.decide("search for contracts in this window") == .ui)
+    }
+
+    /// `ScopedRoutePolicy` considers actions for find sentences (they are not questions), so
+    /// the model still receives the scoped app's matching menu candidates alongside the query.
+    @Test func scopedRoutePolicyConsidersActionsForFindQueries() {
+        for sentence in ["find budget report", "search for the invoice"] {
+            #expect(ScopedRoutePolicy.considersActions(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// `DockShortcut` no longer includes the retired `appFind` case.
+    @Test func appFindShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("appFind"))
+    }
+}
