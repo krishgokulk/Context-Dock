@@ -1877,6 +1877,7 @@ enum AppScopedChatService {
         var prompt = ScopedPromptAssembler()
         prompt.set(.sourceRule, [
             sourceDecision.promptRule, dateTimeBlock(), UntrustedContent.rule,
+            RequestLane.menuRouteInstruction(for: query),
         ].joined(separator: "\n\n"))
         var context: UserContext = .none
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
@@ -1988,11 +1989,6 @@ enum AppScopedChatService {
                 return perApp.isEmpty ? SkillStore.shared.instructionsBlock(for: bundleId) : perApp
             }()
             prompt.set(.skills, skills)
-            let menuSnapshot = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
-                bundleIdentifier: bundleId, appName: appName, query: query)
-            if !menuSnapshot.isEmpty {
-                prompt.set(.liveMenu, menuSnapshot)
-            }
             // The app's live MCP tools. For asksOnly turns, use toolListBlock instead of
             // toolPromptBlock: toolPromptBlock teaches the prose {"mcp_call":…} format which
             // the model uses INSTEAD of the native run_mcp_tool function — they conflict (#357).
@@ -2097,11 +2093,6 @@ enum AppScopedChatService {
                 let frontmostSkills = SkillStore.shared.perAppSkillsPromptBlock(for: effectiveBundleId)
                 if !frontmostSkills.isEmpty {
                     prompt.set(.skills, frontmostSkills)
-                }
-                let frontmostMenu = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
-                    bundleIdentifier: effectiveBundleId, appName: effectiveAppName, query: query)
-                if !frontmostMenu.isEmpty {
-                    prompt.set(.liveMenu, frontmostMenu)
                 }
             }
             // General Chat is frontmost while the user asks, so its UserContext cannot name
