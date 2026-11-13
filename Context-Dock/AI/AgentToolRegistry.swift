@@ -1351,8 +1351,6 @@ final class AgentToolRegistry {
         registerComputerUseTool()
         // Phase 3.5: snapshot + element actions for work inside a window. See ComputerUseAXTools.swift.
         registerComputerUseAXTools()
-        // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
-        registerAppAgentScriptTool()
         // Tier 2: AI Autonomous Scripting Tool. See SynthesizedScriptTool.swift.
         registerSynthesizedScriptTool()
         // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.

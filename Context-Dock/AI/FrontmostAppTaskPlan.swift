@@ -237,9 +237,6 @@ struct FrontmostAppTaskPlan: Equatable {
             tools.formUnion(["read_app_dictionary", "run_synthesized_script"])
             if let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
                 agentNeverRules = profile.never
-                if let scripts = profile.tools.scripts, !scripts.isEmpty {
-                    tools.insert("run_app_script")
-                }
                 if let caps = profile.tools.capabilities, !caps.isEmpty {
                     tools.formUnion(["find_capability", "run_capability"])
                 }

@@ -783,7 +783,7 @@ enum AppScopedChatService {
             return "Route: window elements · read"
         case .axAct:
             return "Route: window element · \(args["action"] ?? "act") \(args["id"] ?? "")"
-        case .appScript, .terminal, .share:
+        case .terminal, .share:
             return nil
         }
     }
@@ -808,9 +808,6 @@ enum AppScopedChatService {
             return "Reading the app's window…"
         case .axAct:
             return "Operating the app's window…"
-        case .appScript:
-            let name = invocation.arguments["name"] ?? ""
-            return name.isEmpty ? "Running this app's script…" : "Running \(name)…"
         case .terminal:
             // The command itself, because that is the thing the user is deciding about — a
             // row saying "running a command" is the same as saying nothing.

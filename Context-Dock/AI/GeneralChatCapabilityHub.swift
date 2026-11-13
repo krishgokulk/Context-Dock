@@ -928,24 +928,6 @@ final class GeneralChatCapabilityHub {
                 handled: true, success: result.success, output: result.output,
                 label: result.displayCommand)
 
-        case .appScript:
-            let name = invocation.arguments["name"] ?? ""
-            guard !name.isEmpty else {
-                return ToolCallResult(
-                    handled: true, success: false,
-                    output: "No script named.", label: "app script blocked")
-            }
-            let chatScope: GeneralChatScope = {
-                if case .contextDock(let bundleID, _) = scope { return .app(bundleId: bundleID) }
-                return .general
-            }()
-            let scriptResult = await AppAgentScriptRunner.run(
-                name: name, reason: invocation.arguments["reason"] ?? "",
-                scope: chatScope, query: name)
-            return ToolCallResult(
-                handled: true, success: scriptResult.success, output: scriptResult.output,
-                label: scriptResult.displayCommand)
-
         case .synthesizedScript:
             let script = invocation.arguments["script"] ?? ""
             guard !script.isEmpty else {

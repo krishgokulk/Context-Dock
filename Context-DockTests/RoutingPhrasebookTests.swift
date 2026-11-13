@@ -1282,3 +1282,38 @@ struct CalendarToolRetirementTests {
         #expect(cap != nil, "calendar.todayEvents capability must be registered")
     }
 }
+
+// MARK: - H6: run_app_script retirement
+
+/// Verifies that `run_app_script` is no longer offered after H6 tool-core trim.
+/// App-profile scripts now execute via `run_synthesized_script` / learned skills.
+struct AppScriptToolRetirementTests {
+
+    /// A plan for an app that declares scripts must NOT include `run_app_script`;
+    /// `run_synthesized_script` is always present for scoped app turns.
+    @Test func runAppScriptIsAbsentFromAppScopedPlan() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "export this document as pdf",
+            bundleId: "com.test.scriptableapp",
+            appName: "ScriptableApp")
+        #expect(!plan.allowedToolNames.contains("run_app_script"))
+        #expect(plan.allowedToolNames.contains("run_synthesized_script"))
+    }
+
+    /// `run_app_script` is not in the OutboundGate's judged tool set.
+    @Test func runAppScriptIsRemovedFromOutboundGate() {
+        #expect(!OutboundGate.outboundTools.contains("run_app_script"))
+    }
+
+    /// The `{"app_script": ...}` JSON shortcut for tool-less providers no longer
+    /// resolves to an invocation — a synthesized_script directive is used instead.
+    @Test func appScriptJsonDirectiveIsRetired() {
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"app_script": {"name": "tabs-to-md.sh"}}"#)
+        #expect(invocation == nil || invocation?.kind != .synthesizedScript)
+        // The synthesized_script path still works for tool-less providers.
+        let synth = AITypedInvocationResolver.invocation(
+            from: #"{"synthesized_script": {"script": "tell application \"Safari\" to get URL of current tab of front window", "language": "applescript", "reason": "get current tab"}}"#)
+        #expect(synth?.kind == .synthesizedScript)
+    }
+}
