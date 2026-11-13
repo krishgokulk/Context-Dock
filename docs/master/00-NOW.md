@@ -10,16 +10,25 @@
 
 ## In progress
 
-**#204 App Find** — retire the `resolvedFindIntent` / `executeAppFindIntent` pre-model shortcut (`DockShortcut.appFind`) from `handleL2Query`; find/search queries now reach the model and route through the ladder (branch `claude/retire-app-find-shortcut-4ad3bd`, 2026-11-13).
+**#413 H6 (3/n)** — tool core trim: consolidate `read_attachment` into `read_file` (2026-11-13).
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim.
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (after App Find)
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (in progress).
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (`transformShare`, `finder`, `crossApp`).
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#413 H6 (2/n): Retire `run_app_script` into `run_synthesized_script` / learned skills (PR #441):**
+- Deleted `run_app_script` tool from `AgentToolRegistry`, `AppAgentScriptTool.swift`, and `FrontmostAppTaskPlan.swift`. Scripts declared in app profiles and on-the-fly AppleScript/JXA execute via `run_synthesized_script` and learned skills under existing approval cards. Added `AppScriptToolRetirementTests` and D24 row to `00-DOCK-PARITY-INVENTORY.md`.
+
+**#413 H6 (1/n): Retire `get_today_events` tool (PR #440):**
+- Deleted `get_today_events` AgentTool from `AgentToolRegistry` and Calendar task plan injection. Calendar events now route to `find_capability` + `run_capability("calendar.todayEvents")`. Added `CalendarToolRetirementTests` and D23 row to `00-DOCK-PARITY-INVENTORY.md`.
+
+**#204 (final): App Find pre-model shortcut retired (PR #439):**
+- Deleted `resolvedFindIntent` / `executeAppFindIntent` / `DockShortcut.appFind` from `handleL2Query`. Find/search queries now reach the model and route through the ladder. Added `AppFindShortcutRetirementTests` and D22 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-13 (`47396892`).
 
 **#411 H4: menus as one tool — no snapshot, UI-lane-first routing (PR #438):**
 - Removed all 3 live menu snapshot injections from every model prompt. Added `RequestLane.menuRouteInstruction(for:)`: UI lane → prefer `run_menu_command`; data lane → prefer direct capabilities/scripts. Added `MenuLaneRoutingTests.swift`. Squash-merged 2026-11-13.
