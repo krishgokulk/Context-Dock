@@ -36,7 +36,7 @@ struct MenuLaneRoutingTests {
                expectedLane: .ui, instructionContains: "run_menu_command"),
 
         // --- Data-lane: data requests → direct/script preferred, no menu push ---
-        Phrase(sentence: "how many tabs are open in Safari?",
+        Phrase(sentence: "how many bookmarks are in Safari?",
                expectedLane: .data, instructionContains: "direct capabilities"),
         Phrase(sentence: "find notes with links",
                expectedLane: .data, instructionContains: "direct capabilities"),

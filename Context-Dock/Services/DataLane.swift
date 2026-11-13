@@ -30,6 +30,7 @@ extension RequestLane {
     private static let uiWords: Set<String> = [
         "minimize", "minimise", "maximize", "maximise", "fullscreen", "sidebar", "zoom",
         "window", "windows", "tab", "tabs", "panel", "toolbar", "preferences", "settings",
+        "toggle",
     ]
     private static let uiPhrases = [
         "mailbox list", "show the mailbox", "hide the mailbox", "full screen", "split view",
