@@ -283,9 +283,6 @@ enum OutboundGate {
         case "run_menu_command":
             return namesASend(arguments["path"]) ? sendTarget : nil
 
-        case "run_app_script":
-            return Target(kind: .external, host: nil, label: "run an app script that can reach the network")
-
         case "run_synthesized_script":
             return Target(kind: .external, host: nil, label: "run a synthesized script that can reach the network")
 
@@ -326,7 +323,7 @@ enum OutboundGate {
     /// Tools `target` can classify as outbound (its switch above).
     static let outboundTools: Set<String> = [
         "read_url", "run_shortcut", "compose_message", "send_message", "send_mail", "run_command", "spawn_worker",
-        "run_menu_command", "run_app_script", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
+        "run_menu_command", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
     ]
 
     /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
