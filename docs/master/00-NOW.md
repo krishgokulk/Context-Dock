@@ -10,16 +10,22 @@
 
 ## In progress
 
-**#413 H6 (3/n)** — tool core trim: consolidate `read_attachment` into `read_file` (2026-11-13). Built on `claude/consolidate-read-attachment-e0fb01`: `read_attachment` deleted, `read_file` reads attachments by path, filename or no path (one attachment), D25 added. Hand check owed.
+**#204 P10 — retire the `transformShare` pre-model shortcut** (2026-11-14). Building on `claude/transformshare-shortcut-retire-f5b746`: the `transformShareIntent` interception (`DockShortcut.transformShare`) leaves `handleL2Query`; "summarise this file and email it to …" goes through the ladder as a data turn (`read_file` → `mail.createDraft` / `messages.compose` under the existing approval gates). The explicit Transform & Share pill keeps `executeTransformShareIntent`. Remaining after this: `finder`, `crossApp`.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (in progress).
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (`transformShare`, `finder`, `crossApp`).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (3/n merged, PR #442).
+- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (`finder`, `crossApp`) — `transformShare` is in progress.
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**`corner.sh clear`: delete a hand check's thread (PR #444):**
+- Dev Corner remote gained a `clear` command so a hand check removes its own General Chat thread. Squash-merged 2026-11-14 (`b9ee54d9`).
+
+**#413 H6 (3/n): consolidate `read_attachment` into `read_file` (PR #442):**
+- `read_attachment` deleted from `AgentToolRegistry`; `read_file` reads an attachment by path, by filename, or with no path when one file is attached. General Chat names attached files in its own prompt section. Added `ReadAttachmentToolRetirementTests` and D25 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-14.
 
 **#413 H6 (2/n): Retire `run_app_script` into `run_synthesized_script` / learned skills (PR #441):**
 - Deleted `run_app_script` tool from `AgentToolRegistry`, `AppAgentScriptTool.swift`, and `FrontmostAppTaskPlan.swift`. Scripts declared in app profiles and on-the-fly AppleScript/JXA execute via `run_synthesized_script` and learned skills under existing approval cards. Added `AppScriptToolRetirementTests` and D24 row to `00-DOCK-PARITY-INVENTORY.md`.
