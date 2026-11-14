@@ -297,8 +297,9 @@ final class GeneralChatCapabilityHub {
                 + "the snapshot does not show. Send/Delete/Pay-style controls are refused. If the window exposes no elements "
                 + "(a canvas app), use {\"ax_snapshot\": {\"mode\": \"screen\"}} to read it by OCR and "
                 + "act on t-ids the same way.",
-            "- Something the user attached to the message is read with the read_attachment "
-                + "tool, never guessed at from the clipboard.",
+            "- Something the user attached to the message is read with the read_file "
+                + "tool (no path needed when one file is attached), never guessed at from the "
+                + "clipboard.",
             // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
             // enforced in code for a while: run_command was refused whenever the scoped app
             // had any adapter action at all, so "what is the recent commit I did?" was

@@ -24,7 +24,6 @@ enum ScopedToolStep {
         case "write_output_file": return "Writing the file…"
         case "list_shortcuts": return "Looking at your shortcuts…"
         case "run_shortcut": return "Running the shortcut…"
-        case "read_attachment": return "Reading the attachment…"
         case "find_capability", "find_route": return "Looking for a way to do this…"
         case "find_menu_command": return "Looking for a menu command…"
         case "run_capability", "run_route": return "Running it…"

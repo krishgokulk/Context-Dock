@@ -10,7 +10,7 @@
 
 ## In progress
 
-**#413 H6 (3/n)** — tool core trim: consolidate `read_attachment` into `read_file` (2026-11-13).
+**#413 H6 (3/n)** — tool core trim: consolidate `read_attachment` into `read_file` (2026-11-13). Built on `claude/consolidate-read-attachment-e0fb01`: `read_attachment` deleted, `read_file` reads attachments by path, filename or no path (one attachment), D25 added. Hand check owed.
 
 ## Queued (next)
 

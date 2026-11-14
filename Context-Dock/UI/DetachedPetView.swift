@@ -225,7 +225,10 @@ final class DetachedPetViewModel: ObservableObject {
             petID: petID,
             appName: appName,
             bundleID: bundleID,
-            position: .zero,
+            // Where the pet sits is the panel's to say (windowDidMove). Writing .zero here
+            // forgot it on every bubble change, so each pet came back at the default spot,
+            // one on top of another.
+            position: DetachedPetStore.record(for: petID)?.position ?? .zero,
             mascotState: mascotState,
             microBarState: microBarState,
             pinnedBubbles: pinnedBubbles

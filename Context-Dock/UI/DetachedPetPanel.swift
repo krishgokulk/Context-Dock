@@ -235,9 +235,11 @@ final class DetachedPetController: NSObject, NSWindowDelegate {
         DetachedPetStore.upsertRecord(record)
     }
 
-    private static func defaultScreenPosition() -> CGPoint {
+    /// Where a pet with no remembered place goes. `slot` steps each further one to the left,
+    /// so two of them are two pets rather than one with a doubled bar.
+    static func defaultScreenPosition(slot: Int = 0) -> CGPoint {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return CGPoint(x: frame.maxX - 320, y: frame.minY + 140)
+        return CGPoint(x: frame.maxX - 320 - CGFloat(slot) * 150, y: frame.minY + 140)
     }
 }

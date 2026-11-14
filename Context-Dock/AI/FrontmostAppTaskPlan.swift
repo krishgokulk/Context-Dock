@@ -217,7 +217,9 @@ struct FrontmostAppTaskPlan: Equatable {
         if shortcutTerms.contains(where: { lower.contains($0) }) {
             tools.formUnion(["list_shortcuts", "run_shortcut"])
         }
-        if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
+        // read_attachment is retired (#413 H6): read_file reads an attachment by path, by
+        // filename, or with no path when one file is attached.
+        if hasAttachments { tools.insert("read_file") }
 
         // The UI lane is for action turns only (AGENTS.md: behaviour is decided by intent +
         // lane, never by scope; #357). 52c7a575 offered these on every app-scoped turn, so a

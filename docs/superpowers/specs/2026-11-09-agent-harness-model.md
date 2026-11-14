@@ -145,7 +145,7 @@ SKILLS         (names + one line; full text via skills.read)
                - Compress files to ZIP       [learned]
                - Finder: tags and metadata   [Finder pack]
 TOOLS          (narrowed for this turn by FrontmostAppTaskPlan)
-               look   read_selection · read_attachment · read_file · find_files · read_app_dictionary
+               look   read_selection · read_file · find_files · read_app_dictionary
                do     run_command · run_synthesized_script · run_mcp_tool · run_capability
                know   skills.read · find_capability · find_menu_command
                click  run_menu_command · operate_app · ax_act   (Computer Use last)

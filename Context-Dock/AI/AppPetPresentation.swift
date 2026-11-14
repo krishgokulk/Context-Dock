@@ -170,6 +170,23 @@ struct DetachedPetRecord: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+extension DetachedPetRecord {
+    /// The record as it may be stored: a turn in flight is not part of it.
+    ///
+    /// The "Thinking…" bubble and the thinking mascot belong to a running turn. Stored, they
+    /// outlived it: an app quit mid-turn came back with "Safari: Thinking…" pinned over the
+    /// mascot for good, because the task that would have cleared it died with the process.
+    var withoutTurnState: DetachedPetRecord {
+        var copy = self
+        copy.mascotState = .idle
+        copy.pinnedBubbles.removeAll {
+            if case .thinking = $0.kind { return true }
+            return false
+        }
+        return copy
+    }
+}
+
 /// Pure store managing detached Pet companion records in UserDefaults (#342).
 /// Reattaching or closing a detached Pet never deletes the underlying conversation or verified memory.
 enum DetachedPetStore {
@@ -181,11 +198,11 @@ enum DetachedPetStore {
         else {
             return []
         }
-        return records
+        return records.map(\.withoutTurnState)
     }
 
     static func saveRecords(_ records: [DetachedPetRecord], defaults: UserDefaults = .standard) {
-        guard let data = try? JSONEncoder().encode(records) else { return }
+        guard let data = try? JSONEncoder().encode(records.map(\.withoutTurnState)) else { return }
         defaults.set(data, forKey: storageKey)
     }
 
