@@ -1,26 +1,19 @@
 // CornerLivePanel.swift
 // Context-Dock
 //
-// The Context Dock's panel (#191, part 2): beside an app's conversation, the way Claude keeps
-// its Progress and Context panel beside a chat (owner 2026-10-05). What DoraX is doing in
-// the app — the steps as they run, a command's output — and what the turn left behind: the
-// files it made or named, the uploads it was given, the connectors and the adapter it can
-// reach, and what it can do there.
+// The Context Dock's panel (#191, part 2, #443): beside a conversation, the way Claude keeps
+// its Progress and Context panel beside a chat (owner 2026-10-05).
 //
-// Nothing here is a second record. The steps are the conversation's own (`liveActivity`
-// while a turn runs, the finished message's activity after), the files are
-// `TurnFileExtractor`'s — the same list the answer's Files card draws — the connectors are
-// `MCPServerManager`'s, the adapter is `AppAdapterManager`'s, and "Can do here" is
-// `ScopeInventory.app`, the list the app's scope card shows. The card and its parts are
-// the result board's (`CornerBoardPreviewPanel`).
+// For App Pets: describes the frontmost app's conversation, capabilities, pack and connectors.
+// For General Chat and Combined Chat: describes the conversation itself — Dora/provider icon,
+// model subtitle, progress with borrowed app badges, context (attachments, selection, memory),
+// apps in this chat, connectors grouped by source, skills, and outputs.
 
 import AppKit
 import SwiftUI
 
 struct CornerLivePanel: View {
-    let appName: String
-    let appBundleID: String
-    let appIcon: NSImage?
+    let subject: PanelSubject
     let messages: [AIChatMessage]
     let isAnswering: Bool
     /// The narration, for the moments before the first step is recorded.
@@ -33,7 +26,7 @@ struct CornerLivePanel: View {
     /// Compact beside the Corner, full in the window. `CornerRailRules` decides which cards a
     /// density draws; compact is exactly today's panel.
     var density: CornerRailDensity = .compact
-    /// Detail mode for the live panel: Summary / Normal / Verbose (#331).
+    /// Detail mode for the live panel: Summary / Normal / Verbose (#331, #443).
     var initialDetailMode: LivePanelDetailMode = .normal
     /// Scope-specific affordances the window appends under the cards (add tools, app docs,
     /// preferred routes). Compact passes nothing, so it is unchanged. Kept here, inside the
@@ -52,6 +45,85 @@ struct CornerLivePanel: View {
     @State private var files: [URL] = []
     /// Sections the user folded, by title — Claude's chevrons.
     @State private var folded: Set<String> = []
+
+    // MARK: - Initializers
+
+    init(
+        subject: PanelSubject,
+        messages: [AIChatMessage],
+        isAnswering: Bool,
+        liveSteps: [String],
+        liveActivity: [ActivityStep],
+        activityByMessageID: [UUID: [ActivityStep]],
+        density: CornerRailDensity = .compact,
+        initialDetailMode: LivePanelDetailMode = .normal,
+        trailing: AnyView? = nil
+    ) {
+        self.subject = subject
+        self.messages = messages
+        self.isAnswering = isAnswering
+        self.liveSteps = liveSteps
+        self.liveActivity = liveActivity
+        self.activityByMessageID = activityByMessageID
+        self.density = density
+        self.initialDetailMode = initialDetailMode
+        self.trailing = trailing
+    }
+
+    /// Convenience initializer preserving today's app-scoped call sites (#191, #323).
+    init(
+        appName: String,
+        appBundleID: String,
+        appIcon: NSImage?,
+        messages: [AIChatMessage],
+        isAnswering: Bool,
+        liveSteps: [String],
+        liveActivity: [ActivityStep],
+        activityByMessageID: [UUID: [ActivityStep]],
+        density: CornerRailDensity = .compact,
+        initialDetailMode: LivePanelDetailMode = .normal,
+        trailing: AnyView? = nil
+    ) {
+        self.init(
+            subject: .app(name: appName, bundleID: appBundleID, icon: appIcon),
+            messages: messages,
+            isAnswering: isAnswering,
+            liveSteps: liveSteps,
+            liveActivity: liveActivity,
+            activityByMessageID: activityByMessageID,
+            density: density,
+            initialDetailMode: initialDetailMode,
+            trailing: trailing
+        )
+    }
+
+    // MARK: - Backward-compatible accessors
+
+    var appName: String {
+        switch subject {
+        case .app(let name, _, _): return name
+        case .general: return "General Chat"
+        case .combined(let participants):
+            return ParticipantSet.formattedTitle(for: participants.map(\.name))
+        }
+    }
+
+    var appBundleID: String {
+        switch subject {
+        case .app(_, let bundleID, _): return bundleID
+        case .general, .combined: return ""
+        }
+    }
+
+    var appIcon: NSImage? {
+        switch subject {
+        case .app(_, _, let icon): return icon
+        case .general:
+            return AIProviderIcon.appIcon(for: AppSettings.shared.selectedAIProvider)
+        case .combined(let participants):
+            return participants.first?.icon
+        }
+    }
 
     private struct CanDoLine: Identifiable {
         var id: String { title }
@@ -78,10 +150,7 @@ struct CornerLivePanel: View {
         return ActivityStep.steps(recorded: recorded, receipts: answer.evidenceReceipts)
     }
 
-    /// The Progress panel's one list: the turn's reasoning above the tool steps it ran. While
-    /// a turn runs it is the live trace; after, the finished answer's. Built from the trace,
-    /// so a turn that reasoned but ran no registered tool still shows why it acted instead of
-    /// "No steps recorded" (#199).
+    /// The Progress panel's one list: the turn's reasoning above the tool steps it ran.
     private var progressRows: [PanelProgressRow] {
         if isAnswering {
             let filtered = L.progressRows(
@@ -108,13 +177,20 @@ struct CornerLivePanel: View {
         let steps = L.steps(
             isAnswering: isAnswering, live: liveActivity, finished: finishedSteps)
         let uploads = L.uploads(messages.filter { $0.role == .user }.map(\.attachments))
+
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
-                // One order for both densities, decided by the rules: the compact list is
-                // exactly today's panel, the window adds the rest. Never a second design.
-                ForEach(CornerRailRules.cards(for: density), id: \.self) { card in
-                    self.card(card, steps: steps, uploads: uploads)
+                switch subject {
+                case .app:
+                    // Single App Pet: preserves today's single-app layout (#191, #323).
+                    ForEach(CornerRailRules.cards(for: density), id: \.self) { card in
+                        self.appCard(card, steps: steps, uploads: uploads)
+                    }
+                case .general, .combined:
+                    // General Chat / Combined Chat: conversation-first side panel (#443).
+                    conversationPanelBody(steps: steps, uploads: uploads)
                 }
+
                 if let trailing {
                     trailing
                 }
@@ -126,11 +202,11 @@ struct CornerLivePanel: View {
         .boardPanelCard()
         .animation(.smooth(duration: 0.18), value: steps.map(\.status))
         .animation(.smooth(duration: 0.18), value: files)
-        .task(id: appBundleID) { loadCanDo() }
-        // A scan that lands after the card opened must repaint "Can do here" — otherwise the
-        // dictionary the app just taught DoraX is invisible until the card is reopened.
+        .task(id: appBundleID) {
+            if subject.isApp { loadCanDo() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .appDictionaryChanged)) { _ in
-            loadCanDo()
+            if subject.isApp { loadCanDo() }
         }
         .task(id: filesKey) { await loadFiles() }
         .onAppear {
@@ -140,11 +216,310 @@ struct CornerLivePanel: View {
         }
     }
 
-    /// One card, drawn the same whatever density asked for it. The full-density cards
-    /// (usage, app pack, skills, mods) are wired when the window hosts this panel; compact
-    /// never lists them, so it is unaffected.
+    // MARK: - General Chat & Combined Chat Panel (#443)
+
     @ViewBuilder
-    private func card(_ card: CornerRailCard, steps: [ActivityStep], uploads: [URL]) -> some View {
+    private func conversationPanelBody(steps: [ActivityStep], uploads: [URL]) -> some View {
+        // Header
+        conversationHeader(steps)
+
+        // 1. Progress (Summary / Normal / Verbose)
+        if detailMode == .summary {
+            section("Progress") {
+                summaryProgress(steps)
+            }
+        } else {
+            section("Progress", count: progressRows.count) {
+                conversationProgress(progressRows)
+            }
+            if let shell = L.terminalStep(in: steps), detailMode == .verbose || shell.status == .running {
+                section(shell.status == .running ? "Terminal — running" : "Terminal") {
+                    terminal(shell)
+                }
+            }
+        }
+
+        // 2. Context (Normal / Verbose): attachments, selection, memory
+        if detailMode != .summary {
+            let contextSelection = lastAnswerSelection
+            let memoryLines = memoryUsedLines
+            let totalContext = uploads.count + contextSelection.count + memoryLines.count
+            if totalContext > 0 {
+                section("Context", count: totalContext) {
+                    ForEach(uploads, id: \.self) { fileRow($0) }
+                    ForEach(contextSelection, id: \.self) { url in
+                        selectionRow(url)
+                    }
+                    ForEach(memoryLines, id: \.self) { mem in
+                        PanelRow(symbol: "brain.head.profile", value: mem, trailing: "memory")
+                    }
+                }
+            }
+        }
+
+        // 3. Apps in this chat (Normal / Verbose): Combined Chat participants, or General Chat borrowed app
+        if detailMode != .summary {
+            appsInThisChatSection(steps: steps)
+        }
+
+        // 4. Connectors (Normal / Verbose): grouped by source
+        if detailMode != .summary {
+            conversationConnectorsSection(steps: steps)
+        }
+
+        // 5. Skills & plugins (Verbose only): skills that fired or steer this chat
+        if detailMode == .verbose {
+            conversationSkillsSection(steps: steps)
+        }
+
+        // 6. Outputs (Summary / Normal / Verbose): files made or named
+        if !files.isEmpty {
+            section("Outputs", count: files.count) {
+                ForEach(files, id: \.self) { fileRow($0) }
+            }
+        }
+    }
+
+    // MARK: - Headers
+
+    @ViewBuilder
+    private func conversationHeader(_ steps: [ActivityStep]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                switch subject {
+                case .general:
+                    AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 24)
+                        .frame(width: 30, height: 30)
+                case .combined(let participants):
+                    stackedIcons(for: participants)
+                        .frame(height: 30)
+                case .app:
+                    EmptyView()
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(subject.displayName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(isAnswering ? Color.orange : Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(generalSubtitle(steps))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 6)
+
+            LivePanelDetailModePicker(mode: $detailMode, compact: true)
+                .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func stackedIcons(for participants: [ConnectedPetInfo]) -> some View {
+        HStack(spacing: -8) {
+            ForEach(participants.prefix(3)) { pet in
+                if let icon = pet.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
+                } else {
+                    Image(systemName: "app.fill")
+                        .resizable()
+                        .frame(width: 24, height: 24)
+                }
+            }
+        }
+    }
+
+    private func generalSubtitle(_ steps: [ActivityStep]) -> String {
+        let usage = ProviderContextUsageStore.shared.snapshot(for: .general)
+        let model = usage.compactModel.isEmpty ? AppSettings.shared.selectedAIProvider.shortName : usage.compactModel
+        if isAnswering {
+            let done = steps.count { $0.status != .running }
+            return steps.isEmpty ? "\(model) · Working…" : "\(model) · Working… \(done) of \(steps.count) done"
+        }
+        if steps.isEmpty {
+            return "\(model) · Ready"
+        }
+        let failed = steps.count { $0.status == .failed || $0.status == .denied }
+        let noun = steps.count == 1 ? "step" : "steps"
+        return failed == 0 ? "\(model) · \(steps.count) \(noun)" : "\(model) · \(steps.count) \(noun) · \(failed) failed"
+    }
+
+    // MARK: - Apps in this chat (#443)
+
+    @ViewBuilder
+    private func appsInThisChatSection(steps: [ActivityStep]) -> some View {
+        switch subject {
+        case .combined(let participants):
+            if !participants.isEmpty {
+                section("Apps in this chat", count: participants.count) {
+                    ForEach(participants) { pet in
+                        let petSteps = steps.filter { step in
+                            step.detail.contains(pet.bundleID) || step.title.contains(pet.name)
+                        }
+                        let trailingText = petSteps.isEmpty ? "connected" : "\(petSteps.count) \(petSteps.count == 1 ? "action" : "actions")"
+                        PanelRow(icon: pet.icon, value: pet.name, trailing: trailingText)
+                    }
+                }
+            }
+        case .general:
+            let borrowed = L.borrowedApps(in: steps)
+            if !borrowed.isEmpty {
+                section("Apps in this chat", count: borrowed.count) {
+                    ForEach(borrowed, id: \.name) { app in
+                        PanelRow(icon: app.icon, value: app.name, trailing: "used once")
+                    }
+                }
+            }
+        case .app:
+            EmptyView()
+        }
+    }
+
+    // MARK: - Conversation Connectors (#443)
+
+    @ViewBuilder
+    private func conversationConnectorsSection(steps: [ActivityStep]) -> some View {
+        let borrowed = L.borrowedApps(in: steps)
+        let linkedMcp = steps.filter { $0.kind == .mcp }.map { L.server(of: $0) }
+        let uniqueMcp = Array(Set(linkedMcp.filter { !$0.isEmpty })).sorted()
+        let hasShell = steps.contains { $0.kind == .command || $0.kind == .providerShell }
+        let totalCount = 1 + (subject.isCombined ? (ifCombinedPetCount) : borrowed.count) + uniqueMcp.count + (hasShell ? 1 : 0)
+
+        section("Connectors", count: totalCount) {
+            // Source: DoraX / System
+            let hostName = Host.current().localizedName ?? "Local Mac"
+            PanelRow(symbol: "desktopcomputer", value: hostName, trailing: "ready")
+
+            // Source: App Plugins & Adapters
+            switch subject {
+            case .combined(let participants):
+                ForEach(participants) { pet in
+                    if let adapter = AppAdapterManager.shared.adapter(for: pet.bundleID) {
+                        PanelRow(
+                            icon: pet.icon,
+                            value: "\(adapter.appName) adapter",
+                            trailing: adapter.isBuiltIn ? "built-in" : "\(adapter.actions.count) actions")
+                    } else {
+                        PanelRow(
+                            icon: pet.icon,
+                            value: "\(pet.name) adapter",
+                            trailing: "connected")
+                    }
+                }
+            case .general:
+                ForEach(borrowed, id: \.name) { app in
+                    PanelRow(
+                        icon: app.icon,
+                        value: "\(app.name) adapter",
+                        trailing: "borrowed")
+                }
+            case .app:
+                EmptyView()
+            }
+
+            // Source: Linked MCP Servers
+            ForEach(uniqueMcp, id: \.self) { name in
+                let inUse = steps.contains {
+                    $0.kind == .mcp && L.server(of: $0) == name && $0.status == .running
+                }
+                let failed = steps.contains {
+                    $0.kind == .mcp && L.server(of: $0) == name && ($0.status == .failed || $0.status == .denied)
+                }
+                let status = inUse ? "in use" : (failed ? "failed" : "called")
+                PanelRow(symbol: "server.rack", value: name, trailing: status)
+            }
+
+            // Source: CLI shell
+            if hasShell {
+                let shellRunning = steps.contains {
+                    ($0.kind == .command || $0.kind == .providerShell) && $0.status == .running
+                }
+                PanelRow(symbol: "terminal", value: "CLI shell", trailing: shellRunning ? "in use" : "ready")
+            }
+        }
+    }
+
+    private var ifCombinedPetCount: Int {
+        if case .combined(let participants) = subject {
+            return participants.count
+        }
+        return 0
+    }
+
+    // MARK: - Conversation Skills (#443)
+
+    @ViewBuilder
+    private func conversationSkillsSection(steps: [ActivityStep]) -> some View {
+        var skillRows: [(name: String, source: String)] = []
+        if let saved = lastTurnAnswer?.savedSkill {
+            skillRows.append((saved.jobKey, "saved skill"))
+        }
+        if let pending = lastTurnAnswer?.pendingWriteSkillOffer {
+            skillRows.append((pending.jobKey, "offer"))
+        }
+        for step in steps where step.kind == .tool && step.title.hasPrefix("Ran skill ") {
+            let skillName = String(step.title.dropFirst("Ran skill ".count))
+            skillRows.append((skillName, "active"))
+        }
+
+        if !skillRows.isEmpty {
+            section("Skills & plugins", count: skillRows.count) {
+                ForEach(skillRows, id: \.name) { row in
+                    PanelRow(symbol: "wand.and.stars", value: row.name, trailing: row.source)
+                }
+            }
+        }
+    }
+
+    // MARK: - Context helpers
+
+    private var lastAnswerSelection: [URL] {
+        guard let answer = lastTurnAnswer else { return [] }
+        return answer.recentFiles.map(\.url)
+    }
+
+    private var memoryUsedLines: [String] {
+        guard let answer = lastTurnAnswer else { return [] }
+        return answer.trace.filter { $0.contains("memory") || $0.contains("Memory") }
+    }
+
+    private func selectionRow(_ url: URL) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "cursorarrow.and.square.on.square.dashed")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(url.lastPathComponent)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text("selection")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.8))
+        }
+        .frame(height: 24)
+    }
+
+    // MARK: - App Pet Card Layout (Today's Single-App Layout)
+
+    @ViewBuilder
+    private func appCard(_ card: CornerRailCard, steps: [ActivityStep], uploads: [URL]) -> some View {
         switch card {
         case .scope:
             VStack(alignment: .leading, spacing: 6) {
@@ -182,7 +557,7 @@ struct CornerLivePanel: View {
             }
         case .connectors:
             if detailMode != .summary {
-                section("Connectors") { connectors(steps) }
+                section("Connectors") { appConnectors(steps) }
             }
         case .canDoHere:
             if detailMode != .summary, !groups.isEmpty {
@@ -216,8 +591,6 @@ struct CornerLivePanel: View {
                 }
             }
         case .skills, .mods:
-            // Skills are one of the App Pack's groups, so they ride in that card rather than
-            // repeating. Mods wait until one applies to the scope (owner 2026-10-26).
             EmptyView()
         }
     }
@@ -247,8 +620,6 @@ struct CornerLivePanel: View {
         .padding(.vertical, 3)
     }
 
-    /// One inventory group in the App Pack card: its title and count, then its items — the
-    /// detail the window's scope tab used to show, now inside the shared rail.
     private func groupRow(_ group: ScopeInventory.Group) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
@@ -295,9 +666,8 @@ struct CornerLivePanel: View {
         return failed == 0 ? "\(capSummary)Done · \(steps.count) \(noun)" : "\(capSummary)Done · \(failed) of \(steps.count) failed"
     }
 
-    // MARK: Sections
+    // MARK: - Sections
 
-    /// A titled section that folds, as Claude's panel does, with a hairline above it.
     @ViewBuilder
     private func section<Content: View>(
         _ title: String, count: Int? = nil, @ViewBuilder content: () -> Content
@@ -333,18 +703,14 @@ struct CornerLivePanel: View {
         }
     }
 
-    // MARK: Progress
+    // MARK: - Progress
 
     @ViewBuilder
-    private func progress(_ rows: [PanelProgressRow]) -> some View {
+    private func conversationProgress(_ rows: [PanelProgressRow]) -> some View {
         if rows.isEmpty {
             if isAnswering {
-                // Nothing recorded yet — the turn has begun but neither reasoning nor a tool
-                // step has landed.
                 stepRow(symbol: nil, title: "Thinking…", detail: "", trailing: nil, done: false)
             } else {
-                // Only what was recorded can be vouched for. "Answered without running
-                // anything" was said of turns a pre-model shortcut had run (issue #195).
                 Text("No steps recorded for this answer.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
@@ -353,8 +719,40 @@ struct CornerLivePanel: View {
             ForEach(rows) { row in
                 switch row {
                 case .reasoning(let line):
-                    // A decision the turn recorded (Understood / Lane / Chose / Gate): shown
-                    // dim with a tick, the way Claude lists the reasoning behind a step.
+                    stepRow(
+                        symbol: "checkmark.circle.fill", title: line, detail: "",
+                        trailing: nil, tint: .secondary, done: true)
+                case .step(let step):
+                    let borrowed = L.borrowedApp(for: step)
+                    stepRow(
+                        symbol: symbol(for: step.status), title: step.title, detail: step.detail,
+                        trailing: step.duration.map(Self.duration), tint: tint(for: step.status),
+                        done: step.status == .ok, appIcon: borrowed?.icon)
+                }
+            }
+            if isAnswering, !rows.contains(where: {
+                if case .step(let step) = $0 { return step.status == .running }
+                return false
+            }) {
+                stepRow(symbol: nil, title: "Working…", detail: "", trailing: nil, done: false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func progress(_ rows: [PanelProgressRow]) -> some View {
+        if rows.isEmpty {
+            if isAnswering {
+                stepRow(symbol: nil, title: "Thinking…", detail: "", trailing: nil, done: false)
+            } else {
+                Text("No steps recorded for this answer.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            ForEach(rows) { row in
+                switch row {
+                case .reasoning(let line):
                     stepRow(
                         symbol: "checkmark.circle.fill", title: line, detail: "",
                         trailing: nil, tint: .secondary, done: true)
@@ -365,7 +763,6 @@ struct CornerLivePanel: View {
                         done: step.status == .ok)
                 }
             }
-            // A live turn with no step running now keeps a spinner so the panel looks alive.
             if isAnswering, !rows.contains(where: {
                 if case .step(let step) = $0 { return step.status == .running }
                 return false
@@ -375,11 +772,9 @@ struct CornerLivePanel: View {
         }
     }
 
-    /// One step: a spinner while it runs (`symbol` nil), its outcome after. A finished step
-    /// dims, the way Claude crosses off what is done.
     private func stepRow(
         symbol: String?, title: String, detail: String, trailing: String?,
-        tint: Color = .secondary, done: Bool
+        tint: Color = .secondary, done: Bool, appIcon: NSImage? = nil
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Group {
@@ -392,6 +787,15 @@ struct CornerLivePanel: View {
                 }
             }
             .frame(width: 16)
+
+            if let appIcon {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 14, height: 14)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 12))
@@ -438,7 +842,7 @@ struct CornerLivePanel: View {
         seconds < 1 ? "<1s" : seconds < 60 ? "\(Int(seconds))s" : "\(Int(seconds / 60))m \(Int(seconds) % 60)s"
     }
 
-    // MARK: Terminal
+    // MARK: - Terminal
 
     private func terminal(_ step: ActivityStep) -> some View {
         let command = step.detail.isEmpty ? step.title : step.detail
@@ -448,10 +852,8 @@ struct CornerLivePanel: View {
                 + (output.isEmpty ? (step.status == .running ? "\n…" : "") : "\n" + output))
     }
 
-    // MARK: Files and uploads
+    // MARK: - Files and outputs
 
-    /// What the last finished answer made or named — the answer's own Files card's list.
-    /// Waits for the turn to end: paths mid-stream are half-written.
     private var filesKey: String {
         guard !isAnswering, let answer = lastAnswer else { return "none" }
         return answer.id.uuidString + "\(answer.content.count)"
@@ -479,8 +881,6 @@ struct CornerLivePanel: View {
         files = found
     }
 
-    /// A file: its icon, its name and kind; click opens it, the folder button shows it in
-    /// Finder.
     private func fileRow(_ url: URL) -> some View {
         HStack(spacing: 8) {
             Button {
@@ -528,10 +928,10 @@ struct CornerLivePanel: View {
         return ext.isEmpty ? "File" : ext.uppercased()
     }
 
-    // MARK: Connectors
+    // MARK: - App Connectors (Single App Pet)
 
     @ViewBuilder
-    private func connectors(_ steps: [ActivityStep]) -> some View {
+    private func appConnectors(_ steps: [ActivityStep]) -> some View {
         let linked = servers.servers(forBundleId: appBundleID).map(\.name)
         let names = L.connectors(linked: linked, steps: steps)
         let adapter = AppAdapterManager.shared.adapter(for: appBundleID)
@@ -567,9 +967,10 @@ struct CornerLivePanel: View {
         }
     }
 
-    // MARK: Can do
+    // MARK: - Can do
 
     private func loadCanDo() {
+        guard !appBundleID.isEmpty else { return }
         let inventory = ScopeInventory.app(bundleId: appBundleID, appName: appName)
         groups = inventory.groups
         canDo = inventory.groups
