@@ -52,12 +52,13 @@ struct RichFileCardModel: Equatable {
     }
 
     /// Reads the live file system once, for the view. Tests build the model directly.
-    static func live(url: URL) -> RichFileCardModel {
+    /// The caller resolves the default app once and passes its name in.
+    static func live(url: URL, defaultAppName: String?) -> RichFileCardModel {
         let exists = FileManager.default.fileExists(atPath: url.path)
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         return RichFileCardModel(
             url: url,
-            defaultAppName: exists ? DefaultAppResolver.shared.getDefaultApp(for: url)?.displayName : nil,
+            defaultAppName: exists ? defaultAppName : nil,
             byteCount: values?.fileSize.map(Int64.init),
             modified: values?.contentModificationDate,
             homeDirectory: NSHomeDirectory(),
@@ -148,9 +149,10 @@ struct RichFileCard: View {
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityElement(children: .contain)
         .task(id: url) {
-            let live = RichFileCardModel.live(url: url)
+            let app = DefaultAppResolver.shared.getDefaultApp(for: url)
+            let live = RichFileCardModel.live(url: url, defaultAppName: app?.displayName)
             loaded = live
-            appIcon = live.exists ? DefaultAppResolver.shared.getDefaultApp(for: url)?.icon : nil
+            appIcon = live.exists ? app?.icon : nil
             fileIcon = NSWorkspace.shared.icon(forFile: url.path)
         }
     }
