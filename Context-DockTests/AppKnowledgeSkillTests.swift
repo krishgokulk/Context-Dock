@@ -127,4 +127,19 @@ struct AppKnowledgeSkillTests {
             helpTitles: help, capabilities: counts()))
         #expect(skill.name.contains("Code"))
     }
+
+    // MARK: - Updates & In-Window Perception Guidance
+
+    /// Skills automatically guide the App Pet to check in-window elements (ax_snapshot / ax_act)
+    /// and changelogs when asked about updates or new features.
+    @Test func updatesAndInWindowGuidanceIncluded() throws {
+        let skill = try #require(AppKnowledgeSkill.make(
+            bundleId: "com.google.Antigravity", appName: "Antigravity", version: "2.29.0",
+            helpTitles: help, capabilities: counts()))
+        #expect(skill.instructions.contains("Updates, new features, and in-window UI actions"))
+        #expect(skill.instructions.contains("ax_snapshot"))
+        #expect(skill.instructions.contains("ax_act"))
+        #expect(skill.instructions.contains("Restart to Update"))
+        #expect(skill.instructions.contains("Antigravity"))
+    }
 }
