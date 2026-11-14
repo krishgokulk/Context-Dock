@@ -34,16 +34,15 @@ the titles are in the AX tree whether or not anybody opens the menu.
 ## The shape: one App Pet Profile assembled per app
 
 `AdapterSkill` already exists and supplies the knowledge/skills part—per bundle id, instructions only, never
-executes anything, versioned, user-editable, shown in Settings ▸ App Adapters ▸ Tools ▸
-Skills. `ChatRoute.Kind.skill` already routes to it and already says what it is: *"it
+executes anything, versioned, user-editable, shown in `Settings ▸ Extensions ▸ Apps ▸ <App> ▸ Capabilities & Skills`. `ChatRoute.Kind.skill` already routes to it and already says what it is: *"it
 steers the model rather than running anything."*
 
 The product-level **App Pet Profile** composes this learned skill with the app identity, granted
 capabilities, connectors, `/mods`, conversation state and memory policy. It is a view over existing
 registries, not a new executable `AGENT.md` system and not a seventh capability registry.
 
-What is missing is only that today's skill is **seeded from a hardcoded template**
-(`AdapterSkillSeeder`) rather than **learned from the app in front of us**.
+Today's app knowledge skill is **learned from the app in front of us** via `AppKnowledgeSkill`
+and the 2-stage `AutonomousAppDiscoveryEngine` (PR #381):
 
 ```
 AppKnowledgeSkill(bundleId)
@@ -83,27 +82,17 @@ sentence, not to reconstructing what the app is from a menu tree.**
    The possessive-phrase guard added tonight is a safety net over the wrong universe; the
    real fix is to stop scanning `InstalledApplicationsCatalog` for intent.
 
-## Order of work
+## Order of work & status
 
-**Step 1 — Help index into the skill.** Pure local, no network, no new permissions. Read the
-Help menu subtree from the cache, plus About, and write/refresh one `AdapterSkill` per
-adapter. Shippable alone, and it is the piece that immediately changes answer quality.
-
-**Step 2 — auto-expand the app sheet.** The result sheet already renders
-`5 actions · 1 skills · 4 cli tools · 20 menu commands`. Show it on scope activation so the
-user sees what DoraX can do in this app before typing, rather than discovering it by being
-surprised.
-
-**Step 3 — website knowledge.** Fetch the product page once per app version, summarise into
-the skill, keep docs and social links. Needs a cache, a size cap, and an explicit user
-toggle: this is the only step that leaves the machine.
-
-**Step 4 — capability-set intent matching.** Replace installed-app name scanning with
-ranking over granted capabilities. This is the one that retires the possessive guard, and it
-is the largest.
-
-Steps 1 and 2 need no network and no new authority. Step 3 does. Step 4 is a resolver
-change and wants its own tests before anything moves.
+- **Step 1 — Help index into the skill (`[code]` Done):** Pure local, reads the Help menu subtree
+  from the cache, plus About, and writes/refreshes `AppKnowledgeSkill`.
+- **Step 2 — auto-expand the app sheet (`[code]` Done):** Renders capabilities, skills, and tools
+  in the Corner split board and live panel.
+- **Step 3 — website knowledge (`[code]` Done in PR #381):** `AutonomousAppDiscoveryEngine` with
+  `[ 🌐 Enrich Knowledge ]` action in `Settings ▸ Extensions ▸ Apps ▸ Capabilities & Skills` fetches
+  and caches web docs per app version.
+- **Step 4 — capability-set intent matching:** Replace installed-app name scanning with ranking over
+  granted capabilities (`Task 17`, `FrontmostAppTaskPlan`, and `AgentHarnessModel` ladder).
 
 ---
 

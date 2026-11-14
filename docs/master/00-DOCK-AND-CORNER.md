@@ -5,9 +5,11 @@
 > (`DockEngine`) behind the Corner's App Chat and Global results. The sections below are the
 > history of the migration; §5 records how it ended.
 >
-> **Target update (2026-10-27, #327):** centre and bottom corner are placements of this one shell.
-> A normal launch opens the frontmost App Pet; Command or empty Backspace returns to Global
-> Context. Running-app icons switch Pets or detach as persistent desktop Pets. See the
+> **Target update (2026-10-27, #327; refined 2026-11-10):** centre and bottom corner are placements of this one shell.
+> A normal launch opens the Unified Dock Launcher (context-biased to the frontmost app). The modal `Command` / `Backspace` switch
+> between Global and App Pet is dissolved into a single unified intent board: commands/files execute immediately on `Return`,
+> while conversational questions escalate directly to the active App Pet. See the
+> [Unified Spotlight-Pet Surface spec](../superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md) and
 > [canonical App Pets design](../superpowers/specs/2026-10-27-app-pets-combined-chat-design.md).
 >
 > **Earlier status: CURRENT — owner-confirmed direction (2026-09-24).** Read with
@@ -79,9 +81,9 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | Clipboard | ✅ | ✅ | **Moved** — a scope in the result board over the field, Raycast-style (owner 2026-10-07; replaced the ambient pill + corner card, which a copy no longer raises). The Dock still keeps its own copy of the pasteboard rules (`DockCore+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardBoardCard` |
 | Selection | ✅ | ✅ | **Moved**, and beyond the Dock — see §4a (#84) | `[code]` `SelectionScopeCard`, `CornerSelectionActionsTests` |
 | Drop shelf | ✅ | ✅ | **Moved** — the Shelf is the last icon of every dock row, in both shells, in every scope (#147); click opens it in the shell, a drag over it drops onto it. The floating "Drop to Shelf" card is gone | `[code]` `DropShelfIcon`, `DockTools`; `DropShelfRowTests` |
-| Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
-| CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
-| Media Dock | ✅ | ❌ | **Not moved** — and Labs in v1 | `[code]` `MediaDockSurface` |
+| Extensions as a scope (e.g. Currency Converter) | ✅ | ✅ | **Moved** — Task 7 (#106): `scopeIntoExtension` opens it in the Corner's board | `[code]` `scopeDocumentKinds`, `CornerGlobalContextParityTests` |
+| CLI tools as a scope (+ terminal) | ✅ | ✅ | **Moved** — Task 7 (#106): steps into the CLI tool in the Corner's board | `[code]` `CornerCLIScopeTests` (7 tests) |
+| Media Dock | — | — | **Labs in v1** (the old Dock window is retired in #257) | `[code]` `MediaDockSurface` |
 | Full-window chat | Chat Window (separate) | — | Stays a separate window by design | `[code]` Chat Window hotkey |
 | Live Progress panel (reasoning + steps beside an App Chat) | ✅ | ✅ | **Moved** — one panel for both positions (`CornerLivePanel`, drawn once in `AppChatPromptPill`). P5/#199: the panel renders the turn's whole trace from the step list — reasoning (Understood → Lane → Chose → Shortcut → Gate) above the tool steps that ran, built by `CornerLivePanelLayout.progressRows` from `ProgressTraceRules.reasoning` + the recorded `ActivityStep`s — not model prose, so a turn that reasoned but ran no registered tool no longer reads "No steps recorded". Folds in #185 (one trace, no raw JSON, no temp-screenshot card) | `[code]` `CornerLivePanel`, `CornerBoardLayout`, `ActivityStep`; `ProgressPanelStepsTests` |
 
@@ -94,27 +96,28 @@ boxes.
 
 ---
 
-## 4a. Selection in the Corner — moved (#84, 2026-09-25); the report that started it (2026-09-24)
+## 4a. Selection in the Corner — moved (#84, 2026-09-25); extraction done (#83 / PR #396); the report that started it (2026-09-24)
 
-**Status 2026-09-25: done.** All five acceptance points below are met (PR #84), and the card goes
-beyond the Dock on the owner's asks: answers inside the card (never a second card), Share inside the
-card, typed "send to …" with a confirmation, Save to Quick Note, file preview, and the Computer Use
-rule for rows that drive another app. Details and tests: inventory D10 and "Corner-only (beyond the
-Dock)". Still owed: #83, the extraction of `SelectionActionSource`, before the Dock retires.
+**Status 2026-11-09: done.** All five acceptance points below are met (PR #84), `SelectionActionSource`
+was extracted from `DockCore` into `Context-Dock/Search/SelectionActionSource.swift` in #83 (PR #396,
+`SelectionActionSourceTests`), and `UI/SelectionScopeCard.swift` is now ~602 lines supporting
+in-card answers, Share inside the card, typed "send to …" with confirmation, Save to Quick Note,
+file preview, and the Computer Use consent rule. Details and tests: inventory D10 and "Corner-only
+(beyond the Dock)".
 
-**Correction to §4:** the Selection row says "Moved". It is **partial** `[owner]` `[code]`.
+**Historical snapshot (2026-09-24 before PR #84):**
 
-| | Dock (before) | Corner card today (`UI/SelectionScopeCard.swift`, 137 lines) |
+| | Dock (before) | Corner card on 2026-09-24 (`UI/SelectionScopeCard.swift`, then 137 lines; now ~602 lines) |
 |---|---|---|
 | Shows the selection + source app | ✅ | ✅ "1 char · TextEdit" |
 | Ask about the selection | ✅ | ✅ field at the bottom |
-| **Actions for the selection** — app menu commands, extensions, Shortcuts, AI presets (the Selection Shortcut Sheet's job, doc `05`) | ✅ filtered live as you type | ❌ none — the card has only the text, a pin and the field |
-| **Close** | Esc | Esc only (`onKeyPress(.escape)`); **no visible close button**. Auto-hides after 8 s idle unless pinned (`SelectionScopeModel.idleDwell`) |
+| **Actions for the selection** — app menu commands, extensions, Shortcuts, AI presets (the Selection Shortcut Sheet's job, doc `05`) | ✅ filtered live as you type | ❌ none (fixed in #84) |
+| **Close** | Esc | Esc only (`onKeyPress(.escape)`); **no visible close button** (fixed in #84). Auto-hides after 8 s idle unless pinned (`SelectionScopeModel.idleDwell`) |
 
-Why it feels incomplete: the Corner took over *showing* the selection but not *acting on* it, so the
+Why it felt incomplete before #84: the Corner took over *showing* the selection but not *acting on* it, so the
 surface lost its one job ("selection-aware action engine", `docs/architecture/SELECTION_SHORTCUT_SHEET.md`).
 
-**Done when** (acceptance for moving Selection):
+**Done when** (acceptance for moving Selection — all complete in #84 and #83):
 1. Typing in the card's field filters the same actions the Dock showed — menu commands of the source
    app, selection extensions (`Services/SelectionScopeExtensionPolicy.swift`,
    `Search/SystemExtensionActionSource.swift`), Shortcuts, AI presets — above the field, the way the
@@ -122,47 +125,49 @@ surface lost its one job ("selection-aware action engine", `docs/architecture/SE
 2. ↑/↓ moves through them, ↩ runs one, the field stays where it is (same keys as the Dock, §3 rule 2).
 3. An empty field + ↩ asks the question, as today.
 4. A visible ✕ closes the card; Esc still does too.
-5. Reuse the Dock's action source — do not write a second ranking (§3 rule 1). If it is locked inside
-   `DockCore`, extract it first, as the 2026-09-08 plan did for menu matching.
-   **Interim (owner 2026-09-25):** Corner uses the Dock's Selection rows through
-   `SelectionActionProviding`; extraction tracked in #83, must land before the Dock retires.
+5. Reuse the Dock's action source — do not write a second ranking (§3 rule 1). Extracted to
+   `SelectionActionSource` in #83 (PR #396).
 
 **Related bug found while testing:** the Selection Scope hotkey was recorded as **⇧S**. A Shift-only
 global hotkey captures every capital S typed anywhere, so typing "S" in TextEdit opened this card.
 Fix: the recorder must require ⌘, ⌥ or ⌃ (`UI/Settings/HotkeysSettingsPage.swift`, `startRecording()`).
 
-## 4b. Swipes — the Corner must match the Dock exactly (owner decision, 2026-09-24)
+## 4b. Swipes — the Corner must match the Dock exactly (owner decision, 2026-09-24; implemented in PR #79)
+
+> **Status: Done (PR #79, hand-tested 2026-09-24).** All rows W1–W10 are implemented in
+> `CornerNavigation` and `CornerSwipe` and tested in `CornerScopeWalkTests` (see inventory row F1).
+> The table below records the original 2026-09-24 gap analysis.
 
 The owner wants the Corner's trackpad swipes to behave **exactly** like the Dock's, over the input
 field only. Below is the Dock's behaviour read from `Search/DockCore+InteractionLifecycle.swift`
-(`setupSwipeGestureMonitor`) `[code]`, and what the Corner does today
+(`setupSwipeGestureMonitor`) `[code]`, and what the Corner did on 2026-09-24 before PR #79
 (`UI/CornerDockWindow.swift` `handleChatSwipe`, `UI/CornerChatPresentation.swift`) `[code]`.
 
 Corner scope names map to Dock layers: **Global Context = Global Context**, **Frontmost App = Context
 Dock**, **General = General Chat**, **Media = Media Dock**.
 
-| # | Rule | Dock (the target) | Corner today | Gap |
+| # | Rule | Dock (the target) | Corner on 2026-09-24 | Gap (resolved in PR #79) |
 |---|---|---|---|---|
 | W1 | Where | Over the dock area or the input field | Over the input field only | Owner: **input field only** in the Corner — keep |
 | W2 | Detection | Adds finger movement **and** momentum; decides when the fingers lift and again when momentum ends; **one action per swipe** | Adds both; decides only once at the end | Match the Dock (a fast flick must still count) |
 | W3 | Sideways threshold | > 70 pt and > 1.8× the vertical movement | Same | ✅ |
-| W4 | Sideways action | **Toggle General Chat**: in General Chat → back to the scope you came from; elsewhere, swipe **right** → General Chat (remembering that scope); swipe left outside General Chat → nothing | **Steps** one place along General ↔ Global Context ↔ Frontmost App | ❌ change to the toggle |
-| W5 | Vertical threshold | > 55 pt and > 1.15× the sideways movement | none | ❌ add |
-| W6 | Swipe **up** | Global Context → Frontmost App → Media (Media **only if** Settings' Media layer — `enableLayer3` — is on) | none | ❌ add |
-| W7 | Swipe **down** | General → back to the previous scope; Media → Frontmost App → Global Context | none | ❌ add |
-| W8 | App scope locked (a running-app capsule is open) | Sideways swipe is swallowed, vertical is left for normal scrolling, no scope change | — | ❌ add |
-| W9 | Sideways scroll over the row of pills / commands above the field | Moves the highlight one pill per 22 pt, skips separators, runs off the end to "nothing highlighted"; the list itself does not scroll | — | ❌ add |
-| W10 | Typed text | Swiping does not require an empty field; the text stays | Swipes only when the field is **empty** | **Owner decision** — Dock parity says remove the guard; the guard protects a draft. Recommendation: keep text in the field (as the Dock does) rather than block the swipe |
+| W4 | Sideways action | **Toggle General Chat**: in General Chat → back to the scope you came from; elsewhere, swipe **right** → General Chat (remembering that scope); swipe left outside General Chat → nothing | **Steps** one place along General ↔ Global Context ↔ Frontmost App | ❌ → ✅ changed to the toggle (#79) |
+| W5 | Vertical threshold | > 55 pt and > 1.15× the sideways movement | none | ❌ → ✅ added (#79) |
+| W6 | Swipe **up** | Global Context → Frontmost App → Media (Media **only if** Settings' Media layer — `enableLayer3` — is on) | none | ❌ → ✅ added (#79) |
+| W7 | Swipe **down** | General → back to the previous scope; Media → Frontmost App → Global Context | none | ❌ → ✅ added (#79) |
+| W8 | App scope locked (a running-app capsule is open) | Sideways swipe is swallowed, vertical is left for normal scrolling, no scope change | — | ❌ → ✅ added (#79) |
+| W9 | Sideways scroll over the row of pills / commands above the field | Moves the highlight one pill per 22 pt, skips separators, runs off the end to "nothing highlighted"; the list itself does not scroll | — | ❌ → ✅ added (#79) |
+| W10 | Typed text | Swiping does not require an empty field; the text stays | Swipes only when the field is **empty** | ✅ Keeps text in the field (#79) |
 
 **Keys must agree with swipes.** The Dock's ←/→ also toggles General Chat (Hotkeys → Dock Key Map).
 If W4 changes, the Corner's ←/→ must change with it, or the keys and the swipes will disagree about what
 sits next to what — the exact reason `CornerChatPresentation.handleHorizontalSwipe` was written as a walk.
 Decide keys and swipes together.
 
-**Done when**
-1. W2, W4–W9 behave as the Dock column; W1 stays input-only; W10 as the owner decides.
-2. The rules live in one pure function (e.g. `CornerSwipe.classify(dx:dy:scope:mediaEnabled:locked:)
-   -> CornerSwipeAction`) with a swift-testing test per row — so no agent can drift them silently.
+**Done when** (all met in PR #79):
+1. W2, W4–W9 behave as the Dock column; W1 stays input-only; W10 keeps text in the field.
+2. The rules live in one pure function (`CornerSwipe.classify` / `CornerNavigation`) with a
+   swift-testing test per row (`CornerScopeWalkTests`).
 3. ←/→ keys and swipes give the same result from every scope (test).
 4. Checked by hand on a trackpad: slow swipe, fast flick, flick with momentum, swipe with text typed.
 

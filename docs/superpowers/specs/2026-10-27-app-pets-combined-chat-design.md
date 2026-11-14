@@ -1,9 +1,8 @@
 # App Pets, General Chat, Global Context and Combined Chat
 
-> **Status: owner-approved architecture (2026-10-27); ready for implementation planning.**
+> **Status: Owner-approved architecture (2026-10-27); core stages shipped (PRs #338–#366, Task #343 completed 2026-11-02).**
 > Written 2026-10-27 for GitHub #327. This is the canonical detailed design behind
-> [`DORAX-BLUEPRINT.md`](../../master/DORAX-BLUEPRINT.md). It changes product language and the
-> target architecture; it does not claim the product code already implements every rule below.
+> [`DORAX-BLUEPRINT.md`](../../master/DORAX-BLUEPRINT.md).
 
 ## 1. Product in one sentence
 

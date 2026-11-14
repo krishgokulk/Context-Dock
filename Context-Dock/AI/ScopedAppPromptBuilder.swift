@@ -41,7 +41,9 @@ enum ScopedAppPromptBuilder {
     /// once here so the prompt and the tests cannot drift apart.
     static let toolOrderLine =
         "Tool choice order, cheapest and most reliable first — do the job with the earliest "
-        + "rung that fits: saved skill → saved adapter action → dictionary/API → MCP tool → "
+        + "rung that fits: rung 0, a saved skill that matches the request (if a listed skill "
+        + "fits, read it with skills.read and follow it before trying anything else) → saved "
+        + "adapter action → dictionary/API → MCP tool → "
         + "linked CLI → Shortcut → menu command (find_menu_command) → Computer Use "
         + "(operate_app). Prefer a route that opens no window; the menu and the screen are the "
         + "last rungs, taken only when nothing headless fits the request."

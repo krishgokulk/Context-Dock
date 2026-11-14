@@ -84,7 +84,7 @@ struct FrontmostAppAgentPhase1Tests {
             bundleId: "com.test.agentapp",
             appName: "TestApp")
 
-        #expect(plan.allowedToolNames.contains("run_app_script"))
+        #expect(!plan.allowedToolNames.contains("run_app_script"))
         #expect(plan.allowedToolNames.contains("run_mcp_tool"))
         #expect(plan.allowedToolNames.contains("run_adapter_action"))
         #expect(plan.allowedToolNames.contains("run_command"))

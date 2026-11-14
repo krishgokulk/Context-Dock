@@ -51,7 +51,9 @@ final class DetachedPetManager: ObservableObject {
             petID: normalizedID,
             appName: appName,
             bundleID: bundleID,
-            initialPosition: screenPoint,
+            initialPosition: screenPoint == .zero
+                ? DetachedPetController.defaultScreenPosition(slot: activeControllers.count)
+                : screenPoint,
             appIcon: icon
         )
 
@@ -95,7 +97,9 @@ final class DetachedPetManager: ObservableObject {
                 petID: record.petID,
                 appName: record.appName,
                 bundleID: record.bundleID,
-                initialPosition: record.position,
+                initialPosition: record.position == .zero
+                    ? DetachedPetController.defaultScreenPosition(slot: activeControllers.count)
+                    : record.position,
                 pinnedBubbles: record.pinnedBubbles
             )
             controller.viewModel.mascotState = record.mascotState

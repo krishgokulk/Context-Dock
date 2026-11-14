@@ -31,24 +31,45 @@ final class ComputerUseSkillRecorder {
         var goal: String = ""
         var steps: [LearnedStep] = []
         var lastSucceeded = true
+        var userQuery: String = ""
+        var hasUntrustedContent: Bool = false
     }
 
     private var runs: [String: Run] = [:]
+    private var currentTurnQuery: String = ""
 
     private init() {}
 
     // MARK: Recording
 
+    /// Call once per AI turn, before any `succeeded` or `failed` calls, to record
+    /// the user's query for templated naming (Rule 3 / H1a).
+    func startTurn(userQuery: String) {
+        currentTurnQuery = userQuery
+    }
+
+    /// Mark the current run as having been exposed to untrusted content.
+    /// Causes `finish()` to discard it rather than save (Rule 2 / H1a).
+    func markUntrusted(bundleID: String) {
+        runs[bundleID]?.hasUntrustedContent = true
+    }
+
     func succeeded(bundleID: String, appName: String, goal: String, step: String) {
         var run = runs[bundleID] ?? Run(appName: appName)
         if run.goal.isEmpty { run.goal = goal.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if run.userQuery.isEmpty { run.userQuery = currentTurnQuery }
         if run.steps.last?.text != step { run.steps.append(LearnedStep(text: step)) }
         run.lastSucceeded = true
         runs[bundleID] = run
     }
 
     func failed(bundleID: String) {
-        runs[bundleID]?.lastSucceeded = false
+        // A run whose first step fails still counts against its job's recipe (H2), so it is
+        // opened here rather than only by a success.
+        var run = runs[bundleID] ?? Run(appName: "")
+        if run.userQuery.isEmpty { run.userQuery = currentTurnQuery }
+        run.lastSucceeded = false
+        runs[bundleID] = run
     }
 
     func discard(bundleID: String? = nil) {
@@ -58,21 +79,26 @@ final class ComputerUseSkillRecorder {
     /// The run has gone quiet. Saves it when it earned it.
     @discardableResult
     func finish(bundleID: String, store: SkillStore = .shared) -> AdapterSkill? {
-        guard let run = runs.removeValue(forKey: bundleID), run.lastSucceeded,
+        guard let run = runs.removeValue(forKey: bundleID) else { return nil }
+        guard run.lastSucceeded else {
+            // H2 staleness: the run failed, which counts against the recipe for this job.
+            if let job = Self.titleAndKey(
+                bundleID: bundleID, goal: run.goal, firstStep: run.steps.first?.text ?? "",
+                userQuery: run.userQuery)
+            {
+                store.noteLearnedFailure(jobKey: job.key, bundleId: bundleID)
+            }
+            return nil
+        }
+        guard !run.hasUntrustedContent,  // Rule 2: untrusted-turn guard
             let skill = Self.makeSkill(
-                bundleID: bundleID, appName: run.appName, goal: run.goal, steps: run.steps)
+                bundleID: bundleID, appName: run.appName, goal: run.goal, steps: run.steps,
+                userQuery: run.userQuery, appVersion: SkillStore.appVersion(bundleID))
         else { return nil }
 
-        // Same task done again updates its skill rather than piling up copies.
-        var saved = skill
-        if let existing = store.skills(for: bundleID).first(where: { $0.name == skill.name }) {
-            saved = AdapterSkill(
-                id: existing.id, adapterBundleId: bundleID, name: skill.name,
-                summary: skill.summary, instructions: skill.instructions,
-                isEnabled: existing.isEnabled, isPinned: existing.isPinned)
-        }
-        store.upsert(saved)
-        return saved
+        // The same job done again replaces its skill rather than piling up copies — by job
+        // key and conflict order (H2), not by name.
+        return store.saveLearned(skill)
     }
 
     // MARK: Step wording
@@ -95,12 +121,14 @@ final class ComputerUseSkillRecorder {
     // MARK: Skill
 
     nonisolated static func makeSkill(
-        bundleID: String, appName: String, goal: String, steps: [LearnedStep]
+        bundleID: String, appName: String, goal: String, steps: [LearnedStep],
+        userQuery: String = "", appVersion: String = ""
     ) -> AdapterSkill? {
-        guard steps.count >= minimumSteps else { return nil }
-        let seed = goal.isEmpty ? steps[0].text : goal
-        let title = String(seed.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
+        guard steps.count >= minimumSteps,
+            let job = titleAndKey(
+                bundleID: bundleID, goal: goal, firstStep: steps[0].text, userQuery: userQuery)
+        else { return nil }
+        let title = job.title
 
         let numbered = steps.enumerated().map { "\($0.offset + 1). \($0.element.text)" }
             .joined(separator: "\n")
@@ -118,6 +146,35 @@ final class ComputerUseSkillRecorder {
             adapterBundleId: bundleID,
             name: namePrefix + title,
             summary: "How DoraX did \"\(title)\" in \(appName) last time (\(steps.count) steps).",
-            instructions: body)
+            instructions: body,
+            jobKey: job.key, rung: LearnedSkillJob.Rung.computerUse,
+            learnedAppVersion: appVersion)
+    }
+
+    /// A run's display title and its job key (H2 #409). Both come from the user's request
+    /// through the H0 deriver when it lifts cleanly (rule 3); otherwise from the goal, whose
+    /// words then stand in for the request shape.
+    nonisolated static func titleAndKey(
+        bundleID: String, goal: String, firstStep: String, userQuery: String
+    ) -> (title: String, key: String)? {
+        if !userQuery.isEmpty,
+            let derived = SolvedSkillCapture.derive(query: userQuery, bundleId: bundleID),
+            !derived.hasLeftoverValue,
+            !derived.template.isEmpty
+        {
+            let title = String(derived.template.prefix(48))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            return (
+                title,
+                LearnedSkillJob.key(
+                    scope: bundleID, nonSlotWords: derived.nonSlotWords,
+                    slotNames: derived.slots.map(\.name))
+            )
+        }
+        let seed = goal.isEmpty ? firstStep : goal
+        let title = String(seed.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        return (title, LearnedSkillJob.key(forSkillName: title, bundleId: bundleID))
     }
 }

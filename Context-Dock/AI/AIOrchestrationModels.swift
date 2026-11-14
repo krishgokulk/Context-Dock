@@ -45,8 +45,6 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case axSnapshot
     /// Click / type / focus one element id from the latest snapshot.
     case axAct
-    /// Run a script the app's own AGENT.md declares.
-    case appScript
     /// Run an on-the-fly synthesized AppleScript or JXA script.
     case synthesizedScript
 }
@@ -321,26 +319,6 @@ enum AITypedInvocationResolver {
                 return AITypedInvocation(
                     kind: .axAct, capabilityID: "computerUse.axAct",
                     arguments: args, requiresApproval: true)
-            }
-
-            // A script the app's profile declares: {"app_script": {"name": "tabs-to-md.sh"}}.
-            //
-            // Without this a provider with no tools of its own cannot reach `run_app_script`
-            // at all — asked to run a declared script it went hunting the file system with
-            // shell commands, which is both the wrong answer and the wrong authority.
-            if let call = root["app_script"] as? [String: Any] {
-                let name = ((call["name"] as? String)
-                    ?? (call["script"] as? String) ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !name.isEmpty {
-                    var args: [String: String] = ["name": name]
-                    if let reason = call["reason"] as? String, !reason.isEmpty {
-                        args["reason"] = reason
-                    }
-                    return AITypedInvocation(
-                        kind: .appScript, capabilityID: "appAgent.runScript",
-                        arguments: args, requiresApproval: true)
-                }
             }
 
             // Synthesized AppleScript / JXA: {"synthesized_script": {"script": "...", "language": "applescript", "reason": "..."}}

@@ -110,12 +110,10 @@ struct AppAgentProfile: Equatable {
         }
         if let scripts = tools.scripts, !scripts.isEmpty {
             lines.append(
-                "Scripts this app carries: " + scripts.joined(separator: ", ")
-                + ". Run one with the run_app_script tool, or — if you were given no tools "
-                + "this turn — reply with ONLY "
-                + "{\"app_script\": {\"name\": \"\(scripts[0])\"}}. Never look for these "
-                + "files yourself and never run them through the shell: the name is the "
-                + "whole interface, and the user approves each run.")
+                "App-profile scripts declared: " + scripts.joined(separator: ", ")
+                + ". Use run_synthesized_script to execute equivalent AppleScript or JXA — "
+                + "synthesize the logic from the script name and context. The user approves "
+                + "each run. Never read or reference these files directly.")
         }
         let declared = tools.allNames
         if !declared.isEmpty {

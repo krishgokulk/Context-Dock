@@ -179,8 +179,10 @@ struct DockMagnifiedGlass: ViewModifier {
             .padding(.horizontal, e)
             // Inside the centred card the card is the glass (`CornerCombinedCard`). The style
             // changes, not the view: a branch here rebuilt the field and selected its text.
+            // Keep `.interactive()` only for the resting dock so open centred bars stay
+            // draggable by window background.
             .glassEffect(
-                sharesOneCard ? .identity : .regular.interactive(),
+                sharesOneCard ? .identity : (active ? .regular.interactive() : .regular),
                 in: .rect(cornerRadius: radius, style: .continuous))
             .padding(.horizontal, -e)
             .animation(DockMagnifier.spring, value: e)

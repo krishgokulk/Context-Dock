@@ -10,7 +10,7 @@ import Foundation
 enum ScopedRecordRead {
     /// Words that ask the app to do something rather than to look something up.
     static let actionWords = [
-        "create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
+        "create ", "draft ", "compose ", "reply ", "send ", "delete ", "move ", "rename ", "install ",
         "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ",
         "quit ", "enable ", "disable ", "export ",
         // Switching a setting or pressing a control. "turn on the spelling option" had none of
@@ -18,6 +18,10 @@ enum ScopedRecordRead {
         "turn on ", "turn off ", "switch on ", "switch off ", "toggle ", "uncheck ", "untick ",
         "click ", "press ",
     ]
+
+    /// Verbs that ask for a look-up. "look for"/"look up" were only understood by Mail's retired
+    /// Mailbox Search shortcut (issue #204); they are the same read in every record-set app.
+    static let lookupVerbs = ["find ", "search ", "list ", "look for ", "look up ", "lookup "]
 
     static func hasExplicitAction(_ query: String) -> Bool {
         let lower = query.lowercased()
@@ -28,7 +32,7 @@ enum ScopedRecordRead {
         let lower = query.lowercased()
         return ReadOnlyDataDomain(scopeBundleId: bundleId) != nil
             && RequestLane.decide(query) == .data
-            && ["find ", "search ", "list "].contains(where: lower.contains)
+            && lookupVerbs.contains(where: lower.contains)
             && !hasExplicitAction(query)
     }
 }
@@ -148,7 +152,7 @@ struct FrontmostAppTaskPlan: Equatable {
         let hasAction = !asksOnly
             && (actionWords.contains(where: lower.contains)
                 || (!readsScopeRecords && ChatRouteResolver.isActionRequest(intentQuery)))
-        let hasRead = readWords.contains(where: lower.contains)
+        let hasRead = readsScopeRecords || readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 
         let isBrowser = ScopedAppPromptBuilder.isBrowserBundle(bundleId)
@@ -191,9 +195,6 @@ struct FrontmostAppTaskPlan: Equatable {
         if id.contains("reminders") {
             tools.formUnion(["list_reminders", "create_reminder"])
         }
-        if id.contains("ical") || id.contains("calendar") {
-            tools.formUnion(["get_today_events"])
-        }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
@@ -216,7 +217,9 @@ struct FrontmostAppTaskPlan: Equatable {
         if shortcutTerms.contains(where: { lower.contains($0) }) {
             tools.formUnion(["list_shortcuts", "run_shortcut"])
         }
-        if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
+        // read_attachment is retired (#413 H6): read_file reads an attachment by path, by
+        // filename, or with no path when one file is attached.
+        if hasAttachments { tools.insert("read_file") }
 
         // The UI lane is for action turns only (AGENTS.md: behaviour is decided by intent +
         // lane, never by scope; #357). 52c7a575 offered these on every app-scoped turn, so a
@@ -236,9 +239,6 @@ struct FrontmostAppTaskPlan: Equatable {
             tools.formUnion(["read_app_dictionary", "run_synthesized_script"])
             if let profile = AppAgentProfileStore.shared.profile(forBundleID: bundleId, appName: appName) {
                 agentNeverRules = profile.never
-                if let scripts = profile.tools.scripts, !scripts.isEmpty {
-                    tools.insert("run_app_script")
-                }
                 if let caps = profile.tools.capabilities, !caps.isEmpty {
                     tools.formUnion(["find_capability", "run_capability"])
                 }

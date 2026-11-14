@@ -297,8 +297,9 @@ final class GeneralChatCapabilityHub {
                 + "the snapshot does not show. Send/Delete/Pay-style controls are refused. If the window exposes no elements "
                 + "(a canvas app), use {\"ax_snapshot\": {\"mode\": \"screen\"}} to read it by OCR and "
                 + "act on t-ids the same way.",
-            "- Something the user attached to the message is read with the read_attachment "
-                + "tool, never guessed at from the clipboard.",
+            "- Something the user attached to the message is read with the read_file "
+                + "tool (no path needed when one file is attached), never guessed at from the "
+                + "clipboard.",
             // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
             // enforced in code for a while: run_command was refused whenever the scoped app
             // had any adapter action at all, so "what is the recent commit I did?" was
@@ -751,6 +752,14 @@ final class GeneralChatCapabilityHub {
                         toolName: "run_mcp_tool", arguments: [:], output: result,
                         succeeded: true, turn: turn)
                 }
+                // #408: provider-issued read-only MCP tools (read_data, etc.) are verified
+                // read-backs; record them so captureIfEligible can produce SavedSkillRow.
+                SolvedSkillToolCallCollector.shared.record(
+                    capability: tool,
+                    input: invocation.arguments,
+                    isReadOnly: true,
+                    verifiedReadBack: true,
+                    scope: chatScope)
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
                 return ToolCallResult(
@@ -919,24 +928,6 @@ final class GeneralChatCapabilityHub {
             return ToolCallResult(
                 handled: true, success: result.success, output: result.output,
                 label: result.displayCommand)
-
-        case .appScript:
-            let name = invocation.arguments["name"] ?? ""
-            guard !name.isEmpty else {
-                return ToolCallResult(
-                    handled: true, success: false,
-                    output: "No script named.", label: "app script blocked")
-            }
-            let chatScope: GeneralChatScope = {
-                if case .contextDock(let bundleID, _) = scope { return .app(bundleId: bundleID) }
-                return .general
-            }()
-            let scriptResult = await AppAgentScriptRunner.run(
-                name: name, reason: invocation.arguments["reason"] ?? "",
-                scope: chatScope, query: name)
-            return ToolCallResult(
-                handled: true, success: scriptResult.success, output: scriptResult.output,
-                label: scriptResult.displayCommand)
 
         case .synthesizedScript:
             let script = invocation.arguments["script"] ?? ""

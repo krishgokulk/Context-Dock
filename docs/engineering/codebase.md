@@ -69,7 +69,7 @@ The provider is the brain and the app is the harness:
 - **Tool loop:** `AI/AgentToolRegistry.swift` (and its extensions); per-turn tool narrowing in
   `AI/FrontmostAppTaskPlan.swift`.
 - **Data lane vs UI lane:** `Services/DataLane.swift` (`RequestLane`), `Services/LanePlan.swift`.
-- **Skills:** `Services/SkillStore` / `Services/SkillScope.swift`; solved skills (#205) in
+- **Skills:** `Services/SkillStore.swift` / `Services/SkillScope.swift`; solved skills (#205) in
   `AI/SolvedSkill*.swift`; Computer Use skills in `AI/ComputerUseSkillRecorder.swift`.
 - **Per-app instructions:** `AppAgentProfileStore` (each app's `AGENT.md`).
 - **Turn diagnosis:** `docs/runbooks/diagnose-an-ai-turn.md`.
@@ -136,7 +136,7 @@ singletons before that point. Under XCTest the app returns early into
 `configureTestHostEnvironment()`.
 
 **Tests**: `Context-DockTests/` uses swift-testing (`import Testing`, `@Test`), not XCTest. Nothing
-in the suite needs a live model.
+**Evaluation & Benchmarks**: offline tests and reasoning evaluations live under `Context-DockTests/` and follow [`MAC_AGENT_BENCHMARKS.md`](MAC_AGENT_BENCHMARKS.md). Model turns must comply with [`AGENT_REASONING_CONTRACT.md`](../architecture/AGENT_REASONING_CONTRACT.md).
 
 ## Apple documentation
 

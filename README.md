@@ -70,47 +70,48 @@ unconfirmed, not ticked.
 That is the difference between an automation demo and something you can leave a
 real task with.
 
-## The four surfaces
+## The unified Dock surfaces
 
-One shell, four jobs. Each stays out of the others' way.
+One Dock shell, focus-scoped jobs. Each stays out of the others' way.
 
-| | |
+| Focus / Surface | Job |
 |---|---|
-| **🔍 Global Context** | Get somewhere, or run something, immediately. Cache-first and deliberately boring — this one is for speed. |
-| **📌 Context Dock** | The app in front of you: its live menus, its actions, a chat scoped to it alone. |
-| **💬 General Chat** | Work that spans apps. This is where the workflows above live. |
-| **⌘ Selection Scope** | Your own actions for whatever you have selected. |
+| **🔍 Global Context** | Mac-wide launcher/home: search apps, files, extensions, commands and tools. |
+| **🐾 App Pet** | The frontmost app (or detached Pet): active context, menus, actions, and persistent per-app memory. |
+| **💬 General Chat** | Dora's Mac-wide conversation; may borrow app abilities for a single turn without anchoring. |
+| **🤝 Combined Chat** | Multi-Pet workspace coordinating two or more explicitly connected Pets. |
+| **⌘ Selection Scope** | Selection-aware actions for whatever you have selected, invoked explicitly. |
 
-Built-in tool access for **Contacts · Calendar · Reminders · Notes**, no setup.
-Your own apps plug in through App Adapters, MCP servers, CLI tools and Shortcuts.
+Built-in tool access for **Mail · Messages · Safari · Finder · Contacts · Calendar · Reminders · Notes**, no setup.
+Your own apps plug in through App Adapters, MCP/UTCP servers, CLI tools, scripts, and Shortcuts.
 
 ## Where it is honestly at
 
 Beta, and specific about it:
 
 - The build → test → hand-back loop works, and is what DoraX is developed with.
-- Saved workflows need a request that resolves to several real steps first.
+- Saved workflows and solved skills need a request that resolves to verified real steps first.
 - General Chat recognises concrete requests deterministically. It is not an
   open-ended planner that will decompose any goal you give it.
-- Verification covers the writes that can be checked cheaply and reliably, not
-  every route.
+- Verification covers writes with typed read-back verification before confirming.
 
-It will not autonomously do anything on your Mac, and it isn't trying to.
+It will not autonomously do anything on your Mac without approval, and it isn't trying to.
 
 ## Privacy
 
 Everything stays on your Mac unless you choose otherwise.
 
-- **You choose what leaves** — cloud requests carrying private context need explicit approval.
-- **You choose the provider** — on-device by default; add your own keys for the rest.
-- **You choose per app** — which MCPs and adapters each app may use.
+- **You choose what leaves** — cloud requests carrying private context need explicit approval via the Outbound Privacy Gate.
+- **You choose the provider** — on-device by default; add your own keys or connect CLI/subscription accounts.
+- **You choose per app** — which tools and capabilities each app may use.
 - **Approvals are per route**, not per app. "Always allow" grants one action, not a blanket.
 
 | Provider | Notes |
 |---|---|
-| Apple On-Device Intelligence | Local, offline — the default |
-| Anthropic (Claude) | API key in Keychain |
-| OpenAI · Gemini · OpenRouter · Ollama · LM Studio | Your own key or endpoint |
+| Apple On-Device Intelligence | Local, offline — private on-device model |
+| Claude Code CLI / ChatGPT Subscription | Connect via CLI auth without exposing raw credentials |
+| Anthropic (Claude) · OpenAI · Gemini | API key in Keychain |
+| OpenRouter · Ollama · LM Studio | Your own key or local endpoint |
 | Shortcuts | Route prompts through anything a Shortcut can reach |
 
 API keys live in the macOS Keychain. High-risk actions require approval, and

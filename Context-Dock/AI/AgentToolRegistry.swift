@@ -551,7 +551,9 @@ final class AgentToolRegistry {
     /// Hands a successful call to the solved-skill collector (#205). Lookups and read-backs are
     /// plumbing; `run_capability` is the one replayable call; anything else is recorded as not
     /// read-only so it keeps the turn from being saved.
-    private static func noteForSolvedSkill(
+    ///
+    /// Internal rather than private so the recording rules can be tested without a provider.
+    static func noteForSolvedSkill(
         name: String, arguments: [String: Any], verifiedReadBack: Bool, scope: GeneralChatScope?
     ) {
         // run_mcp_tool wraps dorax_run_capability which carries a DoraX capability_id.
@@ -572,20 +574,111 @@ final class AgentToolRegistry {
                 verifiedReadBack: verifiedReadBack, scope: scope)
             return
         }
+        // dorax_run_menu_command: DoraX internally re-dispatches as run_menu_command with
+        // scope=nil, so the inner call lands in the wrong solved-skill bucket. Intercept the
+        // outer call here (which still carries the app scope) before the plumbing guard drops it.
+        // On the Anthropic streaming path arguments["server"] and arguments["tool"] are
+        // AIProviderAnyCodable; reach through .value before falling back to a plain String cast.
+        if name == "run_mcp_tool",
+           let serverRaw = arguments["server"],
+           let server = (serverRaw as? AIProviderAnyCodable)?.value as? String
+               ?? serverRaw as? String,
+           server.caseInsensitiveCompare("dorax") == .orderedSame,
+           let toolRaw = arguments["tool"],
+           let toolArg = (toolRaw as? AIProviderAnyCodable)?.value as? String
+               ?? toolRaw as? String, toolArg == "dorax_run_menu_command"
+        {
+            let rawArgs = arguments["arguments"]
+            let innerArgs: [String: Any]
+            if let codable = rawArgs as? [String: AIProviderAnyCodable],
+               let data = try? JSONEncoder().encode(codable) {
+                innerArgs = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            } else {
+                innerArgs = (rawArgs as? [String: Any]) ?? [:]
+            }
+            let app = innerArgs["app"] as? String ?? ""
+            let path = innerArgs["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
+            return
+        }
+        // H1b rung 1: external connector/MCP calls. `run_mcp_tool` is a plumbing tool (it has
+        // no activity row of its own), so this must come before the plumbing guard — below it,
+        // an external read was dropped and never became a skill. DoraX's remaining tools
+        // dispatch their own inner calls and stay plumbing.
+        if name == "run_mcp_tool" {
+            let server = unwrappedArgument(arguments["server"]) as? String ?? ""
+            let toolName = unwrappedArgument(arguments["tool"]) as? String ?? ""
+            guard !toolName.isEmpty, server.caseInsensitiveCompare("dorax") != .orderedSame
+            else { return }
+            var input: [String: String] = [:]
+            for (key, value) in unwrappedArgument(arguments["arguments"]) as? [String: Any] ?? [:] {
+                input[key] = (value as? String) ?? String(describing: value)
+            }
+            // The tool name's heuristic classifies read vs. write, as the tool's own gate does.
+            SolvedSkillToolCallCollector.shared.record(
+                capability: server.isEmpty ? toolName : "\(server).\(toolName)", input: input,
+                isReadOnly: MCPToolSafety.isClearlyReadOnly(name: toolName),
+                verifiedReadBack: verifiedReadBack, scope: scope)
+            return
+        }
         let plumbing = ActivityStepNaming.plumbingTools.union(["verify_outcome"])
         guard !plumbing.contains(name) else { return }
         if name == "run_capability", let id = arguments["capability_id"] as? String {
+            // Unregistered capability IDs are app-adapter internal actions (the adapter
+            // falls through to them when no registered capability matches). They are
+            // implementation details, not user-intent replay targets — skip them so they
+            // do not pollute the skill collector with spurious isReadOnly:false entries.
+            guard CapabilityRegistry.shared.capability(id: id) != nil else {
+                return
+            }
             var input: [String: String] = [:]
             for (key, value) in (arguments["input"] as? [String: Any]) ?? [:] {
                 input[key] = (value as? String) ?? String(describing: value)
             }
+            let isReadOnly = !changesSomething(capabilityID: id)
+            // A successful read-only capability is a verified read-back — align with
+            // GeneralChatCapabilityHub.execute() which uses verifiedReadBack: isReadOnly.
             SolvedSkillToolCallCollector.shared.record(
-                capability: id, input: input, isReadOnly: !changesSomething(capabilityID: id),
-                verifiedReadBack: verifiedReadBack, scope: scope)
+                capability: id, input: input, isReadOnly: isReadOnly,
+                verifiedReadBack: verifiedReadBack || isReadOnly, scope: scope)
+        } else if name == "run_menu_command" {
+            // H1b rung 3: menu presses are typed replays. Every replay is gated (§8 rule 5),
+            // so the turn is recorded as read-only here — the gate appears at run time, not now.
+            // Success IS the verification for a menu command (the AX framework found the item).
+            // On the Anthropic streaming path values arrive as AIProviderAnyCodable; reach
+            // through .value before falling back to a plain String cast.
+            let app = (arguments["app"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["app"] as? String ?? ""
+            let path = (arguments["path"] as? AIProviderAnyCodable)?.value as? String
+                ?? arguments["path"] as? String ?? ""
+            var input: [String: String] = [:]
+            if !app.isEmpty { input["app"] = app }
+            if !path.isEmpty { input["path"] = path }
+            SolvedSkillToolCallCollector.shared.record(
+                capability: "run_menu_command", input: input,
+                isReadOnly: true, verifiedReadBack: true, scope: scope)
         } else {
             SolvedSkillToolCallCollector.shared.record(
                 capability: name, input: [:], isReadOnly: false, verifiedReadBack: verifiedReadBack,
                 scope: scope)
+        }
+    }
+
+    /// A tool argument with the Anthropic streaming path's `AIProviderAnyCodable` wrapping
+    /// removed, all the way down.
+    private static func unwrappedArgument(_ raw: Any?) -> Any? {
+        switch raw {
+        case let boxed as AIProviderAnyCodable: return unwrappedArgument(boxed.value)
+        case let object as [String: AIProviderAnyCodable]:
+            return object.mapValues { unwrappedArgument($0.value) ?? () }
+        case let list as [AIProviderAnyCodable]:
+            return list.map { unwrappedArgument($0.value) ?? () }
+        default: return raw
         }
     }
 
@@ -1152,7 +1245,7 @@ final class AgentToolRegistry {
         // words against ids and titles, and finder.readFile's title says "Read a file's
         // contents" — nothing a person asking for a summary would type. So the query
         // scored zero against it and one against every Apple Notes capability, because the
-        // FILENAME contained "notes". The model looped on read_attachment and gave up.
+        // FILENAME contained "notes". The model looped on the (since retired) read_attachment tool and gave up.
         case "finder.readFile":
             return "read open summarise summarize explain describe contents what does say "
                 + "inside text pdf document markdown md txt docx file"
@@ -1258,8 +1351,6 @@ final class AgentToolRegistry {
         registerComputerUseTool()
         // Phase 3.5: snapshot + element actions for work inside a window. See ComputerUseAXTools.swift.
         registerComputerUseAXTools()
-        // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
-        registerAppAgentScriptTool()
         // Tier 2: AI Autonomous Scripting Tool. See SynthesizedScriptTool.swift.
         registerSynthesizedScriptTool()
         // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.
@@ -1621,97 +1712,6 @@ final class AgentToolRegistry {
         // 35k tokens per message, so they are reached through two tools instead: search,
         // then call. The model discovers what exists at the moment it needs it, and pays for
         // only what it looked up.
-
-        register(AgentTool(
-            name: "read_attachment",
-            description: "Read a file the user attached to this message — OCR for images and "
-                + "screenshots, plain text for text/markdown/code, extracted text for PDFs. "
-                + "Call this FIRST whenever the user says \"this\", \"this screenshot\", "
-                + "\"the attached file\", or asks to convert, summarise or reformat something "
-                + "they attached. Do not guess the content from the clipboard.",
-            properties: [
-                "index": [
-                    "type": "integer",
-                    "description": "Which attachment, 0-based. Omit for the first one.",
-                ]
-            ],
-            required: []
-        ) { arguments, context in
-            let attachments = context.attachments
-            guard !attachments.isEmpty else {
-                // "These files" usually means the Finder selection, not an upload. Ending
-                // the turn on "nothing is attached" left the model with a flat no while the
-                // files the user was pointing at sat one tool call away — so this says what
-                // *is* there and which tool reaches it.
-                if case .filesSelected(let selected) = context.userContext, !selected.isEmpty {
-                    let names = selected.prefix(10).map(\.path).joined(separator: "\n")
-                    return AgentToolResult(
-                        success: false,
-                        output: "Nothing is attached to this message, but the user has "
-                            + "\(selected.count) item(s) selected in Finder:\n\(names)\n\n"
-                            + "That is what \"these files\" means. Any image among them has "
-                            + "already been shown to you — describe it directly. For anything "
-                            + "else use finder.readFile or finder.fileInfo on the paths above.",
-                        displayCommand: "read_attachment()")
-                }
-                return AgentToolResult(
-                    success: false,
-                    output: "Nothing is attached to this message.",
-                    displayCommand: "read_attachment()")
-            }
-            let index = (arguments["index"] as? Int) ?? 0
-            guard attachments.indices.contains(index) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "There \(attachments.count == 1 ? "is 1 attachment" : "are \(attachments.count) attachments"), so index \(index) doesn't exist.",
-                    displayCommand: "read_attachment(\(index))")
-            }
-            let url = attachments[index]
-            let label = url.lastPathComponent
-            guard let data = try? Data(contentsOf: url) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Couldn't read \(label).",
-                    displayCommand: "read_attachment(\(label))")
-            }
-
-            let imageTypes: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp"]
-            let ext = url.pathExtension.lowercased()
-            var text = ""
-            if imageTypes.contains(ext) {
-                let outcome = ScreenCaptureService.recognizeTextOutcome(in: data)
-                text = outcome.text
-                if text.isEmpty {
-                    // An image with no text is a real answer, not a failure — and saying so
-                    // stops the model inventing content it cannot see. A recogniser that
-                    // could not run is not that answer: the summary says which one it was.
-                    return AgentToolResult(
-                        success: true,
-                        output: outcome.summary(label: label) + " If the user is asking "
-                            + "about what the image depicts, describe it from the image you "
-                            + "were shown rather than from this tool.",
-                        displayCommand: "read_attachment(\(label))")
-                }
-            } else if ext == "pdf" {
-                text = PDFDocument(url: url)?.string ?? ""
-            } else {
-                text = String(data: data, encoding: .utf8) ?? ""
-            }
-
-            guard !text.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "\(label) has no text I can extract.",
-                    displayCommand: "read_attachment(\(label))")
-            }
-            // Bounded: a long PDF would otherwise crowd out the rest of the turn.
-            let clipped = text.count > 20_000
-                ? String(text.prefix(20_000)) + "\n…(truncated)" : text
-            return AgentToolResult(
-                success: true,
-                output: "Contents of \(label):\n\n\(clipped)",
-                displayCommand: "read_attachment(\(label))")
-        })
 
         register(AgentTool(
             name: "find_capability",
@@ -2673,18 +2673,18 @@ final class AgentToolRegistry {
             required: []
         ) { arguments, _ in
             let query = arguments["query"] as? String ?? ""
-            var sender = arguments["sender"] as? String ?? ""
-            var subject = arguments["subject"] as? String ?? ""
             let unreadOnly = arguments["unread_only"] as? Bool ?? false
             let limit = arguments["limit"] as? Int ?? 20
-            if !query.isEmpty && sender.isEmpty && subject.isEmpty {
-                subject = query
-            }
+            let filters = await AppleLiveDataContext.mailSearchFilters(
+                query: query, sender: arguments["sender"] as? String ?? "",
+                subject: arguments["subject"] as? String ?? "", day: "")
+            let sender = filters.sender
             let output = await withCheckedContinuation { cont in
                 DispatchQueue.global(qos: .userInitiated).async {
                     cont.resume(returning: MailAutomation.mailboxSnapshot(
-                        senderContains: sender, subjectContains: subject,
-                        unreadOnly: unreadOnly, relativeDay: "", limit: limit))
+                        senderContains: filters.sender, subjectContains: filters.subject,
+                        anyContains: filters.any,
+                        unreadOnly: unreadOnly, relativeDay: filters.day, limit: limit))
                 }
             }
             return AgentToolResult(success: true, output: output, displayCommand: "search_mail(\(query.isEmpty ? sender : query))")
@@ -2843,30 +2843,9 @@ final class AgentToolRegistry {
             return result
         })
 
-        register(AgentTool(
-            name: "get_today_events",
-            description: "Get today's calendar events headlessly from Apple Calendar via EventKit.",
-            properties: [:],
-            required: []
-        ) { _, _ in
-            let events = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: AppleAppsAPI.shared.getTodayEvents())
-                }
-            }
-            if events.isEmpty {
-                return AgentToolResult(success: true, output: "No events scheduled for today.", displayCommand: "get_today_events")
-            }
-            let lines = events.map { ev -> String in
-                let title = ev["title"] as? String ?? "Untitled"
-                let allDay = ev["isAllDay"] as? Bool ?? false
-                let start = ev["startDate"] as? String ?? ""
-                let end = ev["endDate"] as? String ?? ""
-                if allDay { return "• \(title) (all day)" }
-                return "• \(title) (\(start) - \(end))"
-            }
-            return AgentToolResult(success: true, output: "Today's events (\(events.count)):\n" + lines.joined(separator: "\n"), displayCommand: "get_today_events")
-        })
+        // get_today_events retired (H6): the model uses find_capability + run_capability("calendar.todayEvents")
+        // instead. The capability is registered in AppleCalendarMCPCapabilities and discoverable on
+        // every turn — find_capability and run_capability are always in the base tool set.
     }
 }
 

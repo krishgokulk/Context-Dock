@@ -72,6 +72,10 @@ enum AppScopedChatService {
         var activeMode: String? = nil
         /// Mode provenance string for this turn (e.g. "Safari: Research") (#341).
         var modeProvenance: String? = nil
+        /// Set when this turn was auto-saved as a read skill. Surfaces show "Saved as a skill · Undo".
+        var savedSkill: SolvedSkill? = nil
+        /// Set when this turn has write calls and qualifies for a save offer. Surfaces show "Save as a skill?".
+        var pendingWriteSkillOffer: SolvedSkill? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -779,7 +783,7 @@ enum AppScopedChatService {
             return "Route: window elements · read"
         case .axAct:
             return "Route: window element · \(args["action"] ?? "act") \(args["id"] ?? "")"
-        case .appScript, .terminal, .share:
+        case .terminal, .share:
             return nil
         }
     }
@@ -804,9 +808,6 @@ enum AppScopedChatService {
             return "Reading the app's window…"
         case .axAct:
             return "Operating the app's window…"
-        case .appScript:
-            let name = invocation.arguments["name"] ?? ""
-            return name.isEmpty ? "Running this app's script…" : "Running \(name)…"
         case .terminal:
             // The command itself, because that is the thing the user is deciding about — a
             // row saying "running a command" is the same as saying nothing.
@@ -1016,6 +1017,20 @@ enum AppScopedChatService {
     }
 
     // MARK: - Shared context blocks
+
+    /// Names the files attached to this message and says they are what "this file" means.
+    nonisolated static func attachmentsPromptBlock(_ attachments: [URL]) -> String {
+        guard !attachments.isEmpty else { return "" }
+        let paths = attachments.prefix(10).map { "- \($0.path)" }.joined(separator: "\n")
+        return """
+            ATTACHED TO THIS MESSAGE (\(attachments.count)):
+            \(paths)
+            "This file", "it", "these" and "the attachment" mean these files — not the \
+            Finder selection and not the app behind the chat. Do not look for a selection \
+            first. Their extracted contents are at the end of this prompt; read_file reads \
+            one by its path if you need more.
+            """
+    }
 
     /// Image files a provider can be shown directly. Capped: a folder of forty photos sent
     /// as vision blocks is a very expensive way to answer one question, and the first few
@@ -1427,10 +1442,13 @@ enum AppScopedChatService {
         }
         // #205: a verified read the model just solved is kept, so the next one like it skips the
         // model. Taken here, after the answer is assembled, so every provider pass is included.
-        SolvedSkillCapture.captureIfEligible(
+        let captureOutcome = SolvedSkillCapture.captureIfEligible(
             query: query, scope: scope, answer: answer,
             toolCalls: SolvedSkillToolCallCollector.shared.take(scope: scope))
-        return answer
+        var tagged = answer
+        tagged.savedSkill = captureOutcome.savedSkill
+        tagged.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
+        return tagged
     }
 
     private static func sendUntraced(
@@ -1570,14 +1588,23 @@ enum AppScopedChatService {
         // #205 (D1): a read DoraX already solved with the model runs again from its saved typed
         // calls, through the same executor and gates, before the model is asked. Any mismatch or
         // failure returns nil and the turn carries on to the model, which repairs the skill.
-        if skillOverride == nil, case .app(let bundleId) = scope,
-            let (skill, filled) = SolvedSkillMatch.match(
+        // H3 #410: selection-scoped skills cross app boundaries — eligible() merges the bundle's
+        // own skills with any selection-type skills whose type matches the current attachments.
+        if skillOverride == nil, case .app(let bundleId) = scope {
+            let selContext = SlotDerivationContext(
+                selectedText: nil,
+                selectedFilePaths: attachments.map(\.path),
+                appName: appName)
+            let eligibleSkills = await SolvedSkillStore.shared.allEligible(
+                forBundle: bundleId, context: selContext)
+            if let (skill, filled) = SolvedSkillMatch.match(
                 query: query, bundleId: bundleId,
-                skills: SolvedSkillStore.shared.all(forBundle: bundleId)),
-            let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
-        {
-            log.notice("stage: saved skill")
-            return answer
+                skills: eligibleSkills, context: selContext),
+               let answer = await SolvedSkillMatch.run(skill, filled: filled, scope: scope)
+            {
+                log.notice("stage: saved skill")
+                return answer
+            }
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from
@@ -1861,6 +1888,7 @@ enum AppScopedChatService {
         var prompt = ScopedPromptAssembler()
         prompt.set(.sourceRule, [
             sourceDecision.promptRule, dateTimeBlock(), UntrustedContent.rule,
+            RequestLane.menuRouteInstruction(for: query),
         ].joined(separator: "\n\n"))
         var context: UserContext = .none
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
@@ -1972,11 +2000,6 @@ enum AppScopedChatService {
                 return perApp.isEmpty ? SkillStore.shared.instructionsBlock(for: bundleId) : perApp
             }()
             prompt.set(.skills, skills)
-            let menuSnapshot = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
-                bundleIdentifier: bundleId, appName: appName, query: query)
-            if !menuSnapshot.isEmpty {
-                prompt.set(.liveMenu, menuSnapshot)
-            }
             // The app's live MCP tools. For asksOnly turns, use toolListBlock instead of
             // toolPromptBlock: toolPromptBlock teaches the prose {"mcp_call":…} format which
             // the model uses INSTEAD of the native run_mcp_tool function — they conflict (#357).
@@ -2081,11 +2104,6 @@ enum AppScopedChatService {
                 let frontmostSkills = SkillStore.shared.perAppSkillsPromptBlock(for: effectiveBundleId)
                 if !frontmostSkills.isEmpty {
                     prompt.set(.skills, frontmostSkills)
-                }
-                let frontmostMenu = AppMenuCapabilityCache.shared.menuCommandsSnapshotBlock(
-                    bundleIdentifier: effectiveBundleId, appName: effectiveAppName, query: query)
-                if !frontmostMenu.isEmpty {
-                    prompt.set(.liveMenu, frontmostMenu)
                 }
             }
             // General Chat is frontmost while the user asks, so its UserContext cannot name
@@ -2195,8 +2213,10 @@ enum AppScopedChatService {
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
         log.notice("stage: live apple data")
+        let scopedMailBundleId: String? = { if case .app(let id) = scope { return id }; return nil }()
         var liveAppleData = await withTimeout(seconds: 8, fallback: "") {
-            await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+            await AppleLiveDataContext.appleAppsAndWeatherContext(
+                for: query, scopeBundleId: scopedMailBundleId)
         }
         // A provider with no tools cannot ask for the dictionary read that holds a value the
         // live facts lack (volume, repeat), and answered from the window title instead.
@@ -2239,6 +2259,12 @@ enum AppScopedChatService {
                 characterBudget: AIContextBudget.characterBudget(for: provider))
         }
         prompt.set(.capabilities, hubBlock)
+        // What the user attached to this message, named. The provider router folds the
+        // extracted text in at the very end of the prompt, unlabelled as the thing being
+        // asked about — so "summarise this file" with a PDF attached was resolved against
+        // the app behind the chat (Finder's empty selection) and answered "I can't tell
+        // which file you mean". The dock's scoped turn has always had this section.
+        prompt.set(.attachments, Self.attachmentsPromptBlock(attachments))
 
         // What DoraX has durably learned — saved notes, prior findings, the user's own
         // written knowledge for this app. Withheld when the question is about live state,

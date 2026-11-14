@@ -106,6 +106,49 @@ struct CornerGlobalContextParityTests {
         #expect(!model.showsExtensionPanel)
     }
 
+    @Test func ghostCompletionFollowsFocusedRowWhenArrowNavigating() {
+        let source = GlobalContextResultSource()
+        let first = DockPill(id: "app-whatsapp", name: "WhatsApp", icon: "message", badge: "Application", execute: {})
+        let second = DockPill(id: "menu-whats-new", name: "What's New", icon: "doc", badge: "Menu", execute: {})
+        source.pureGlobalResults = { query in
+            query == "wha" ? [first, second] : []
+        }
+        let model = AppChatPromptModel(conversation: AppChatConversation(), globalResultSource: source)
+        model.summonGlobalContext()
+        model.query = "wha"
+        model.updateMenuMatches()
+
+        // Before arrowing, ghost matches the top row.
+        #expect(model.focusedRow == nil)
+        #expect(model.globalGhostCompletion == "tsApp")
+
+        // Arrowing to the first row keeps its ghost; arrowing to the second switches to its title.
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.focusedRow?.title == "WhatsApp")
+        #expect(model.globalGhostCompletion == "tsApp")
+
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.focusedRow?.title == "What's New")
+        #expect(model.globalGhostCompletion == "t's New")
+
+        // Arrowing onto a row whose title doesn't start with the typed query clears the ghost
+        // instead of falling back to the top match's ghost.
+        while let title = model.focusedRow?.title, title.lowercased().hasPrefix("wha") {
+            guard model.moveMenuFocus(by: 1) else { break }
+        }
+        #expect(model.focusedRow != nil)
+        #expect(model.focusedRow?.title.lowercased().hasPrefix("wha") == false)
+        #expect(model.globalGhostCompletion == "")
+
+        // Moving back to "What's New" restores its ghost, and accepting appends it to the query.
+        while model.focusedRow?.title != "What's New" {
+            guard model.moveMenuFocus(by: -1) else { break }
+        }
+        #expect(model.globalGhostCompletion == "t's New")
+        #expect(model.acceptGhostCompletion())
+        #expect(model.query == "what's New")
+    }
+
     /// The matches, without the fallback section that closes every typed Global list.
     private func matchTitles(_ model: AppChatPromptModel) -> [String] {
         model.rows.filter { GlobalResultSection.title(for: $0) != GlobalFallbacks.section }

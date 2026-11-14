@@ -283,9 +283,6 @@ enum OutboundGate {
         case "run_menu_command":
             return namesASend(arguments["path"]) ? sendTarget : nil
 
-        case "run_app_script":
-            return Target(kind: .external, host: nil, label: "run an app script that can reach the network")
-
         case "run_synthesized_script":
             return Target(kind: .external, host: nil, label: "run a synthesized script that can reach the network")
 
@@ -326,13 +323,13 @@ enum OutboundGate {
     /// Tools `target` can classify as outbound (its switch above).
     static let outboundTools: Set<String> = [
         "read_url", "run_shortcut", "compose_message", "send_message", "send_mail", "run_command", "spawn_worker",
-        "run_menu_command", "run_app_script", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
+        "run_menu_command", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
     ]
 
     /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
     /// carry data to another host.
     static let localTools: Set<String> = [
-        "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
+        "read_page", "read_file", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
         "read_app_dictionary", "read_unread_mail", "search_mail", "list_reminders",
@@ -503,7 +500,7 @@ enum OutboundGate {
     /// Whether a SUCCESSFUL call just read the user's private data.
     static func readsPrivateData(toolName: String, arguments: [String: Any]) -> Bool {
         switch toolName {
-        case "read_file", "read_attachment", "read_selection", "find_files",
+        case "read_file", "read_selection", "find_files",
             "get_messages_conversations", "search_messages", "run_mcp_tool", "run_route":
             return true
         case "run_command", "spawn_worker":

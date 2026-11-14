@@ -14,11 +14,11 @@ import SwiftUI
 
 enum AppChatPromptMetrics {
     static let width: CGFloat = 372
-    static let inputHeight: CGFloat = 56
+    static let inputHeight: CGFloat = DockShellWidth.fieldHeight
     static let suggestionRowHeight: CGFloat = 34
     static let summaryHeight: CGFloat = 30
     /// Just the app's icon.
-    static let miniSize = CGSize(width: 52, height: 44)
+    static let miniSize = CGSize(width: dockIconSize, height: dockIconSize)
     /// Attached files, as chips with a thumbnail — taller than the old bare capsules, and
     /// shared with General so one attachment is the same object in both modes.
     static let attachmentRowHeight: CGFloat = 46
@@ -209,11 +209,9 @@ enum AppChatPromptMetrics {
             fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: appBarPillWidth(for: model),
-            shellWidth: (CornerDockController.shared.chatPresentation.isCentred
-                || AppSettings.shared.launcherPresentationMode == .centerScreen
-                || CornerDockController.shared.showsBoardUnderField)
-                ? DockShellWidth.current
-                : (model.fitsField && !model.showsTabBar && !model.showsLivePanel ? nil : DockShellWidth.current),
+            // One size for every field, centred or at the bottom (Siri's, owner
+            // 2026-11-11); the chat grows to show its answer.
+            shellWidth: phase == .chat ? DockShellWidth.results : DockShellWidth.current,
             fieldLines: model.fieldLines)
     }
 
@@ -336,8 +334,13 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let natural = dockSearchStubSpan + 2 * dockInset
-            + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
+        // No apps to show (running apps turned off, nothing pinned): the folded field stands
+        // alone, with no slot held for an app that is not drawn. A slot was held for "Finder
+        // is always running", and showed as a hairline and blank glass (owner 2026-11-11).
+        let appSlots = pinnedApps + runningSlots
+        let natural = 2 * dockInset
+            + (appSlots > 0 ? dockSearchStubSpan + runWidth(appSlots) : dockIconSize)
+            + pinsWidth + toolsWidth
         if shellWidth != nil {
             // Wider than the shell only when the pins alone overrun the screen: they are
             // never dropped.
@@ -636,12 +639,12 @@ struct AppChatPromptPill: View {
     /// Chat-card width with the sidebar hidden: just the transcript column, matching
     /// what the transcript already occupies when the panel is open.
     private var compactChatWidth: CGFloat {
-        let full = DockShellWidth.current
+        let full = DockShellWidth.results
         return max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
     }
 
     private var transcriptColumnWidth: CGFloat {
-        let full = DockShellWidth.current
+        let full = DockShellWidth.results
         return model.showsLivePanel ? (full - CornerLivePanelLayout.panelWidth(card: full)) : compactChatWidth
     }
 
@@ -714,11 +717,18 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
-        .onTapGesture {
-            if model.phase == .dock {
-                _ = model.expandFromDock(seeding: nil)
-                CornerDockController.shared.requestComposerFocus()
-            }
+        // Only catch empty-background taps while resting as a dock so centred open fields
+        // remain natively draggable by window background.
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if model.phase == .dock {
+                        _ = model.expandFromDock(seeding: nil)
+                        CornerDockController.shared.requestComposerFocus()
+                    }
+                }
+                .allowsHitTesting(model.phase == .dock)
         }
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
@@ -788,8 +798,11 @@ struct AppChatPromptPill: View {
                 : .easeIn(duration: 0.12)
         }
         let full = AppChatPromptMetrics.dockMorphDuration
+        // In as the field goes out (its fade is `full * 0.22`), not a beat later: with running
+        // apps off and nothing pinned the strip is one icon, and the wait between the two
+        // fades showed as an empty glass shell (owner 2026-11-11).
         return model.phase == .dock
-            ? .easeOut(duration: full * 0.42).delay(full * 0.42)
+            ? .easeOut(duration: full * 0.42).delay(full * 0.2)
             : .easeIn(duration: full * 0.3)
     }
 
@@ -921,7 +934,7 @@ struct AppChatPromptPill: View {
                             liveActivity: conversation.liveActivity,
                             activityByMessageID: conversation.activityByMessageID,
                             density: .compact)
-                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.results))
                             .padding(.vertical, 8)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
@@ -953,23 +966,32 @@ struct AppChatPromptPill: View {
             // field gets over a result board (Part B), inside the chat card. One HStack in
             // every phase with the composer first, so the TextField keeps its identity.
             HStack(alignment: .bottom, spacing: 8) {
-                inputRow
-                    // In a conversation the field is a rounded composer inset in the card, the
-                    // way Claude's sits under its chat (owner 2026-10-05), rather than a row
-                    // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
-                    // its identity, and with it focus, as the phase changes.
-                    .background {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.primary.opacity(0.07))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
-                            .opacity(model.phase == .chat ? 1 : 0)
+                // The field row, and under it in an App Pet conversation Claude's lower row —
+                // app chip, provider chip, "+" (owner 2026-11-12). The VStack stands in every
+                // phase so the TextField's place in the tree, and with it focus, never moves.
+                VStack(alignment: .leading, spacing: 0) {
+                    inputRow
+                    if showsComposerToolbar {
+                        composerToolbar
+                            .transition(.opacity)
                     }
+                }
+                // In a conversation the field is a rounded composer inset in the card, the
+                // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                // its identity, and with it focus, as the phase changes.
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                        .opacity(model.phase == .chat ? 1 : 0)
+                }
                 if splitsChatComposer {
                     CornerSplitStrip(
                         model: model,
-                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.current),
+                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.results),
                         inset: true)
                         .transition(.opacity)
                 }
@@ -983,6 +1005,10 @@ struct AppChatPromptPill: View {
             .padding(.horizontal, model.phase == .chat ? 10 : 0)
             .padding(.top, model.phase == .chat ? 6 : 0)
             .padding(.bottom, model.phase == .chat ? 10 : 0)
+            // With the live panel showing but no app strip beside the composer, the composer
+            // stays under the transcript column only — not under the panel (design: "the
+            // composer stands under the transcript", line above). Without this, the pill
+            // stretched full-card-width and appeared visually detached from the transcript.
             .frame(
                 maxWidth: (model.phase == .chat && model.showsLivePanel && !splitsChatComposer)
                     ? transcriptColumnWidth : .infinity,
@@ -1121,9 +1147,13 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 4)
 
-            // Provider / context usage chip (#335)
-            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
-                .transition(.opacity)
+            // Provider / context usage chip (#335). In an App Pet conversation it lives in
+            // the composer's lower row, by the field, as Claude's model picker does (owner
+            // 2026-11-12) — drawn once, never in both places.
+            if !showsComposerToolbar {
+                ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
+                    .transition(.opacity)
+            }
 
             // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
             // panel toggle beside it (owner 2026-10-10).
@@ -1237,7 +1267,10 @@ struct AppChatPromptPill: View {
                 // A tool or a command keeps its way back; an app is its own Context Dock,
                 // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
-            } else {
+            } else if !showsComposerToolbar {
+                // In an App Pet conversation the chip leads the composer's lower row instead
+                // (owner 2026-11-12) — the only branch the toolbar can reach, since it never
+                // shows for the clipboard, Global or a scope stepped into from it.
                 appChip
                     .layoutPriority(1)
             }
@@ -1246,7 +1279,7 @@ struct AppChatPromptPill: View {
                 if model.isClipboardScope {
                     if clipboard.query.isEmpty {
                         Text("Type to filter entries…")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                             .foregroundStyle(.secondary.opacity(0.6))
                             .lineLimit(1)
                     }
@@ -1265,7 +1298,7 @@ struct AppChatPromptPill: View {
                             .foregroundStyle(.secondary.opacity(0.45))
                         Spacer(minLength: 0)
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .lineLimit(1)
                     .allowsHitTesting(false)
                 }
@@ -1283,7 +1316,7 @@ struct AppChatPromptPill: View {
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                         model.inputFrame = $0
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
@@ -1321,7 +1354,10 @@ struct AppChatPromptPill: View {
                             model.runReturnRow(runsTopRow: true)
                             return
                         }
-                        // Finder's Ask AI row, and every app's composer: the question.
+                        if model.returnRunsTopRow, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
+                        // Finder's Ask AI row, questions, and every app's composer: the question.
                         model.submit()
                     }
                     // Space is always a space: the result sheet stays open while typing, so a
@@ -1560,7 +1596,11 @@ struct AppChatPromptPill: View {
             // Global Context and the scopes entered from it are search fields rather than
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
-                attachMenu
+                // In an App Pet conversation "+" sits in the composer's lower row, beside
+                // the provider chip, as Claude's does (owner 2026-11-12).
+                if !showsComposerToolbar {
+                    attachMenu
+                }
                 // The pin right after "+", in every app (owner 2026-09-28): it sat at the far
                 // end, past the app's bar, and appeared and vanished with the pointer. Beside
                 // "+" it is always there, so nothing after it shifts when it would have come
@@ -1760,6 +1800,24 @@ struct AppChatPromptPill: View {
         .help("Add context")
     }
 
+    /// The App Pet composer's lower row, as Claude lays out its composer (owner 2026-11-12):
+    /// who the chat is with (the app chip — its ⌄ still hides the conversation), which
+    /// provider answers (the same `ProviderContextChip` the header carried — one picker,
+    /// mounted where the user is typing), and "+" at the end.
+    private var composerToolbar: some View {
+        HStack(spacing: 8) {
+            appChip
+                .layoutPriority(1)
+            ProviderContextChip(scope: .app(bundleId: model.appBundleID))
+            Spacer(minLength: 4)
+            attachMenu
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .padding(.bottom, 6)
+        .frame(height: AppChatComposerToolbar.rowHeight)
+    }
+
     /// The app the question is about, named rather than implied.
     /// In Global Context the leading chip is the top match, not the scope — the same thing
     /// the dock's global bar shows, so three letters and a glance tell the user what Tab
@@ -1870,6 +1928,14 @@ struct AppChatPromptPill: View {
         model.phase != .chat && model.isShowingScopeCard
     }
 
+    /// An App Pet conversation: the composer gets Claude's lower row — app chip, provider
+    /// chip, "+" — and the header gives up its provider chip (owner 2026-11-12).
+    private var showsComposerToolbar: Bool {
+        AppChatComposerToolbar.shows(
+            phase: model.phase, isSearchField: model.isSearchField,
+            isClipboardScope: model.isClipboardScope, appBundleID: model.appBundleID)
+    }
+
     private var chipIconShown: Bool { model.phase != .dock }
 
     private var chipIconHandover: Animation {
@@ -1889,7 +1955,7 @@ struct AppChatPromptPill: View {
             // field the same way. It leaves when the app is there and the placeholder comes
             // back, which is the whole of the announcement.
             Text(running)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)
                 .transition(.opacity)
@@ -1900,11 +1966,11 @@ struct AppChatPromptPill: View {
                 Text("— press Enter to send…")
                     .foregroundStyle(.secondary.opacity(0.45))
             }
-            .font(.system(size: 14, weight: .medium))
+            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
             .lineLimit(1)
         } else {
             Text("\(AppChatListCard.placeholder(for: model))…")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)
         }

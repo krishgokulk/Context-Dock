@@ -44,19 +44,18 @@ request → intent → context → capability discovery → ranking
 A stage that cannot be shown is a stage that cannot be trusted. Each one is observable:
 the Console records what ran, the log records where a turn stalled.
 
-## Route ranking
+## Route ranking (The 5-Rung Escalation Ladder)
 
 A capability is not just a thing that can run — it carries where it came from and what it
-costs. Ranking is fixed, and deliberately boring:
+costs. Ranking follows the 5-rung ladder defined in `docs/superpowers/specs/2026-11-09-agent-harness-model.md`:
 
-| Rank | Kind | Why it wins |
+| Rung | Channel | Cost & Characteristics |
 |---|---|---|
-| 1 | Native app action (adapter) | The app's own API. Deterministic, no UI theft. |
-| 2 | MCP tool | Structured, typed, no window opens. |
-| 3 | CLI | Deterministic and inspectable; output is a receipt. |
-| 4 | Shortcut / automation | Typed when declared; may require the app process. |
-| 5 | Menu / keyboard / AX | Works broadly, but takes the screen; last resort. |
-| 6 | Model | Answers from context; runs nothing. |
+| **0** | **Solved Skills** (`SolvedSkillMatch`) | 0ms, 0 tokens; previously verified successful reads run directly |
+| **1** | **Direct Data / UTCP** (`DataLane`, native APIs, DB readers) | Fast, headless, deterministic, no UI theft, no app activation |
+| **2** | **Synthesized AI Scripts** (sandboxed JXA / AppleScript) | Headless code mode when no pre-built tool exists |
+| **3** | **Menu Commands** (`find_menu_command` on demand, `press_menu`) | Screen-visible, verified against live UI; searched on demand, not dumped into prompts |
+| **4** | **Computer Use / UI Automation** (`ax_click`, `ax_type`) | Last-resort fallback for non-scriptable apps with explicit user consent |
 
 Read-only routes never require a decision from the user. When several routes differ in
 consequence — one opens a window, another does not — the user picks, and the choice is
@@ -92,7 +91,7 @@ DoraX sits directly between the Frontmost Application and the AI Provider. It no
 └──────────────────┘          └───────────────────────────┘          └──────────────────┘
 ```
 
-1. **Downwards (macOS):** DoraX abstracts whether an app uses AppleScript, UTCP HTTP APIs, or Accessibility menus into a unified Sense & Act interface.
-2. **Upwards (AI):** DoraX provides a single **App Envelope** (app identity, `AGENT.md` rules, live menus, and JSON tools) to the model.
+1. **Downwards (macOS):** DoraX abstracts whether an app uses AppleScript, direct SQLite/IPC, or Accessibility menus into a unified Sense & Act interface.
+2. **Upwards (AI):** DoraX provides a single **App Envelope** (app identity, `AGENT.md` rules, learned skills, and bounded JSON tools) to the model. Menu hierarchies are searched on demand via `find_menu_command` rather than dumped into prompt tokens.
 3. **Control:** DoraX enforces target app pinning, read-vs-write approval gating, and outbound data protection.
 

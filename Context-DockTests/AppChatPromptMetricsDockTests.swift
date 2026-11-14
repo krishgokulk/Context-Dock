@@ -28,10 +28,22 @@ struct AppChatPromptMetricsDockTests {
         #expect(layout.width == expected)
     }
 
-    @Test func zeroOfBothStillDrawsOneSlot() {
-        // Finder is always running, but the arithmetic must not go negative either way.
-        let one: CGFloat = M.dockSearchStubSpan + 20 + 48
-        #expect(M.dockLayout(running: 0, pinned: 0).width == one)
+    @Test func zeroOfBothIsTheFoldedFieldAlone() {
+        // Running apps can be turned off: no slot is held for an app that is not drawn.
+        #expect(M.dockLayout(running: 0, pinned: 0).width == 20 + M.dockIconSize)
+        // Pins alone follow the folded field directly, after their own divider.
+        let pins = M.dockLayout(running: 0, pinned: 2)
+        #expect(pins.width == 20 + M.dockIconSize + M.dockDividerSpan + 2 * 48 + 8)
+    }
+
+    @Test func systemAgentsAreNotTheUsersApp() {
+        #expect(AppDelegate.isSystemAgentUI(
+            bundlePath: "/System/Library/CoreServices/UserNotificationCenter.app",
+            isRegularApp: false))
+        #expect(!AppDelegate.isSystemAgentUI(
+            bundlePath: "/System/Library/CoreServices/Finder.app", isRegularApp: true))
+        #expect(!AppDelegate.isSystemAgentUI(
+            bundlePath: "/Applications/Raycast.app", isRegularApp: false))
     }
 
     @Test func runningOverflowsIntoAPlusPill() {

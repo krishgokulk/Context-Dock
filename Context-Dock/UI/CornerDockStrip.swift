@@ -250,11 +250,14 @@ struct CornerDockStrip: View {
                     .overlay(alignment: .center) {
                         let glyphEdge: CGFloat = 10
                         let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.18))
-                            .frame(width: 1, height: M.dockIconSize * 0.7)
-                            .offset(x: (glyphEdge + appEdge) / 2)
-                            .allowsHitTesting(false)
+                        // Only with apps after it: alone it divided the icon from nothing.
+                        if !self.plan.composition.apps.isEmpty || self.plan.layout.overflow > 0 {
+                            Rectangle()
+                                .fill(Color.primary.opacity(0.18))
+                                .frame(width: 1, height: M.dockIconSize * 0.7)
+                                .offset(x: (glyphEdge + appEdge) / 2)
+                                .allowsHitTesting(false)
+                        }
                     }
                     // The field's own magnifier opens on this exact spot; this one hands over.
                     // An app bar's icon hands over only once it has landed on the chip.
@@ -351,6 +354,10 @@ struct CornerDockStrip: View {
                     }
                 }
             }
+            // In prompt phase the strip fills the full shell width; a Spacer pushes the
+            // trailing tools to the right edge regardless of how many app icons exist.
+            // In dock phase the strip is compact (no Spacer: it would expand the pill).
+            if !isDock { Spacer(minLength: 0) }
             if plan.layout.tools > 0 {
                 appBarToolsDivider
                 // The corner's own cards, not the field's scope chips: a dock icon opens a

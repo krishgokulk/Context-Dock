@@ -1,5 +1,12 @@
 # LLM app patterns — reference notes for DoraX
 
+> **Status (Updated 2026-11-09):** Many patterns identified here as targets have since landed:
+> - **Native tool schemas:** Unified `ToolLoopAdapter` and `AgentToolRegistry` with typed parameters.
+> - **Per-turn LLM trace:** `TurnRecorder.swift` writes OTel-compatible `turn.trace` JSON per turn (#150).
+> - **Prompt caching:** `AnthropicPromptCache` + `ScopedPromptAssembler` dual breakpoint caching (#151 / PR #382).
+> - **Context budgeting:** Subcommand-chunked help budgeting via `AIContextBudget.fitHelpText`.
+> - **Unified loop harness:** `runToolLoop<A: ToolLoopAdapter>` with `ToolLoopBudget` (#154, #155).
+
 Distilled from three sources the user supplied (July 2026):
 
 1. *LangChain — Complete Notes* (study notes, Python, Part 1)

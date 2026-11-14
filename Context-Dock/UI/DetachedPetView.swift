@@ -225,7 +225,10 @@ final class DetachedPetViewModel: ObservableObject {
             petID: petID,
             appName: appName,
             bundleID: bundleID,
-            position: .zero,
+            // Where the pet sits is the panel's to say (windowDidMove). Writing .zero here
+            // forgot it on every bubble change, so each pet came back at the default spot,
+            // one on top of another.
+            position: DetachedPetStore.record(for: petID)?.position ?? .zero,
             mascotState: mascotState,
             microBarState: microBarState,
             pinnedBubbles: pinnedBubbles
@@ -384,6 +387,14 @@ private struct ActionBubbleCard: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+        .contextMenu {
+            if let suggestionID = bubble.suggestionID {
+                Button("Mute This Pet for a Day", systemImage: "bell.slash") {
+                    AppPetSuggestionCoordinator.shared.dismissSuggestion(
+                        id: suggestionID, mutePetFor: 86_400)
+                }
+            }
+        }
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.ultraThinMaterial)

@@ -531,6 +531,12 @@ extension DockCore {
         for url in attached where !aiMode.attachments.contains(url) {
             aiMode.attachments.append(url)
         }
+        // The App Pet turn reads `contextDockChatFiles`, which only the old Dock window's
+        // composer ever filled. Since that window went (#257) a file attached in the corner
+        // reached no scoped turn: the model answered "I can't find a file attached".
+        for url in attached where !contextDockChatFiles.contains(url) {
+            contextDockChatFiles.append(url)
+        }
 
         // Asking in the corner used to open the Context Dock over whatever the user was
         // working in, and then wait 120 ms for it to finish appearing before the question

@@ -154,28 +154,43 @@ extension AgentToolRegistry {
             description: "Read a file's contents as text — source, Markdown, PDF, Word, "
                 + "spreadsheets, anything DoraX can convert. Use this instead of `cat` or a "
                 + "shell command: it handles documents a shell cannot, and it needs no "
-                + "approval because it only reads.",
+                + "approval because it only reads. It is also how a file the user attached "
+                + "to this message is read — text, PDF, or OCR for images and screenshots: "
+                + "call it FIRST whenever the user says \"this\", \"this screenshot\" or "
+                + "\"the attached file\", and do not guess the content from the clipboard.",
             properties: [
                 "path": [
                     "type": "string",
-                    "description": "Absolute path, or ~ relative to the user's home.",
+                    "description": "Absolute path, or ~ relative to the user's home. For an "
+                        + "attachment, its path or just its filename; omit when exactly one "
+                        + "file is attached.",
                 ]
             ],
-            required: ["path"]
+            required: []
         ) { arguments, context in
             let raw = (arguments["path"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty else {
+            // read_attachment is retired (#413 H6): an attachment is a file, read here.
+            let attachment = AgentToolRegistry.attachment(named: raw, in: context.attachments)
+            let url: URL
+            if let attachment {
+                url = attachment.standardizedFileURL
+            } else if raw.isEmpty {
                 return AgentToolResult(
-                    success: false, output: "read_file needs 'path'.",
+                    success: false,
+                    output: AgentToolRegistry.missingPathFeedback(context),
                     displayCommand: "read_file")
+            } else {
+                let expanded = (raw as NSString).expandingTildeInPath
+                url = URL(fileURLWithPath: expanded).standardizedFileURL
             }
-            let expanded = (raw as NSString).expandingTildeInPath
-            let url = URL(fileURLWithPath: expanded).standardizedFileURL
 
             // A folder thread is a boundary, not a starting point. Reading outside it is the
-            // same trespass whether it happens through a capability or through this.
-            if let folder = await MainActor.run(body: { context.chatScope?.folderURL }) {
+            // same trespass whether it happens through a capability or through this. A file
+            // the user attached by hand is theirs to hand over, wherever it lives.
+            if attachment == nil,
+                let folder = await MainActor.run(body: { context.chatScope?.folderURL })
+            {
                 let root = folder.standardizedFileURL.path
                 guard url.path == root || url.path.hasPrefix(root + "/") else {
                     return AgentToolResult(
@@ -204,6 +219,33 @@ extension AgentToolRegistry {
                     displayCommand: "read_file(\(url.lastPathComponent)/)")
             }
 
+            // Images are read by OCR — a document converter returns metadata, not the words
+            // in a screenshot.
+            if AgentToolRegistry.imageExtensions.contains(url.pathExtension.lowercased()),
+                let data = try? Data(contentsOf: url)
+            {
+                let label = url.lastPathComponent
+                let outcome = await Task.detached(priority: .userInitiated) {
+                    ScreenCaptureService.recognizeTextOutcome(in: data)
+                }.value
+                // An image with no text is a real answer, not a failure — and saying so
+                // stops the model inventing content it cannot see. A recogniser that could
+                // not run is not that answer: the summary says which one it was.
+                guard !outcome.text.isEmpty else {
+                    return AgentToolResult(
+                        success: true,
+                        output: outcome.summary(label: label) + " If the user is asking "
+                            + "about what the image depicts, describe it from the image you "
+                            + "were shown rather than from this tool.",
+                        displayCommand: "read_file(\(label))")
+                }
+                return AgentToolResult(
+                    success: true,
+                    output: UntrustedContent.fenced(
+                        String(outcome.text.prefix(AgentToolRegistry.readBudget)), from: label),
+                    displayCommand: "read_file(\(label))")
+            }
+
             let text = await Task.detached(priority: .userInitiated) {
                 AIAttachmentPreparer.extractedText(from: url)
             }.value
@@ -221,6 +263,46 @@ extension AgentToolRegistry {
                     String(text.prefix(AgentToolRegistry.readBudget)), from: url.lastPathComponent),
                 displayCommand: "read_file(\(url.lastPathComponent))")
         }
+    }
+
+    nonisolated static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp",
+    ]
+
+    /// The attachment `raw` names: by full path, by bare filename, or — with nothing named
+    /// and exactly one file attached — that file. Nil means `raw` is an ordinary path.
+    nonisolated static func attachment(named raw: String, in attachments: [URL]) -> URL? {
+        guard !raw.isEmpty else { return attachments.count == 1 ? attachments[0] : nil }
+        let expanded = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+            .standardizedFileURL.path
+        if let exact = attachments.first(where: { $0.standardizedFileURL.path == expanded }) {
+            return exact
+        }
+        guard !raw.contains("/") else { return nil }
+        return attachments.first {
+            $0.lastPathComponent.caseInsensitiveCompare(raw) == .orderedSame
+        }
+    }
+
+    /// What to say when read_file is called with no path and no single attachment to mean.
+    nonisolated static func missingPathFeedback(_ context: AgentToolContext) -> String {
+        if !context.attachments.isEmpty {
+            let paths = context.attachments.map(\.path).joined(separator: "\n")
+            return "\(context.attachments.count) files are attached to this message. Call "
+                + "read_file again with the path of the one to read:\n\(paths)"
+        }
+        // "These files" usually means the Finder selection, not an upload. Ending the turn
+        // on "nothing is attached" left the model with a flat no while the files the user
+        // was pointing at sat one tool call away — so this says what *is* there.
+        if case .filesSelected(let selected) = context.userContext, !selected.isEmpty {
+            let names = selected.prefix(10).map(\.path).joined(separator: "\n")
+            return "Nothing is attached to this message, but the user has "
+                + "\(selected.count) item(s) selected in Finder:\n\(names)\n\n"
+                + "That is what \"these files\" means. Any image among them has already been "
+                + "shown to you — describe it directly. For anything else call read_file "
+                + "with one of the paths above."
+        }
+        return "read_file needs 'path'. Nothing is attached to this message."
     }
 
     // MARK: - What the user has highlighted

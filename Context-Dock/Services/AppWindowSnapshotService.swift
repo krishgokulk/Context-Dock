@@ -42,11 +42,24 @@ final class AppWindowSnapshotService: ObservableObject {
 
     private init() {}
 
+    /// A preview is decoration: it never asks for Screen Recording. Calling ScreenCaptureKit
+    /// without the grant raises the system's own prompt over whatever the user is doing —
+    /// it came up in the middle of an answer, from an icon the pointer passed over (owner
+    /// 2026-11-11). Without the grant the surface says so; Settings is where it is asked for.
+    private static func mayCapture() -> Bool {
+        guard CGPreflightScreenCaptureAccess() else {
+            shared.isDenied = true
+            return false
+        }
+        return true
+    }
+
     func snapshot(for bundleID: String) -> NSImage? { snapshots[bundleID] }
 
     /// Capture the app's frontmost window, unless a recent shot is already in hand.
     func refresh(bundleID: String) {
         guard !bundleID.isEmpty, !inFlight.contains(bundleID) else { return }
+        guard Self.mayCapture() else { return }
         if let last = lastCaptured[bundleID],
             Date().timeIntervalSince(last) < Self.freshness
         {
@@ -167,6 +180,7 @@ extension AppWindowSnapshotService {
     /// the single-window path's; walking the strip must not capture continuously.
     func refreshWindows(bundleID: String) {
         guard !bundleID.isEmpty, !windowsInFlight.contains(bundleID) else { return }
+        guard Self.mayCapture() else { return }
         if let last = windowsCaptured[bundleID],
             Date().timeIntervalSince(last) < Self.freshness
         {

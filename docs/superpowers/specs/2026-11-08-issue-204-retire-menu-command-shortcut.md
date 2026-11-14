@@ -1,7 +1,7 @@
 # Issue #204 (P10 / E12): Retire the Menu Command Pre-Model Shortcut into the Ladder
 
-> **Date:** 2026-11-08  
-> **Status:** Approved (EGM Cycle - Iteration 1)  
+> **Date:** 2026-11-08
+> **Status:** Shipped (PR #402)
 > **Target Branch:** `claude/issue-204-retire-menu-command` (bases on `general-chat-agent`)  
 > **GitHub Issue:** #204 (Milestone 1.0 — P10 / E12: Retire the Dock's pre-model shortcuts into the ladder, one per PR)  
 > **References:**  

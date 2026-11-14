@@ -48,7 +48,114 @@ enum AppleLiveDataContext {
             .contains(where: q.contains)
     }
 
-    static func appleAppsContextBlock(for query: String) async -> String {
+    /// What a Mail sentence asks to search for: a sender ("… from SBI"), or a term that may be
+    /// either sender or subject ("search for invoice"), and an optional day.
+    struct MailSearchIntent: Equatable {
+        let sender: String
+        let term: String
+        let day: String
+        var label: String { sender.isEmpty ? term : "from \(sender)" }
+    }
+
+    /// Words `DataSubject` leaves in that are still not a name or a topic in a Mail sentence.
+    private static let notAMailTerm: Set<String> = [
+        "mails", "unread", "new", "sender", "subject", "up", "there", "have", "has", "got",
+        "get", "sent", "received", "attachment", "attachments", "titled", "regarding",
+        "morning", "afternoon", "evening", "tonight", "ago", "since", "before", "after",
+        "earlier", "anything", "something", "how", "many", "much",
+        "window", "app", "application", "menu", "menus", "command", "commands",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "january", "february", "march", "april", "may", "june", "july", "august",
+        "september", "october", "november", "december",
+    ]
+
+    /// The search a Mail sentence names, or nil when it names none (the recent inbox is the
+    /// answer then). A provider with no tool protocol cannot call `search_mail`; without this,
+    /// "look for emails from SBI" was answered from the twelve newest headers, none of them
+    /// from SBI, as "a full Mail search wasn't readable".
+    ///
+    /// A sender is whatever follows "from". A free term is taken only from a look-up sentence
+    /// ("search …", "look for …") or after "about": a question such as "how many emails did I
+    /// get this morning?" names no term, and searching for "morning" would report a false
+    /// "no matches". A write ("reply to the mail from Sarah") is never a search.
+    static func mailSearchIntent(for query: String) -> MailSearchIntent? {
+        guard !ScopedRecordRead.hasExplicitAction(query) else { return nil }
+        let lower = query.lowercased()
+        let day = lower.contains("today") ? "today" : lower.contains("yesterday") ? "yesterday" : ""
+        func term(_ text: String, maxWords: Int) -> String? {
+            let words = DataSubject.subject(in: text).split(separator: " ").map(String.init)
+                .filter { !notAMailTerm.contains($0) }
+            // The words are searched as one phrase, so more than a few is a description that
+            // no header contains word for word.
+            return words.isEmpty || words.count > maxWords ? nil : words.joined(separator: " ")
+        }
+        if let from = lower.range(of: #"\bfrom\s+"#, options: .regularExpression) {
+            var tail = String(lower[from.upperBound...])
+            // An address is the sender as written; splitting it on punctuation loses it.
+            if let first = tail.split(separator: " ").first, first.contains("@") {
+                let address = first.trimmingCharacters(in: CharacterSet(charactersIn: "?.!,;:<>\"'"))
+                return MailSearchIntent(sender: address, term: "", day: day)
+            }
+            for stop in [" and ", " then ", " about ", " regarding ", " with ", " that ", " who ", " whose "] {
+                if let cut = tail.range(of: stop) { tail = String(tail[..<cut.lowerBound]) }
+            }
+            return term(tail, maxWords: 4).map { MailSearchIntent(sender: $0, term: "", day: day) }
+        }
+        let isLookUp = lower.range(
+            of: #"\b(search|find|list|look for|look up|lookup)\b|\b(about|regarding)\s"#,
+            options: .regularExpression) != nil
+        guard isLookUp else { return nil }
+        return term(lower, maxWords: 2).map { MailSearchIntent(sender: "", term: $0, day: day) }
+    }
+
+    /// A Mail search typed in Mail's own chat. It is answered in the transcript from a headless
+    /// read (the prefetch below); no shortcut may drive Mail's window for it (owner, 2026-10-10).
+    static func isInScopeMailSearch(_ query: String, scopedBundleId: String) -> Bool {
+        scopedBundleId.lowercased() == "com.apple.mail" && mailSearchIntent(for: query) != nil
+    }
+
+    /// The filters for a `mail.search` / `search_mail` call. The `query` input is not always a
+    /// bare term: the scoped route (`ChatRouteResolver.execute`) puts the user's whole sentence
+    /// in it, so "search mail from uel" was searched for verbatim and matched nothing. A
+    /// sentence is read with `mailSearchIntent`; anything else goes to
+    /// `MailAutomation.searchFilters`. An explicit sender, subject or day always wins.
+    static func mailSearchFilters(query: String, sender: String, subject: String, day: String)
+        -> (sender: String, subject: String, any: String, day: String)
+    {
+        if sender.isEmpty, subject.isEmpty, let intent = mailSearchIntent(for: query) {
+            return (intent.sender, "", intent.term, day.isEmpty ? intent.day : day)
+        }
+        let filters = MailAutomation.searchFilters(query: query, sender: sender, subject: subject)
+        return (filters.sender, filters.subject, filters.any, day)
+    }
+
+    /// The prompt block for a mailbox search that already ran. Nil when the mailbox could not
+    /// be read — that is not "no matches", and the caller falls back to the recent inbox.
+    static func mailSearchBlock(label: String, summary: String) -> String? {
+        var lines = summary.components(separatedBy: .newlines)
+        guard let first = lines.first, first.hasPrefix("Mailbox: ") else { return nil }
+        let mailbox = String(first.dropFirst("Mailbox: ".count))
+        lines.removeFirst()
+        let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty || body == "Mail context could not be read." { return nil }
+        if body == "No matching messages found." {
+            return "## Mail — no messages match \"\(label)\" in the \(mailbox) mailbox. The search "
+                + "ran (sender and subject were checked for exactly that text); say that nothing "
+                + "matched \"\(label)\" there, not that the search could not be run. If "
+                + "\"\(label)\" is not what the user meant, answer from the rest of this data."
+        }
+        return "## Mail — search matches for \"\(label)\" (\(mailbox) mailbox, already searched):\n"
+            + UntrustedContent.fenced(body, from: "Mail message headers")
+            + "\nThese are the search results; answer from them. Only headers are listed. A line "
+            + "ending in an Id is in the inbox and mail.read can open it by that Id; a line "
+            + "ending in a Mailbox name is filed there."
+    }
+
+    /// - Parameter scopeBundleId: the app the chat is scoped to. In Mail's own chat a search
+    ///   sentence need not say "mail" ("search from SBI") to be about the mailbox.
+    static func appleAppsContextBlock(for query: String, scopeBundleId: String? = nil) async
+        -> String
+    {
         let q = query.lowercased()
         let api = AppleAppsAPI.shared
         var blocks: [String] = []
@@ -150,7 +257,28 @@ enum AppleLiveDataContext {
             }
         }
 
-        if wantsMailContext(q) {
+        // A named sender or term is searched for here, before the model, so the answer is
+        // grounded for every provider — including the ones that cannot call search_mail.
+        var mailSearchFoundMatches = false
+        let mailIntent = mailSearchIntent(for: query)
+        let wantsMail = wantsMailContext(q)
+            || (scopeBundleId?.lowercased() == "com.apple.mail" && mailIntent != nil)
+        // Only when Mail is already running: a read never launches an app.
+        if wantsMail, AppSettings.shared.mailMCPEnabled,
+            AppleAppsAPI.isRunning("com.apple.mail"), let intent = mailIntent
+        {
+            let summary = await Task.detached(priority: .userInitiated) {
+                MailAutomation.mailboxSnapshot(
+                    senderContains: intent.sender, anyContains: intent.term,
+                    relativeDay: intent.day, limit: 15)
+            }.value
+            if let block = mailSearchBlock(label: intent.label, summary: summary) {
+                blocks.append(block)
+                mailSearchFoundMatches = block.contains("search matches for")
+            }
+        }
+
+        if wantsMail, !mailSearchFoundMatches {
             let emails = api.getRecentEmails(limit: 12)
             // Headers only. Bodies are never in this block, so say where they are: without
             // the pointer the model answered "body not returned" and asked the user to open
@@ -206,8 +334,10 @@ enum AppleLiveDataContext {
             + " automatically."
     }
 
-    static func appleAppsAndWeatherContext(for query: String) async -> String {
-        var block = await appleAppsContextBlock(for: query)
+    static func appleAppsAndWeatherContext(for query: String, scopeBundleId: String? = nil)
+        async -> String
+    {
+        var block = await appleAppsContextBlock(for: query, scopeBundleId: scopeBundleId)
         let ql = query.lowercased()
         if ["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
             "how hot", "how cold", "degrees"].contains(where: ql.contains)

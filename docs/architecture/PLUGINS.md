@@ -34,16 +34,17 @@ A **Plugin** is a JSON manifest in a **Pack** folder. It declares:
 - **Skills steer, never grant.** `tools` and approval are enforced after the model answers.
 - **Scripts are visible and gated.** Shown in the Creator, the install preview and the detail
   view. In the Creator, Run test precedes Save. Anything beyond read prompts on first run.
-- **Plugins is its own Settings section.** Integrations keeps app adapters. Packs carry plugins
-  only.
-- **The Creator is a plugin** and a mode of the General Chat window, not a separate window.
+- **Extensions in Settings (#373 / PR #374):** Consolidated under `Settings ▸ Extensions` with
+  two rows: `Apps` (per-app adapters, capabilities, `AGENT.md`, and permissions) and `Store / Packs`
+  (with `[+ Create Pack]` in the header).
+- **The Creator is a pack authoring mode**, not a separate window.
 
-## What it replaces
+## What it replaces and coordinates
 
 `SystemCommand` / `SystemCommandsRegistry` (Route A), `provider:custom` rows
 (`CustomListProviderService`, `ScopedListPanelContent`), and `UserGlobalExtension` /
-`UserGlobalExtensionStore` / `ExtensionPanelManager` (Route B). Both routes are retired only
-after the migrated set passes parity tests (plan Phase 8).
+`UserGlobalExtensionStore` / `ExtensionPanelManager` (Route B). `UserGlobalExtensionStore` is exposed
+to the AI provider via `ExtensionAgentTools.swift`. Both routes remain active behind the unified Extensions surface.
 
 ## Code homes
 

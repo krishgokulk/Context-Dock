@@ -40,6 +40,7 @@ struct RoutingPhrasebookTests {
         case generalChat = "General Chat"
         case notesChat = "Notes chat"
         case mailChat = "Mail chat"
+        case messagesChat = "Messages chat"
 
         var scopedApp: String? {
             switch self {
@@ -47,6 +48,7 @@ struct RoutingPhrasebookTests {
             case .safariChat: return "Safari"
             case .notesChat: return "Notes"
             case .mailChat: return "Mail"
+            case .messagesChat: return "Messages"
             case .generalChat: return nil
             }
         }
@@ -121,6 +123,8 @@ struct RoutingPhrasebookTests {
     private static let finderFind = menu("Finder", ["File", "Find"])
     private static let notesCreate = capability("Notes", "notes.create", "Create Apple Note")
     private static let mailCreateDraft = capability("Mail", "mail.createDraft", "Create Mail Draft")
+    private static let mailSearch = capability("Mail", "mail.search", "Search Mail")
+    private static let messagesCompose = capability("Messages", "messages.compose", "Open a Message for Review")
 
     // MARK: - The phrasebook
     //
@@ -312,6 +316,46 @@ struct RoutingPhrasebookTests {
                found: [mailCreateDraft], expected: .model),
         Phrase(surface: .mailChat, sentence: "draft an email to alex about the invoice",
                found: [mailCreateDraft], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Mailbox Search shortcut is retired. The search
+        // commands it claimed ("search mail from SBI") are requests with a value, not a command
+        // title, so the model takes them and calls `mail.search` with the sender / subject / query.
+        Phrase(surface: .mailChat, sentence: "search mail from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search for invoice",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "find mail from Gokula kannan J",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "look for emails from SBI",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search my inbox for subject payslip",
+               found: [mailSearch], expected: .model),
+        Phrase(surface: .mailChat, sentence: "search mail for \"invoice and receipt\"",
+               found: [mailSearch], expected: .model),
+
+        // Issue 204 (P10, E12): the pre-model Messages shortcut (`DockShortcut.messages`) is
+        // retired. Questions in the Messages scope are answered from live `chat.db` readers (.none);
+        // compose/send and search requests go to the model with `messages.compose`, `messages.send`,
+        // `messages.search`, `messages.recent`, and `messages.topContacts` (.model); exact menu
+        // commands still offer the command (.exactCommand).
+        Phrase(surface: .messagesChat, sentence: "what did Salman text me today?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "who do I message most?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "do I have any unread messages?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "did Salman text me yesterday?",
+               found: [messagesCompose], expected: .none),
+        Phrase(surface: .messagesChat, sentence: "send \"hi\" to Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "send I'm running late to Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "text Salman I'm running late",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "find messages from Salman",
+               found: [messagesCompose], expected: .model),
+        Phrase(surface: .messagesChat, sentence: "New Message",
+               found: [menu("Messages", ["File", "New Message"])], expected: .exactCommand),
     ]
 
     // MARK: - Running a row
@@ -319,7 +363,7 @@ struct RoutingPhrasebookTests {
     /// Which of the fixture apps the sentence names, judged by the same rule the resolver
     /// applies to every installed name (`isAppReference`). Offline stand-in for
     /// `namedInstalledApp`, which reads the machine's app catalogue.
-    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts", "Mail"]
+    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts", "Mail", "Messages"]
 
     static func namedApp(in sentence: String) -> String? {
         let lowered = sentence.lowercased()
@@ -673,76 +717,6 @@ struct ExactCommandTests {
     }
 }
 
-// MARK: - Mail's Mailbox Search shortcut (issue #195)
-
-/// The Mail scope runs Edit › Find › Mailbox Search before any model reads the sentence.
-/// "check my recent mail from Gokula kannan J and do what it says" clicked it and typed
-/// the leftovers, because the word "from" made it a sender search. Task 17's rule applies
-/// here too: the shortcut claims the turn only when the sentence IS the search command and
-/// its value; everything else goes to the model, which has `mail.search` and `mail.read`.
-@MainActor
-struct MailboxSearchCommandTests {
-
-    @Test func theOwnersSentenceGoesToTheModel() {
-        #expect(
-            MailboxSearchCommand.claims(
-                "check my recent mail from Gokula kannan J and do what it says") == nil)
-    }
-
-    @Test func aBareSenderSearchIsTheCommand() {
-        let parsed = MailboxSearchCommand.claims("search mail from SBI")
-        #expect(parsed == MailboxSearchCommand.Parsed(term: "SBI", field: .sender))
-    }
-
-    @Test func aDateOrASecondClauseMakesItARequest() {
-        let sentences = [
-            "find mail from SBI today",
-            "find my recent mail from SBI",
-            "search mail from SBI and summarize it",
-            "search mail from Gokula kannan J and do what it says",
-            "find the latest email from SBI",
-            "search mail from SBI about the loan",
-            "find unread mail from SBI",
-            "look for mail from SBI this week",
-        ]
-        for sentence in sentences {
-            #expect(MailboxSearchCommand.claims(sentence) == nil, "\"\(sentence)\" is a request")
-        }
-    }
-
-    @Test func theSearchCommandAndItsValue() {
-        let cases: [(String, MailboxSearchCommand.Parsed)] = [
-            ("search for invoice", .init(term: "invoice", field: .any)),
-            ("Search mail for quarterly report", .init(term: "quarterly report", field: .any)),
-            ("find mail from Gokula kannan J", .init(term: "Gokula kannan J", field: .sender)),
-            ("look for emails from SBI", .init(term: "SBI", field: .sender)),
-            ("search my inbox for subject payslip", .init(term: "payslip", field: .subject)),
-            ("please search mail from SBI", .init(term: "SBI", field: .sender)),
-            // The Mail scope may already have stripped its own name from the sentence.
-            ("search from SBI", .init(term: "SBI", field: .sender)),
-            ("search mail for \"invoice and receipt\"", .init(term: "invoice and receipt", field: .any)),
-        ]
-        for (sentence, expected) in cases {
-            #expect(MailboxSearchCommand.claims(sentence) == expected, "\"\(sentence)\"")
-        }
-    }
-
-    @Test func noVerbOrNoValueIsNotTheCommand() {
-        let sentences = [
-            "mail from SBI",
-            "show mail from SBI",
-            "check mail from SBI",
-            "search mail",
-            "find",
-            "is there mail from SBI?",
-            "can you search mail from SBI",
-            "search mail from a sender whose name I forget",
-        ]
-        for sentence in sentences {
-            #expect(MailboxSearchCommand.claims(sentence) == nil, "\"\(sentence)\"")
-        }
-    }
-}
 
 
 // MARK: - Issue 204: Notes reads keep the shortcut's safety and its scope
@@ -995,5 +969,450 @@ struct MailQuestionShortcutRetirementTests {
         #expect(AppleLiveDataContext.wantsMailContext("any unread mail?"))
         #expect(AppleLiveDataContext.wantsMailContext("what's the subject line?"))
         #expect(!AppleLiveDataContext.wantsMailContext("hi hello?"))
+    }
+}
+
+// MARK: - Issue 204: Mailbox Search commands reach the model as data-lane Mail reads
+
+@MainActor
+struct MailboxSearchShortcutRetirementTests {
+
+    /// Every kind of sentence the retired Mailbox Search shortcut took before the model.
+    static let retiredCommands = [
+        "search mail from SBI",
+        "search for invoice",
+        "Search mail for quarterly report",
+        "find mail from Gokula kannan J",
+        "look for emails from SBI",
+        "look up mail from SBI",
+        "search my inbox for subject payslip",
+        "please search mail from SBI",
+        // The Mail scope may already have stripped its own name from the sentence.
+        "search from SBI",
+        "search mail for \"invoice and receipt\"",
+    ]
+
+    /// A search command in Mail scope is a fresh read of Mail's records, never an answer from
+    /// memory or conversation.
+    @Test func searchCommandsAreFreshLiveStateReads() {
+        for sentence in Self.retiredCommands {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.mail")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+        }
+    }
+
+    /// The plan is a data-lane read with Mail's search tool and no UI automation: Mail's
+    /// window is never raised, clicked or typed into (owner, 2026-10-10).
+    @Test func searchCommandsPlanAsDataLaneReads() {
+        for sentence in Self.retiredCommands {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.mail", appName: "Mail")
+            #expect(plan.intent == .read, "\"\(sentence)\"")
+            #expect(!plan.permitsUIAutomation, "\"\(sentence)\"")
+            #expect(plan.complexity != .direct, "\"\(sentence)\" needs a tool round")
+            #expect(plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+        }
+    }
+
+    /// The cross-app parser reads "search mail …" as a search *in* Mail and types the rest
+    /// into Mail's search field. In Mail's own chat it must not take the turn — whether or not
+    /// Global Context is active underneath, which it is inside an App Pet. Typed from Global
+    /// Context, where the sentence named the app, it is cross-app as before.
+    @Test func crossAppRoutingDoesNotClaimSearchCommands() {
+        let handler = CrossAppNLHandler.shared
+        for sentence in Self.retiredCommands {
+            guard let intent = handler.parse(sentence.lowercased()) else { continue }
+            #expect(
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false),
+                "\"\(sentence)\"")
+            #expect(
+                handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", scopeNamedByQuery: true),
+                "\"\(sentence)\" from Global Context")
+            // The App Pet's own app wins even when the sentence also named it.
+            #expect(
+                !handler.claimsTurn(
+                    intent, scopedBundleId: "com.apple.mail", chatBundleId: "com.apple.mail",
+                    scopeNamedByQuery: true),
+                "\"\(sentence)\" in Mail's App Pet")
+        }
+        // A search of another app from Mail's chat, and any non-search intent, still claim.
+        if let other = handler.parse("search notes tax return") {
+            #expect(handler.claimsTurn(other, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+            #expect(!handler.claimsTurn(other, scopedBundleId: "com.apple.Notes", scopeNamedByQuery: false))
+        } else {
+            Issue.record("search notes tax return should parse as a cross-app search")
+        }
+        if let send = handler.parse("send this to salman") {
+            #expect(handler.claimsTurn(send, scopedBundleId: "com.apple.mail", scopeNamedByQuery: false))
+        }
+    }
+
+    /// If a Mail search does go to Mail's search field (from Global Context), the field gets
+    /// the name, not the literal words "from uel", which match nothing.
+    @Test func aCrossAppMailSearchDropsTheWordFrom() {
+        let handler = CrossAppNLHandler.shared
+        #expect(handler.parse("search mail from uel")?.searchQuery == "uel")
+        #expect(handler.parse("find mail from gokula kannan j")?.searchQuery == "gokula kannan j")
+        #expect(handler.parse("search mail quarterly report")?.searchQuery == "quarterly report")
+        #expect(handler.parse("search notes from last week")?.searchQuery == "from last week")
+    }
+
+    /// App Find runs before the cross-app parser and would drive Mail's Mailbox Search.
+    @Test func aMailSearchInMailsOwnChatStaysInTheTranscript() {
+        for sentence in ["search mail from uel", "look for emails from SBI", "search for invoice"] {
+            #expect(
+                AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.mail"),
+                "\"\(sentence)\"")
+            #expect(
+                !AppleLiveDataContext.isInScopeMailSearch(sentence, scopedBundleId: "com.apple.Notes"),
+                "\"\(sentence)\"")
+        }
+        #expect(!AppleLiveDataContext.isInScopeMailSearch("find in this window", scopedBundleId: "com.apple.mail"))
+    }
+
+    /// A look-up verb is a record read in every record-set app, not only Mail, and a UI
+    /// sentence with the same verb stays an action.
+    @Test func lookUpVerbsAreRecordReads() {
+        #expect(ScopedRecordRead.matches(query: "look for emails from SBI", bundleId: "com.apple.mail"))
+        #expect(ScopedRecordRead.matches(query: "look up notes about tax", bundleId: "com.apple.Notes"))
+        #expect(!ScopedRecordRead.matches(query: "look for the sidebar", bundleId: "com.apple.mail"))
+        #expect(!ScopedRecordRead.matches(query: "look for mail from SBI and reply to it", bundleId: "com.apple.mail"))
+    }
+
+    @Test func mailboxSearchShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("mailboxSearch"))
+    }
+}
+
+// MARK: - Issue 204: Messages shortcut retirement
+
+@MainActor
+struct MessagesShortcutRetirementTests {
+
+    /// Questions in the Messages scope route to `.liveState` in `AgentSourceAuthority`
+    /// (`requiresFreshRead == true`, `allowsMemoryEvidence == false`), while ordinary greetings in
+    /// Messages scope stay `.conversation`.
+    @Test func messagesScopeQuestionsAreFreshLiveStateReads() {
+        for sentence in [
+            "what did Salman text me today?",
+            "who do I message most?",
+            "do I have any unread messages?",
+            "did Salman text me yesterday?",
+        ] {
+            let decision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.MobileSMS")
+            #expect(decision.primary == .liveState, "\"\(sentence)\"")
+            #expect(decision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!decision.allowsMemoryEvidence, "\"\(sentence)\"")
+            #expect(decision.promptRule.contains("messages.search"))
+        }
+
+        let greeting = AgentSourceAuthority.decide(
+            query: "hi hello?", scopeBundleId: "com.apple.MobileSMS")
+        #expect(greeting.primary == .conversation)
+    }
+
+    /// Outbound compose and send requests that the retired pre-model Messages shortcut
+    /// previously intercepted without approval now route to `.action` in `AgentSourceAuthority`,
+    /// plan as `.act` in `FrontmostAppTaskPlan` with `compose_message` / `send_message`, skip
+    /// `CrossAppNLHandler` in Messages scope, and resolve `messages.compose` (`requiresApproval == true`)
+    /// in `AppAdapterCapabilityCatalog`.
+    @Test func messagesComposeAndSendRequestsAreGatedActions() {
+        for sentence in [
+            "send \"hi\" to Salman",
+            "send I'm running late to Salman",
+            "text Salman I'm running late",
+        ] {
+            let sourceDecision = AgentSourceAuthority.decide(
+                query: sentence, scopeBundleId: "com.apple.MobileSMS")
+            #expect(sourceDecision.primary == .action, "\"\(sentence)\"")
+            #expect(sourceDecision.requiresFreshRead, "\"\(sentence)\"")
+            #expect(!sourceDecision.allowsMemoryEvidence, "\"\(sentence)\"")
+
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.MobileSMS", appName: "Messages")
+            #expect(plan.intent == .act, "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+
+            #expect(
+                DockCore.shouldSkipCrossAppMessagesRouting(
+                    scopedBundleId: "com.apple.MobileSMS", rawScopedQuery: sentence),
+                "\"\(sentence)\" should stay in the Messages ladder")
+
+            let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+                appName: "Messages", bundleID: "com.apple.MobileSMS", query: sentence)
+            #expect(candidates.first?.capabilityID == "messages.compose", "\"\(sentence)\"")
+            #expect(candidates.first?.riskLevel.requiresApproval == true, "\"\(sentence)\"")
+            #expect(candidates.first?.inputValues["recipient"]?.lowercased().contains("salman") == true, "\"\(sentence)\"")
+        }
+
+        // Genuine cross-app contextual share payloads in Messages scope are not blocked.
+        #expect(
+            !DockCore.shouldSkipCrossAppMessagesRouting(
+                scopedBundleId: "com.apple.MobileSMS", rawScopedQuery: "send this file to Salman"))
+    }
+
+    /// Imperative record searches in Messages ("find messages from Salman") are data-lane reads of
+    /// Messages' records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
+    /// Messages' read tools (`search_messages`, `get_messages_conversations`) are included.
+    @Test func findInMessagesIsADataLaneRead() {
+        let query = "find messages from Salman"
+        let plan = FrontmostAppTaskPlan.make(
+            query: query, bundleId: "com.apple.MobileSMS", appName: "Messages")
+        #expect(plan.intent == .read)
+        #expect(!plan.permitsUIAutomation)
+        #expect(RequestLane.decide(query) == .data)
+        #expect(plan.allowedToolNames.contains("search_messages"))
+        #expect(plan.allowedToolNames.contains("get_messages_conversations"))
+        for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
+            #expect(!plan.allowedToolNames.contains(tool), "Messages find offered \(tool)")
+        }
+
+        let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Messages", bundleID: "com.apple.MobileSMS", query: query)
+        #expect(candidates.first?.capabilityID == "messages.search")
+        #expect(candidates.first?.inputValues["query"] == "salman")
+    }
+
+    /// Messages read capabilities (`messages.recent`, `messages.search`, `messages.topContacts`)
+    /// are free (`requiresApproval == false`), while outbound capabilities (`messages.compose`,
+    /// `messages.send`) require approval (`requiresApproval == true`).
+    @Test func messagesCapabilitiesRespectApprovalGates() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        for id in ["messages.recent", "messages.search", "messages.topContacts"] {
+            let cap = CapabilityRegistry.shared.capability(id: id)
+            #expect(cap != nil, "Missing capability \(id)")
+            #expect(cap?.riskLevel.requiresApproval == false, "\(id) should not require approval")
+        }
+        for id in ["messages.compose", "messages.send"] {
+            let cap = CapabilityRegistry.shared.capability(id: id)
+            #expect(cap != nil, "Missing capability \(id)")
+            #expect(cap?.riskLevel.requiresApproval == true, "\(id) must require approval")
+        }
+    }
+
+    /// `DockShortcut` no longer includes the retired `messages` case, and `ReadOnlyDataRouter`
+    /// classifies "text me" questions as `.messages`.
+    @Test func messagesShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("messages"))
+        #expect(ReadOnlyDataRouter.domain(for: "what did Salman text me today?") == .messages)
+        #expect(ReadOnlyDataRouter.domain(for: "did Salman text me yesterday?") == .messages)
+    }
+}
+
+// MARK: - Issue 204: App Find shortcut retirement
+
+@MainActor
+struct AppFindShortcutRetirementTests {
+
+    /// Find, search, and photo sentences that the retired pre-model App Find shortcut would
+    /// have intercepted and routed to `executeAppFindIntent` now reach the model: data-seeking
+    /// queries route as `.data` through `RequestLane.decide` (unless mentioning a UI element like "window").
+    @Test func appFindQueryRoutesAsData() {
+        for sentence in [
+            "find budget report",
+            "search for the passport pdf",
+            "look for the invoice",
+            "photos of cats",
+            "find \"budget\" in this app",
+            "search for contracts in this document",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+        // A find request explicitly mentioning a window targets the UI lane
+        #expect(RequestLane.decide("search for contracts in this window") == .ui)
+    }
+
+    /// `ScopedRoutePolicy` considers actions for find sentences (they are not questions), so
+    /// the model still receives the scoped app's matching menu candidates alongside the query.
+    @Test func scopedRoutePolicyConsidersActionsForFindQueries() {
+        for sentence in ["find budget report", "search for the invoice"] {
+            #expect(ScopedRoutePolicy.considersActions(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// `DockShortcut` no longer includes the retired `appFind` case.
+    @Test func appFindShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("appFind"))
+    }
+}
+
+// MARK: - H6: get_today_events tool retirement
+
+@MainActor
+struct CalendarToolRetirementTests {
+
+    /// Calendar queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("calendar.todayEvents")` rather than a named tool.
+    @Test func calendarQueriesRouteAsData() {
+        for sentence in [
+            "what's on my calendar today",
+            "do I have any meetings today",
+            "what are my events today",
+            "show me today's calendar",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `get_today_events` for Calendar turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func calendarPlanOmitsRetiredTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "what are my events today",
+            bundleId: "com.apple.iCal",
+            appName: "Calendar"
+        )
+        #expect(!plan.allowedToolNames.contains("get_today_events"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// The `calendar.todayEvents` capability is registered and discoverable — the fallback
+    /// path the model uses after the named tool is retired.
+    @Test func calendarTodayEventsCapabilityExists() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        let cap = CapabilityRegistry.shared.capability(id: "calendar.todayEvents")
+        #expect(cap != nil, "calendar.todayEvents capability must be registered")
+    }
+}
+
+// MARK: - H6: run_app_script retirement
+
+/// Verifies that `run_app_script` is no longer offered after H6 tool-core trim.
+/// App-profile scripts now execute via `run_synthesized_script` / learned skills.
+struct AppScriptToolRetirementTests {
+
+    /// A plan for an app that declares scripts must NOT include `run_app_script`;
+    /// `run_synthesized_script` is always present for scoped app turns.
+    @Test func runAppScriptIsAbsentFromAppScopedPlan() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "export this document as pdf",
+            bundleId: "com.test.scriptableapp",
+            appName: "ScriptableApp")
+        #expect(!plan.allowedToolNames.contains("run_app_script"))
+        #expect(plan.allowedToolNames.contains("run_synthesized_script"))
+    }
+
+    /// `run_app_script` is not in the OutboundGate's judged tool set.
+    @Test func runAppScriptIsRemovedFromOutboundGate() {
+        #expect(!OutboundGate.outboundTools.contains("run_app_script"))
+    }
+
+    /// The `{"app_script": ...}` JSON shortcut for tool-less providers no longer
+    /// resolves to an invocation — a synthesized_script directive is used instead.
+    @Test func appScriptJsonDirectiveIsRetired() {
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"app_script": {"name": "tabs-to-md.sh"}}"#)
+        #expect(invocation == nil || invocation?.kind != .synthesizedScript)
+        // The synthesized_script path still works for tool-less providers.
+        let synth = AITypedInvocationResolver.invocation(
+            from: #"{"synthesized_script": {"script": "tell application \"Safari\" to get URL of current tab of front window", "language": "applescript", "reason": "get current tab"}}"#)
+        #expect(synth?.kind == .synthesizedScript)
+    }
+}
+
+// MARK: - H6: read_attachment consolidated into read_file
+
+/// Verifies that `read_attachment` is retired after H6 tool-core trim and that an attachment
+/// question is answered by `read_file`.
+@MainActor
+struct ReadAttachmentToolRetirementTests {
+
+    private func context(attachments: [URL]) -> AgentToolContext {
+        var context = AgentToolContext(commandExecutor: { _, _, _ in (false, "", -1) })
+        context.attachments = attachments
+        return context
+    }
+
+    private func attachment(_ name: String, _ text: String) throws -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-h6-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(name)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// A turn with something attached is offered `read_file`, never the retired tool.
+    @Test func attachmentQuestionsAreOfferedReadFileOnly() {
+        for sentence in [
+            "summarise this", "what does the attached file say",
+            "convert this screenshot to markdown",
+        ] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.Notes", appName: "Notes",
+                hasAttachments: true)
+            #expect(plan.allowedToolNames.contains("read_file"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("read_attachment"), "\"\(sentence)\"")
+        }
+    }
+
+    @Test func readAttachmentIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "read_attachment") == nil)
+        #expect(!OutboundGate.localTools.contains("read_attachment"))
+        #expect(!OutboundGate.readsPrivateData(toolName: "read_attachment", arguments: [:]))
+    }
+
+    /// "Summarise this" with one file attached: no path needed.
+    @Test func readFileReadsTheOnlyAttachmentWithoutAPath() async throws {
+        let url = try attachment("quarterly-notes.md", "Revenue rose nine percent.")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: [url]))
+        #expect(result?.success == true)
+        #expect(result?.output.contains("Revenue rose nine percent.") == true)
+    }
+
+    /// The model sees filenames, so a bare filename must reach the attachment.
+    @Test func readFileFindsAnAttachmentByFilename() async throws {
+        let first = try attachment("a.txt", "alpha")
+        let second = try attachment("b.txt", "bravo")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler(["path": "B.txt"], context(attachments: [first, second]))
+        #expect(result?.success == true)
+        #expect(result?.output.contains("bravo") == true)
+    }
+
+    /// Several attachments and no path: say which exist rather than pick one silently.
+    @Test func readFileListsAttachmentsWhenTheChoiceIsAmbiguous() async throws {
+        let first = try attachment("a.txt", "alpha")
+        let second = try attachment("b.txt", "bravo")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: [first, second]))
+        #expect(result?.success == false)
+        #expect(result?.output.contains(first.path) == true)
+        #expect(result?.output.contains(second.path) == true)
+    }
+
+    @Test func readFileSaysWhenNothingIsAttached() async {
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: []))
+        #expect(result?.success == false)
+        #expect(result?.output.contains("Nothing is attached") == true)
+    }
+
+    /// A file the user attached by hand is readable even from a folder-scoped thread.
+    @Test func anAttachmentIsReadableInsideAFolderThread() async throws {
+        let url = try attachment("outside.txt", "handed over")
+        var scoped = context(attachments: [url])
+        scoped.chatScope = .folder(path: NSTemporaryDirectory() + "dorax-h6-scope")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler(["path": url.path], scoped)
+        #expect(result?.success == true)
+    }
+
+    /// General Chat names what was attached, so "this file" is not resolved against Finder.
+    @Test func generalChatPromptNamesTheAttachedFiles() throws {
+        let url = try attachment("named.txt", "x")
+        let block = AppScopedChatService.attachmentsPromptBlock([url])
+        #expect(block.contains(url.path))
+        #expect(block.contains("not the Finder selection"))
+        #expect(AppScopedChatService.attachmentsPromptBlock([]).isEmpty)
     }
 }
