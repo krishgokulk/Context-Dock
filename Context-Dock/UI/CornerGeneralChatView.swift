@@ -293,11 +293,8 @@ struct CornerGeneralChatView: View {
                     transcript
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     if showsLivePanel {
-                        let pet = activePetInfo
                         CornerLivePanel(
-                            appName: pet.name,
-                            appBundleID: pet.bundleID,
-                            appIcon: pet.icon,
+                            subject: panelSubject,
                             messages: model.messages,
                             isAnswering: model.isSending,
                             liveSteps: model.isSending
@@ -514,6 +511,14 @@ struct CornerGeneralChatView: View {
         }
         .padding(.horizontal, 15)
         .frame(height: 48)
+    }
+
+    /// The subject for the live side panel (#443): General Chat, Combined Chat, or single Pet.
+    private var panelSubject: PanelSubject {
+        CornerLivePanelLayout.subject(
+            kind: model.conversationKind,
+            participants: model.participantSet,
+            fallbackAppName: model.activeScopeAppName)
     }
 
     /// Dynamic Pet identity resolution for the live panel (#387, #388).
