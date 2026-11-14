@@ -67,6 +67,15 @@ enum DevCornerRemote {
             } else {
                 controller.prompt.attach(URL(fileURLWithPath: argument))
             }
+        case "clear":
+            // Hand checks clean up after themselves: no argument deletes the General Chat
+            // thread, a bundle id deletes that app's thread.
+            if argument.isEmpty {
+                GeneralChatWindowModel.shared.openGeneralSession()
+                GeneralChatWindowModel.shared.clearActiveThread()
+            } else {
+                GeneralChatSessionStore.purge(scope: .app(bundleId: argument))
+            }
         case "hide":
             presentation.dismiss()
         case "state":

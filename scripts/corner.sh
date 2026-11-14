@@ -12,6 +12,7 @@
 #   scripts/corner.sh cmd                 a single ⌘ tap: app <-> Global
 #   scripts/corner.sh ask "question"      put text in the field and submit it
 #   scripts/corner.sh attach /abs/path    attach a file to the next ask
+#   scripts/corner.sh clear [bundle id]   delete the General Chat thread, or that app's thread
 #   scripts/corner.sh hide                put the Corner away
 #   scripts/corner.sh state               only report the state
 #
@@ -29,8 +30,9 @@ if [ "${1:-}" = "--app" ]; then
     shift 2
 fi
 
-COMMAND="${1:?usage: corner.sh [--app <bundle id>] centre|bottom|global|general|cmd|ask <text>|attach <path>|hide|state}"
+COMMAND="${1:?usage: corner.sh [--app <bundle id>] centre|bottom|global|general|cmd|ask <text>|attach <path>|clear [bundle id]|hide|state}"
 [ "$COMMAND" = "ask" ] && COMMAND="ask:${2:?ask needs the question}"
+[ "$COMMAND" = "clear" ] && COMMAND="clear:${2:-}"
 [ "$COMMAND" = "attach" ] && COMMAND="attach:${2:?attach needs an absolute file path}"
 
 pgrep -x Context-Dock >/dev/null || { echo "Context-Dock is not running — ./scripts/dev-run.sh first." >&2; exit 1; }
