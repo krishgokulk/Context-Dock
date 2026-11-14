@@ -52,11 +52,21 @@ enum DevCornerRemote {
         case "cmd":
             presentation.applyCommandTap()
         case "ask":
-            controller.prompt.query = argument
-            _ = controller.prompt.submit()
+            // General Chat has its own composer; the Corner prompt's submit is App Chat's.
+            if "\(presentation.mode)" == "general" {
+                GeneralChatWindowModel.shared.input = argument
+                GeneralChatWindowModel.shared.send()
+            } else {
+                controller.prompt.query = argument
+                _ = controller.prompt.submit()
+            }
         case "attach":
             // The same entry point a drop or the + picker calls; the next `ask` sends it.
-            controller.prompt.attach(URL(fileURLWithPath: argument))
+            if "\(presentation.mode)" == "general" {
+                GeneralChatWindowModel.shared.attachments.append(URL(fileURLWithPath: argument))
+            } else {
+                controller.prompt.attach(URL(fileURLWithPath: argument))
+            }
         case "hide":
             presentation.dismiss()
         case "state":
