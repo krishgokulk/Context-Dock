@@ -195,9 +195,6 @@ struct FrontmostAppTaskPlan: Equatable {
         if id.contains("reminders") {
             tools.formUnion(["list_reminders", "create_reminder"])
         }
-        if id.contains("ical") || id.contains("calendar") {
-            tools.formUnion(["get_today_events"])
-        }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }

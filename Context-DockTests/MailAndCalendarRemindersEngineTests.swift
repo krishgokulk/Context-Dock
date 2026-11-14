@@ -87,7 +87,7 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(createReminder != nil)
         #expect(createReminder?.required == ["title"])
 
-        #expect(registry.tool(named: "get_today_events") != nil)
+        #expect(registry.tool(named: "get_today_events") == nil)
     }
 
     @Test func outboundGateClassifiesAllNewTools() {
@@ -131,6 +131,7 @@ struct MailAndCalendarRemindersEngineTests {
             bundleId: "com.apple.iCal",
             appName: "Calendar"
         )
-        #expect(calendarPlan.allowedToolNames.contains("get_today_events"))
+        #expect(!calendarPlan.allowedToolNames.contains("get_today_events"))
+        #expect(calendarPlan.allowedToolNames.contains("run_capability"))
     }
 }

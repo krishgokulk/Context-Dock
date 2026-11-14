@@ -1242,3 +1242,43 @@ struct AppFindShortcutRetirementTests {
         #expect(!DockShortcut.allCases.map(\.rawValue).contains("appFind"))
     }
 }
+
+// MARK: - H6: get_today_events tool retirement
+
+@MainActor
+struct CalendarToolRetirementTests {
+
+    /// Calendar queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("calendar.todayEvents")` rather than a named tool.
+    @Test func calendarQueriesRouteAsData() {
+        for sentence in [
+            "what's on my calendar today",
+            "do I have any meetings today",
+            "what are my events today",
+            "show me today's calendar",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `get_today_events` for Calendar turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func calendarPlanOmitsRetiredTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "what are my events today",
+            bundleId: "com.apple.iCal",
+            appName: "Calendar"
+        )
+        #expect(!plan.allowedToolNames.contains("get_today_events"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// The `calendar.todayEvents` capability is registered and discoverable — the fallback
+    /// path the model uses after the named tool is retired.
+    @Test func calendarTodayEventsCapabilityExists() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        let cap = CapabilityRegistry.shared.capability(id: "calendar.todayEvents")
+        #expect(cap != nil, "calendar.todayEvents capability must be registered")
+    }
+}

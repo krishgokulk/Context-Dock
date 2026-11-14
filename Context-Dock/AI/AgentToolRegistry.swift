@@ -2936,30 +2936,9 @@ final class AgentToolRegistry {
             return result
         })
 
-        register(AgentTool(
-            name: "get_today_events",
-            description: "Get today's calendar events headlessly from Apple Calendar via EventKit.",
-            properties: [:],
-            required: []
-        ) { _, _ in
-            let events = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: AppleAppsAPI.shared.getTodayEvents())
-                }
-            }
-            if events.isEmpty {
-                return AgentToolResult(success: true, output: "No events scheduled for today.", displayCommand: "get_today_events")
-            }
-            let lines = events.map { ev -> String in
-                let title = ev["title"] as? String ?? "Untitled"
-                let allDay = ev["isAllDay"] as? Bool ?? false
-                let start = ev["startDate"] as? String ?? ""
-                let end = ev["endDate"] as? String ?? ""
-                if allDay { return "• \(title) (all day)" }
-                return "• \(title) (\(start) - \(end))"
-            }
-            return AgentToolResult(success: true, output: "Today's events (\(events.count)):\n" + lines.joined(separator: "\n"), displayCommand: "get_today_events")
-        })
+        // get_today_events retired (H6): the model uses find_capability + run_capability("calendar.todayEvents")
+        // instead. The capability is registered in AppleCalendarMCPCapabilities and discoverable on
+        // every turn — find_capability and run_capability are always in the base tool set.
     }
 }
 
