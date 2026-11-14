@@ -101,6 +101,30 @@ struct AppPetDetachedOverlayTests {
         #expect(DetachedPetStore.record(for: petID, defaults: defaults) == nil)
     }
 
+    @Test("A turn in flight is not stored: no Thinking bubble or thinking mascot survives a relaunch")
+    func turnStateIsNotPersisted() {
+        let suiteName = "test.dorax.detachedpets.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let petID = AppPetID.app(bundleID: "com.apple.Safari")
+        DetachedPetStore.upsertRecord(
+            DetachedPetRecord(
+                petID: petID, appName: "Safari", bundleID: "com.apple.Safari",
+                position: CGPoint(x: 200, y: 300), mascotState: .thinking, microBarState: .micro,
+                pinnedBubbles: [
+                    AppPetActionBubble(kind: .thinking(detail: "Safari: Thinking…")),
+                    AppPetActionBubble(kind: .receipt(title: "Safari", detail: "done")),
+                ]),
+            defaults: defaults)
+
+        let loaded = DetachedPetStore.record(for: petID, defaults: defaults)
+        #expect(loaded?.mascotState == .idle)
+        #expect(loaded?.pinnedBubbles.count == 1)
+        #expect(loaded?.pinnedBubbles.first?.displayTitle == "Safari")
+        #expect(loaded?.position.x == 200)
+    }
+
     @Test("DetachedPetManager coordinates multiple detached pets without state collision")
     @MainActor
     func multipleDetachedPetsCoexistence() {
