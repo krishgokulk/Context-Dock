@@ -837,8 +837,15 @@ final class GeneralAIActionResolver {
             .map(String.init)
         if words.contains(where: verbs.contains) { return true }
         // Two-word forms whose first half is harmless on its own.
+        // "email it to Sam", "text this to Priya" (issue #204): a delivery word is a noun as
+        // often as a verb ("show my email"), so it counts only with its object right after it.
+        // Without this, "summarize this file and email it to Sam" read as a question and
+        // mail.createDraft was refused.
+        let deliveryWords: Set<String> = ["email", "mail", "text", "message", "imessage"]
+        let deliveryObjects: Set<String> = ["it", "this", "that", "them"]
         return zip(words, words.dropFirst()).contains { first, second in
-            first == "shut" && second == "down"
+            (first == "shut" && second == "down")
+                || (deliveryWords.contains(first) && deliveryObjects.contains(second))
         }
     }
 

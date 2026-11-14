@@ -1264,10 +1264,16 @@ struct TransformShareShortcutRetirementTests {
         }
     }
 
-    /// They are requests, not questions, so the scoped ladder still considers actions for them.
-    @Test func scopedRoutePolicyConsidersActionsForTransformShare() {
+    /// They are requests, not questions — even when they open with "summarize" or "explain" —
+    /// so the write-intent guard lets `mail.createDraft` / `messages.compose` run, and the
+    /// scoped ladder considers actions for them. A question about mail stays a question.
+    @Test func transformShareIsARequestNotAQuestion() {
         for sentence in Self.sentences {
+            #expect(!GeneralAIActionResolver.shared.asksOnly(sentence), "\"\(sentence)\"")
             #expect(ScopedRoutePolicy.considersActions(sentence), "\"\(sentence)\"")
+        }
+        for question in ["summarize this file", "show my email", "what does this email say?"] {
+            #expect(GeneralAIActionResolver.shared.asksOnly(question), "\"\(question)\"")
         }
     }
 
