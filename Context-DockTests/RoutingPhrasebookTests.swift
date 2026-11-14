@@ -1406,4 +1406,13 @@ struct ReadAttachmentToolRetirementTests {
             .handler(["path": url.path], scoped)
         #expect(result?.success == true)
     }
+
+    /// General Chat names what was attached, so "this file" is not resolved against Finder.
+    @Test func generalChatPromptNamesTheAttachedFiles() throws {
+        let url = try attachment("named.txt", "x")
+        let block = AppScopedChatService.attachmentsPromptBlock([url])
+        #expect(block.contains(url.path))
+        #expect(block.contains("not the Finder selection"))
+        #expect(AppScopedChatService.attachmentsPromptBlock([]).isEmpty)
+    }
 }

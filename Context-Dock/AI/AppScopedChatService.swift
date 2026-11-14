@@ -1018,6 +1018,20 @@ enum AppScopedChatService {
 
     // MARK: - Shared context blocks
 
+    /// Names the files attached to this message and says they are what "this file" means.
+    nonisolated static func attachmentsPromptBlock(_ attachments: [URL]) -> String {
+        guard !attachments.isEmpty else { return "" }
+        let paths = attachments.prefix(10).map { "- \($0.path)" }.joined(separator: "\n")
+        return """
+            ATTACHED TO THIS MESSAGE (\(attachments.count)):
+            \(paths)
+            "This file", "it", "these" and "the attachment" mean these files — not the \
+            Finder selection and not the app behind the chat. Do not look for a selection \
+            first. Their extracted contents are at the end of this prompt; read_file reads \
+            one by its path if you need more.
+            """
+    }
+
     /// Image files a provider can be shown directly. Capped: a folder of forty photos sent
     /// as vision blocks is a very expensive way to answer one question, and the first few
     /// are what "these" almost always means.
@@ -2245,6 +2259,12 @@ enum AppScopedChatService {
                 characterBudget: AIContextBudget.characterBudget(for: provider))
         }
         prompt.set(.capabilities, hubBlock)
+        // What the user attached to this message, named. The provider router folds the
+        // extracted text in at the very end of the prompt, unlabelled as the thing being
+        // asked about — so "summarise this file" with a PDF attached was resolved against
+        // the app behind the chat (Finder's empty selection) and answered "I can't tell
+        // which file you mean". The dock's scoped turn has always had this section.
+        prompt.set(.attachments, Self.attachmentsPromptBlock(attachments))
 
         // What DoraX has durably learned — saved notes, prior findings, the user's own
         // written knowledge for this app. Withheld when the question is about live state,
