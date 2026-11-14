@@ -329,7 +329,7 @@ enum OutboundGate {
     /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
     /// carry data to another host.
     static let localTools: Set<String> = [
-        "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
+        "read_page", "read_file", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
         "read_app_dictionary", "read_unread_mail", "search_mail", "list_reminders",
@@ -500,7 +500,7 @@ enum OutboundGate {
     /// Whether a SUCCESSFUL call just read the user's private data.
     static func readsPrivateData(toolName: String, arguments: [String: Any]) -> Bool {
         switch toolName {
-        case "read_file", "read_attachment", "read_selection", "find_files",
+        case "read_file", "read_selection", "find_files",
             "get_messages_conversations", "search_messages", "run_mcp_tool", "run_route":
             return true
         case "run_command", "spawn_worker":

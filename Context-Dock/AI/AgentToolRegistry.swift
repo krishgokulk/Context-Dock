@@ -1245,7 +1245,7 @@ final class AgentToolRegistry {
         // words against ids and titles, and finder.readFile's title says "Read a file's
         // contents" — nothing a person asking for a summary would type. So the query
         // scored zero against it and one against every Apple Notes capability, because the
-        // FILENAME contained "notes". The model looped on read_attachment and gave up.
+        // FILENAME contained "notes". The model looped on the (since retired) read_attachment tool and gave up.
         case "finder.readFile":
             return "read open summarise summarize explain describe contents what does say "
                 + "inside text pdf document markdown md txt docx file"
@@ -1712,97 +1712,6 @@ final class AgentToolRegistry {
         // 35k tokens per message, so they are reached through two tools instead: search,
         // then call. The model discovers what exists at the moment it needs it, and pays for
         // only what it looked up.
-
-        register(AgentTool(
-            name: "read_attachment",
-            description: "Read a file the user attached to this message — OCR for images and "
-                + "screenshots, plain text for text/markdown/code, extracted text for PDFs. "
-                + "Call this FIRST whenever the user says \"this\", \"this screenshot\", "
-                + "\"the attached file\", or asks to convert, summarise or reformat something "
-                + "they attached. Do not guess the content from the clipboard.",
-            properties: [
-                "index": [
-                    "type": "integer",
-                    "description": "Which attachment, 0-based. Omit for the first one.",
-                ]
-            ],
-            required: []
-        ) { arguments, context in
-            let attachments = context.attachments
-            guard !attachments.isEmpty else {
-                // "These files" usually means the Finder selection, not an upload. Ending
-                // the turn on "nothing is attached" left the model with a flat no while the
-                // files the user was pointing at sat one tool call away — so this says what
-                // *is* there and which tool reaches it.
-                if case .filesSelected(let selected) = context.userContext, !selected.isEmpty {
-                    let names = selected.prefix(10).map(\.path).joined(separator: "\n")
-                    return AgentToolResult(
-                        success: false,
-                        output: "Nothing is attached to this message, but the user has "
-                            + "\(selected.count) item(s) selected in Finder:\n\(names)\n\n"
-                            + "That is what \"these files\" means. Any image among them has "
-                            + "already been shown to you — describe it directly. For anything "
-                            + "else use finder.readFile or finder.fileInfo on the paths above.",
-                        displayCommand: "read_attachment()")
-                }
-                return AgentToolResult(
-                    success: false,
-                    output: "Nothing is attached to this message.",
-                    displayCommand: "read_attachment()")
-            }
-            let index = (arguments["index"] as? Int) ?? 0
-            guard attachments.indices.contains(index) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "There \(attachments.count == 1 ? "is 1 attachment" : "are \(attachments.count) attachments"), so index \(index) doesn't exist.",
-                    displayCommand: "read_attachment(\(index))")
-            }
-            let url = attachments[index]
-            let label = url.lastPathComponent
-            guard let data = try? Data(contentsOf: url) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Couldn't read \(label).",
-                    displayCommand: "read_attachment(\(label))")
-            }
-
-            let imageTypes: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp"]
-            let ext = url.pathExtension.lowercased()
-            var text = ""
-            if imageTypes.contains(ext) {
-                let outcome = ScreenCaptureService.recognizeTextOutcome(in: data)
-                text = outcome.text
-                if text.isEmpty {
-                    // An image with no text is a real answer, not a failure — and saying so
-                    // stops the model inventing content it cannot see. A recogniser that
-                    // could not run is not that answer: the summary says which one it was.
-                    return AgentToolResult(
-                        success: true,
-                        output: outcome.summary(label: label) + " If the user is asking "
-                            + "about what the image depicts, describe it from the image you "
-                            + "were shown rather than from this tool.",
-                        displayCommand: "read_attachment(\(label))")
-                }
-            } else if ext == "pdf" {
-                text = PDFDocument(url: url)?.string ?? ""
-            } else {
-                text = String(data: data, encoding: .utf8) ?? ""
-            }
-
-            guard !text.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "\(label) has no text I can extract.",
-                    displayCommand: "read_attachment(\(label))")
-            }
-            // Bounded: a long PDF would otherwise crowd out the rest of the turn.
-            let clipped = text.count > 20_000
-                ? String(text.prefix(20_000)) + "\n…(truncated)" : text
-            return AgentToolResult(
-                success: true,
-                output: "Contents of \(label):\n\n\(clipped)",
-                displayCommand: "read_attachment(\(label))")
-        })
 
         register(AgentTool(
             name: "find_capability",

@@ -95,7 +95,7 @@ enum AgentToolNarration {
         case "search_messages", "get_messages_conversations": return "Searching Messages"
         case "read_page": return "Reading the open page"
         case "read_url": return "Fetching"
-        case "read_file", "read_attachment": return "Reading"
+        case "read_file": return "Reading"
         case "read_selection": return "Reading the selection"
         case "find_files": return "Searching for files"
         case "write_output_file": return "Writing a file"

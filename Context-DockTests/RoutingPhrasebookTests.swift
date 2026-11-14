@@ -1317,3 +1317,93 @@ struct AppScriptToolRetirementTests {
         #expect(synth?.kind == .synthesizedScript)
     }
 }
+
+// MARK: - H6: read_attachment consolidated into read_file
+
+/// Verifies that `read_attachment` is retired after H6 tool-core trim and that an attachment
+/// question is answered by `read_file`.
+@MainActor
+struct ReadAttachmentToolRetirementTests {
+
+    private func context(attachments: [URL]) -> AgentToolContext {
+        var context = AgentToolContext(commandExecutor: { _, _, _ in (false, "", -1) })
+        context.attachments = attachments
+        return context
+    }
+
+    private func attachment(_ name: String, _ text: String) throws -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-h6-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(name)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// A turn with something attached is offered `read_file`, never the retired tool.
+    @Test func attachmentQuestionsAreOfferedReadFileOnly() {
+        for sentence in [
+            "summarise this", "what does the attached file say",
+            "convert this screenshot to markdown",
+        ] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.Notes", appName: "Notes",
+                hasAttachments: true)
+            #expect(plan.allowedToolNames.contains("read_file"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("read_attachment"), "\"\(sentence)\"")
+        }
+    }
+
+    @Test func readAttachmentIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "read_attachment") == nil)
+        #expect(!OutboundGate.localTools.contains("read_attachment"))
+        #expect(!OutboundGate.readsPrivateData(toolName: "read_attachment", arguments: [:]))
+    }
+
+    /// "Summarise this" with one file attached: no path needed.
+    @Test func readFileReadsTheOnlyAttachmentWithoutAPath() async throws {
+        let url = try attachment("quarterly-notes.md", "Revenue rose nine percent.")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: [url]))
+        #expect(result?.success == true)
+        #expect(result?.output.contains("Revenue rose nine percent.") == true)
+    }
+
+    /// The model sees filenames, so a bare filename must reach the attachment.
+    @Test func readFileFindsAnAttachmentByFilename() async throws {
+        let first = try attachment("a.txt", "alpha")
+        let second = try attachment("b.txt", "bravo")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler(["path": "B.txt"], context(attachments: [first, second]))
+        #expect(result?.success == true)
+        #expect(result?.output.contains("bravo") == true)
+    }
+
+    /// Several attachments and no path: say which exist rather than pick one silently.
+    @Test func readFileListsAttachmentsWhenTheChoiceIsAmbiguous() async throws {
+        let first = try attachment("a.txt", "alpha")
+        let second = try attachment("b.txt", "bravo")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: [first, second]))
+        #expect(result?.success == false)
+        #expect(result?.output.contains(first.path) == true)
+        #expect(result?.output.contains(second.path) == true)
+    }
+
+    @Test func readFileSaysWhenNothingIsAttached() async {
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler([:], context(attachments: []))
+        #expect(result?.success == false)
+        #expect(result?.output.contains("Nothing is attached") == true)
+    }
+
+    /// A file the user attached by hand is readable even from a folder-scoped thread.
+    @Test func anAttachmentIsReadableInsideAFolderThread() async throws {
+        let url = try attachment("outside.txt", "handed over")
+        var scoped = context(attachments: [url])
+        scoped.chatScope = .folder(path: NSTemporaryDirectory() + "dorax-h6-scope")
+        let result = await AgentToolRegistry.shared.tool(named: "read_file")?
+            .handler(["path": url.path], scoped)
+        #expect(result?.success == true)
+    }
+}
