@@ -1243,6 +1243,60 @@ struct AppFindShortcutRetirementTests {
     }
 }
 
+// MARK: - Issue 204: Transform & Share shortcut retirement
+
+@MainActor
+struct TransformShareShortcutRetirementTests {
+
+    private static let sentences = [
+        "summarise this file and email it to sam",
+        "summarize this file and email it to sam@example.com",
+        "tldr this pdf and text it to priya",
+        "explain this document and send it to john",
+        "share the key points of the selected file with maya",
+    ]
+
+    /// Transform-and-share sentences the retired pre-model shortcut used to claim now reach the
+    /// model as data turns: read with `read_file`, draft with a capability — no menu click.
+    @Test func transformShareQueryRoutesAsData() {
+        for sentence in Self.sentences {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// They are requests, not questions, so the scoped ladder still considers actions for them.
+    @Test func scopedRoutePolicyConsidersActionsForTransformShare() {
+        for sentence in Self.sentences {
+            #expect(ScopedRoutePolicy.considersActions(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// The cross-app share shortcut must stand down for these sentences — it would send the raw
+    /// file, not the summary. A plain share stays a cross-app share.
+    @Test func crossAppShortcutStandsDownForTransformShare() {
+        for sentence in Self.sentences {
+            #expect(DockCore.isTransformShareSentence(sentence), "\"\(sentence)\"")
+        }
+        for sentence in ["send this to salman", "email this to john", "open this in xcode", "summarise this file"] {
+            #expect(!DockCore.isTransformShareSentence(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// The capabilities the model drafts with are registered, so `find_capability` can offer them.
+    @Test func draftCapabilitiesAreRegistered() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+        AppleMessagesMCPCapabilities.register(in: registry)
+        #expect(registry.capability(id: "mail.createDraft") != nil)
+        #expect(registry.capability(id: "messages.compose") != nil)
+    }
+
+    /// `DockShortcut` no longer includes the retired `transformShare` case.
+    @Test func transformShareShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("transformShare"))
+    }
+}
+
 // MARK: - H6: get_today_events tool retirement
 
 @MainActor
