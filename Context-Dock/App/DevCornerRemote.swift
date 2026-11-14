@@ -54,6 +54,9 @@ enum DevCornerRemote {
         case "ask":
             controller.prompt.query = argument
             _ = controller.prompt.submit()
+        case "attach":
+            // The same entry point a drop or the + picker calls; the next `ask` sends it.
+            controller.prompt.attach(URL(fileURLWithPath: argument))
         case "hide":
             presentation.dismiss()
         case "state":
@@ -80,6 +83,7 @@ enum DevCornerRemote {
             "shellWidth": Double(DockShellWidth.current),
             "app": prompt.appName,
             "query": prompt.query,
+            "attachments": prompt.attachments.map(\.lastPathComponent),
             "writtenAt": ISO8601DateFormatter().string(from: Date()),
         ]
         guard
