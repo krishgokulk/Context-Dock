@@ -463,8 +463,7 @@ struct CornerLivePanel: View {
 
     // MARK: - Conversation Skills (#443)
 
-    @ViewBuilder
-    private func conversationSkillsSection(steps: [ActivityStep]) -> some View {
+    private func conversationSkillRows(steps: [ActivityStep]) -> [(name: String, source: String)] {
         var skillRows: [(name: String, source: String)] = []
         if let saved = lastTurnAnswer?.savedSkill {
             skillRows.append((saved.jobKey, "saved skill"))
@@ -476,7 +475,12 @@ struct CornerLivePanel: View {
             let skillName = String(step.title.dropFirst("Ran skill ".count))
             skillRows.append((skillName, "active"))
         }
+        return skillRows
+    }
 
+    @ViewBuilder
+    private func conversationSkillsSection(steps: [ActivityStep]) -> some View {
+        let skillRows = conversationSkillRows(steps: steps)
         if !skillRows.isEmpty {
             section("Skills & plugins", count: skillRows.count) {
                 ForEach(skillRows, id: \.name) { row in
