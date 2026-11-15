@@ -355,12 +355,14 @@ struct CornerGeneralChatView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
-                AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 18)
-                Text(identity.primaryTitle)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("General AI")
                     .font(.system(size: 14, weight: .semibold))
             }
 
-            if let subtitle = identity.subtitle {
+            if !members.isEmpty, let subtitle = identity.subtitle {
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -414,10 +416,6 @@ struct CornerGeneralChatView: View {
             }
 
             Spacer(minLength: 6)
-
-            // Provider / context usage chip (#335)
-            ProviderContextChip(scope: model.activeScope)
-                .transition(.opacity)
 
             // Live sidepanel toggle (#191 / #386 parity with App Pet).
             Button {

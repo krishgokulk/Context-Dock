@@ -860,35 +860,29 @@ struct AIComposerBar: View {
     @ViewBuilder
     private var siriComposerRow: some View {
         HStack(spacing: 8) {
-            attachButton
-                .frame(width: 32, height: 32)
-                .background(Color.primary.opacity(0.08), in: Circle())
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                .contentShape(Circle())
+            providerMenu
+                .layoutPriority(1)
 
-            HStack(spacing: 7) {
-                providerMenu
-                inputTextField
-                if !attachedAppNames.isEmpty {
-                    attachedAppChips
-                }
+            inputTextField
+                .layoutPriority(1)
+
+            if !attachedAppNames.isEmpty {
+                attachedAppChips
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color.primary.opacity(0.06), in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-            )
+
+            attachButton
+
+            if let onTogglePin {
+                Button(action: onTogglePin) {
+                    cornerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Keep this open")
+            }
 
             if isSending, let onStop {
                 Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Color.secondary.opacity(0.5), in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                        .contentShape(Circle())
+                    cornerGlyph("stop.fill", tinted: true)
                 }
                 .buttonStyle(.plain)
                 .help("Stop generating")
@@ -898,27 +892,22 @@ struct AIComposerBar: View {
                     onSubmit()
                 } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
                         .background(Color.accentColor, in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Send (Return)")
             } else {
                 appPickerButton
-                    .frame(width: 32, height: 32)
-                    .background(Color.primary.opacity(0.08), in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                    .contentShape(Circle())
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .animation(.smooth(duration: 0.2), value: text.isEmpty)
-        .animation(.smooth(duration: 0.2), value: isSending)
+        .animation(.smooth(duration: 0.16), value: text.isEmpty)
+        .animation(.smooth(duration: 0.16), value: isSending)
     }
 
     @ViewBuilder
@@ -1019,15 +1008,18 @@ struct AIComposerBar: View {
         } label: {
             if cornerStyle {
                 HStack(spacing: 5) {
-                    AIProviderIcon(provider: settings.selectedAIProvider, size: 15)
+                    AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
                     Text(settings.selectedAIProvider.shortName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08), in: Capsule())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.09), in: Capsule())
                 .contentShape(Capsule())
             } else {
                 HStack(spacing: 4) {
@@ -1116,9 +1108,10 @@ struct AIComposerBar: View {
                 extraAttachMenu()
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: cornerStyle ? 12 : 15, weight: .medium))
+                    .foregroundStyle(cornerStyle ? Color.secondary : Color.primary.opacity(0.85))
+                    .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
                     .contentShape(Circle())
             }
             .menuStyle(.borderlessButton)
@@ -1127,9 +1120,10 @@ struct AIComposerBar: View {
         } else {
             Button(action: onAttachFile) {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: cornerStyle ? 12 : 15, weight: .medium))
+                    .foregroundStyle(cornerStyle ? Color.secondary : Color.primary.opacity(0.85))
+                    .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -1195,9 +1189,10 @@ struct AIComposerBar: View {
             }
         } label: {
             Image(systemName: "app.dashed")
-                .font(.system(size: 14))
+                .font(.system(size: cornerStyle ? 12 : 14))
                 .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
+                .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                .background(Color.primary.opacity(0.08), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
