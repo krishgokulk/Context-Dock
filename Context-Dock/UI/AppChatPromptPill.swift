@@ -1148,10 +1148,6 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 8)
 
-            // Provider / context usage chip (#335). Cleanly placed in the header where model selection belongs.
-            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
-                .layoutPriority(1)
-
             // Streamlined header actions: primary controls visible, secondary actions in the ellipsis menu
             HStack(spacing: 3) {
                 // The app's panel beside the conversation, shown or hidden (#191)
@@ -1261,10 +1257,7 @@ struct AppChatPromptPill: View {
                 // A tool or a command keeps its way back; an app is its own Context Dock,
                 // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
-            } else if model.phase != .chat {
-                // In non-chat phases (dock/prompt), the app chip leads the field so the user
-                // knows what app is active. Once in chat, the header already carries the app
-                // identity and icon, so drawing it here would duplicate the app name.
+            } else {
                 appChip
                     .layoutPriority(1)
             }
