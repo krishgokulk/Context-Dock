@@ -803,52 +803,7 @@ struct AIChatMessageView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             ForEach(message.recentFiles, id: \.url) { file in
-                HStack(spacing: 8) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(file.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(file.folder)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 4)
-                    if let onPreviewFile {
-                        // Reading a file in the dock costs the conversation, and going back
-                        // to the conversation costs the file. The window shows both.
-                        Button("Preview") { onPreviewFile(file.url) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .disabled(!FileManager.default.fileExists(atPath: file.url.path))
-                            .help("Open \(file.name) beside this chat")
-                    }
-                    Button("Open") {
-                        NSWorkspace.shared.open(file.url)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
-                    .help("Open \(file.name)")
-                    Button {
-                        NSWorkspace.shared.activateFileViewerSelecting([file.url])
-                    } label: {
-                        Image(systemName: "folder")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
-                    .help("Show \(file.name) in Finder")
-                }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                RichFileCard(url: file.url, onPreview: onPreviewFile)
             }
         }
     }

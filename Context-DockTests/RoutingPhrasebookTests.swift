@@ -1243,6 +1243,101 @@ struct AppFindShortcutRetirementTests {
     }
 }
 
+// MARK: - Issue 204: Transform & Share shortcut retirement
+
+@MainActor
+struct TransformShareShortcutRetirementTests {
+
+    private static let sentences = [
+        "summarise this file and email it to sam",
+        "summarize this file and email it to sam@example.com",
+        "tldr this pdf and text it to priya",
+        "explain this document and send it to john",
+        "share the key points of the selected file with maya",
+    ]
+
+    /// Transform-and-share sentences the retired pre-model shortcut used to claim now reach the
+    /// model as data turns: read with `read_file`, draft with a capability — no menu click.
+    @Test func transformShareQueryRoutesAsData() {
+        for sentence in Self.sentences {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// They are requests, not questions — even when they open with "summarize" or "explain" —
+    /// so the write-intent guard lets `mail.createDraft` / `messages.compose` run, and the
+    /// scoped ladder considers actions for them. A question about mail stays a question.
+    @Test func transformShareIsARequestNotAQuestion() {
+        for sentence in Self.sentences {
+            #expect(!GeneralAIActionResolver.shared.asksOnly(sentence), "\"\(sentence)\"")
+            #expect(ScopedRoutePolicy.considersActions(sentence), "\"\(sentence)\"")
+        }
+        for question in ["summarize this file", "show my email", "what does this email say?"] {
+            #expect(GeneralAIActionResolver.shared.asksOnly(question), "\"\(question)\"")
+        }
+    }
+
+    /// The cross-app share shortcut must stand down for these sentences — it would send the raw
+    /// file, not the summary. A plain share stays a cross-app share.
+    @Test func crossAppShortcutStandsDownForTransformShare() {
+        for sentence in Self.sentences {
+            #expect(DockCore.isTransformShareSentence(sentence), "\"\(sentence)\"")
+        }
+        for sentence in ["send this to salman", "email this to john", "open this in xcode", "summarise this file"] {
+            #expect(!DockCore.isTransformShareSentence(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// The capabilities the model drafts with are registered, so `find_capability` can offer them.
+    @Test func draftCapabilitiesAreRegistered() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+        AppleMessagesMCPCapabilities.register(in: registry)
+        #expect(registry.capability(id: "mail.createDraft") != nil)
+        #expect(registry.capability(id: "messages.compose") != nil)
+    }
+
+    /// `DockShortcut` no longer includes the retired `transformShare` case.
+    @Test func transformShareShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("transformShare"))
+    }
+}
+
+// MARK: - Issue 204: Finder shortcut retirement
+
+@MainActor
+struct FinderShortcutRetirementTests {
+
+    private static let sentences = [
+        "what files are in this folder?",
+        "what files are here?",
+        "find report in Downloads",
+        "find invoice in this folder",
+        "show me the pdfs in this folder",
+    ]
+
+    /// Finder folder and file sentences the retired pre-model Finder shortcut used to claim
+    /// (folder attached, Finder frontmost) now reach the model as data turns: found with
+    /// `find_files`, read with `read_file` — no menu click.
+    @Test func finderFolderQueryRoutesAsData() {
+        for sentence in Self.sentences {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// The tools the model answers these with are in the registry.
+    @Test func fileToolsAreRegistered() {
+        let names = Set(AgentToolRegistry.shared.allTools.map(\.name))
+        #expect(names.contains("find_files"))
+        #expect(names.contains("read_file"))
+    }
+
+    /// `DockShortcut` no longer includes the retired `finder` case.
+    @Test func finderShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("finder"))
+    }
+}
+
 // MARK: - H6: get_today_events tool retirement
 
 @MainActor
