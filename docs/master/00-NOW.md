@@ -10,11 +10,11 @@
 
 ## In progress
 
-Nothing in progress. Next up: **#413** H6 tool core trim (4/n) — `list_reminders`, then `create_reminder`, one tool per PR.
+**#413 H6 (4/n): Retire `list_reminders` tool into `reminders.list` capability** (2026-11-15). Building on `claude/retire-list-reminders-tool`: `list_reminders` deleted from `AgentToolRegistry`, its reminders-bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. Reminders queries route as data turns to `find_capability` + `run_capability("reminders.list")`. Remaining H6 trim: `create_reminder`.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (3/n merged, PR #442).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (`list_reminders` in progress, next `create_reminder`).
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 

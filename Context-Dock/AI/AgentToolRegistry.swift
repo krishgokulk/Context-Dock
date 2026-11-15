@@ -2775,30 +2775,9 @@ final class AgentToolRegistry {
 
         // MARK: - Apple Reminders & Calendar Tools
 
-        register(AgentTool(
-            name: "list_reminders",
-            description: "List active reminders headlessly from Apple Reminders via EventKit.",
-            properties: [
-                "limit": ["type": "integer", "description": "Maximum reminders to return, default 20."],
-            ],
-            required: []
-        ) { arguments, _ in
-            let limit = arguments["limit"] as? Int ?? 20
-            let reminders = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: AppleAppsAPI.shared.getReminders(limit: limit))
-                }
-            }
-            if reminders.isEmpty {
-                return AgentToolResult(success: true, output: "No active reminders.", displayCommand: "list_reminders")
-            }
-            let lines = reminders.map { r -> String in
-                let title = r["title"] as? String ?? "Untitled"
-                let due = r["dueDate"] as? String
-                return due != nil ? "• \(title) (due: \(due!))" : "• \(title)"
-            }
-            return AgentToolResult(success: true, output: "Active reminders (\(reminders.count)):\n" + lines.joined(separator: "\n"), displayCommand: "list_reminders")
-        })
+        // list_reminders retired (H6 4/n): the model uses find_capability + run_capability("reminders.list")
+        // instead. The capability is registered in AppleRemindersMCPCapabilities and discoverable on
+        // every turn — find_capability and run_capability are always in the base tool set.
 
         register(AgentTool(
             name: "create_reminder",
