@@ -10,16 +10,22 @@
 
 ## In progress
 
-**#204 P10 — retire the `transformShare` pre-model shortcut** (2026-11-14). Building on `claude/transformshare-shortcut-retire-f5b746`: the `transformShareIntent` interception (`DockShortcut.transformShare`) leaves `handleL2Query`; "summarise this file and email it to …" goes through the ladder as a data turn (`read_file` → `mail.createDraft` / `messages.compose` under the existing approval gates). The explicit Transform & Share pill keeps `executeTransformShareIntent`. Remaining after this: `finder`, `crossApp`.
+**#204 P10 — retire the `finder` pre-model shortcut** (2026-11-15). Building on `claude/retire-finder-shortcut-739f60`: the `allowFrontmostFinderRouting` interception (`DockShortcut.finder` → `handleFinderAIQuery`) leaves `handleL2Query`; "what files are in this folder?", "find report in Downloads" go through the ladder as data turns (`find_files` / `read_file` / Finder capabilities). Remaining after this: `crossApp`.
 
 ## Queued (next)
 
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (3/n merged, PR #442).
-- Issue #204: P10: Remaining pre-model shortcuts in `DockCore+AIChat.swift` (`finder`, `crossApp`) — `transformShare` is in progress.
+- Issue #204: P10: Remaining pre-model shortcut in `DockCore+AIChat.swift`: `crossApp` — `finder` is in progress.
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#204 (part): Transform & Share pre-model shortcut retired (PR #445):**
+- Deleted the `transformShareIntent` interception and `DockShortcut.transformShare` from `handleL2Query`; "summarise this file and email it to …" reaches the model as a data turn (`read_file` → `mail.createDraft` / `messages.compose` under the existing approval gates). The Transform & Share pill still calls `executeTransformShareIntent`. Added `TransformShareShortcutRetirementTests` and D26 row. Squash-merged 2026-11-15 (`c13a0d8c`). Follow-ups filed: #447, #448.
+
+**Rich cards 1/N — file card with Open in {Default App} (#418, PR #419):**
+- File results render as a rich card with Open in {Default App}, Quick Look and Reveal. Squash-merged 2026-11-14 (`ffc39fc7`).
 
 **`corner.sh clear`: delete a hand check's thread (PR #444):**
 - Dev Corner remote gained a `clear` command so a hand check removes its own General Chat thread. Squash-merged 2026-11-14 (`b9ee54d9`).

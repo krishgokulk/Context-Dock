@@ -2554,22 +2554,9 @@ extension DockCore {
             l2.chatContextKey = currentKey == "none" ? l2.chatContextKey : currentKey
         }
 
-        // ── Finder AI — natural language over current folder / selection ──────
-        let allowFrontmostFinderRouting =
-            !dockScope.isGlobalScope
-            && !isGlobalContextActive
-            && finderFolderQueryModeActive
-            && isFinderFolderSearchAttached(currentFolderPath: currentFinderFolderPath())
-        if allowFrontmostFinderRouting
-            && ((frontmost.bundleID == "com.apple.finder" || frontmost.name == "Finder")
-                || (scopedBundleId == "com.apple.finder"
-                    && !dockScope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .isEmpty))
-        {
-            dockShortcutStep(.finder)
-            handleFinderAIQuery(query: query)
-            return
-        }
+        // Finder folder / file sentences ("what files are in this folder?", "find report in
+        // Downloads") are the model's (issue #204): it finds with `find_files`, reads with
+        // `read_file`, or runs a Finder capability. No pre-model Finder interception here.
 
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
