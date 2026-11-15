@@ -76,6 +76,20 @@ final class GeneralChatWindowModel: ObservableObject {
     @Published private(set) var sessions: [GeneralChatSession] = GeneralChatSessionStore.index()
     /// Active temporary side thread branched off the current conversation (#333).
     @Published var activeSideThread: SideThreadState? = nil
+    /// Whether the conversation board in the corner is minimized down to the resting pill.
+    @Published var isConversationMinimized: Bool = false
+
+    func minimizeConversation() {
+        isConversationMinimized = true
+    }
+
+    func expandConversation() {
+        isConversationMinimized = false
+    }
+
+    func toggleConversationMinimized() {
+        isConversationMinimized.toggle()
+    }
 
     /// Persistent identity of the active conversation, separate from per-turn `activeTurnScope`.
     var conversationKind: ConversationKind {
@@ -757,6 +771,7 @@ final class GeneralChatWindowModel: ObservableObject {
         messages = []
         messageApps = [:]
         attachments = []
+        isConversationMinimized = false
         if activeScope == .general {
             GeneralAIChatConversationStore.clear()
         } else {
@@ -1109,6 +1124,7 @@ final class GeneralChatWindowModel: ObservableObject {
     func send() {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
+        isConversationMinimized = false
         guard !isSending else {
             Self.log.notice(
                 "send ignored: \(self.activeScope.storageKey, privacy: .public) already sending")

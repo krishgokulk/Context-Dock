@@ -151,33 +151,52 @@ enum CornerGeneralChatMetrics {
     /// the way Global and an app's Context Dock do, and the board appears with the first
     /// question. The Chat Window keeps its start screen.
     static func boardHeight(for model: GeneralChatWindowModel) -> CGFloat {
-        boardHeight(
+        guard (!model.messages.isEmpty || model.isSending) && !model.isConversationMinimized else {
+            return 0
+        }
+        return boardHeight(
             messageCount: model.messages.count,
             isSending: model.isSending,
             liveStepCount: model.activeProgress.count,
             clarificationOptionCount: clarificationOptionCount(for: model))
     }
 
-    static func size(for model: GeneralChatWindowModel) -> CGSize {
+    @MainActor
+    static func size(for model: GeneralChatWindowModel, showsLivePanel: Bool? = nil) -> CGSize {
         let modMatches = ChatSlashModPicker.matches(for: model.input, participant: model.participantSet.first)
         let slashMatches = modMatches.isEmpty ? ChatSlashAppPicker.matches(for: model.input) : []
         let matchCount = !modMatches.isEmpty ? modMatches.count : slashMatches.count
-        let isExpanded = (!model.messages.isEmpty || model.isSending) || !model.attachments.isEmpty || model.cornerComposerLines > 1
-        return CGSize(
-            // The shell's one width (#189): General stands exactly as wide as Global and
-            // every app's Context Dock, so switching mode changes only what is inside.
-            // Grows past the field only once there is an answer to show.
-            width: model.messages.isEmpty ? DockShellWidth.current : DockShellWidth.results,
-            height: height(
+        let hasActiveChat = (!model.messages.isEmpty || model.isSending) && !model.isConversationMinimized
+        let isExpanded = hasActiveChat || !model.attachments.isEmpty || model.cornerComposerLines > 1
+
+        let full = DockShellWidth.results
+        let compactChatWidth = max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
+        let targetWidth: CGFloat
+        if hasActiveChat {
+            let isPanelOpen = showsLivePanel ?? (CornerChatPresentation.shared.appChat.livePanelOpen)
+            targetWidth = isPanelOpen ? full : compactChatWidth
+        } else {
+            targetWidth = DockShellWidth.current
+        }
+
+        let boardH = hasActiveChat
+            ? boardHeight(
                 messageCount: model.messages.count,
                 isSending: model.isSending,
-                hasAttachments: !model.attachments.isEmpty,
-                slashMatchCount: matchCount,
-                hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
                 liveStepCount: model.activeProgress.count,
-                clarificationOptionCount: clarificationOptionCount(for: model),
-                composerLines: model.cornerComposerLines)
-                + (isExpanded ? 36 : 0))
+                clarificationOptionCount: clarificationOptionCount(for: model))
+            : 0
+
+        let composerH = composerHeight(
+            hasAttachments: !model.attachments.isEmpty,
+            slashMatchCount: matchCount,
+            hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
+            lines: model.cornerComposerLines)
+            + (isExpanded ? 36 : 0)
+
+        let targetHeight = boardH > 0 ? boardH + CornerDockLayout.gap + composerH : composerH
+
+        return CGSize(width: targetWidth, height: targetHeight)
     }
 }
 
@@ -195,10 +214,17 @@ struct CornerGeneralChatView: View {
     /// highlight jump when the user typed after being asked something.
     @State private var clarificationSelection = 0
 
-    private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
-    private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
     private var showsLivePanel: Bool {
         promptModel.livePanelOpen && showsTranscript
+    }
+    private var showsTranscript: Bool {
+        (!model.messages.isEmpty || model.isSending) && !model.isConversationMinimized
+    }
+    private var hasChatToShow: Bool {
+        !model.messages.isEmpty || model.isSending
+    }
+    private var size: CGSize {
+        CornerGeneralChatMetrics.size(for: model, showsLivePanel: showsLivePanel)
     }
 
     /// The conversation, the start screen, or the `/` picker: a card of its own above the
@@ -277,6 +303,7 @@ struct CornerGeneralChatView: View {
         // One animation for the whole card. Two — a spring on the height and an ease on the
         // starter — ran against each other every time the starter appeared, which is the
         // stutter the resize looked like it had.
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: size.width)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: size.height)
     }
 
@@ -453,6 +480,34 @@ struct CornerGeneralChatView: View {
                 .disabled(expand == .disabled)
                 .help("Open this conversation in the full window")
             }
+
+            // Clear conversation button (user requested delete button)
+            Button {
+                model.clearActiveThread()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear conversation (⌘K)")
+            .accessibilityLabel("Clear conversation")
+
+            // Minimize conversation to pill
+            Button {
+                model.minimizeConversation()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Minimize conversation")
+            .accessibilityLabel("Minimize conversation")
 
             // Pin toggle
             Button {
@@ -724,12 +779,25 @@ struct CornerGeneralChatView: View {
         }
         // The same rule for a clarifying question, and only while the field is empty —
         // once the user is typing their own answer the arrows belong to the cursor.
-        guard model.input.isEmpty, let clarification,
+        if model.input.isEmpty, let clarification,
             let next = ChatSlashAppPicker.movedSelection(
                 from: clarificationSelection, by: delta, count: clarification.options.count)
-        else { return false }
-        clarificationSelection = next
-        return true
+        {
+            clarificationSelection = next
+            return true
+        }
+
+        // On an empty field, ↑ expands a minimized conversation, and ↓ minimizes an open conversation (parity with App Pet).
+        if model.input.isEmpty && hasChatToShow {
+            if delta < 0 && model.isConversationMinimized {
+                model.expandConversation()
+                return true
+            } else if delta > 0 && !model.isConversationMinimized {
+                model.minimizeConversation()
+                return true
+            }
+        }
+        return false
     }
 
     /// Escape unwinds what the user built, one layer per press, and only closes the corner
@@ -891,7 +959,9 @@ struct CornerGeneralChatView: View {
                 },
                 isExpanded: isComposerExpanded,
                 activeModeName: model.activePetMode?.name,
-                onSelectMode: { _ in })
+                onSelectMode: { _ in },
+                onToggleChat: hasChatToShow ? { model.toggleConversationMinimized() } : nil,
+                isChatOpen: showsTranscript)
                 .frame(height: CornerGeneralChatMetrics.rowHeight(
                     lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0))
                 .focused($composerFocused)

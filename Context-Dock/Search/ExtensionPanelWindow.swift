@@ -586,6 +586,10 @@ struct AIComposerBar: View {
     var activeModeName: String? = nil
     /// Callback when user picks a mode from the mode pill.
     var onSelectMode: ((String) -> Void)? = nil
+    /// Callback to minimize or expand the conversation (chevron.down / chevron.up).
+    var onToggleChat: (() -> Void)? = nil
+    /// Whether the conversation board is currently expanded.
+    var isChatOpen: Bool = false
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -833,6 +837,18 @@ struct AIComposerBar: View {
             }
             .buttonStyle(.plain)
             .help("Stop generating")
+        } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let onToggleChat {
+            Button(action: onToggleChat) {
+                Image(systemName: isChatOpen ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isChatOpen ? "Minimize conversation" : "Show conversation")
+            .accessibilityLabel(isChatOpen ? "Minimize conversation" : "Show conversation")
         } else {
             Button {
                 if onCommitSelection?() == true { return }
@@ -900,6 +916,13 @@ struct AIComposerBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Send (Return)")
+            } else if let onToggleChat {
+                Button(action: onToggleChat) {
+                    cornerGlyph(isChatOpen ? "chevron.down" : "chevron.up")
+                }
+                .buttonStyle(.plain)
+                .help(isChatOpen ? "Minimize conversation" : "Show conversation")
+                .accessibilityLabel(isChatOpen ? "Minimize conversation" : "Show conversation")
             } else {
                 appPickerButton
             }
