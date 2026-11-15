@@ -51,12 +51,14 @@ struct DoraXMCPCapabilityToolTests {
         #expect(block.contains("BEFORE any shell"))
     }
 
-    @Test func anAppWithNoCapabilitiesAddsNothingToThePrompt() {
+    @Test func anAppWithNoCapabilitiesListsOnlyTheShareVerb() {
         // Unowned capabilities (clipboard, browser) are listed in every app but are not the
-        // app's own, so they must not make a prompt block for it.
-        #expect(
-            CapabilityRegistry.shared.cliPromptBlock(for: "com.example.none", appName: "None")
-                .isEmpty)
+        // app's own, so they must not fill a prompt block for it. The one exception is
+        // `share.send` (issue #204): handing the chat's object to a person is a system verb
+        // every Pet has, so it is the only line an app with no capabilities gets.
+        let lines = CapabilityRegistry.shared.cliCapabilityLines(for: "com.example.none")
+        #expect(lines.count == 1)
+        #expect(lines.first?.hasPrefix("- share.send(") == true)
     }
 
     @Test func anUnknownIdIsRefusedNotRun() async {
