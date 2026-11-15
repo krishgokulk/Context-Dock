@@ -2558,35 +2558,10 @@ extension DockCore {
         // Downloads") are the model's (issue #204): it finds with `find_files`, reads with
         // `read_file`, or runs a Finder capability. No pre-model Finder interception here.
 
-        // ── Cross-app natural language ────────────────────────────────────────
-        // "send this to salman", "email this to john", "open this in xcode", etc.
-        let shouldSkipCrossAppMailRouting =
-            dockScope.scopedBundleId == "com.apple.mail"
-            && isQuestionStyleMailQuery(rawScopedSearchQuery)
-        let shouldSkipCrossAppMessagesRouting = Self.shouldSkipCrossAppMessagesRouting(
-            scopedBundleId: dockScope.scopedBundleId,
-            rawScopedQuery: rawScopedSearchQuery
-        )
-
-        if !shouldStayInScopedAIChat,
-            !shouldSkipCrossAppMailRouting,
-            !shouldSkipCrossAppMessagesRouting,
-            // "summarise this file and email it to Sam" is the model's (issue #204): the share
-            // shortcut would send the raw file, not the summary.
-            !Self.isTransformShareSentence(normalizedQuery),
-            let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
-            // In an app's own chat, "search mail from SBI" is a read of that app's records for
-            // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot
-            // tell the two apart — it is also true inside an App Pet — so the test is whether
-            // the sentence itself named the app.
-            CrossAppNLHandler.shared.claimsTurn(
-                intent, scopedBundleId: scopedBundleId, chatBundleId: chatOwnBundleId,
-                scopeNamedByQuery: dockScope.namedByQuery)
-        {
-            dockShortcutStep(.crossApp)
-            executeCrossAppIntent(intent, userMessage: query)
-            return
-        }
+        // Cross-app sentences ("send this to salman", "email this to john", "open this in
+        // xcode") are the model's (issue #204): it drafts with `messages.compose` /
+        // `mail.createDraft` or opens with `finder.openFile`, behind the capability's own
+        // approval. `CrossAppNLHandler` no longer claims a typed turn before the model.
 
         if dockScope.isGlobalScope && !globalSelectionActive,
             let resolution =

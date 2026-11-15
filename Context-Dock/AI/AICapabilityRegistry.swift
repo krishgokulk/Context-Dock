@@ -273,7 +273,10 @@ final class CapabilityRegistry {
     func cliCapabilityLines(for bundleID: String?) -> [String] {
         // The app's own only: the unowned ones (clipboard, browser, shell-adjacent) are
         // listed in every app and would bury `mail.search` under thirty unrelated lines.
-        capabilities(for: bundleID).filter { bundleID == nil || $0.appBundleID == bundleID }.map { capability in
+        capabilities(for: bundleID).filter {
+            bundleID == nil || $0.appBundleID == bundleID
+                || ShareCapabilities.listedInEveryApp.contains($0.id)
+        }.map { capability in
             let fields = capability.inputSchema.fields.map(\.name).joined(separator: ", ")
             return "- \(capability.id)(\(fields)): \(capability.title) [risk=\(capability.riskLevel.rawValue)]"
         }
@@ -370,6 +373,7 @@ final class CapabilityRegistry {
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
         FinderSearchCapabilities.register(in: self)
+        ShareCapabilities.register(in: self)
         // The file tools carry Finder's bundle id for scoping, not for dispatch — they run
         // through FileManager. Without this they were filtered out of every prompt as
         // "app with no adapter", which is why a Finder chat could describe file work and

@@ -1338,6 +1338,86 @@ struct FinderShortcutRetirementTests {
     }
 }
 
+// MARK: - Issue 204: Cross-App shortcut retirement (the last pre-model shortcut of #204)
+
+@MainActor
+struct CrossAppShortcutRetirementTests {
+
+    private static let sentences = [
+        "send this to salman",
+        "email this to john",
+        "open this in xcode",
+    ]
+
+    /// Cross-app sentences the retired pre-model shortcut used to claim now reach the model as
+    /// data turns: a capability drafts or opens — no menu click.
+    @Test func crossAppQueryRoutesAsData() {
+        for sentence in Self.sentences {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// They are requests, not questions, so the write-intent guard lets the capability run.
+    @Test func crossAppIsARequestNotAQuestion() {
+        for sentence in Self.sentences {
+            #expect(!GeneralAIActionResolver.shared.asksOnly(sentence), "\"\(sentence)\"")
+        }
+    }
+
+    /// The capabilities the model acts with are registered. Sending and drafting ask first;
+    /// opening a file does not.
+    @Test func crossAppCapabilitiesAreRegistered() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+        AppleMessagesMCPCapabilities.register(in: registry)
+        registry.refreshBuiltInMCPs()
+        #expect(registry.capability(id: "messages.compose") != nil)
+        #expect(registry.capability(id: "mail.createDraft") != nil)
+        #expect(registry.capability(id: "finder.openFile") != nil)
+        #expect(registry.capability(id: "finder.openFile")?.riskLevel.requiresApproval == false)
+    }
+
+    /// `finder.openFile` finds an installed app by its display name, and refuses an unknown one.
+    @Test func openFileResolvesAnInstalledAppByName() {
+        #expect(FinderCoworkerCapabilities.applicationURL(named: "Finder") != nil
+            || FinderCoworkerCapabilities.applicationURL(named: "Safari") != nil)
+        #expect(FinderCoworkerCapabilities.applicationURL(named: "No Such App 204") == nil)
+    }
+
+    /// Inside an App Pet the model only sees its own app's capabilities, so Mail's and
+    /// Messages' are invisible from Finder. `share.send` carries no app: every Pet sees it,
+    /// it is listed in every app's CLI prompt, and it always asks first.
+    @Test func shareSendIsOfferedInEveryAppAndAsksFirst() {
+        let registry = CapabilityRegistry.shared
+        registry.refreshBuiltInMCPs()
+        guard let share = registry.capability(id: "share.send") else {
+            Issue.record("share.send is not registered"); return
+        }
+        #expect(share.appBundleID == nil)
+        #expect(share.riskLevel.requiresApproval)
+        for bundleID in ["com.apple.finder", "com.apple.Safari", "com.apple.Notes"] {
+            #expect(registry.capabilities(for: bundleID).contains { $0.id == "share.send" }, "\(bundleID)")
+            #expect(
+                registry.cliCapabilityLines(for: bundleID).contains { $0.hasPrefix("- share.send(") },
+                "\(bundleID)")
+        }
+    }
+
+    /// The channel follows the recipient unless one is named.
+    @Test func shareSendPicksTheChannelFromTheRecipient() {
+        #expect(ShareCapabilities.channelHint(named: nil, recipient: "salman") == .messages)
+        #expect(ShareCapabilities.channelHint(named: nil, recipient: "sam@example.com") == .mail)
+        #expect(ShareCapabilities.channelHint(named: "Mail", recipient: "salman") == .mail)
+        #expect(ShareCapabilities.channelHint(named: "AirDrop", recipient: nil) == .airDrop)
+        #expect(ShareCapabilities.channelHint(named: nil, recipient: nil) == .picker)
+    }
+
+    /// `DockShortcut` no longer includes the retired `crossApp` case.
+    @Test func crossAppShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("crossApp"))
+    }
+}
+
 // MARK: - H6: get_today_events tool retirement
 
 @MainActor
