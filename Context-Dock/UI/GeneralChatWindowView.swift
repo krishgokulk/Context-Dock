@@ -1355,16 +1355,14 @@ struct GeneralChatWindowView: View {
             }
 
             if effectivePanelTab == .scope {
-                // One rail, two densities (#323): the same panel the compact Corner shows,
-                // here at full density. Scope / Usage / Progress / Connectors / Can do here /
+                // One rail, two densities (#323, #443): the same panel the compact Corner shows,
+                // here at full density. For General Chat, describes the conversation rather than
+                // the frontmost app. Scope / Usage / Progress / Connectors / Can do here /
                 // App Pack / Outputs, with this scope's config actions in the trailing slot.
                 // The window's per-message activity rides on each message, so live steps are
                 // passed empty.
-                let pet = model.resolvedConnectedPet
                 CornerLivePanel(
-                    appName: pet.name,
-                    appBundleID: pet.bundleID,
-                    appIcon: pet.icon ?? GeneralChatSessionStore.icon(for: model.activeScope),
+                    subject: panelSubject,
                     messages: model.messages,
                     isAnswering: model.isSending,
                     liveSteps: windowLiveProgressSteps,
@@ -1704,16 +1702,18 @@ struct GeneralChatWindowView: View {
         }
     }
 
+    private var panelSubject: PanelSubject {
+        CornerLivePanelLayout.subject(
+            kind: model.conversationKind,
+            participants: model.participantSet,
+            fallbackAppName: model.activeScopeAppName)
+    }
+
     private var scopePill: some View {
+        let isConnectedPet = model.conversationKind != .general
         let pet = model.resolvedConnectedPet
-        let isGeneralOrThread: Bool = {
-            switch model.activeScope {
-            case .general, .thread: return true
-            default: return false
-            }
-        }()
         return HStack(spacing: 6) {
-            if !pet.bundleID.isEmpty && isGeneralOrThread {
+            if isConnectedPet && !pet.bundleID.isEmpty {
                 if let icon = pet.icon {
                     Image(nsImage: icon)
                         .resizable()

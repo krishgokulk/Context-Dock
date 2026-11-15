@@ -11,10 +11,10 @@ import Testing
 @Suite("App Pet composer toolbar")
 struct AppChatComposerToolbarTests {
 
-    @Test("an App Pet conversation draws the lower row")
-    func appPetChatShowsRow() {
+    @Test("an App Pet conversation keeps the single clean row without lower toolbar")
+    func appPetChatKeepsSingleRow() {
         #expect(
-            AppChatComposerToolbar.shows(
+            !AppChatComposerToolbar.shows(
                 phase: .chat, isSearchField: false, isClipboardScope: false,
                 appBundleID: "com.apple.MobileSMS"))
     }
