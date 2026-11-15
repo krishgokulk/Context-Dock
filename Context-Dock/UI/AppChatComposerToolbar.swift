@@ -17,19 +17,17 @@ enum AppChatComposerToolbar {
     /// surface); the transcript gives up this much instead.
     static let rowHeight: CGFloat = 34
 
-    /// Whether the composer draws its lower row — and with it, the provider chip moves out of
-    /// the header.
+    /// Whether the composer draws a lower row.
     ///
-    /// Only an App Pet conversation: the frontmost app's own chat (`phase == .chat`), not a
-    /// search field (Global Context, or a tool/command stepped into from it), not the
-    /// clipboard board, and not a field with no app behind it. Every other phase keeps the
-    /// single Siri-size field row (#432).
+    /// Retired in favor of unified conversation header: the app identity, mode, and provider
+    /// selector live cleanly in the conversation header where standard macOS apps place them,
+    /// keeping the composer input field sleek, focused, and single-row without duplicate chips.
     static func shows(
         phase: AppChatPromptPhase,
         isSearchField: Bool,
         isClipboardScope: Bool,
         appBundleID: String
     ) -> Bool {
-        phase == .chat && !isSearchField && !isClipboardScope && !appBundleID.isEmpty
+        false
     }
 }
