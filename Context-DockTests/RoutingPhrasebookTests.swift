@@ -1591,3 +1591,50 @@ struct ReadAttachmentToolRetirementTests {
         #expect(AppScopedChatService.attachmentsPromptBlock([]).isEmpty)
     }
 }
+
+// MARK: - H6: list_reminders tool retirement
+
+@MainActor
+struct ListRemindersToolRetirementTests {
+
+    /// Reminders queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("reminders.list")` rather than a named tool.
+    @Test func remindersQueriesRouteAsData() {
+        for sentence in [
+            "what are my reminders",
+            "list my reminders",
+            "show my reminders",
+            "what reminders do I have today",
+            "do I have any reminders",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `list_reminders` for Reminders turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func remindersPlanOmitsRetiredTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "list my reminders",
+            bundleId: "com.apple.reminders",
+            appName: "Reminders"
+        )
+        #expect(!plan.allowedToolNames.contains("list_reminders"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// The `reminders.list` capability is registered and discoverable — the fallback
+    /// path the model uses after the named tool is retired.
+    @Test func remindersListCapabilityExists() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        let cap = CapabilityRegistry.shared.capability(id: "reminders.list")
+        #expect(cap != nil, "reminders.list capability must be registered")
+    }
+
+    /// `list_reminders` is retired everywhere: removed from AgentToolRegistry and OutboundGate.
+    @Test func listRemindersIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "list_reminders") == nil)
+        #expect(!OutboundGate.localTools.contains("list_reminders"))
+    }
+}

@@ -40,7 +40,6 @@ enum ScopedToolStep {
         case "send_message": return "Sending a message…"
         case "read_unread_mail", "search_mail": return "Checking Mail…"
         case "send_mail": return "Sending an email…"
-        case "list_reminders": return "Checking Reminders…"
         case "create_reminder": return "Creating a reminder…"
         case "get_today_events": return "Checking Calendar…"
         default:

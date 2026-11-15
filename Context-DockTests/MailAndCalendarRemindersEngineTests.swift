@@ -81,7 +81,7 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(sendMail != nil)
         #expect(sendMail?.required == ["to", "subject", "body"])
 
-        #expect(registry.tool(named: "list_reminders") != nil)
+        #expect(registry.tool(named: "list_reminders") == nil)
 
         let createReminder = registry.tool(named: "create_reminder")
         #expect(createReminder != nil)
@@ -103,7 +103,6 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(OutboundGate.outboundTools.contains("send_mail"))
         #expect(OutboundGate.localTools.contains("read_unread_mail"))
         #expect(OutboundGate.localTools.contains("search_mail"))
-        #expect(OutboundGate.localTools.contains("list_reminders"))
         #expect(OutboundGate.localTools.contains("create_reminder"))
         #expect(OutboundGate.localTools.contains("get_today_events"))
     }
@@ -123,7 +122,8 @@ struct MailAndCalendarRemindersEngineTests {
             bundleId: "com.apple.reminders",
             appName: "Reminders"
         )
-        #expect(remindersPlan.allowedToolNames.contains("list_reminders"))
+        #expect(!remindersPlan.allowedToolNames.contains("list_reminders"))
+        #expect(remindersPlan.allowedToolNames.contains("run_capability"))
         #expect(remindersPlan.allowedToolNames.contains("create_reminder"))
 
         let calendarPlan = FrontmostAppTaskPlan.make(
