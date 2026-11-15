@@ -1143,43 +1143,18 @@ struct AppChatPromptPill: View {
                     .overlay(
                         Capsule().strokeBorder(Color.accentColor.opacity(0.32), lineWidth: 0.5)
                     )
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
 
-            // Provider / context usage chip (#335). In an App Pet conversation it lives in
-            // the composer's lower row, by the field, as Claude's model picker does (owner
-            // 2026-11-12) — drawn once, never in both places.
-            if !showsComposerToolbar {
-                ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
-                    .transition(.opacity)
-            }
+            // Provider / context usage chip (#335). Cleanly placed in the header where model selection belongs.
+            ProviderContextChip(scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID))
+                .layoutPriority(1)
 
-            // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
-            // panel toggle beside it (owner 2026-10-10).
-            HStack(spacing: 2) {
-                // Past conversations browser (#334).
-                Button {
-                    model.openConversationsBoard()
-                } label: {
-                    headerGlyph("clock.arrow.circlepath", tinted: false)
-                }
-                .buttonStyle(.plain)
-                .help("Browse past conversations (⌥H)")
-                .accessibilityLabel("Browse past conversations")
-
-                // Capabilities & Skills browser (#335).
-                Button {
-                    model.openCapabilitiesSkillsBrowser()
-                } label: {
-                    headerGlyph("sparkles", tinted: false)
-                }
-                .buttonStyle(.plain)
-                .help("Browse capabilities & skills (⌥K)")
-                .accessibilityLabel("Browse capabilities and skills")
-
-                // The app's panel beside the conversation, shown or hidden (#191) — Claude's
-                // sidebar toggle, in the same place.
+            // Streamlined header actions: primary controls visible, secondary actions in the ellipsis menu
+            HStack(spacing: 3) {
+                // The app's panel beside the conversation, shown or hidden (#191)
                 if !model.isGlobalScope {
                     Button { model.livePanelOpen.toggle() } label: {
                         headerGlyph("sidebar.right", tinted: model.livePanelOpen)
@@ -1189,10 +1164,7 @@ struct AppChatPromptPill: View {
                     .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
                 }
 
-                // Expand opens this conversation in the full window on its Chat tab, seeded with
-                // the transcript the dock has not flushed yet (#323). Never in Global search
-                // (layer rule), and inert while a turn is running — it waits for the answer
-                // (owner 2026-10-26). `CornerRailRules` is the one place that decides this.
+                // Expand opens this conversation in the full window
                 let expand = CornerRailRules.expand(
                     isChatScope: !model.isGlobalScope, isAnswering: model.isAnswering)
                 if expand != .hidden {
@@ -1213,27 +1185,49 @@ struct AppChatPromptPill: View {
                     .help("Open this conversation in the full window")
                 }
 
-                Button {
-                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
-                } label: {
-                    headerGlyph(
-                        "keyboard",
-                        tinted: CornerDockController.shared.chatPresentation.isShowingKeysOverlay)
-                }
-                .buttonStyle(.plain)
-                .help("Keyboard shortcuts (⌘/)")
-
-                Button { model.newConversation() } label: {
-                    headerGlyph("trash")
-                }
-                .buttonStyle(.plain)
-                .help("Clear this conversation")
-
                 Button { model.togglePin() } label: {
                     headerGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
                 }
                 .buttonStyle(.plain)
                 .help(model.isPinned ? "Unpin" : "Keep this open")
+
+                // Secondary actions consolidated in an ellipsis menu to keep header uncluttered
+                Menu {
+                    Button {
+                        model.openConversationsBoard()
+                    } label: {
+                        Label("Past Conversations", systemImage: "clock.arrow.circlepath")
+                    }
+                    .keyboardShortcut("h", modifiers: [.option])
+
+                    Button {
+                        model.openCapabilitiesSkillsBrowser()
+                    } label: {
+                        Label("Capabilities & Skills", systemImage: "sparkles")
+                    }
+                    .keyboardShortcut("k", modifiers: [.option])
+
+                    Button {
+                        CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+                    } label: {
+                        Label("Keyboard Shortcuts", systemImage: "keyboard")
+                    }
+                    .keyboardShortcut("/", modifiers: [.command])
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        model.newConversation()
+                    } label: {
+                        Label("Clear Conversation", systemImage: "trash")
+                    }
+                    .keyboardShortcut("k", modifiers: [.command])
+                } label: {
+                    headerGlyph("ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("More options")
             }
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -1267,10 +1261,10 @@ struct AppChatPromptPill: View {
                 // A tool or a command keeps its way back; an app is its own Context Dock,
                 // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
-            } else if !showsComposerToolbar {
-                // In an App Pet conversation the chip leads the composer's lower row instead
-                // (owner 2026-11-12) — the only branch the toolbar can reach, since it never
-                // shows for the clipboard, Global or a scope stepped into from it.
+            } else if model.phase != .chat {
+                // In non-chat phases (dock/prompt), the app chip leads the field so the user
+                // knows what app is active. Once in chat, the header already carries the app
+                // identity and icon, so drawing it here would duplicate the app name.
                 appChip
                     .layoutPriority(1)
             }
@@ -1806,11 +1800,8 @@ struct AppChatPromptPill: View {
     /// mounted where the user is typing), and "+" at the end.
     private var composerToolbar: some View {
         HStack(spacing: 8) {
-            appChip
-                .layoutPriority(1)
-            ProviderContextChip(scope: .app(bundleId: model.appBundleID))
-            Spacer(minLength: 4)
             attachMenu
+            Spacer(minLength: 4)
         }
         .padding(.leading, 10)
         .padding(.trailing, 10)

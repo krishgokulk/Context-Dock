@@ -1662,24 +1662,8 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                if message.role == .assistant, !message.isError, !isStreaming, detailMode == .summary {
-                    let verdict = LivePanelDetailMode.verdict(
-                        evaluation: message.subjectiveEvaluation,
-                        receipts: message.evidenceReceipts,
-                        isError: message.isError
-                    )
-                    LivePanelSummaryCard(
-                        headline: LivePanelDetailMode.headline(from: message.content),
-                        verdictText: verdict.text,
-                        isSuccess: verdict.isSuccess,
-                        verdictSymbol: verdict.symbol,
-                        evaluationNote: message.subjectiveEvaluation?.summary,
-                        receiptCount: message.evidenceReceipts.count,
-                        detailMode: $detailMode
-                    )
-                } else {
-                    // Live activity, in the place the answer is about to occupy.
-                    if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
+                // Live activity, in the place the answer is about to occupy.
+                if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
                         LiveAgentProgressView(steps: liveSteps, activity: liveActivity)
                     } else if message.role == .assistant,
                         !finishedActivity.isEmpty || !durableStepLines.isEmpty
@@ -1810,21 +1794,42 @@ struct AIChatMessageView: View {
                 }
 
                 if message.role == .assistant, !message.isError, !isStreaming {
-                    if isHovered || detailMode != .normal {
+                    HStack(spacing: 6) {
+                        if let mode = message.activeMode {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(message.modeProvenance ?? mode)
+                                    .font(.system(size: 9.5, weight: .medium))
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Color.secondary.opacity(0.1), in: Capsule())
+                            .help("Turn executed in \(message.modeProvenance ?? mode) mode")
+                        }
+
+                        Spacer(minLength: 4)
+
+                        // Hover action buttons: stable layout height, fade in smoothly on hover without layout shift
                         HStack(spacing: 6) {
-                            if let mode = message.activeMode {
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(message.content, forType: .string)
+                            } label: {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 8, weight: .bold))
-                                    Text(message.modeProvenance ?? mode)
-                                        .font(.system(size: 9.5, weight: .medium))
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                    Text("Copy")
+                                        .font(.system(size: 10, weight: .medium))
                                 }
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2.5)
-                                .background(Color.secondary.opacity(0.1), in: Capsule())
-                                .help("Turn executed in \(message.modeProvenance ?? mode) mode")
+                                .background(Color.primary.opacity(0.06), in: Capsule())
                             }
+                            .buttonStyle(.plain)
+                            .help("Copy answer to clipboard")
 
                             if let onBranchSideThread {
                                 Button {
@@ -1846,15 +1851,11 @@ struct AIChatMessageView: View {
                                 .buttonStyle(.plain)
                                 .help("Branch a side question from this turn without polluting main thread")
                             }
-
-                            Spacer(minLength: 4)
-
-                            LivePanelDetailModePicker(mode: $detailMode, compact: true)
-                                .fixedSize(horizontal: true, vertical: false)
                         }
-                        .padding(.top, 2)
-                        .transition(.opacity)
+                        .opacity(isHovered ? 1.0 : 0.0)
+                        .animation(.easeInOut(duration: 0.15), value: isHovered)
                     }
+                    .padding(.top, 2)
                 } else if let mode = message.activeMode {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
@@ -1906,7 +1907,6 @@ struct AIChatMessageView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                }
                 }
             }
 

@@ -121,4 +121,67 @@ struct CornerLivePanelTests {
         let model3 = AppChatPromptModel(conversation: AppChatConversation())
         #expect(model3.livePanelOpen == true)
     }
+
+    @Test("PanelSubject: general, combined, and app identities (#443)")
+    func panelSubjectIdentities() {
+        let general = PanelSubject.general
+        #expect(general.isGeneral)
+        #expect(!general.isCombined)
+        #expect(!general.isApp)
+        #expect(general.displayName == "General Chat")
+        #expect(general.bundleID == nil)
+
+        let pet1 = ConnectedPetInfo(name: "Finder", bundleID: "com.apple.finder")
+        let pet2 = ConnectedPetInfo(name: "Safari", bundleID: "com.apple.Safari")
+        let combined = PanelSubject.combined(participants: [pet1, pet2])
+        #expect(!combined.isGeneral)
+        #expect(combined.isCombined)
+        #expect(!combined.isApp)
+        #expect(combined.displayName == "Finder + Safari")
+        #expect(combined.bundleID == nil)
+
+        let app = PanelSubject.app(name: "Xcode", bundleID: "com.apple.dt.Xcode", icon: nil)
+        #expect(!app.isGeneral)
+        #expect(!app.isCombined)
+        #expect(app.isApp)
+        #expect(app.displayName == "Xcode")
+        #expect(app.bundleID == "com.apple.dt.Xcode")
+    }
+
+    @Test("Borrowed app detection: step extracts app from title or detail (#443)")
+    func borrowedAppDetection() {
+        let finderStep = ActivityStep(
+            kind: .tool,
+            title: "Ran Finder: list",
+            detail: "target: Desktop"
+        )
+        let borrowed1 = L.borrowedApp(for: finderStep)
+        #expect(borrowed1?.name == "Finder")
+
+        let safariStep = ActivityStep(
+            kind: .read,
+            title: "Read Safari tabs",
+            detail: "window: 1"
+        )
+        let borrowed2 = L.borrowedApp(for: safariStep)
+        #expect(borrowed2?.name == "Safari")
+
+        let bundleStep = ActivityStep(
+            kind: .command,
+            title: "Ran status",
+            detail: "app: Notes · active"
+        )
+        let borrowed3 = L.borrowedApp(for: bundleStep)
+        #expect(borrowed3?.name == "Notes")
+
+        let plainStep = ActivityStep(
+            kind: .command,
+            title: "Ran ls",
+            detail: "ls -la"
+        )
+        #expect(L.borrowedApp(for: plainStep) == nil)
+
+        let allBorrowed = L.borrowedApps(in: [finderStep, safariStep, plainStep, finderStep])
+        #expect(allBorrowed.map(\.name) == ["Finder", "Safari"])
+    }
 }
