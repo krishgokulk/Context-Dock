@@ -7,6 +7,8 @@ import SwiftUI
 extension DockCore {
     // MARK: - Finder AI — natural language over current folder
 
+    /// No longer called from `handleL2Query` (issue #204): Finder sentences reach the model.
+    /// Kept for an explicit Finder UI action to call; nothing calls it today.
     func handleFinderAIQuery(query: String) {
         guard !query.isEmpty else { return }
 

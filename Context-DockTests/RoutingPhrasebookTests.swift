@@ -1303,6 +1303,41 @@ struct TransformShareShortcutRetirementTests {
     }
 }
 
+// MARK: - Issue 204: Finder shortcut retirement
+
+@MainActor
+struct FinderShortcutRetirementTests {
+
+    private static let sentences = [
+        "what files are in this folder?",
+        "what files are here?",
+        "find report in Downloads",
+        "find invoice in this folder",
+        "show me the pdfs in this folder",
+    ]
+
+    /// Finder folder and file sentences the retired pre-model Finder shortcut used to claim
+    /// (folder attached, Finder frontmost) now reach the model as data turns: found with
+    /// `find_files`, read with `read_file` — no menu click.
+    @Test func finderFolderQueryRoutesAsData() {
+        for sentence in Self.sentences {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// The tools the model answers these with are in the registry.
+    @Test func fileToolsAreRegistered() {
+        let names = Set(AgentToolRegistry.shared.allTools.map(\.name))
+        #expect(names.contains("find_files"))
+        #expect(names.contains("read_file"))
+    }
+
+    /// `DockShortcut` no longer includes the retired `finder` case.
+    @Test func finderShortcutIsRetiredFromDockShortcut() {
+        #expect(!DockShortcut.allCases.map(\.rawValue).contains("finder"))
+    }
+}
+
 // MARK: - H6: get_today_events tool retirement
 
 @MainActor
