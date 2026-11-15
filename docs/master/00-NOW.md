@@ -10,7 +10,7 @@
 
 ## In progress
 
-**#204 P10 — retire the `crossApp` pre-model shortcut (final shortcut of #204)** (2026-11-15). Building on `claude/retire-crossapp-shortcut-5f435c`: the `CrossAppNLHandler.claimsTurn` interception (`DockShortcut.crossApp` → `executeCrossAppIntent`) leaves `handleL2Query`; "send this to Salman", "email this to John", "open this in Xcode" go through the ladder as data turns (`messages.compose` / `mail.createDraft` / new `finder.openFile`). With this, every pre-model shortcut listed in #204 is retired; #204 closes when the PR merges.
+Nothing in progress. Next up: **#413** H6 tool core trim (4/n) — `list_reminders`, then `create_reminder`, one tool per PR.
 
 ## Queued (next)
 
@@ -19,6 +19,13 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#204 (final): `crossApp` pre-model shortcut retired; #204 complete (PR #450, merged 2026-11-15 as `a9d3c0c9`):**
+- The `CrossAppNLHandler.claimsTurn` block (`DockShortcut.crossApp` → `executeCrossAppIntent`) is gone from `handleL2Query`. Every pre-model shortcut listed in #204 is now retired; GitHub issue #204 is closed. Parity row D28.
+- New `finder.openFile` (path + optional app name, low risk) for "open this in Xcode".
+- **Owner decision 2026-11-15 ("go on fix it"):** sharing is a scope-free system verb, not another app's capability. An App Pet only sees its own app's capabilities, so "send this to Salman" had no route from the Finder Pet once the shortcut was gone. New `share.send` (`AI/ShareCapabilities.swift`) wraps the existing `ShareIntentRouter`, carries no app, is listed in every app's prompt and always shows the approval card. Connect (Combined Chat) stays for working with another app's data.
+- Hand-checked: General Chat "open this in xcode" (no shortcut step); `share.send` to an email address (approval card, owner approved, Mail draft opened). **Not hand-checked before merge:** Finder App Pet send with a selected file, the Messages channel (sends on approve), the centred launcher.
+- Not built: an approval card with a recipient picker and channel chips. `share.send` uses the share path behind #447 and #448. `CrossAppNLHandler`, `executeCrossAppIntent` and `handleFinderAIQuery` are kept with no typed caller.
 
 **#204 (part): Finder pre-model shortcut retired (PR #449, merged 2026-11-15 as `79a8aa8d`):**
 - The `allowFrontmostFinderRouting` block (`DockShortcut.finder` → `handleFinderAIQuery`) is gone from `handleL2Query`; Finder folder sentences reach the model as data turns (`find_files` / `read_file` / Finder capabilities). Parity row D27. Owner hand check passed 2026-11-15.
