@@ -22,10 +22,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.githubInstall.step == "Shortcut: GitHub Install — matched 'link a GitHub tool'")
     }
 
-    @Test func crossAppStep() {
-        #expect(DockShortcut.crossApp.step == "Shortcut: Cross-App — matched 'send/open this in another app'")
-    }
-
     @Test func appActionStep() {
         #expect(DockShortcut.appAction.step == "Shortcut: App Action — matched 'a global app action'")
     }

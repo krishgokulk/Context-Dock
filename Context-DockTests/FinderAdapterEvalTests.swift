@@ -85,7 +85,7 @@ struct FinderAdapterEvalTests {
         for id in [
             "finder.duplicates", "finder.staleFiles", "finder.diskSpace", "finder.folderSize",
             "finder.searchFiles", "finder.listFolder", "finder.readFile", "finder.fileInfo",
-            "finder.recentByKind", "finder.reveal",
+            "finder.recentByKind", "finder.reveal", "finder.openFile",
         ] {
             guard let capability = registry.capability(id: id) else {
                 Issue.record("\(id) is not registered"); continue

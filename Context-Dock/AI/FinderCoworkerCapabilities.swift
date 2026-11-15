@@ -21,6 +21,7 @@ enum FinderCoworkerCapabilities {
         registerRead(in: registry)
         registerInfo(in: registry)
         registerReveal(in: registry)
+        registerOpenFile(in: registry)
         registerTrash(in: registry)
         registerDiskUsage(in: registry)
         registerDuplicates(in: registry)
@@ -923,6 +924,68 @@ enum FinderCoworkerCapabilities {
                 return .init(success: true, output: "Revealed \(url.lastPathComponent) in Finder.")
             }
         )
+    }
+
+    // MARK: - Open (in the default app, or a named one)
+
+    /// "open this in Xcode" (issue #204): the typed sentence used to be claimed before the
+    /// model by `CrossAppNLHandler`; the model now opens the file with this capability.
+    private static func registerOpenFile(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.openFile",
+                title: "Open a file or folder, in its default app or a named app",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(name: "path", description: "Item to open (defaults to the selected item)", required: false),
+                    .init(name: "app", description: "App to open it in, by name (e.g. Xcode). Omit for the default app.", required: false),
+                ]),
+                riskLevel: .low
+            ) { request in
+                let url = resolveRoot(request.input["path"]) ?? selectedURLs(from: request).first
+                guard let url else { return .init(success: false, output: "Nothing to open.") }
+                let appName = (request.input["app"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !appName.isEmpty else {
+                    let opened = NSWorkspace.shared.open(url)
+                    return .init(
+                        success: opened,
+                        output: opened ? "Opened \(url.lastPathComponent)." : "Could not open \(url.lastPathComponent).")
+                }
+                guard let appURL = applicationURL(named: appName) else {
+                    return .init(success: false, output: "No app named \(appName) is installed.")
+                }
+                do {
+                    _ = try await NSWorkspace.shared.open(
+                        [url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
+                    return .init(success: true, output: "Opened \(url.lastPathComponent) in \(appName).")
+                } catch {
+                    return .init(success: false, output: "Could not open \(url.lastPathComponent) in \(appName): \(error.localizedDescription)")
+                }
+            }
+        )
+    }
+
+    /// An installed app by its display name: a running one first, then the standard folders.
+    nonisolated static func applicationURL(named name: String) -> URL? {
+        let wanted = name.lowercased().replacingOccurrences(of: ".app", with: "")
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.localizedName?.lowercased() == wanted
+        })?.bundleURL {
+            return running
+        }
+        let fm = FileManager.default
+        let folders =
+            ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities"]
+            .map { URL(fileURLWithPath: $0) } + fm.urls(for: .applicationDirectory, in: .userDomainMask)
+        for folder in folders {
+            let items = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            if let match = items.first(where: {
+                $0.pathExtension == "app" && $0.deletingPathExtension().lastPathComponent.lowercased() == wanted
+            }) {
+                return match
+            }
+        }
+        return nil
     }
 
     // MARK: - Trash (destructive → approval)

@@ -19,7 +19,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
     case triggerRule
     case systemCommand
     case githubInstall
-    case crossApp
     case appAction
     case appLaunch
     case safariCommand
@@ -30,7 +29,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .triggerRule: return "Trigger Rule"
         case .systemCommand: return "System Command"
         case .githubInstall: return "GitHub Install"
-        case .crossApp: return "Cross-App"
         case .appAction: return "App Action"
         case .appLaunch: return "App Launch"
         case .safariCommand: return "Safari Command"
@@ -44,7 +42,6 @@ enum DockShortcut: String, CaseIterable, Sendable {
         case .triggerRule: return "a saved trigger phrase"
         case .systemCommand: return "a built-in system command"
         case .githubInstall: return "link a GitHub tool"
-        case .crossApp: return "send/open this in another app"
         case .appAction: return "a global app action"
         case .appLaunch: return "open an app"
         case .safariCommand: return "a Safari command"
