@@ -906,16 +906,17 @@ struct GeneralChatWindowView: View {
             }
 
             if !model.attachments.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(model.attachments, id: \.self) { url in
-                        Text(url.lastPathComponent)
-                            .font(.system(size: 11))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Theme.surfaceElevated(dark), in: Capsule())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(model.attachments, id: \.self) { url in
+                            ChatAttachmentChip(url: url, style: .composerTile) {
+                                model.attachments.removeAll { $0 == url }
+                            }
+                        }
                     }
-                    Spacer()
+                    .padding(.horizontal, 4)
                 }
+                .frame(height: CornerGeneralChatMetrics.attachmentRowHeight)
             }
 
             AIComposerBar(
@@ -963,7 +964,8 @@ struct GeneralChatWindowView: View {
                 onPasteImages: { urls in
                     model.attachments.append(
                         contentsOf: urls.filter { !model.attachments.contains($0) })
-                }
+                },
+                isExpanded: true
             )
         }
         .frame(maxWidth: 760)

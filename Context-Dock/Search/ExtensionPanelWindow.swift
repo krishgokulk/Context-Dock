@@ -578,6 +578,14 @@ struct AIComposerBar: View {
     /// The text's own height as it wraps, for a surface that sizes itself to it (the
     /// corner's General Chat grows upward to three lines, #189). Nil elsewhere.
     var onTextHeightChange: ((CGFloat) -> Void)? = nil
+    /// Whether to render the expanded composer card layout with multi-line text input and a rich
+    /// bottom toolbar row (attachments, multi-line field, (+) attach menu, model picker dropdown,
+    /// speed/turbo mode, mic dictation, and circular send button).
+    var isExpanded: Bool = false
+    /// Active pet or chat mode name (e.g. "Turbo", "Deep Reasoning", or custom pet mode).
+    var activeModeName: String? = nil
+    /// Callback when user picks a mode from the mode pill.
+    var onSelectMode: ((String) -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -620,13 +628,233 @@ struct AIComposerBar: View {
                 ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
             }
 
-            if cornerStyle {
+            if isExpanded {
+                expandedComposerView
+            } else if cornerStyle {
                 siriComposerRow
             } else {
                 legacyComposerRow
             }
         }
         .acceptsPastedImages { urls in onPasteImages?(urls) }
+    }
+
+    @ViewBuilder
+    private var expandedComposerView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            inputTextField
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+            HStack(spacing: 8) {
+                expandedAttachButton
+
+                expandedProviderMenu
+
+                if !attachedAppNames.isEmpty {
+                    attachedAppChips
+                }
+
+                Spacer(minLength: 4)
+
+                modePill
+
+                micButton
+
+                expandedSendButton
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+        }
+        .background {
+            if drawsChrome {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedAttachButton: some View {
+        if let extraAttachMenu {
+            Menu {
+                Button { onAttachFile() } label: {
+                    Label("Attach Files…", systemImage: "paperclip")
+                }
+                Divider()
+                extraAttachMenu()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Attach files or media")
+        } else {
+            Button(action: onAttachFile) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Attach a file")
+        }
+    }
+
+    @ViewBuilder
+    private var expandedProviderMenu: some View {
+        Menu {
+            ForEach(AIProvider.allCases) { provider in
+                Button {
+                    settings.selectedAIProvider = provider
+                } label: {
+                    if provider == settings.selectedAIProvider {
+                        Label(provider.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(provider.displayName)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
+                Text(settings.selectedAIProvider.shortName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Select AI Model (\(settings.selectedAIProvider.displayName))")
+    }
+
+    @ViewBuilder
+    private var modePill: some View {
+        Menu {
+            Button {
+                onSelectMode?("Turbo")
+            } label: {
+                Label("Turbo (Fast)", systemImage: "bolt.fill")
+            }
+            Button {
+                onSelectMode?("Deep Reasoning")
+            } label: {
+                Label("Deep Reasoning", systemImage: "brain")
+            }
+            if !slashMods.isEmpty {
+                Divider()
+                ForEach(slashMods) { mode in
+                    Button {
+                        text = "/mods \(mode.id)"
+                        onSubmit()
+                    } label: {
+                        Label(mode.name, systemImage: mode.icon ?? "sparkles")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "shield.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(activeModeName ?? "Turbo")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Select Speed & Mode")
+    }
+
+    @ViewBuilder
+    private var micButton: some View {
+        Button {
+            NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+        } label: {
+            Image(systemName: "mic")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(0.06), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Dictate (Mic)")
+    }
+
+    @ViewBuilder
+    private var expandedSendButton: some View {
+        if isSending, let onStop {
+            Button(action: onStop) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Color.secondary.opacity(0.6), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Stop generating")
+        } else {
+            Button {
+                if onCommitSelection?() == true { return }
+                onSubmit()
+            } label: {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? Color.secondary.opacity(0.28)
+                            : Color.accentColor,
+                        in: Circle()
+                    )
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Send (Return)")
+        }
     }
 
     @ViewBuilder
@@ -827,8 +1055,8 @@ struct AIComposerBar: View {
     private var inputTextField: some View {
         TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
             .textFieldStyle(.plain)
-            .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
-            .lineLimit(cornerStyle ? 1...DockFieldLines.maximum : 1...5)
+            .font(.system(size: isExpanded ? 13 : (cornerStyle ? 14 : 12), weight: (isExpanded || cornerStyle) ? .medium : .regular))
+            .lineLimit(isExpanded ? 1...8 : (cornerStyle ? 1...DockFieldLines.maximum : 1...5))
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 onTextHeightChange?(height)
             }

@@ -162,6 +162,7 @@ enum CornerGeneralChatMetrics {
         let modMatches = ChatSlashModPicker.matches(for: model.input, participant: model.participantSet.first)
         let slashMatches = modMatches.isEmpty ? ChatSlashAppPicker.matches(for: model.input) : []
         let matchCount = !modMatches.isEmpty ? modMatches.count : slashMatches.count
+        let isExpanded = (!model.messages.isEmpty || model.isSending) || !model.attachments.isEmpty || model.cornerComposerLines > 1
         return CGSize(
             // The shell's one width (#189): General stands exactly as wide as Global and
             // every app's Context Dock, so switching mode changes only what is inside.
@@ -175,7 +176,8 @@ enum CornerGeneralChatMetrics {
                 hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
                 liveStepCount: model.activeProgress.count,
                 clarificationOptionCount: clarificationOptionCount(for: model),
-                composerLines: model.cornerComposerLines))
+                composerLines: model.cornerComposerLines)
+                + (isExpanded ? 36 : 0))
     }
 }
 
@@ -204,12 +206,16 @@ struct CornerGeneralChatView: View {
     /// are one surface, so switching scope changes what the board holds — not how many
     /// containers there are, which is what made the switch flicker.
     private var boardHeight: CGFloat { CornerGeneralChatMetrics.boardHeight(for: model) }
+    private var isComposerExpanded: Bool {
+        showsTranscript || !model.attachments.isEmpty || model.cornerComposerLines > 1
+    }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
             hasAttachments: !model.attachments.isEmpty,
             slashMatchCount: slashMatches.count,
             hasApproval: approvals.pending(for: .corner) != nil,
             lines: model.cornerComposerLines)
+            + (isComposerExpanded ? 36 : 0)
     }
 
     var body: some View {
@@ -884,9 +890,12 @@ struct CornerGeneralChatView: View {
                 onTextHeightChange: { height in
                     let lines = DockFieldLines.lines(measuredTextHeight: height)
                     if model.cornerComposerLines != lines { model.cornerComposerLines = lines }
-                })
+                },
+                isExpanded: isComposerExpanded,
+                activeModeName: model.activePetMode?.name,
+                onSelectMode: { _ in })
                 .frame(height: CornerGeneralChatMetrics.rowHeight(
-                    lines: model.cornerComposerLines))
+                    lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0))
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()
