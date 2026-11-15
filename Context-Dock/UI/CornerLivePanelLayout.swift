@@ -194,17 +194,36 @@ enum CornerLivePanelLayout {
     /// Detects if an activity step borrowed or executed an app action (#443).
     /// Returns the app's display name and its icon if found.
     static func borrowedApp(for step: ActivityStep) -> (name: String, icon: NSImage?)? {
+        let knownAppNames: [String: String] = [
+            "finder": "Finder",
+            "safari": "Safari",
+            "notes": "Notes",
+            "messages": "Messages",
+            "mail": "Mail",
+            "calendar": "Calendar",
+            "reminders": "Reminders",
+            "music": "Music",
+            "terminal": "Terminal",
+            "xcode": "Xcode"
+        ]
+
         let title = step.title
         for prefix in ["Ran ", "Read ", "Searched ", "Fetched "] {
             if title.hasPrefix(prefix) {
                 let rest = title.dropFirst(prefix.count)
                 if let colonIdx = rest.firstIndex(of: ":") {
                     let candidate = String(rest[..<colonIdx]).trimmingCharacters(in: .whitespaces)
+                    if let canonical = knownAppNames[candidate.lowercased()] {
+                        return (canonical, AppContextPicker.icon(forAppNamed: canonical))
+                    }
                     if !candidate.isEmpty, let icon = AppContextPicker.icon(forAppNamed: candidate) {
                         return (candidate, icon)
                     }
                 }
                 let firstWord = String(rest.split(separator: " ").first ?? "")
+                if let canonical = knownAppNames[firstWord.lowercased()] {
+                    return (canonical, AppContextPicker.icon(forAppNamed: canonical))
+                }
                 if !firstWord.isEmpty, let icon = AppContextPicker.icon(forAppNamed: firstWord) {
                     return (firstWord, icon)
                 }
@@ -233,6 +252,9 @@ enum CornerLivePanelLayout {
         if let appRange = detail.range(of: "app: ") {
             let candidate = String(detail[appRange.upperBound...]).components(separatedBy: " · ").first ?? ""
             let trimmed = candidate.trimmingCharacters(in: .whitespaces)
+            if let canonical = knownAppNames[trimmed.lowercased()] {
+                return (canonical, AppContextPicker.icon(forAppNamed: canonical))
+            }
             if !trimmed.isEmpty, let icon = AppContextPicker.icon(forAppNamed: trimmed) {
                 return (trimmed, icon)
             }
