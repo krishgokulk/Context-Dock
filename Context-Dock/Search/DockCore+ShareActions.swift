@@ -253,9 +253,13 @@ extension DockCore {
         }
     }
 
-    func transformShareIntent(for query: String) -> ShareIntent? {
+    /// Pure: the sentence asks to transform something and deliver the result ("summarise this
+    /// file and email it to Sam"). Such a turn belongs to the model (issue #204): the
+    /// pre-model cross-app share shortcut must not claim it, or the raw file is sent instead of
+    /// the summary. Also the wording test behind the explicit Transform & Share pill.
+    nonisolated static func isTransformShareSentence(_ query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return nil }
+        guard !q.isEmpty else { return false }
         let hasTransformWord = [
             "summary", "summarize", "summarise", "tldr", "tl;dr",
             "explain", "describe", "key points", "short version", "brief",
@@ -268,7 +272,11 @@ extension DockCore {
             "this file", "selected file", "selection", "this document",
             "selected document", "this pdf", "selected pdf", "this",
         ].contains { q.contains($0) }
-        guard hasTransformWord, hasDeliveryWord, referencesSelection else { return nil }
+        return hasTransformWord && hasDeliveryWord && referencesSelection
+    }
+
+    func transformShareIntent(for query: String) -> ShareIntent? {
+        guard Self.isTransformShareSentence(query) else { return nil }
         guard !effectiveSelectedFileURLsForConversation().isEmpty else { return nil }
         return ShareIntentRouter.shared.parse(query)
     }

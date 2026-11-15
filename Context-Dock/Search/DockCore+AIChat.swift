@@ -2554,12 +2554,6 @@ extension DockCore {
             l2.chatContextKey = currentKey == "none" ? l2.chatContextKey : currentKey
         }
 
-        if !shouldStayInScopedAIChat, let transformIntent = transformShareIntent(for: query) {
-            dockShortcutStep(.transformShare)
-            executeTransformShareIntent(transformIntent, userMessage: query)
-            return
-        }
-
         // ── Finder AI — natural language over current folder / selection ──────
         let allowFrontmostFinderRouting =
             !dockScope.isGlobalScope
@@ -2590,6 +2584,9 @@ extension DockCore {
         if !shouldStayInScopedAIChat,
             !shouldSkipCrossAppMailRouting,
             !shouldSkipCrossAppMessagesRouting,
+            // "summarise this file and email it to Sam" is the model's (issue #204): the share
+            // shortcut would send the raw file, not the summary.
+            !Self.isTransformShareSentence(normalizedQuery),
             let intent = CrossAppNLHandler.shared.parse(normalizedQuery),
             // In an app's own chat, "search mail from SBI" is a read of that app's records for
             // the model (issue #204), not a cross-app UI search. `isGlobalContextActive` cannot

@@ -22,10 +22,6 @@ struct DockShortcutTests {
         #expect(DockShortcut.githubInstall.step == "Shortcut: GitHub Install — matched 'link a GitHub tool'")
     }
 
-    @Test func transformShareStep() {
-        #expect(DockShortcut.transformShare.step == "Shortcut: Transform & Share — matched 'transform this and send it'")
-    }
-
     @Test func finderStep() {
         #expect(DockShortcut.finder.step == "Shortcut: Finder — matched 'a Finder folder request'")
     }
