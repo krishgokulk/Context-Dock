@@ -1638,3 +1638,50 @@ struct ListRemindersToolRetirementTests {
         #expect(!OutboundGate.localTools.contains("list_reminders"))
     }
 }
+
+// MARK: - H6: create_reminder tool retirement
+
+@MainActor
+struct CreateReminderToolRetirementTests {
+
+    /// Reminder creation routes as `.data` — the model uses `find_capability` +
+    /// `run_capability("reminders.create")` rather than a named tool.
+    @Test func reminderCreationRoutesAsData() {
+        for sentence in [
+            "remind me to call Mom at 5pm",
+            "add a reminder to pay the bank tomorrow",
+            "create a reminder to buy milk",
+            "set a reminder for the dentist on Friday",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `create_reminder` for Reminders turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func remindersPlanOmitsRetiredTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "remind me to call Mom at 5pm",
+            bundleId: "com.apple.reminders",
+            appName: "Reminders"
+        )
+        #expect(!plan.allowedToolNames.contains("create_reminder"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// The `reminders.create` capability is registered and approval-gated — the path the
+    /// model uses after the named tool is retired.
+    @Test func remindersCreateCapabilityExistsAndNeedsApproval() {
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+        let cap = CapabilityRegistry.shared.capability(id: "reminders.create")
+        #expect(cap != nil, "reminders.create capability must be registered")
+        #expect(cap?.riskLevel == .medium)
+    }
+
+    /// `create_reminder` is retired everywhere: removed from AgentToolRegistry and OutboundGate.
+    @Test func createReminderIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "create_reminder") == nil)
+        #expect(!OutboundGate.localTools.contains("create_reminder"))
+    }
+}

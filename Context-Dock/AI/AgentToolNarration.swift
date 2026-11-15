@@ -114,7 +114,6 @@ enum AgentToolNarration {
         case "send_message": return "Sending message"
         case "send_mail": return "Sending email"
         case "read_unread_mail", "search_mail": return "Checking Mail"
-        case "create_reminder": return "Creating reminder"
         case "get_today_events": return "Checking Calendar"
         case "verify_outcome": return "Checking the result"
         case "spawn_worker": return "Handing this to a worker"

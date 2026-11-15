@@ -333,7 +333,7 @@ enum OutboundGate {
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
         "read_app_dictionary", "read_unread_mail", "search_mail",
-        "create_reminder", "get_today_events",
+        "get_today_events",
     ]
 
     /// Built-in tools that can reach further than the table above judges, left ungated on
