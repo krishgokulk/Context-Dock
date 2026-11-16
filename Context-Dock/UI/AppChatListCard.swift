@@ -110,6 +110,11 @@ struct AppChatListCard: View {
     /// (#191) — the same number the window reserves.
     private var size: CGSize { model.boardSize }
 
+    private var effectiveFocus: Int? {
+        model.skipsTopRowOnBareReturn
+            ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
+    }
+
     /// The right half: the app's card when the chip opened it (owner 2026-10-08: "in the
     /// right half of the result sheet"), the highlighted row's preview otherwise.
     @ViewBuilder
@@ -168,8 +173,6 @@ struct AppChatListCard: View {
                             // reads — so a list showing none of them chosen was a list
                             // disagreeing with what its own Return key was about to do.
                             // Under Finder's Ask AI row, nothing chosen is that row.
-                            let effectiveFocus = model.skipsTopRowOnBareReturn
-                                ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
                             if model.showsAskAIRow {
                                 askAIRow(isFocused: model.focusedMenuIndex == nil)
                                     .id("ask-ai")
