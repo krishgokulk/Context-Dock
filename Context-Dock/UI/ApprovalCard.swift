@@ -64,7 +64,22 @@ struct ApprovalCard: View {
 
     @ObservedObject private var center = ApprovalCenter.shared
 
+    private var messagesPending: AICapabilityApprovalCenter.PendingApproval? {
+        guard case .capability(let pending) = request.kind,
+              pending.capability.id == "messages.send"
+        else { return nil }
+        return pending
+    }
+
     var body: some View {
+        if let pending = messagesPending {
+            MessagesSendApprovalCard(pending: pending)
+        } else {
+            genericCard
+        }
+    }
+
+    private var genericCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: symbol)
@@ -95,7 +110,7 @@ struct ApprovalCard: View {
                     Text(ApprovalRequest.claimAttribution(for: request.kind))
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
-                    Text("“\(claim)”")
+                    Text("\u{201C}\(claim)\u{201D}")
                         .font(.system(size: 11).italic())
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

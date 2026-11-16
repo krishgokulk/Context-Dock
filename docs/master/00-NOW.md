@@ -10,15 +10,29 @@
 
 ## In progress
 
-**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability** (2026-11-15). On `claude/retire-create-reminder-tool-39e6e5`: `create_reminder` deleted from `AgentToolRegistry`, the Reminders bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. "remind me to call Mom at 5pm" reaches the model, which uses `find_capability` + `run_capability("reminders.create")` behind the existing approval card. This closes the Reminders pair of the H6 trim. Same branch (owner 2026-11-16): a created reminder shows as a card under the answer, and zone-less `dueDate` values are no longer dropped.
+**#56: Messages delivery honesty (PR #459, branch `claude/message-delivery-honesty-76dd3f`):**
+- `messages.send` now reports "Handed to Messages" with a delivery note, never "Sent" unless `MessagesChatDBReader.checkDelivery` confirms it
+- `DeliveryStatus` enum: `.confirmed` / `.unconfirmed` / `.failed` / `.accessDenied`
+- Sent-confirmation card: green ✓ (confirmed), orange ? (unconfirmed), red ✗ (failed)
+- 6 new tests in `MessagesDeliveryHonestyTests`
+- **Awaiting owner hand check** (see PR description for checklist)
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (4/n `list_reminders` merged, PR #452; 5/n `create_reminder` in progress).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (4/n `list_reminders` merged, PR #452; 5/n `create_reminder` merged, PR #455).
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#448: Messages file send + rich approval card + sent-confirmation card (PR #457, merged 2026-11-16):**
+- `messages.send` gains optional `filePath` field; `body` becomes optional when a file is provided. `MessagesAutomation.sendFile` sends via AppleScript.
+- Rich Siri-style approval card (`MessagesSendApprovalCard`): contact photo, resolved name + handle, file thumbnail with QL fallback, file size, green Send button, irreversible-send warning.
+- Sent-confirmation card: green checkmark, contact name/handle, file name, "Open in Messages" button (`imessage://` deep link). Pipeline: `ChatResultRow.Kind.message` → `MessageSentAction` → `messageSentRows` view, wired through all 6 `AIChatMessage` construction sites.
+- `resolveRecipient` searches contacts for phone/email display names. 17 tests.
+
+**#413 H6 (5/n): `create_reminder` retired + created-reminder card (PR #455, merged 2026-11-16 as `fdbe0fc8`):**
+- `create_reminder` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. `reminders.create` now returns a `.created` `ChatResultRow` card under the answer. Zone-less `dueDate` values parsed as local time. Parity row D30. Squash-merged 2026-11-16.
 
 **#204 (final): `crossApp` pre-model shortcut retired; #204 complete (PR #450, merged 2026-11-15 as `a9d3c0c9`):**
 - The `CrossAppNLHandler.claimsTurn` block (`DockShortcut.crossApp` → `executeCrossAppIntent`) is gone from `handleL2Query`. Every pre-model shortcut listed in #204 is now retired; GitHub issue #204 is closed. Parity row D28.
@@ -38,6 +52,9 @@
 
 **`corner.sh clear`: delete a hand check's thread (PR #444):**
 - Dev Corner remote gained a `clear` command so a hand check removes its own General Chat thread. Squash-merged 2026-11-14 (`b9ee54d9`).
+
+**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability (PR #455):**
+- `create_reminder` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan` (Reminders bundle gate gone), `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. Reminder requests run `reminders.create` behind its approval card. A created reminder shows as a card under the answer, and zone-less `dueDate` values are read as local time instead of being dropped. Added `CreateReminderToolRetirementTests`, `ReminderCreatedCardTests` and D30 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-16 (`fdbe0fc8`). Not hand-checked: the created card in General Chat; a provider on the in-app `find_capability` / `run_capability`.
 
 **#413 H6 (4/n): Retire `list_reminders` tool into `reminders.list` capability (PR #452):**
 - `list_reminders` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. Reminders queries route as data turns to `find_capability` + `run_capability("reminders.list")`. Added `ListRemindersToolRetirementTests` and D29 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-15 (`b5fc5efe`).

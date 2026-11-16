@@ -11,6 +11,23 @@
 import Foundation
 
 enum MessagesChatDBReader {
+    /// How certain we are that an outbound message was delivered.
+    enum DeliveryStatus {
+        case confirmed              // found in chat.db with error = 0
+        case failed                 // found in chat.db with a non-zero error code
+        case unconfirmed            // DB readable but message not yet visible
+        case accessDenied           // chat.db unreadable (Full Disk Access absent)
+
+        var statusNote: String {
+            switch self {
+            case .confirmed:   return " ✓ (delivery confirmed)"
+            case .failed:      return " — delivery failed (Messages reported an error)"
+            case .unconfirmed: return " (delivery unconfirmed)"
+            case .accessDenied: return " (delivery unconfirmed — Full Disk Access not available)"
+            }
+        }
+    }
+
     struct MessageRow {
         let fromMe: Bool
         let text: String
@@ -199,6 +216,53 @@ enum MessagesChatDBReader {
                 $0.trimmingCharacters(in: .whitespaces)
             }
         return (count, recipients)
+    }
+
+    /// Returns a delivery status for an outbound message, distinguishing confirmed,
+    /// failed, unconfirmed, and access-denied outcomes.
+    static func checkDelivery(
+        to recipient: String,
+        textSnippet: String,
+        withinSeconds: TimeInterval = 30
+    ) -> DeliveryStatus {
+        guard isAccessible else { return .accessDenied }
+        let nowAppleSeconds = Date().timeIntervalSince1970 - appleEpochOffset
+        let minDateAppleSeconds = nowAppleSeconds - withinSeconds
+        let filterSnippet = textSnippet.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(60)
+            .lowercased()
+        let filterRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "'", with: "''")
+            .lowercased()
+
+        let sql = """
+            SELECT m.is_from_me, HEX(COALESCE(CAST(m.text AS BLOB),X'')), m.date,
+                   COALESCE(h.id,''), HEX(COALESCE(m.attributedBody,X'')),
+                   COALESCE(m.error,0)
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+            WHERE m.is_from_me = 1
+              AND (CASE WHEN m.date > 1000000000000 THEN m.date/1000000000 ELSE m.date END) >= \(Int(minDateAppleSeconds))
+            ORDER BY m.date DESC
+            LIMIT 15;
+            """
+        guard let rows = query(sql) else { return .unconfirmed }
+        for cols in rows {
+            guard cols.count >= 6 else { continue }
+            let body = visibleText(textHex: cols[1], attributedHex: cols[4]).lowercased()
+            let handle = cols[3].lowercased()
+            let errorCode = Int(cols[5]) ?? 0
+
+            let bodyMatches = filterSnippet.isEmpty || body.contains(filterSnippet)
+            let recipientMatches = filterRecipient.isEmpty
+                || handle.contains(filterRecipient)
+                || filterRecipient.contains(handle)
+
+            if bodyMatches && (filterRecipient.isEmpty || recipientMatches) {
+                return errorCode == 0 ? .confirmed : .failed
+            }
+        }
+        return .unconfirmed
     }
 
     /// Verifies whether an outbound message was recently recorded in chat.db.

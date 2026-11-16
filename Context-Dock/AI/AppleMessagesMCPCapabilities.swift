@@ -152,11 +152,12 @@ enum AppleMessagesMCPCapabilities {
         registry.register(
             AICapability(
                 id: "messages.send",
-                title: "Send Message (with approval)",
+                title: "Send Message or File (with approval)",
                 appBundleID: "com.apple.MobileSMS",
                 inputSchema: .init(fields: [
                     .init(name: "recipient", description: "Contact name, phone number, or Apple ID", required: true),
-                    .init(name: "body", description: "The message text to send", required: true),
+                    .init(name: "body", description: "Message text to send. Optional when filePath is provided.", required: false),
+                    .init(name: "filePath", description: "Absolute path to a file to send as an attachment", required: false),
                 ]),
                 riskLevel: .high
             ) { request in
@@ -164,13 +165,62 @@ enum AppleMessagesMCPCapabilities {
                 guard let recipient = request.input["recipient"], !recipient.isEmpty else {
                     throw AICapabilityError.missingInput("recipient")
                 }
-                guard let body = request.input["body"], !body.isEmpty else {
-                    throw AICapabilityError.missingInput("body")
+                let body = request.input["body"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let filePath = request.input["filePath"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !body.isEmpty || !filePath.isEmpty else {
+                    throw AICapabilityError.missingInput("body or filePath")
+                }
+                if !filePath.isEmpty {
+                    let res = await MessagesAutomation.sendFile(
+                        to: recipient, filePath: filePath, body: body.isEmpty ? nil : body)
+                    if res.success {
+                        await emitSentRow(
+                            recipient: recipient,
+                            fileName: (filePath as NSString).lastPathComponent,
+                            delivery: res.delivery,
+                            scope: request.chatScope)
+                    }
+                    return .init(success: res.success, output: res.message)
                 }
                 let res = await MessagesAutomation.sendMessage(to: recipient, body: body)
+                if res.success {
+                    await emitSentRow(recipient: recipient, fileName: nil, delivery: res.delivery, scope: request.chatScope)
+                }
                 return .init(success: res.success, output: res.message)
             }
         )
+    }
+
+    @MainActor
+    private static func emitSentRow(
+        recipient: String, fileName: String?,
+        delivery: MessagesChatDBReader.DeliveryStatus = .unconfirmed,
+        scope: GeneralChatScope?
+    ) {
+        let resolved = MessagesAutomation.resolveRecipient(recipient)
+        let name: String
+        let handle: String
+        switch resolved {
+        case .resolved(let contact):
+            name = contact.name
+            handle = contact.handle
+        case .ambiguous, .notFound:
+            name = recipient
+            handle = recipient
+        }
+        var row = ChatResultRow(
+            kind: .message, id: handle, title: name,
+            subtitle: handle != name ? handle : "",
+            detail: fileName ?? "",
+            bundleID: "com.apple.MobileSMS")
+        row.messageSentState = {
+            switch delivery {
+            case .confirmed: return .sent
+            case .unconfirmed, .accessDenied: return .unconfirmed
+            case .failed: return .failed
+            }
+        }()
+        ChatResultRowCollector.shared.add([row], scope: scope)
     }
 
     private static func ensureEnabled() throws {

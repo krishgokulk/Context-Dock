@@ -517,6 +517,7 @@ final class GeneralChatWindowModel: ObservableObject {
                     ? named.map { RecentFileAction(url: $0) } : rows.files,
                 noteResults: rows.notes,
                 reminderResults: rows.reminders,
+                messageResults: rows.messages,
                 pageLinks: rows.links,
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,

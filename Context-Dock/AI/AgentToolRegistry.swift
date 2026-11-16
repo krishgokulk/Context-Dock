@@ -2629,7 +2629,7 @@ final class AgentToolRegistry {
                 displayCommand: "send_message(\(displayName))"
             ).withUserSummary(result.message)
 
-            if result.verified {
+            if result.delivery == .confirmed {
                 toolResult.verifiedByReadBack = "Sent message confirmed in Messages history."
             }
             return toolResult

@@ -730,6 +730,7 @@ extension DockCore {
                             recentFiles: recentFiles.isEmpty ? rows.files : recentFiles,
                             noteResults: rows.notes,
                             reminderResults: rows.reminders,
+                            messageResults: rows.messages,
                             pageLinks: rows.links,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             // A turn that executed something hands over a typed record, and
@@ -3626,6 +3627,7 @@ extension DockCore {
                                     recentFiles: rows.files,
                                     noteResults: rows.notes,
                                     reminderResults: rows.reminders,
+                                    messageResults: rows.messages,
                                     pageLinks: rows.links,
                                     mcpToolsRan: saved.toolChips,
                                     evidenceReceipts: saved.evidenceReceipts,
@@ -3667,6 +3669,7 @@ extension DockCore {
                                     recentFiles: rows.files,
                                     noteResults: rows.notes,
                                     reminderResults: rows.reminders,
+                                    messageResults: rows.messages,
                                     pageLinks: rows.links,
                                     mcpToolsRan: saved.toolChips,
                                     evidenceReceipts: saved.evidenceReceipts,
@@ -3816,6 +3819,7 @@ extension DockCore {
                             recentFiles: rows.files,
                             noteResults: rows.notes,
                             reminderResults: rows.reminders,
+                            messageResults: rows.messages,
                             pageLinks: rows.links,
                             mcpToolsRan: toolsRan,
                             evidenceReceipts: browserPageReceipts
