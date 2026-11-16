@@ -91,6 +91,18 @@ enum AgentAnswerVerifier {
         return !executed.contains(where: { $0.success && $0.isVerification })
     }
 
+    /// True when the conversation history contains evidence of a capability write from a
+    /// prior turn (a "[Capability writes this turn: …]" marker injected by DockCore+AIChat).
+    ///
+    /// Used by ScopedTurnRunner to suppress `claimsUnperformedWork` when no tools ran this
+    /// turn but the model is legitimately answering a history question ("what did you just
+    /// create?") rather than asserting new unperformed work.
+    static func historyContainsPriorCapabilityWrites(_ history: [ChatMessage]) -> Bool {
+        history.contains {
+            $0.role == .assistant && $0.content.contains("[Capability writes this turn:")
+        }
+    }
+
     static func verificationPrompt(originalQuery: String, answer: String) -> String {
         """
         SYSTEM NOTE — outcome verification required.
