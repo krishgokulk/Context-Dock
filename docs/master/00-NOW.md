@@ -10,7 +10,7 @@
 
 ## In progress
 
-**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability** (2026-11-15). On `claude/retire-create-reminder-tool-39e6e5`: `create_reminder` deleted from `AgentToolRegistry`, the Reminders bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. "remind me to call Mom at 5pm" reaches the model, which uses `find_capability` + `run_capability("reminders.create")` behind the existing approval card. This closes the Reminders pair of the H6 trim. Same branch (owner 2026-11-16): a created reminder shows as a card under the answer, and zone-less `dueDate` values are no longer dropped.
+**#448: Messages file send capability — extend `messages.send` with file attachment** (2026-11-16). `messages.send` accepts only text; sending a file falls back to raw AppleScript (four approval cards). Adding an optional `filePath` field so the model sends a file through the Messages bridge on a single readable approval card. `body` becomes optional when a file is provided.
 
 ## Queued (next)
 
@@ -19,6 +19,9 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#413 H6 (5/n): `create_reminder` retired + created-reminder card (PR #455, merged 2026-11-16 as `fdbe0fc8`):**
+- `create_reminder` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. `reminders.create` now returns a `.created` `ChatResultRow` card under the answer. Zone-less `dueDate` values parsed as local time. Parity row D30. Squash-merged 2026-11-16.
 
 **#204 (final): `crossApp` pre-model shortcut retired; #204 complete (PR #450, merged 2026-11-15 as `a9d3c0c9`):**
 - The `CrossAppNLHandler.claimsTurn` block (`DockShortcut.crossApp` → `executeCrossAppIntent`) is gone from `handleL2Query`. Every pre-model shortcut listed in #204 is now retired; GitHub issue #204 is closed. Parity row D28.
