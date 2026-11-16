@@ -10,12 +10,13 @@
 
 ## In progress
 
-**#233: App chat retracts notes.create on subsequent turn (branch `claude/chat-note-creation-retention-4ee64a`):**
-- **Fix A** (`DockCore+AIChat.swift`): chatHistory builder now appends `[Capability writes this turn: …]` to prior assistant messages, so the model can reference what it did in the previous turn.
-- **Fix B** (`ScopedTurnRunner.swift` + `AgentAnswerVerifier`): `claimsUnperformedWork` is suppressed when no tools ran this turn AND history carries a capability-write marker — prevents the verifier from firing the correction prompt when the model legitimately answers a history question.
-- `AgentAnswerVerifier.historyContainsPriorCapabilityWrites` extracted for testability.
-- 9 new tests in `CapabilityWriteRetentionTests`.
-- **Hand check needed:** Notes App Chat → "create a note titled Meeting with body Hello" → approve → next turn "what note did you just create?" → model should acknowledge the note without retracting.
+**#180: Fix: Safari "follow a link <URL>" opens a different link from the page (branch `claude/safari-link-target-fix-5fa535`):**
+- `SafariPageLinkRules.explicitURL(in:)` detects a typed `http(s)` URL in the query.
+- `rankedSafariPageLinks` prefers exact/prefix URL match when an explicit URL is present; never falls through to domain-scored token matching.
+- Call site distinguishes: `count==1` auto-open, `count>1` ambiguous (present options), `count==0` with explicit URL navigates directly, `count==0` without shows all links.
+- Added "follow" to `opensAPageLink` verbs.
+- 12 tests in `SafariLinkTargetTests` + extended `SafariPageLinkRulesTests`.
+- **Hand check needed:** Safari App Chat → "follow a link https://openai.com/api/" on a page with other openai.com links → must open `/api/`, not blog or pricing.
 
 ## Queued (next)
 
@@ -24,6 +25,9 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#233: App chat retracts notes.create on subsequent turn (PR #461, merged 2026-11-16):**
+- `DockCore+AIChat.swift` chatHistory builder appends `[Capability writes this turn: …]` marker; `ScopedTurnRunner` suppresses `claimsUnperformedWork` when no tools ran and history carries the marker. 3536 tests pass. Hand check confirmed.
 
 **#235: Safari browser-history classifier token-boundary fix (PR #460, merged 2026-11-16):**
 - `isBrowserLibraryReadPhrase` switched from substring to token-boundary matching on data words, so "tools" in a tool query no longer shadows the browser-history fast path.

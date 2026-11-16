@@ -87,6 +87,26 @@ enum SafariPageLinkRules {
         URL(string: pageURL)?.host?.replacingOccurrences(of: "www.", with: "") ?? ""
     }
 
+    // MARK: - Explicit URL in query
+
+    /// Returns the first `http(s)` URL found verbatim in `query`, or nil.
+    ///
+    /// "follow a link https://openai.com/api/" → `URL("https://openai.com/api/")`
+    /// "open the pricing link" → nil (no literal URL present)
+    static func explicitURL(in query: String) -> URL? {
+        let words = query.components(separatedBy: .whitespaces)
+        for word in words {
+            let cleaned = word.trimmingCharacters(
+                in: CharacterSet(charactersIn: ".,;:\"'()[]<>"))
+            guard let url = URL(string: cleaned),
+                  let scheme = url.scheme, scheme.hasPrefix("http"),
+                  url.host != nil
+            else { continue }
+            return url
+        }
+        return nil
+    }
+
     // MARK: - Opening one of them
 
     /// The user is asking to open a destination that lives on the current page.
@@ -99,7 +119,7 @@ enum SafariPageLinkRules {
         let lower = query.lowercased()
         let verbs = [
             "open", "go to", "goto", "visit", "launch", "take me to", "navigate",
-            "jump to", "bring up", "load",
+            "jump to", "bring up", "load", "follow",
         ]
         guard verbs.contains(where: lower.contains) else { return false }
 
