@@ -1685,3 +1685,79 @@ struct CreateReminderToolRetirementTests {
         #expect(!OutboundGate.localTools.contains("create_reminder"))
     }
 }
+
+// MARK: - Issue #235: Safari browser history classifier false-positive on tool questions
+
+@MainActor
+struct BrowserHistoryClassifierTests {
+
+    // MARK: - False-positive: tool/API names that contain data-word substrings
+
+    /// "browser_console_messages" contains "browse" as a substring. Word-token matching
+    /// must not fire isBrowserLibraryReadPhrase for a meta question about a tool.
+    @Test func toolNameQuestionDoesNotMatchBrowserPhrase() {
+        let falsePositives = [
+            "what does the browser_console_messages tool return?",
+            "how does browser_console_messages work?",
+            "explain browser_console_messages",
+            "what parameters does browser_console_messages take?",
+            "describe the browser_console_messages tool",
+        ]
+        for query in falsePositives {
+            let normalized = query.lowercased()
+            #expect(
+                !DockCore.isBrowserLibraryReadPhrase(normalized),
+                "should NOT match: \"\(query)\""
+            )
+        }
+    }
+
+    // MARK: - True-positives: legitimate browser history queries must still match
+
+    /// Canonical history queries that must continue to route to the local browser library.
+    @Test func legitimateHistoryQueriesMatch() {
+        let truePositives = [
+            "what websites did I browse yesterday?",
+            "show my browsing history",
+            "did I visit any website today?",
+            "what websites did I visit this week?",
+            "find sites I visited last monday",
+            "show me my browser history",
+            "list all websites I browsed",
+            "which urls did I open today?",
+            "show all my bookmarks",
+            "list open tabs",
+            "what are my recent websites",
+            "tell me what pages I visited",
+            "did I visit apple.com?",
+        ]
+        for query in truePositives {
+            let normalized = query.lowercased()
+            #expect(
+                DockCore.isBrowserLibraryReadPhrase(normalized),
+                "should match: \"\(query)\""
+            )
+        }
+    }
+
+    // MARK: - Action queries must still be excluded
+
+    /// Queries that act ON the browser (clear, delete, close) must not match.
+    @Test func actionQueriesDoNotMatch() {
+        let actionQueries = [
+            "clear my browser history",
+            "delete my browsing history",
+            "close all tabs",
+            "open a new tab",
+            "bookmark this page",
+            "add bookmark for this site",
+        ]
+        for query in actionQueries {
+            let normalized = query.lowercased()
+            #expect(
+                !DockCore.isBrowserLibraryReadPhrase(normalized),
+                "action query should NOT match: \"\(query)\""
+            )
+        }
+    }
+}
