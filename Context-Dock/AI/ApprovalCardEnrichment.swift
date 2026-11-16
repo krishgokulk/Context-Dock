@@ -10,6 +10,7 @@ enum ApprovalCardEnrichment {
     static func contactPhoto(for query: String) -> NSImage? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { return nil }
 
         let store = CNContactStore()
         let keys: [CNKeyDescriptor] = [

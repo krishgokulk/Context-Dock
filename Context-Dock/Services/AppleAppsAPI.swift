@@ -304,6 +304,7 @@ class AppleAppsAPI {
     func createContact(
         firstName: String, lastName: String?, phone: String?, email: String?
     ) -> String? {
+        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { return nil }
         let contact = CNMutableContact()
         contact.givenName = firstName
         if let lastName, !lastName.isEmpty { contact.familyName = lastName }
@@ -414,6 +415,7 @@ class AppleAppsAPI {
     // MARK: - Contacts API
 
     func getContacts(limit: Int = 100) -> [[String: Any]] {
+        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { return [] }
         var contacts: [[String: Any]] = []
 
         let keys =
