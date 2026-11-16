@@ -19,6 +19,7 @@ struct FluidSelectionTests {
     }
 
     @Test("MouseGate rejects stationary hover to prevent cursor fighting keyboard navigation")
+    @MainActor
     func mouseGateStationaryHover() {
         let gate = MouseGate()
         // A stationary check immediately after init should return false (distance <= 1.5pt)
