@@ -53,7 +53,12 @@ final class SelectionScopeModel: ObservableObject {
     /// What can be done with it: the Dock's Selection rows, less Share, in the Dock's order.
     @Published private(set) var rows: [SelectionActionRow] = []
     /// The row ↑/↓ landed on. Nil: Return asks the typed question.
-    @Published private(set) var focusedIndex: Int?
+    @Published var focusedIndex: Int?
+
+    func setFocusedIndex(_ index: Int?) {
+        touch()
+        focusedIndex = index
+    }
 
     // MARK: Answering in place
 

@@ -481,7 +481,7 @@ struct SelectionScopeCard: View {
                                 .onHover { hovering in
                                     if hovering, mouseGate.moved() {
                                         withAnimation(FluidMotion.selectionGlide) {
-                                            model.focusedIndex = index
+                                            model.setFocusedIndex(index)
                                         }
                                     }
                                 }
