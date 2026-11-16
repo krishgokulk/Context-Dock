@@ -75,6 +75,8 @@ struct ChatSlashModList: View {
     }
 
     @State private var hovered: String?
+    @State private var mouseGate = MouseGate()
+    @Namespace private var slashModSelectionSpace
 
     private var selectedIndex: Int {
         guard !matches.isEmpty else { return 0 }
@@ -92,6 +94,7 @@ struct ChatSlashModList: View {
                                     .font(.system(size: 13, weight: .medium))
                                     .frame(width: 20, height: 20)
                                     .foregroundStyle(index == selectedIndex ? Color.accentColor : .primary)
+                                    .fluidIconZoom(isFocused: index == selectedIndex)
 
                                 VStack(alignment: .leading, spacing: 1) {
                                     HStack(spacing: 6) {
@@ -125,31 +128,42 @@ struct ChatSlashModList: View {
                             }
                             .padding(.horizontal, 14)
                             .frame(height: Self.rowHeight)
+                            .fluidSelection(
+                                isSelected: index == selectedIndex,
+                                namespace: slashModSelectionSpace,
+                                cornerRadius: 8,
+                                paddingHorizontal: 0,
+                                fill: Color.accentColor.opacity(0.22),
+                                strokeColor: Color.accentColor.opacity(0.35)
+                            )
                             .background(
-                                rowTint(index: index, mode: mode),
+                                hovered == mode.id && index != selectedIndex ? Color.primary.opacity(0.08) : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                             )
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .id(index)
-                        .onHover { hovered = $0 ? mode.id : (hovered == mode.id ? nil : hovered) }
+                        .onHover { isHovering in
+                            if isHovering {
+                                if mouseGate.moved() {
+                                    hovered = mode.id
+                                }
+                            } else if hovered == mode.id {
+                                hovered = nil
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, Self.verticalInset)
+                .animation(FluidMotion.selectionGlide, value: selectedIndex)
             }
             .frame(height: Self.height(for: matches.count))
             .onChange(of: selectedIndex) { _, index in
-                withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(index) }
+                withAnimation(FluidMotion.selectionGlide) { proxy.scrollTo(index) }
             }
         }
-    }
-
-    private func rowTint(index: Int, mode: AppPetModeManifest) -> Color {
-        if index == selectedIndex { return Color.accentColor.opacity(0.22) }
-        if hovered == mode.id { return Color.primary.opacity(0.1) }
-        return .clear
     }
 }
 

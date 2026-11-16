@@ -63,6 +63,8 @@ struct ChatSlashAppList: View {
     }
 
     @State private var hovered: String?
+    @State private var mouseGate = MouseGate()
+    @Namespace private var slashSelectionSpace
 
     /// Clamped, because the filter narrows under the cursor: typing another letter can
     /// leave the selection pointing past the end of a shorter list.
@@ -99,6 +101,7 @@ struct ChatSlashAppList: View {
                                             Circle().stroke(.black.opacity(0.4), lineWidth: 1))
                                 }
                             }
+                            .fluidIconZoom(isFocused: index == selectedIndex)
 
                             Text(app.name)
                                 .font(.system(size: 13, weight: .medium))
@@ -115,34 +118,45 @@ struct ChatSlashAppList: View {
                         }
                         .padding(.horizontal, 14)
                         .frame(height: Self.rowHeight)
+                        .fluidSelection(
+                            isSelected: index == selectedIndex,
+                            namespace: slashSelectionSpace,
+                            cornerRadius: 8,
+                            paddingHorizontal: 0,
+                            fill: Color.accentColor.opacity(0.22),
+                            strokeColor: Color.accentColor.opacity(0.35)
+                        )
                         .background(
-                            rowTint(index: index, app: app),
+                            hovered == app.id && index != selectedIndex ? Color.primary.opacity(0.08) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .id(index)
-                    .onHover { hovered = $0 ? app.id : (hovered == app.id ? nil : hovered) }
+                    .onHover { isHovering in
+                        if isHovering {
+                            if mouseGate.moved() {
+                                hovered = app.id
+                            }
+                        } else if hovered == app.id {
+                            hovered = nil
+                        }
+                    }
                     .help(app.isRunning ? "\(app.name) — running" : app.name)
                     }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, Self.verticalInset)
+                .animation(FluidMotion.selectionGlide, value: selectedIndex)
             }
             .frame(height: Self.height(for: matches.count))
             // Arrowing past the fifth row has to bring it into view, or the selection is
             // somewhere the user cannot see.
             .onChange(of: selectedIndex) { _, index in
-                withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(index) }
+                withAnimation(FluidMotion.selectionGlide) { proxy.scrollTo(index) }
             }
         }
-    }
-
-    private func rowTint(index: Int, app: ChatAppEntry) -> Color {
-        if index == selectedIndex { return Color.accentColor.opacity(0.22) }
-        if hovered == app.id { return Color.primary.opacity(0.1) }
-        return .clear
     }
 }
 
