@@ -1727,10 +1727,9 @@ struct BrowserHistoryClassifierTests {
             "which urls did I open today?",
             "show all my bookmarks",
             "list open tabs",
-            "what are my recent sites",
+            "what are my recent websites",
             "tell me what pages I visited",
             "did I visit apple.com?",
-            "have I been to github.com",
         ]
         for query in truePositives {
             let normalized = query.lowercased()

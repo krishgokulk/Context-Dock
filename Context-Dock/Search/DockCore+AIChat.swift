@@ -4551,15 +4551,16 @@ extension DockCore {
     static func isBrowserLibraryReadPhrase(_ normalized: String) -> Bool {
         // "open <x> history page" is navigation, owned by SafariCapabilityRouter.
         guard !normalized.hasPrefix("open ") else { return false }
-        if normalized.contains("browser history") || normalized.contains("browsing history") {
-            return true
-        }
-        // Acting ON the data, not reading it.
+        // Acting ON the data, not reading it — checked before the fast-path so that
+        // "clear my browser history" is not caught by the "browser history" substring.
         let actionWords = [
             "clear ", "delete ", "remove ", "erase ", "close ", "new tab", "new window",
             "bookmark this", "bookmark the", "add bookmark", "save bookmark",
         ]
         if actionWords.contains(where: normalized.contains) { return false }
+        if normalized.contains("browser history") || normalized.contains("browsing history") {
+            return true
+        }
         // Split the query into alphanumeric tokens so that single-word data words are
         // matched at token boundaries, not as substrings. This prevents "browse" from
         // matching inside compound identifiers like "browser_console_messages" — a tool
