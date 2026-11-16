@@ -37,7 +37,7 @@ struct ChatResultRow: Equatable, Identifiable, Sendable {
     }
 
     enum MessageSentState: String, Sendable {
-        case sent, failed
+        case sent, unconfirmed, failed
     }
 
     /// Which reminder this is, when `kind` is `.reminder`.
@@ -189,7 +189,13 @@ enum ChatResultRowMapper {
                         recipientHandle: row.id,
                         detail: row.subtitle,
                         fileName: row.detail.isEmpty ? nil : row.detail,
-                        state: row.messageSentState == .sent ? .sent : .failed))
+                        state: {
+                        switch row.messageSentState {
+                        case .sent: return .sent
+                        case .unconfirmed: return .unconfirmed
+                        case .failed: return .failed
+                        }
+                    }()))
             }
         }
         return mapped

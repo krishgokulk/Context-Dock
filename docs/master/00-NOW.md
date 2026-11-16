@@ -10,7 +10,12 @@
 
 ## In progress
 
-Nothing in progress. #413 H6 tool core trim has no further tool named after 5/n (`create_reminder`, PR #455); next in the queue is **#412** / **#152**, both waiting on the owner's E5 escalation answer.
+**#56: Messages delivery honesty (PR #459, branch `claude/message-delivery-honesty-76dd3f`):**
+- `messages.send` now reports "Handed to Messages" with a delivery note, never "Sent" unless `MessagesChatDBReader.checkDelivery` confirms it
+- `DeliveryStatus` enum: `.confirmed` / `.unconfirmed` / `.failed` / `.accessDenied`
+- Sent-confirmation card: green ✓ (confirmed), orange ? (unconfirmed), red ✗ (failed)
+- 6 new tests in `MessagesDeliveryHonestyTests`
+- **Awaiting owner hand check** (see PR description for checklist)
 
 ## Queued (next)
 
