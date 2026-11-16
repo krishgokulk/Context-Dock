@@ -20,6 +20,15 @@ Nothing in progress. #413 H6 tool core trim has no further tool named after 5/n 
 
 ## Done (most recent first)
 
+**#448: Messages file send + rich approval card + sent-confirmation card (PR #457, merged 2026-11-16):**
+- `messages.send` gains optional `filePath` field; `body` becomes optional when a file is provided. `MessagesAutomation.sendFile` sends via AppleScript.
+- Rich Siri-style approval card (`MessagesSendApprovalCard`): contact photo, resolved name + handle, file thumbnail with QL fallback, file size, green Send button, irreversible-send warning.
+- Sent-confirmation card: green checkmark, contact name/handle, file name, "Open in Messages" button (`imessage://` deep link). Pipeline: `ChatResultRow.Kind.message` → `MessageSentAction` → `messageSentRows` view, wired through all 6 `AIChatMessage` construction sites.
+- `resolveRecipient` searches contacts for phone/email display names. 17 tests.
+
+**#413 H6 (5/n): `create_reminder` retired + created-reminder card (PR #455, merged 2026-11-16 as `fdbe0fc8`):**
+- `create_reminder` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. `reminders.create` now returns a `.created` `ChatResultRow` card under the answer. Zone-less `dueDate` values parsed as local time. Parity row D30. Squash-merged 2026-11-16.
+
 **#204 (final): `crossApp` pre-model shortcut retired; #204 complete (PR #450, merged 2026-11-15 as `a9d3c0c9`):**
 - The `CrossAppNLHandler.claimsTurn` block (`DockShortcut.crossApp` → `executeCrossAppIntent`) is gone from `handleL2Query`. Every pre-model shortcut listed in #204 is now retired; GitHub issue #204 is closed. Parity row D28.
 - New `finder.openFile` (path + optional app name, low risk) for "open this in Xcode".

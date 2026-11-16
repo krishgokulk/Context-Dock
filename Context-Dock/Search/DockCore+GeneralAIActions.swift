@@ -192,6 +192,7 @@ extension DockCore {
                         noteResults: relatedNotes,
                         noteTasks: noteTasks,
                         reminderResults: reminderResults,
+                        messageResults: [],
                         mcpToolsRan: [isComputerUse
                             ? "Computer Use · \(route)"
                             : "\(candidate.source == .mcp ? "MCP" : candidate.routeLabel) · \(candidate.capabilityID ?? candidate.title)"],

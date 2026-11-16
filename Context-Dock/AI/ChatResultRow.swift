@@ -32,6 +32,12 @@ struct ChatResultRow: Equatable, Identifiable, Sendable {
         case app
         /// A reminder, with the state that decides its colour.
         case reminder
+        /// A sent message confirmation, with the recipient and an "Open in Messages" action.
+        case message
+    }
+
+    enum MessageSentState: String, Sendable {
+        case sent, failed
     }
 
     /// Which reminder this is, when `kind` is `.reminder`.
@@ -54,6 +60,7 @@ struct ChatResultRow: Equatable, Identifiable, Sendable {
     var url: URL? = nil
     var date: Date? = nil
     var reminderState: ReminderState = .active
+    var messageSentState: MessageSentState = .sent
 }
 
 /// Rows produced during one conversation's turn.
@@ -128,10 +135,11 @@ enum ChatResultRowMapper {
         var links: [PageLinkAction] = []
         var apps: [AppLaunchAction] = []
         var reminders: [ReminderResultAction] = []
+        var messages: [MessageSentAction] = []
 
         var isEmpty: Bool {
             notes.isEmpty && files.isEmpty && links.isEmpty && apps.isEmpty
-                && reminders.isEmpty
+                && reminders.isEmpty && messages.isEmpty
         }
     }
 
@@ -174,6 +182,14 @@ enum ChatResultRowMapper {
                         label: row.title,
                         systemIcon: row.subtitle.isEmpty ? "app" : row.subtitle,
                         bundleId: row.bundleID ?? row.id))
+            case .message:
+                mapped.messages.append(
+                    MessageSentAction(
+                        recipientName: row.title,
+                        recipientHandle: row.id,
+                        detail: row.subtitle,
+                        fileName: row.detail.isEmpty ? nil : row.detail,
+                        state: row.messageSentState == .sent ? .sent : .failed))
             }
         }
         return mapped
