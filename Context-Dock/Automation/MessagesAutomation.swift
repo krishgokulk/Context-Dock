@@ -199,8 +199,14 @@ enum MessagesAutomation {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .notFound }
 
-        // If it looks like a direct phone number or email address, return immediately
+        // Phone or email: still search contacts for a display name before falling back
+        // to the raw value — the approval card and sent card need "Salman Khan", not "+91…".
         if trimmed.contains("@") || (trimmed.rangeOfCharacter(from: CharacterSet.decimalDigits) != nil && trimmed.count >= 7 && !trimmed.contains(" ")) {
+            let matches = AppleAppsAPI.shared.searchContacts(query: trimmed)
+            if let match = matches.first,
+               let fullName = match["fullName"] as? String, !fullName.isEmpty {
+                return .resolved(ResolvedContact(name: fullName, handle: trimmed))
+            }
             return .resolved(ResolvedContact(name: trimmed, handle: trimmed))
         }
 

@@ -73,10 +73,12 @@ enum ApprovalCardEnrichment {
             representationTypes: .thumbnail)
         do {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
-            return representation.nsImage
-        } catch {
-            return NSWorkspace.shared.icon(forFile: path)
-        }
+            let img = representation.nsImage
+            if img.size.width > 0 { return img }
+        } catch {}
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icon.size = size
+        return icon
     }
 
     static func fileIcon(at path: String) -> NSImage {

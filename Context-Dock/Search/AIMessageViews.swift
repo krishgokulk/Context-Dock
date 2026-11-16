@@ -371,6 +371,29 @@ struct NoteTaskAction: Equatable, Identifiable {
 
 /// A grounded Reminders result. Action receipts and list rows stay structured so the
 /// conversation reads like a task manager instead of an MCP debug console.
+struct MessageSentAction: Equatable, Identifiable {
+    enum State: Equatable { case sent, failed }
+
+    let id: UUID
+    let recipientName: String
+    let recipientHandle: String
+    let detail: String?
+    let fileName: String?
+    let state: State
+
+    init(
+        recipientName: String, recipientHandle: String,
+        detail: String? = nil, fileName: String? = nil, state: State = .sent
+    ) {
+        self.id = UUID()
+        self.recipientName = recipientName
+        self.recipientHandle = recipientHandle
+        self.detail = detail
+        self.fileName = fileName
+        self.state = state
+    }
+}
+
 struct ReminderResultAction: Equatable, Identifiable {
     enum State: Equatable {
         case active
@@ -433,6 +456,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
     var noteTasks: [NoteTaskAction]  // Grounded tasks extracted from one Apple Note
     var reminderResults: [ReminderResultAction]  // Structured Reminders rows and receipts
+    var messageResults: [MessageSentAction]  // Sent-message confirmation cards
     var browserTabs: [BrowserTabAction]  // Live browser tabs with direct activation
     var pageLinks: [PageLinkAction]  // Grounded links from the active Safari page
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
@@ -510,6 +534,7 @@ struct AIChatMessage: Identifiable, Equatable {
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
         reminderResults: [ReminderResultAction] = [],
+        messageResults: [MessageSentAction] = [],
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
@@ -540,6 +565,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.noteResults = noteResults
         self.noteTasks = noteTasks
         self.reminderResults = reminderResults
+        self.messageResults = messageResults
         self.browserTabs = browserTabs
         self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
@@ -562,6 +588,7 @@ struct AIChatMessage: Identifiable, Equatable {
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
         reminderResults: [ReminderResultAction] = [],
+        messageResults: [MessageSentAction] = [],
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
@@ -594,6 +621,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.noteResults = noteResults
         self.noteTasks = noteTasks
         self.reminderResults = reminderResults
+        self.messageResults = messageResults
         self.browserTabs = browserTabs
         self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
@@ -1056,6 +1084,76 @@ struct AIChatMessageView: View {
         case .completed: return "Completed"
         case .created: return "Created"
         case .active: return "Reminder"
+        }
+    }
+
+    @ViewBuilder
+    private var messageSentRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(message.messageResults) { msg in
+                HStack(spacing: 11) {
+                    ZStack {
+                        Circle()
+                            .fill(msg.state == .sent
+                                ? Color.green.opacity(0.14) : Color.red.opacity(0.14))
+                        Image(systemName: msg.state == .sent
+                            ? "checkmark" : "xmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(msg.state == .sent ? .green : .red)
+                    }
+                    .frame(width: 30, height: 30)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(msg.recipientName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(msg.state == .sent ? "Sent" : "Failed")
+                            if msg.recipientHandle != msg.recipientName {
+                                Text("\u{00B7}")
+                                Text(msg.recipientHandle)
+                            }
+                            if let file = msg.fileName {
+                                Text("\u{00B7}")
+                                Text(file)
+                            }
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        let handle = msg.recipientHandle
+                        let encoded = handle.addingPercentEncoding(
+                            withAllowedCharacters: .urlQueryAllowed) ?? handle
+                        if let url = URL(string: "imessage://\(encoded)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        Label("Open", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Open in Messages")
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(
+                    .regularMaterial,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(
+                            (msg.state == .sent ? Color.green : Color.red).opacity(0.22),
+                            lineWidth: 0.7)
+                }
+            }
+
+            Label("via iMessage", systemImage: "message.fill")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
         }
     }
 
@@ -1770,6 +1868,10 @@ struct AIChatMessageView: View {
 
                 if !message.reminderResults.isEmpty {
                     reminderResultRows
+                }
+
+                if !message.messageResults.isEmpty {
+                    messageSentRows
                 }
 
                 if !message.browserTabs.isEmpty {

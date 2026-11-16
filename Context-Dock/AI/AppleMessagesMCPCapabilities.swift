@@ -173,12 +173,42 @@ enum AppleMessagesMCPCapabilities {
                 if !filePath.isEmpty {
                     let res = await MessagesAutomation.sendFile(
                         to: recipient, filePath: filePath, body: body.isEmpty ? nil : body)
+                    if res.success {
+                        await emitSentRow(
+                            recipient: recipient, fileName: (filePath as NSString).lastPathComponent,
+                            scope: request.chatScope)
+                    }
                     return .init(success: res.success, output: res.message)
                 }
                 let res = await MessagesAutomation.sendMessage(to: recipient, body: body)
+                if res.success {
+                    await emitSentRow(recipient: recipient, fileName: nil, scope: request.chatScope)
+                }
                 return .init(success: res.success, output: res.message)
             }
         )
+    }
+
+    @MainActor
+    private static func emitSentRow(recipient: String, fileName: String?, scope: GeneralChatScope?) {
+        let resolved = MessagesAutomation.resolveRecipient(recipient)
+        let name: String
+        let handle: String
+        switch resolved {
+        case .resolved(let contact):
+            name = contact.name
+            handle = contact.handle
+        case .ambiguous, .notFound:
+            name = recipient
+            handle = recipient
+        }
+        var row = ChatResultRow(
+            kind: .message, id: handle, title: name,
+            subtitle: handle != name ? handle : "",
+            detail: fileName ?? "",
+            bundleID: "com.apple.MobileSMS")
+        row.messageSentState = .sent
+        ChatResultRowCollector.shared.add([row], scope: scope)
     }
 
     private static func ensureEnabled() throws {

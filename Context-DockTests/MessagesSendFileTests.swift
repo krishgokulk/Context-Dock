@@ -117,4 +117,40 @@ struct MessagesSendFileTests {
         let icon = ApprovalCardEnrichment.fileIcon(at: "/System/Library/CoreServices/Finder.app")
         #expect(icon.size.width > 0)
     }
+
+    // MARK: - Sent-Confirmation Card Mapping
+
+    @Test
+    func messageRowMapsToSentAction() {
+        var row = ChatResultRow(
+            kind: .message, id: "+15559876543", title: "Salman Khan",
+            subtitle: "+15559876543", detail: "photo.png",
+            bundleID: "com.apple.MobileSMS")
+        row.messageSentState = .sent
+        let mapped = ChatResultRowMapper.map([row])
+        #expect(mapped.messages.count == 1)
+        #expect(mapped.messages.first?.recipientName == "Salman Khan")
+        #expect(mapped.messages.first?.recipientHandle == "+15559876543")
+        #expect(mapped.messages.first?.fileName == "photo.png")
+        #expect(mapped.messages.first?.state == .sent)
+    }
+
+    @Test
+    func messageRowWithoutFileNameMapsNilFileName() {
+        let row = ChatResultRow(
+            kind: .message, id: "+15551234567", title: "+15551234567",
+            bundleID: "com.apple.MobileSMS")
+        let mapped = ChatResultRowMapper.map([row])
+        #expect(mapped.messages.first?.fileName == nil)
+    }
+
+    @Test
+    func resolveRecipientPhoneSearchesContacts() {
+        let result = MessagesAutomation.resolveRecipient("+15559876543")
+        if case .resolved(let contact) = result {
+            #expect(contact.handle == "+15559876543")
+        } else {
+            Issue.record("Phone number must resolve")
+        }
+    }
 }
