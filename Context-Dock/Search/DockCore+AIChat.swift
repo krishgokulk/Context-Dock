@@ -3039,10 +3039,24 @@ extension DockCore {
             return
         }
 
-        // Build conversation history (clean messages only — no tool chips)
+        // Build conversation history (clean messages only — no tool chips).
+        // For assistant messages that executed capability writes, append a bracketed
+        // evidence note so the model can reference those writes in subsequent turns
+        // without asserting unperformed work.
         let chatHistory: [ChatMessage] = l2.chatMessages.dropLast()
             .filter { $0.role != .tool }
-            .map { ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.content) }
+            .map { msg -> ChatMessage in
+                let role: ChatMessage.MessageRole = msg.role == .user ? .user : .assistant
+                var content = msg.content
+                if msg.role == .assistant {
+                    let writes = msg.evidenceReceipts.filter { !$0.isVerification && $0.success }
+                    if !writes.isEmpty {
+                        let evidence = writes.map { $0.command }.joined(separator: ", ")
+                        content += "\n\n[Capability writes this turn: \(evidence)]"
+                    }
+                }
+                return ChatMessage(role: role, content: content)
+            }
 
         l2.currentTask = Task {
             do {

@@ -10,12 +10,12 @@
 
 ## In progress
 
-**#56: Messages delivery honesty (PR #459, branch `claude/message-delivery-honesty-76dd3f`):**
-- `messages.send` now reports "Handed to Messages" with a delivery note, never "Sent" unless `MessagesChatDBReader.checkDelivery` confirms it
-- `DeliveryStatus` enum: `.confirmed` / `.unconfirmed` / `.failed` / `.accessDenied`
-- Sent-confirmation card: green ✓ (confirmed), orange ? (unconfirmed), red ✗ (failed)
-- 6 new tests in `MessagesDeliveryHonestyTests`
-- **Awaiting owner hand check** (see PR description for checklist)
+**#233: App chat retracts notes.create on subsequent turn (branch `claude/chat-note-creation-retention-4ee64a`):**
+- **Fix A** (`DockCore+AIChat.swift`): chatHistory builder now appends `[Capability writes this turn: …]` to prior assistant messages, so the model can reference what it did in the previous turn.
+- **Fix B** (`ScopedTurnRunner.swift` + `AgentAnswerVerifier`): `claimsUnperformedWork` is suppressed when no tools ran this turn AND history carries a capability-write marker — prevents the verifier from firing the correction prompt when the model legitimately answers a history question.
+- `AgentAnswerVerifier.historyContainsPriorCapabilityWrites` extracted for testability.
+- 9 new tests in `CapabilityWriteRetentionTests`.
+- **Hand check needed:** Notes App Chat → "create a note titled Meeting with body Hello" → approve → next turn "what note did you just create?" → model should acknowledge the note without retracting.
 
 ## Queued (next)
 
@@ -24,6 +24,14 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#235: Safari browser-history classifier token-boundary fix (PR #460, merged 2026-11-16):**
+- `isBrowserLibraryReadPhrase` switched from substring to token-boundary matching on data words, so "tools" in a tool query no longer shadows the browser-history fast path.
+- Added `BrowserHistoryClassifierTests` (9 cases) covering legitimate history queries and action queries. Squash-merged.
+
+**#56/#447: Messages delivery honesty (PR #459, merged 2026-11-16):**
+- `messages.send` now reports "Handed to Messages" with a delivery note, never "Sent" unless `MessagesChatDBReader.checkDelivery` confirms it.
+- `DeliveryStatus` enum: `.confirmed` / `.unconfirmed` / `.failed` / `.accessDenied`. Sent-confirmation card: green ✓ (confirmed), orange ? (unconfirmed), red ✗ (failed). 6 new tests in `MessagesDeliveryHonestyTests`. Squash-merged.
 
 **#448: Messages file send + rich approval card + sent-confirmation card (PR #457, merged 2026-11-16):**
 - `messages.send` gains optional `filePath` field; `body` becomes optional when a file is provided. `MessagesAutomation.sendFile` sends via AppleScript.

@@ -254,7 +254,15 @@ enum ScopedTurnRunner {
         // An answer reporting an action nobody performed is the most damaging thing a chat
         // on someone's Mac can produce. These passes deliberately do not stream: their text
         // replaces the answer rather than continuing it.
-        if !pageAnswerOnly, !Task.isCancelled,
+        //
+        // Exception: when the conversation history already contains evidence of a prior
+        // capability write (a "[Capability writes this turn: ...]" marker) and no tools
+        // ran this turn, the model is answering a history question ("what did you just
+        // create?") rather than asserting new unperformed work. Firing the correction
+        // prompt in that case causes the model to retract a write that genuinely happened.
+        let suppressUnperformedWorkCheck = executed.isEmpty
+            && AgentAnswerVerifier.historyContainsPriorCapabilityWrites(history)
+        if !pageAnswerOnly, !Task.isCancelled, !suppressUnperformedWorkCheck,
             AgentAnswerVerifier.claimsUnperformedWork(
                 answer: text,
                 executed: executed + (provider.isSubscriptionCLI
