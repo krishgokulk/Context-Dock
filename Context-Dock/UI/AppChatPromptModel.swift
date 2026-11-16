@@ -1471,7 +1471,7 @@ final class AppChatPromptModel: ObservableObject {
            let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
             NSWorkspace.shared.open(url)
         }
-        close()
+        dismiss()
     }
 
     /// Siri fallback: Search files on Mac via Finder.
@@ -1486,7 +1486,7 @@ final class AppChatPromptModel: ObservableObject {
         if let appleScript = NSAppleScript(source: script) {
             appleScript.executeAndReturnError(nil)
         }
-        close()
+        dismiss()
     }
 
     /// A question was asked elsewhere and its answer belongs here.
