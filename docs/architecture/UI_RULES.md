@@ -68,6 +68,8 @@ Mode content changes inside same shell. Window/material/control shell should not
 - Resize content smoothly.
 - Avoid flicker from state resets.
 - Avoid layout jumps on backspace.
+- All result lists must use fluid selection gliding and pointer gating (`docs/architecture/MOTION_AND_NAVIGATION_PERFORMANCE.md`).
+
 
 ## Labels
 

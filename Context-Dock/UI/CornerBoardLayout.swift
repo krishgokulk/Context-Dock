@@ -235,7 +235,9 @@ enum PanelProgressRow: Identifiable, Equatable {
 extension AppChatPromptModel {
     /// The side panel for the row the arrows are on (#191). Read by the board that draws it
     /// and by the window that hit-tests it, so the two are one answer.
+    /// Only active when isSidePanelExpanded is toggled on; otherwise compact mode matching input width.
     var boardPreview: CornerBoardPreview? {
+        guard isSidePanelExpanded else { return nil }
         // The chip's card takes the right half until the arrows choose a row, whose preview
         // is then what the half is for.
         if isShowingScopeCard, !isGlobalScope, focusedRow == nil {
@@ -257,18 +259,21 @@ extension AppChatPromptModel {
 
     /// The list card and its panel together: the size the window reserves for the board.
     var boardSize: CGSize {
-        let isExpanded = CornerDockController.shared.showsBoardUnderField
+        let baseWidth = AppChatPromptMetrics.boardWidth(for: self)
+        let isExpanded = isSidePanelExpanded && (
+            CornerDockController.shared.showsBoardUnderField
             || CornerDockController.shared.chatPresentation.isCentred
             || AppSettings.shared.launcherPresentationMode == .centerScreen
+        )
         let calc = CornerBoardLayout.boardSize(
             list: AppChatListMetrics.size(
-                rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self),
+                rows: listRowCount, width: baseWidth,
                 header: globalSectionHeaders.isEmpty),
-            preview: boardPreview)
+            preview: isSidePanelExpanded ? boardPreview : nil)
         if isExpanded {
             return CGSize(width: max(calc.width, 680), height: 440)
         }
-        return calc
+        return CGSize(width: baseWidth, height: min(calc.height, 440))
     }
 
     /// The Context Dock's panel shows (#191, part 2). Read by the card that draws it.

@@ -180,6 +180,16 @@ extension AppChatPromptModel {
     /// The row Return takes — the highlighted one, else the top one (the list draws that
     /// row as chosen) — read by the board's foot.
     var boardFoot: BoardFoot {
+        if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let index = focusedMenuIndex ?? 0
+            if index == 1 {
+                return BoardFoot(title: "Web search", verb: "Search", symbol: "globe")
+            } else if index == 2 {
+                return BoardFoot(title: "Finder", verb: "Search", bundleID: "com.apple.finder", symbol: "magnifyingglass")
+            } else {
+                return BoardFoot(title: "Ask AI", verb: "Ask", symbol: "sparkles")
+            }
+        }
         let row = skipsTopRowOnBareReturn ? focusedRow : (focusedRow ?? rows.first)
         return BoardFoot.foot(
             for: row, scopeName: isGlobalScope ? Self.globalScopeName : appName,

@@ -71,3 +71,15 @@ Rules:
 - Prefer native shortcut/menu execution.
 - Use AX click fallback only when native path fails.
 - Record recent/most-used actions after successful execution.
+
+## Motion & Navigation Performance
+
+List navigation and motion must meet Spotlight/Lumio fluid standards.
+See `docs/architecture/MOTION_AND_NAVIGATION_PERFORMANCE.md` for full specification.
+
+Rules:
+- Use single continuous gliding capsule (`matchedGeometryEffect`) across list rows; never use 0ms teleport jumps or per-row opacity crossfades.
+- Gate `.onHover` behind `MouseGate.moved()` to prevent stationary pointer jitter from stealing keyboard navigation.
+- Apply `FluidIconZoom` micro-zoom spring on focused row icons.
+- Synchronize list scrolling (`proxy.scrollTo`) with `FluidMotion.selectionGlide`.
+

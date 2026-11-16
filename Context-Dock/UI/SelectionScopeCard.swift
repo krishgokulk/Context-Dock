@@ -70,6 +70,8 @@ struct SelectionScopeCard: View {
     @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var fieldFocused: Bool
+    @State private var mouseGate = MouseGate()
+    @Namespace private var selectionSpace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -476,14 +478,24 @@ struct SelectionScopeCard: View {
                         ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                             rowView(row, isFocused: index == model.focusedIndex)
                                 .id(row.id)
+                                .onHover { hovering in
+                                    if hovering, mouseGate.moved() {
+                                        withAnimation(FluidMotion.selectionGlide) {
+                                            model.setFocusedIndex(index)
+                                        }
+                                    }
+                                }
                         }
                     }
+                    .animation(FluidMotion.selectionGlide, value: model.focusedIndex)
                 }
                 .frame(height: SelectionScopeMetrics.size(rows: model.rows.count).height
                     - SelectionScopeMetrics.size(rows: 0).height)
                 .onChange(of: model.focusedIndex) { _, index in
                     guard let index, model.rows.indices.contains(index) else { return }
-                    proxy.scrollTo(model.rows[index].id)
+                    withAnimation(FluidMotion.selectionGlide) {
+                        proxy.scrollTo(model.rows[index].id)
+                    }
                 }
             }
         }
@@ -501,6 +513,7 @@ struct SelectionScopeCard: View {
                 }
             }
             .frame(width: 28, height: 28)
+            .fluidIconZoom(isFocused: isFocused)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 if case .needsConsent = model.screenGate(for: row) {
@@ -517,7 +530,7 @@ struct SelectionScopeCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: SelectionScopeMetrics.rowHeight)
-        .background { CornerListRowBackground(isFocused: isFocused) }
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.run(row) }
         .accessibilityElement(children: .combine)

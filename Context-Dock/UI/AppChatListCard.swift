@@ -103,10 +103,17 @@ struct AppChatListCard: View {
     /// highlight — so a hand scroll can keep the highlight in view without fighting the keys.
     @State private var topItemID: String?
     @State private var lastKeyMove = Date.distantPast
+    @State private var mouseGate = MouseGate()
+    @Namespace private var selectionSpace
 
     /// The board: the list, and the highlighted row's preview beside it in the same card
     /// (#191) — the same number the window reserves.
     private var size: CGSize { model.boardSize }
+
+    private var effectiveFocus: Int? {
+        model.skipsTopRowOnBareReturn
+            ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
+    }
 
     /// The right half: the app's card when the chip opened it (owner 2026-10-08: "in the
     /// right half of the result sheet"), the highlighted row's preview otherwise.
@@ -153,7 +160,35 @@ struct AppChatListCard: View {
             // it — the same board, the way a turn shows its own reasoning. A second card is
             // for a terminal that needs one, and nothing here needs one yet.
 
-            if model.rows.isEmpty, !model.returnsToGlobalScope {
+            if model.rows.isEmpty, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                VStack(spacing: 0) {
+                    fallbackAskAIRow(isFocused: (effectiveFocus ?? 0) == 0)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 0
+                                }
+                            }
+                        }
+                    fallbackWebRow(isFocused: effectiveFocus == 1)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 1
+                                }
+                            }
+                        }
+                    fallbackFinderRow(isFocused: effectiveFocus == 2)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 2
+                                }
+                            }
+                        }
+                }
+                .animation(FluidMotion.selectionGlide, value: effectiveFocus)
+            } else if model.rows.isEmpty, !model.returnsToGlobalScope {
                 ForEach(model.suggestions.prefix(AppChatPromptModel.menuRowLimit)) { suggestion in
                     suggestionRow(suggestion)
                 }
@@ -166,11 +201,16 @@ struct AppChatListCard: View {
                             // reads — so a list showing none of them chosen was a list
                             // disagreeing with what its own Return key was about to do.
                             // Under Finder's Ask AI row, nothing chosen is that row.
-                            let effectiveFocus = model.skipsTopRowOnBareReturn
-                                ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
                             if model.showsAskAIRow {
                                 askAIRow(isFocused: model.focusedMenuIndex == nil)
                                     .id("ask-ai")
+                                    .onHover { hovering in
+                                        if hovering, mouseGate.moved() {
+                                            withAnimation(FluidMotion.selectionGlide) {
+                                                model.focusedMenuIndex = nil
+                                            }
+                                        }
+                                    }
                             }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                                 // A section's header and its first row are one item, scrolled to
@@ -200,14 +240,19 @@ struct AppChatListCard: View {
                                     }
                                 }
                                 .contextMenu { pinMenu(for: row) }
+                                .onHover { hovering in
+                                    if hovering, mouseGate.moved() {
+                                        withAnimation(FluidMotion.selectionGlide) {
+                                            model.focusedMenuIndex = index
+                                        }
+                                    }
+                                }
                                 }
                                 .id(row.id)
                             }
                         }
-                        // The highlight jumps, as Raycast's does: the card's crossfade for the
-                        // preview caught the rows too, and at the list's end — nothing left to
-                        // scroll — two rows sat half-highlighted (owner 2026-10-14).
-                        .transaction { $0.animation = nil }
+                        // Fluid gliding selection capsule travels smoothly between rows
+                        .animation(FluidMotion.selectionGlide, value: effectiveFocus)
                         .scrollTargetLayout()
                     }
                     // A hand scroll settles on whole rows, as the arrows do — never half a
@@ -231,15 +276,19 @@ struct AppChatListCard: View {
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
                         lastKeyMove = Date()
-                        // The top row's section header comes into view with it.
+                        // Synchronized scrolling in step with selectionGlide animation
                         if model.focusedMenuIndex == 0, let first = model.rows.first {
-                            proxy.scrollTo(first.id, anchor: .top)
+                            withAnimation(FluidMotion.selectionGlide) {
+                                proxy.scrollTo(first.id, anchor: .top)
+                            }
                         } else if let row = model.focusedRow {
-                            // A beat later: rows that arrived with the highlight ("Show N
-                            // more") are not laid out yet, and the scroll stopped short.
-                            DispatchQueue.main.async { proxy.scrollTo(row.id) }
+                            withAnimation(FluidMotion.selectionGlide) {
+                                proxy.scrollTo(row.id)
+                            }
                         } else if model.showsAskAIRow {
-                            proxy.scrollTo("ask-ai", anchor: .top)
+                            withAnimation(FluidMotion.selectionGlide) {
+                                proxy.scrollTo("ask-ai", anchor: .top)
+                            }
                         }
                     }
                     .onChange(of: model.query) { _, _ in
@@ -283,14 +332,14 @@ struct AppChatListCard: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
+                .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85))
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
             }
         }
         .onHover { _ in model.touch() }
@@ -334,6 +383,18 @@ struct AppChatListCard: View {
             }
             .animation(.smooth(duration: 0.15), value: foot)
             BoardFooter.pill {
+                Button {
+                    withAnimation(FluidMotion.selectionGlide) {
+                        model.isSidePanelExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: model.isSidePanelExpanded ? "sidebar.trailing" : "sidebar.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.isSidePanelExpanded ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.isSidePanelExpanded ? "Collapse preview panel" : "Expand preview panel")
                 Button {
                     if !model.pinChosenRow() { model.togglePin() }
                 } label: {
@@ -493,6 +554,7 @@ struct AppChatListCard: View {
     private func commandRow(_ item: AXMenuItem, isFocused: Bool) -> some View {
         HStack(spacing: 10) {
             MenuRowIcon(item: item, bundleID: model.appBundleID)
+                .fluidIconZoom(isFocused: isFocused)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.system(size: 13, weight: .medium))
@@ -520,10 +582,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.runMenuItem(item) }
     }
@@ -543,6 +602,7 @@ struct AppChatListCard: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28)
+                .fluidIconZoom(isFocused: isFocused)
             Text(word)
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
@@ -554,10 +614,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.cliSuggestion(word)) }
     }
@@ -576,6 +633,7 @@ struct AppChatListCard: View {
             }
             .frame(width: AppChatListMetrics.iconSize - 6, height: AppChatListMetrics.iconSize - 6)
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            .fluidIconZoom(isFocused: isFocused)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name)
                     .font(.system(size: 15, weight: .medium))
@@ -594,10 +652,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.app(entry)) }
         .accessibilityElement(children: .combine)
@@ -612,6 +667,7 @@ struct AppChatListCard: View {
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(Color.accentColor)
                 .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask AI")
                     .font(.system(size: 15, weight: .medium))
@@ -631,15 +687,105 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.submit() }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Ask AI: \(model.query)")
+    }
+
+    /// Siri Fallback 1: Ask AI with typed prompt
+    private func fallbackAskAIRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ask AI")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text(model.query.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.submit() }
+    }
+
+    /// Siri Fallback 2: Search web via default browser
+    private func fallbackWebRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "globe")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.blue)
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Search The Web")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text("Search default browser for “\(model.query.trimmingCharacters(in: .whitespacesAndNewlines))”")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openWebSearch() }
+    }
+
+    /// Siri Fallback 3: Search Finder for files on Mac
+    private func fallbackFinderRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.85))
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Search in Finder")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text("Find files matching “\(model.query.trimmingCharacters(in: .whitespacesAndNewlines))” on Mac")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openFinderSearch() }
     }
 
     /// A file or folder from the Finder scope, with the path it lives at — two files called
@@ -651,6 +797,7 @@ struct AppChatListCard: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 22, height: 22)
                 .frame(width: 28, height: 28)
+                .fluidIconZoom(isFocused: isFocused)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(url.lastPathComponent)
@@ -668,10 +815,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.file(url)) }
     }
@@ -706,6 +850,7 @@ struct AppChatListCard: View {
                     symbol: GlobalContextRow.symbol(for: doc))
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            .fluidIconZoom(isFocused: isFocused)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(doc.title)
@@ -735,10 +880,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.global(doc)) }
     }
@@ -770,6 +912,7 @@ struct AppChatListCard: View {
                 }
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            .fluidIconZoom(isFocused: isFocused)
             VStack(alignment: .leading, spacing: 2) {
                 Text(pill.name)
                     .font(.system(size: isShowMore ? 13 : 15, weight: .medium))
@@ -795,7 +938,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background { CornerListRowBackground(isFocused: isFocused) }
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .opacity(pill.isEnabled ? 1 : 0.45)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.dock(pill)) }
@@ -855,6 +998,7 @@ struct AppChatListCard: View {
                     .foregroundStyle(Color.accentColor)
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+            .fluidIconZoom(isFocused: isFocused)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(action.name)
@@ -874,10 +1018,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
         .onTapGesture { model.runAdapterAction(action) }
     }

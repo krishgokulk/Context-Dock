@@ -174,10 +174,10 @@ struct CornerDockKeyRulesTests {
         // Typed text with matching rows auto-expands the result sheet (486fd230, 2026-11-04),
         // so Esc steps back to the field's resting shape and the sheet follows the rows.
         #expect(model.phase == .suggesting)
-        // Once nothing matches the text, the same resting shape is the plain field.
+        // Siri-parity: typed text keeps the sheet open even when no rows match (fallbacks visible).
         model.rows = []
         model.syncListPhase()
-        #expect(model.phase == .prompt)
+        #expect(model.phase == .suggesting)
         #expect(model.query == "quit")
     }
 

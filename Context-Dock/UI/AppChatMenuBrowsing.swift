@@ -1674,6 +1674,10 @@ extension AppChatPromptModel {
             if count > 1, slots[count - 1] { count -= 1 }
             return count
         }
+        // Siri fallback rows (Ask AI, Search Web, Search in Finder) when query has no matching rows
+        if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return 3
+        }
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.
@@ -1702,6 +1706,11 @@ extension AppChatPromptModel {
         // it, the same way the dock's own results sheet is never open until the arrow
         // keys ask for it. Reaching for it now is exactly that ask.
         if phase == .prompt { set(.suggesting) }
+        if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            focusedMenuIndex = DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: 3)
+            touch()
+            return true
+        }
         // The first press opens the list on a row — down at the top, up at the bottom —
         // as the Dock's does (DockKeyRules.listArrow, C1); after that the arrows move.
         focusedMenuIndex = showsAskAIRow
@@ -1720,6 +1729,17 @@ extension AppChatPromptModel {
     /// user is pointing at, and it wins over both.
     @discardableResult
     func enterFocusedRow() -> Bool {
+        if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let index = focusedMenuIndex ?? 0
+            if index == 0 {
+                submit()
+            } else if index == 1 {
+                openWebSearch()
+            } else {
+                openFinderSearch()
+            }
+            return true
+        }
         guard let row = focusedRow else { return false }
         run(row)
         return true
