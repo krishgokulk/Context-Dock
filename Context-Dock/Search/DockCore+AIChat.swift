@@ -4560,17 +4560,31 @@ extension DockCore {
             "bookmark this", "bookmark the", "add bookmark", "save bookmark",
         ]
         if actionWords.contains(where: normalized.contains) { return false }
-        // "visit" unsuffixed, because visit/visited/visiting/visite are all the same
-        // question and a trailing space made "did i visite any website today?" match none
-        // of them. "website" and friends were missing outright, so the most ordinary way to
-        // ask this — naming the thing rather than the log it lives in — was never
-        // recognised, and the question fell through to a generic answer that reported
-        // finding nothing while Safari sat enabled two inches away.
+        // Split the query into alphanumeric tokens so that single-word data words are
+        // matched at token boundaries, not as substrings. This prevents "browse" from
+        // matching inside compound identifiers like "browser_console_messages" — a tool
+        // name in a meta-question ("what does the browser_console_messages tool return?")
+        // that should route to the model, not the local history library.
+        // Multi-word phrases keep substring matching because whitespace already prevents
+        // false splits. "visit" uses prefix matching to cover visited/visiting/visits;
+        // other tokens use exact matching, with plurals listed explicitly.
+        let tokens = normalized.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
         let dataWords = [
-            "history", "visit", "bookmark", "opened tab", "open tab", "tabs",
-            "website", "web site", "webpage", "web page", "browse", "browsing", "url",
+            "history", "visit",
+            "bookmark", "bookmarks",
+            "opened tab", "open tab", "tabs",
+            "website", "websites", "web site",
+            "webpage", "webpages", "web page",
+            "browse", "browsing",
+            "url", "urls",
         ]
-        guard dataWords.contains(where: normalized.contains) else { return false }
+        let hasDataWord = dataWords.contains { word in
+            if word.contains(" ") { return normalized.contains(word) }
+            if word == "visit" { return tokens.contains { $0 == "visit" || $0.hasPrefix("visit") } }
+            return tokens.contains(word)
+        }
+        guard hasDataWord else { return false }
         let readShapes = [
             "what", "which", "show", "list", "find", "search", "how many", "give me",
             "all ", "any ", "recent", "did i", "have i", "tell me",
