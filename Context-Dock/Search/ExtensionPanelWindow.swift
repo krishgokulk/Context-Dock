@@ -578,6 +578,18 @@ struct AIComposerBar: View {
     /// The text's own height as it wraps, for a surface that sizes itself to it (the
     /// corner's General Chat grows upward to three lines, #189). Nil elsewhere.
     var onTextHeightChange: ((CGFloat) -> Void)? = nil
+    /// Whether to render the expanded composer card layout with multi-line text input and a rich
+    /// bottom toolbar row (attachments, multi-line field, (+) attach menu, model picker dropdown,
+    /// speed/turbo mode, mic dictation, and circular send button).
+    var isExpanded: Bool = false
+    /// Active pet or chat mode name (e.g. "Turbo", "Deep Reasoning", or custom pet mode).
+    var activeModeName: String? = nil
+    /// Callback when user picks a mode from the mode pill.
+    var onSelectMode: ((String) -> Void)? = nil
+    /// Callback to minimize or expand the conversation (chevron.down / chevron.up).
+    var onToggleChat: (() -> Void)? = nil
+    /// Whether the conversation board is currently expanded.
+    var isChatOpen: Bool = false
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -620,7 +632,9 @@ struct AIComposerBar: View {
                 ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
             }
 
-            if cornerStyle {
+            if isExpanded {
+                expandedComposerView
+            } else if cornerStyle {
                 siriComposerRow
             } else {
                 legacyComposerRow
@@ -630,37 +644,261 @@ struct AIComposerBar: View {
     }
 
     @ViewBuilder
-    private var siriComposerRow: some View {
-        HStack(spacing: 8) {
-            attachButton
-                .frame(width: 32, height: 32)
-                .background(Color.primary.opacity(0.08), in: Circle())
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                .contentShape(Circle())
+    private var expandedComposerView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            inputTextField
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
-            HStack(spacing: 7) {
-                providerMenu
-                inputTextField
+            HStack(spacing: 8) {
+                expandedAttachButton
+
+                expandedProviderMenu
+
                 if !attachedAppNames.isEmpty {
                     attachedAppChips
                 }
+
+                Spacer(minLength: 4)
+
+                modePill
+
+                micButton
+
+                expandedSendButton
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color.primary.opacity(0.06), in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-            )
+            .padding(.bottom, 6)
+        }
+        .background {
+            if drawsChrome {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedAttachButton: some View {
+        if let extraAttachMenu {
+            Menu {
+                Button { onAttachFile() } label: {
+                    Label("Attach Files…", systemImage: "paperclip")
+                }
+                Divider()
+                extraAttachMenu()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Attach files or media")
+        } else {
+            Button(action: onAttachFile) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Attach a file")
+        }
+    }
+
+    @ViewBuilder
+    private var expandedProviderMenu: some View {
+        Menu {
+            ForEach(AIProvider.allCases) { provider in
+                Button {
+                    settings.selectedAIProvider = provider
+                } label: {
+                    if provider == settings.selectedAIProvider {
+                        Label(provider.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(provider.displayName)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
+                Text(settings.selectedAIProvider.shortName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Select AI Model (\(settings.selectedAIProvider.displayName))")
+    }
+
+    @ViewBuilder
+    private var modePill: some View {
+        Menu {
+            Button {
+                onSelectMode?("Turbo")
+            } label: {
+                Label("Turbo (Fast)", systemImage: "bolt.fill")
+            }
+            Button {
+                onSelectMode?("Deep Reasoning")
+            } label: {
+                Label("Deep Reasoning", systemImage: "brain")
+            }
+            if !slashMods.isEmpty {
+                Divider()
+                ForEach(slashMods) { mode in
+                    Button {
+                        text = "/mods \(mode.id)"
+                        onSubmit()
+                    } label: {
+                        Label(mode.name, systemImage: mode.icon ?? "sparkles")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "shield.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(activeModeName ?? "Turbo")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Select Speed & Mode")
+    }
+
+    @ViewBuilder
+    private var micButton: some View {
+        Button {
+            NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+        } label: {
+            Image(systemName: "mic")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(0.06), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Dictate (Mic)")
+    }
+
+    @ViewBuilder
+    private var expandedSendButton: some View {
+        if isSending, let onStop {
+            Button(action: onStop) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Color.secondary.opacity(0.6), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Stop generating")
+        } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let onToggleChat {
+            Button(action: onToggleChat) {
+                Image(systemName: isChatOpen ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isChatOpen ? "Minimize conversation" : "Show conversation")
+            .accessibilityLabel(isChatOpen ? "Minimize conversation" : "Show conversation")
+        } else {
+            Button {
+                if onCommitSelection?() == true { return }
+                onSubmit()
+            } label: {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? Color.secondary.opacity(0.28)
+                            : Color.accentColor,
+                        in: Circle()
+                    )
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Send (Return)")
+        }
+    }
+
+    @ViewBuilder
+    private var siriComposerRow: some View {
+        HStack(spacing: 8) {
+            providerMenu
+                .layoutPriority(1)
+
+            inputTextField
+                .layoutPriority(1)
+
+            if !attachedAppNames.isEmpty {
+                attachedAppChips
+            }
+
+            attachButton
+
+            if let onTogglePin {
+                Button(action: onTogglePin) {
+                    cornerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Keep this open")
+            }
 
             if isSending, let onStop {
                 Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Color.secondary.opacity(0.5), in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                        .contentShape(Circle())
+                    cornerGlyph("stop.fill", tinted: true)
                 }
                 .buttonStyle(.plain)
                 .help("Stop generating")
@@ -670,27 +908,29 @@ struct AIComposerBar: View {
                     onSubmit()
                 } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
                         .background(Color.accentColor, in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Send (Return)")
+            } else if let onToggleChat {
+                Button(action: onToggleChat) {
+                    cornerGlyph(isChatOpen ? "chevron.down" : "chevron.up")
+                }
+                .buttonStyle(.plain)
+                .help(isChatOpen ? "Minimize conversation" : "Show conversation")
+                .accessibilityLabel(isChatOpen ? "Minimize conversation" : "Show conversation")
             } else {
                 appPickerButton
-                    .frame(width: 32, height: 32)
-                    .background(Color.primary.opacity(0.08), in: Circle())
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                    .contentShape(Circle())
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .animation(.smooth(duration: 0.2), value: text.isEmpty)
-        .animation(.smooth(duration: 0.2), value: isSending)
+        .animation(.smooth(duration: 0.16), value: text.isEmpty)
+        .animation(.smooth(duration: 0.16), value: isSending)
     }
 
     @ViewBuilder
@@ -791,15 +1031,18 @@ struct AIComposerBar: View {
         } label: {
             if cornerStyle {
                 HStack(spacing: 5) {
-                    AIProviderIcon(provider: settings.selectedAIProvider, size: 15)
+                    AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
                     Text(settings.selectedAIProvider.shortName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08), in: Capsule())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.09), in: Capsule())
                 .contentShape(Capsule())
             } else {
                 HStack(spacing: 4) {
@@ -827,8 +1070,8 @@ struct AIComposerBar: View {
     private var inputTextField: some View {
         TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
             .textFieldStyle(.plain)
-            .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
-            .lineLimit(cornerStyle ? 1...DockFieldLines.maximum : 1...5)
+            .font(.system(size: isExpanded ? 13 : (cornerStyle ? 14 : 12), weight: (isExpanded || cornerStyle) ? .medium : .regular))
+            .lineLimit(isExpanded ? 1...8 : (cornerStyle ? 1...DockFieldLines.maximum : 1...5))
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 onTextHeightChange?(height)
             }
@@ -888,9 +1131,10 @@ struct AIComposerBar: View {
                 extraAttachMenu()
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: cornerStyle ? 12 : 15, weight: .medium))
+                    .foregroundStyle(cornerStyle ? Color.secondary : Color.primary.opacity(0.85))
+                    .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
                     .contentShape(Circle())
             }
             .menuStyle(.borderlessButton)
@@ -899,9 +1143,10 @@ struct AIComposerBar: View {
         } else {
             Button(action: onAttachFile) {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: cornerStyle ? 12 : 15, weight: .medium))
+                    .foregroundStyle(cornerStyle ? Color.secondary : Color.primary.opacity(0.85))
+                    .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -967,9 +1212,10 @@ struct AIComposerBar: View {
             }
         } label: {
             Image(systemName: "app.dashed")
-                .font(.system(size: 14))
+                .font(.system(size: cornerStyle ? 12 : 14))
                 .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
+                .frame(width: cornerStyle ? 26 : 32, height: cornerStyle ? 26 : 32)
+                .background(Color.primary.opacity(0.08), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
