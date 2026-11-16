@@ -87,4 +87,34 @@ struct MessagesSendFileTests {
         #expect(cap!.riskLevel.requiresApproval,
                 "messages.send with file must require approval before it runs")
     }
+
+    // MARK: - Approval Card Enrichment
+
+    @Test
+    func enrichmentFileNameExtractsBasename() {
+        #expect(ApprovalCardEnrichment.fileName(at: "/Users/me/photo.png") == "photo.png")
+        #expect(ApprovalCardEnrichment.fileName(at: "/tmp/report.pdf") == "report.pdf")
+    }
+
+    @Test
+    func enrichmentFileSizeReturnsNilForMissingFile() {
+        #expect(ApprovalCardEnrichment.fileSize(at: "/nonexistent/file.txt") == nil)
+    }
+
+    @Test
+    func enrichmentContactPhotoReturnsNilForUnknown() {
+        let photo = ApprovalCardEnrichment.contactPhoto(for: "zzz_no_such_contact_99")
+        #expect(photo == nil)
+    }
+
+    @Test
+    func enrichmentContactPhotoReturnsNilForEmpty() {
+        #expect(ApprovalCardEnrichment.contactPhoto(for: "") == nil)
+    }
+
+    @Test
+    func enrichmentFileIconReturnsNonNil() {
+        let icon = ApprovalCardEnrichment.fileIcon(at: "/System/Library/CoreServices/Finder.app")
+        #expect(icon.size.width > 0)
+    }
 }
