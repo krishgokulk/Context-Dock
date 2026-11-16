@@ -109,6 +109,7 @@ struct AppScopeCardPlacementTests {
         #expect(model.boardPreview != card)
 
         // The chip's card takes the half until the arrows choose a row.
+        model.isSidePanelExpanded = true
         model.isShowingScopeCard = true
         #expect(model.boardPreview == card)
         #expect(model.boardSize.height >= AppScopeBoardMetrics.height)
@@ -117,11 +118,12 @@ struct AppScopeCardPlacementTests {
         #expect(model.boardPreview != card)
     }
 
-    @Test("An app with nothing listed still shows its card, so the sheet is never empty")
+    @Test("An app with nothing listed still shows its card when the side panel is expanded")
     func anEmptyAppSheetShowsItsCard() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Notes", bundleID: "com.apple.Notes")
         model.rows = []
+        model.isSidePanelExpanded = true
         #expect(model.boardPreview == .appScope(bundleID: "com.apple.Notes", name: "Notes"))
     }
 }
