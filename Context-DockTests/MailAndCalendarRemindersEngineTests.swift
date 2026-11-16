@@ -83,9 +83,7 @@ struct MailAndCalendarRemindersEngineTests {
 
         #expect(registry.tool(named: "list_reminders") == nil)
 
-        let createReminder = registry.tool(named: "create_reminder")
-        #expect(createReminder != nil)
-        #expect(createReminder?.required == ["title"])
+        #expect(registry.tool(named: "create_reminder") == nil)
 
         #expect(registry.tool(named: "get_today_events") == nil)
     }
@@ -103,7 +101,7 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(OutboundGate.outboundTools.contains("send_mail"))
         #expect(OutboundGate.localTools.contains("read_unread_mail"))
         #expect(OutboundGate.localTools.contains("search_mail"))
-        #expect(OutboundGate.localTools.contains("create_reminder"))
+        #expect(!OutboundGate.localTools.contains("create_reminder"))
         #expect(OutboundGate.localTools.contains("get_today_events"))
     }
 
@@ -124,7 +122,7 @@ struct MailAndCalendarRemindersEngineTests {
         )
         #expect(!remindersPlan.allowedToolNames.contains("list_reminders"))
         #expect(remindersPlan.allowedToolNames.contains("run_capability"))
-        #expect(remindersPlan.allowedToolNames.contains("create_reminder"))
+        #expect(!remindersPlan.allowedToolNames.contains("create_reminder"))
 
         let calendarPlan = FrontmostAppTaskPlan.make(
             query: "what is on my calendar today",

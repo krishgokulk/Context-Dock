@@ -192,9 +192,6 @@ struct FrontmostAppTaskPlan: Equatable {
         if id.contains("mail") {
             tools.formUnion(["read_unread_mail", "search_mail", "send_mail"])
         }
-        if id.contains("reminders") {
-            tools.formUnion(["create_reminder"])
-        }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }

@@ -430,13 +430,15 @@ enum AppleRemindersMCPCapabilities {
                 var msg = success
                     ? "Created reminder '\(title)'"
                     : "Failed to create reminder. Grant Reminders access in System Settings › Privacy › Reminders."
-                if success, let dueDateStr, !dueDateStr.isEmpty,
-                   let dueDate = ISO8601DateFormatter().date(from: dueDateStr) {
+                let due = success ? dueDateStr.flatMap { parseDueDate($0) } : nil
+                let dueText = due.map { date -> String in
                     let df = DateFormatter()
                     df.dateStyle = .medium
                     df.timeStyle = .short
-                    msg += " due \(df.string(from: dueDate))"
+                    df.doesRelativeDateFormatting = true
+                    return df.string(from: date)
                 }
+                if let dueText { msg += " due \(dueText)" }
                 if success {
                     let verified = AppleAppsAPI.shared.getReminders(limit: 20).contains(where: { ($0["title"] as? String) == title })
                     if verified {
@@ -444,10 +446,52 @@ enum AppleRemindersMCPCapabilities {
                     } else {
                         msg += "."
                     }
+                    // The new reminder as a row, so the answer carries a card for it
+                    // rather than only a sentence saying it exists.
+                    ChatResultRowCollector.shared.add(
+                        [createdRow(title: title, dueText: dueText, listName: listName)],
+                        scope: request.chatScope)
                 }
                 return .init(success: success, output: msg)
             }
         )
+    }
+
+    /// The card row for a reminder that was just created: title, then when it is due
+    /// and which list it went to.
+    nonisolated static func createdRow(title: String, dueText: String?, listName: String?) -> ChatResultRow {
+        let list = listName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return ChatResultRow(
+            kind: .reminder,
+            id: "created:\(title)",
+            title: title,
+            subtitle: [dueText, list.isEmpty ? nil : list].compactMap { $0 }.joined(separator: " · "),
+            bundleID: "com.apple.reminders",
+            reminderState: .created)
+    }
+
+    /// A due date as the model writes it. The schema asks for ISO 8601, and models send it
+    /// without a time zone ("2026-11-16T17:00:00", "2026-11-16 17:00"), which
+    /// `ISO8601DateFormatter` rejects — the reminder was then saved with no due date at all.
+    /// A string with no zone means the user's local time.
+    nonisolated static func parseDueDate(_ string: String, timeZone: TimeZone = .current) -> Date? {
+        let text = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if let date = ISO8601DateFormatter().date(from: text) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: text) { return date }
+        let local = DateFormatter()
+        local.locale = Locale(identifier: "en_US_POSIX")
+        local.timeZone = timeZone
+        for format in [
+            "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd",
+        ] {
+            local.dateFormat = format
+            if let date = local.date(from: text) { return date }
+        }
+        return nil
     }
 
     // MARK: - EventKit create helper (runs on background thread)
@@ -480,10 +524,11 @@ enum AppleRemindersMCPCapabilities {
         }
 
         if let dueDateString, !dueDateString.isEmpty {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
-            if let date = formatter.date(from: dueDateString) ?? ISO8601DateFormatter().date(from: dueDateString) {
-                let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+            if let date = parseDueDate(dueDateString) {
+                // A bare date is an all-day reminder, not one due at midnight.
+                let dateOnly = dueDateString.trimmingCharacters(in: .whitespacesAndNewlines).count == 10
+                let comps = Calendar.current.dateComponents(
+                    dateOnly ? [.year, .month, .day] : [.year, .month, .day, .hour, .minute], from: date)
                 reminder.dueDateComponents = comps
             }
         }

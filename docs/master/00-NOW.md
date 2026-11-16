@@ -10,11 +10,11 @@
 
 ## In progress
 
-**#413 H6 (4/n): Retire `list_reminders` tool into `reminders.list` capability** (2026-11-15). Building on `claude/retire-list-reminders-tool`: `list_reminders` deleted from `AgentToolRegistry`, its reminders-bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. Reminders queries route as data turns to `find_capability` + `run_capability("reminders.list")`. Remaining H6 trim: `create_reminder`.
+**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability** (2026-11-15). On `claude/retire-create-reminder-tool-39e6e5`: `create_reminder` deleted from `AgentToolRegistry`, the Reminders bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. "remind me to call Mom at 5pm" reaches the model, which uses `find_capability` + `run_capability("reminders.create")` behind the existing approval card. This closes the Reminders pair of the H6 trim. Same branch (owner 2026-11-16): a created reminder shows as a card under the answer, and zone-less `dueDate` values are no longer dropped.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (`list_reminders` in progress, next `create_reminder`).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (4/n `list_reminders` merged, PR #452; 5/n `create_reminder` in progress).
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
@@ -38,6 +38,9 @@
 
 **`corner.sh clear`: delete a hand check's thread (PR #444):**
 - Dev Corner remote gained a `clear` command so a hand check removes its own General Chat thread. Squash-merged 2026-11-14 (`b9ee54d9`).
+
+**#413 H6 (4/n): Retire `list_reminders` tool into `reminders.list` capability (PR #452):**
+- `list_reminders` deleted from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. Reminders queries route as data turns to `find_capability` + `run_capability("reminders.list")`. Added `ListRemindersToolRetirementTests` and D29 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-15 (`b5fc5efe`).
 
 **#413 H6 (3/n): consolidate `read_attachment` into `read_file` (PR #442):**
 - `read_attachment` deleted from `AgentToolRegistry`; `read_file` reads an attachment by path, by filename, or with no path when one file is attached. General Chat names attached files in its own prompt section. Added `ReadAttachmentToolRetirementTests` and D25 row to `00-DOCK-PARITY-INVENTORY.md`. Squash-merged 2026-11-14.

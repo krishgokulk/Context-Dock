@@ -2779,48 +2779,8 @@ final class AgentToolRegistry {
         // instead. The capability is registered in AppleRemindersMCPCapabilities and discoverable on
         // every turn — find_capability and run_capability are always in the base tool set.
 
-        register(AgentTool(
-            name: "create_reminder",
-            description: "Create a reminder in Apple Reminders via EventKit with verified read-back.",
-            properties: [
-                "title": ["type": "string", "description": "Reminder title."],
-                "due_date": ["type": "string", "description": "Optional due date (ISO 8601)."],
-                "notes": ["type": "string", "description": "Optional notes."],
-                "list_name": ["type": "string", "description": "Optional list name."],
-            ],
-            required: ["title"]
-        ) { arguments, _ in
-            guard let title = arguments["title"] as? String, !title.isEmpty else {
-                return AgentToolResult(success: false, output: "create_reminder requires 'title'.", displayCommand: "create_reminder(invalid)")
-            }
-            let dueDate = arguments["due_date"] as? String
-            let notes = arguments["notes"] as? String
-            let listName = arguments["list_name"] as? String
-
-            let success = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: AppleRemindersMCPCapabilities.createReminder(
-                        title: title,
-                        dueDateString: dueDate,
-                        notes: notes,
-                        listName: listName
-                    ))
-                }
-            }
-            guard success else {
-                return AgentToolResult(success: false, output: "Failed to create reminder '\(title)'. Check Reminders permissions.", displayCommand: "create_reminder(\(title)) · failed")
-            }
-            let verified = AppleAppsAPI.shared.getReminders(limit: 20).contains(where: { ($0["title"] as? String) == title })
-            var result = AgentToolResult(
-                success: true,
-                output: "Created reminder '\(title)'\(verified ? " (Verified in Reminders)" : "").",
-                displayCommand: "create_reminder(\(title))"
-            )
-            if verified {
-                result.verifiedByReadBack = "Reminder creation confirmed in Reminders database."
-            }
-            return result
-        })
+        // create_reminder retired (H6 5/n): the model uses find_capability + run_capability("reminders.create")
+        // instead, behind that capability's approval card.
 
         // get_today_events retired (H6): the model uses find_capability + run_capability("calendar.todayEvents")
         // instead. The capability is registered in AppleCalendarMCPCapabilities and discoverable on
