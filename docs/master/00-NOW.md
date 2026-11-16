@@ -10,7 +10,7 @@
 
 ## In progress
 
-**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability** (2026-11-15). On `claude/retire-create-reminder-tool-39e6e5`: `create_reminder` deleted from `AgentToolRegistry`, the Reminders bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. "remind me to call Mom at 5pm" reaches the model, which uses `find_capability` + `run_capability("reminders.create")` behind the existing approval card. This closes the Reminders pair of the H6 trim.
+**#413 H6 (5/n): Retire `create_reminder` tool into `reminders.create` capability** (2026-11-15). On `claude/retire-create-reminder-tool-39e6e5`: `create_reminder` deleted from `AgentToolRegistry`, the Reminders bundle gate removed from `FrontmostAppTaskPlan`, removed from `OutboundGate.localTools`, `ScopedToolStep` and `AgentToolNarration`. "remind me to call Mom at 5pm" reaches the model, which uses `find_capability` + `run_capability("reminders.create")` behind the existing approval card. This closes the Reminders pair of the H6 trim. Same branch (owner 2026-11-16): a created reminder shows as a card under the answer, and zone-less `dueDate` values are no longer dropped.
 
 ## Queued (next)
 
