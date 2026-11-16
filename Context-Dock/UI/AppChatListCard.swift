@@ -160,7 +160,35 @@ struct AppChatListCard: View {
             // it — the same board, the way a turn shows its own reasoning. A second card is
             // for a terminal that needs one, and nothing here needs one yet.
 
-            if model.rows.isEmpty, !model.returnsToGlobalScope {
+            if model.rows.isEmpty, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                VStack(spacing: 0) {
+                    fallbackAskAIRow(isFocused: (effectiveFocus ?? 0) == 0)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 0
+                                }
+                            }
+                        }
+                    fallbackWebRow(isFocused: effectiveFocus == 1)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 1
+                                }
+                            }
+                        }
+                    fallbackFinderRow(isFocused: effectiveFocus == 2)
+                        .onHover { hovering in
+                            if hovering, mouseGate.moved() {
+                                withAnimation(FluidMotion.selectionGlide) {
+                                    model.focusedMenuIndex = 2
+                                }
+                            }
+                        }
+                }
+                .animation(FluidMotion.selectionGlide, value: effectiveFocus)
+            } else if model.rows.isEmpty, !model.returnsToGlobalScope {
                 ForEach(model.suggestions.prefix(AppChatPromptModel.menuRowLimit)) { suggestion in
                     suggestionRow(suggestion)
                 }
@@ -304,14 +332,14 @@ struct AppChatListCard: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
+                .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85))
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
             }
         }
         .onHover { _ in model.touch() }
@@ -355,6 +383,18 @@ struct AppChatListCard: View {
             }
             .animation(.smooth(duration: 0.15), value: foot)
             BoardFooter.pill {
+                Button {
+                    withAnimation(FluidMotion.selectionGlide) {
+                        model.isSidePanelExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: model.isSidePanelExpanded ? "sidebar.trailing" : "sidebar.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.isSidePanelExpanded ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.isSidePanelExpanded ? "Collapse preview panel" : "Expand preview panel")
                 Button {
                     if !model.pinChosenRow() { model.togglePin() }
                 } label: {
@@ -653,6 +693,99 @@ struct AppChatListCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Ask AI: \(model.query)")
+    }
+
+    /// Siri Fallback 1: Ask AI with typed prompt
+    private func fallbackAskAIRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ask AI")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text(model.query.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.submit() }
+    }
+
+    /// Siri Fallback 2: Search web via default browser
+    private func fallbackWebRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "globe")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.blue)
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Search The Web")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text("Search default browser for “\(model.query.trimmingCharacters(in: .whitespacesAndNewlines))”")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openWebSearch() }
+    }
+
+    /// Siri Fallback 3: Search Finder for files on Mac
+    private func fallbackFinderRow(isFocused: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.85))
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Search in Finder")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text("Find files matching “\(model.query.trimmingCharacters(in: .whitespacesAndNewlines))” on Mac")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openFinderSearch() }
     }
 
     /// A file or folder from the Finder scope, with the path it lives at — two files called

@@ -138,8 +138,52 @@ Any surface in Context-Dock that displays navigable items (Search Results, Menus
 ## 4. Current Adoption Across Context-Dock
 
 The fluid navigation architecture is actively implemented across all primary launcher surfaces:
-- **`AppChatListCard.swift`**: All rows (`commandRow`, `cliSuggestionRow`, `appRow`, `askAIRow`, `fileRow`, `globalRow`, `dockRow`, `actionRow`).
+- **`AppChatListCard.swift`**: All rows (`commandRow`, `cliSuggestionRow`, `appRow`, `askAIRow`, `fileRow`, `globalRow`, `dockRow`, `actionRow`, and Siri fallbacks).
 - **`SelectionScopeCard.swift`**: All action rows and Finder file inspection rows.
 - **`ChatSlashAppPicker.swift`**: `/` quick app jump popover.
 - **`ChatSlashModPicker.swift`**: `/mods` Pet mode selector popover.
 - **`FluidSelection.swift`**: Shared core primitives (`FluidMotion`, `MouseGate`, `FluidSelectionPill`, `FluidIconZoom`).
+
+---
+
+## 5. The Siri & Apple Intelligence Benchmark: Compact-First Architecture
+
+Comparing Context-Dock against macOS 26 Apple Intelligence / Siri reveals three critical ergonomic principles:
+
+### 1. Compact Width Matching (Single-Column First)
+Traditional Mac utilities immediately pop up massive 680pt–800pt dual-column windows with split preview panes. This obscures the user's desktop workspace prematurely.
+- **Siri Approach:** The search result card strictly matches the exact horizontal width of the input pill below it (~420–480pt).
+- **Context-Dock Implementation:**
+  - `CornerBoardLayout.boardSize` enforces `baseWidth = AppChatPromptMetrics.boardWidth(for: self)`.
+  - The preview side panel is suppressed by default (`boardPreview = nil`).
+  - A toggle button in the board footer (`sidebar.right` / `sidebar.trailing`) gives the user deliberate control to expand into a dual-column inspect panel (`680pt`) with a smooth glide animation.
+
+### 2. Unified Dark Smoked Acrylic Glass Token
+A common visual bug in macOS visual effect apps occurs when a transparent clear glass (`fill(Color.clear)` over `NSVisualEffectView`) is paired with an opaque dark input field. Under certain wallpapers or lighting, the result card appears as a milky white wash, creating an unsightly two-tone contrast.
+- **Context-Dock Solution:** Unify the background token across `AppChatListCard`, `CornerCombinedCard`, and `BoardGlass` using `Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85)` backed by `GlassBackground(cornerRadius: 22, isDark: true)`. This guarantees a deep smoked dark acrylic texture that blends seamlessly with the prompt pill in both light and dark macOS appearances.
+
+### 3. Graceful Fallback Action Ladder (No-Match Handling)
+When a user types a natural-language query that does not correspond to an exact local application, menu command, or file (e.g., *"what im doing in"*), an empty window or irrelevant suggestions creates friction.
+- **Siri Action Ladder:**
+  Siri displays an intent action ladder:
+  1. **Ask AI** (`sparkles` icon) → Dispatches prompt to the AI coworker model (`model.submit()`).
+  2. **Search The Web** (`globe` icon) → Opens the query in the default browser (`model.openWebSearch()`).
+  3. **Search in Finder** (`magnifyingglass` icon) → Launches Finder Mac-wide search (`model.openFinderSearch()`).
+- **Context-Dock Implementation:**
+  - `AppChatListCard` dynamically renders the 3-step fallback ladder whenever `rows.isEmpty && !query.isEmpty`.
+  - Arrow keys glide seamlessly across fallback options via `FluidMotion.selectionGlide`.
+  - Return on top item (default focus `0`) defaults to asking the AI coworker.
+  - The footer status pill dynamically adapts: *"Ask AI · Ask"*, *"Web search · Search"*, *"Finder · Search"*.
+
+---
+
+## 6. Checklist for Future UI Contributions
+
+Before merging any new list, menu, or search UI:
+- [ ] Uses `fluidSelection(isSelected: ...)` with `FluidMotion.selectionGlide`.
+- [ ] Gated mouse hover with `mouseGate.moved()` to prevent stationary cursor fighting.
+- [ ] Leading icon utilizes `fluidIconZoom(isFocused: ...)`.
+- [ ] `proxy.scrollTo` synchronized with selection animation spring.
+- [ ] Uses dark smoked acrylic glass token (`Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85)`).
+- [ ] Compact-first by default; side panels gated behind explicit toggle or expansion.
+- [ ] Non-matching queries provide actionable fallbacks (Ask AI, Web, Finder).

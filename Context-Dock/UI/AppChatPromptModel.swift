@@ -128,6 +128,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var pinnedPreviewPinID: UUID?
     /// The pin card grown by its expand control (`DockPinPreviewMetrics.folderExpanded`).
     @Published private(set) var pinPreviewExpanded = false
+    /// Whether the result sheet expands horizontally to display the preview side panel.
+    /// Defaults to false (compact single-column mode matching input width like Siri).
+    @Published var isSidePanelExpanded = false
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
 
@@ -754,8 +757,8 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: auto-expand the result sheet when there are matching rows (Raycast/Spotlight parity).
-        if typed { return rows.isEmpty ? .prompt : .suggesting }
+        // Typed: auto-expand the result sheet when there are matching rows or query to fall back (Raycast/Spotlight/Siri parity).
+        if typed { return .suggesting }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
@@ -1458,6 +1461,32 @@ final class AppChatPromptModel: ObservableObject {
         set(.chat)
         touch()
         return true
+    }
+
+    /// Siri fallback: Search the web via default browser.
+    func openWebSearch() {
+        let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        if let encoded = question.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+        close()
+    }
+
+    /// Siri fallback: Search files on Mac via Finder.
+    func openFinderSearch() {
+        let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        let script = """
+        tell application "Finder"
+            activate
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            appleScript.executeAndReturnError(nil)
+        }
+        close()
     }
 
     /// A question was asked elsewhere and its answer belongs here.
