@@ -372,7 +372,7 @@ struct NoteTaskAction: Equatable, Identifiable {
 /// A grounded Reminders result. Action receipts and list rows stay structured so the
 /// conversation reads like a task manager instead of an MCP debug console.
 struct MessageSentAction: Equatable, Identifiable {
-    enum State: Equatable { case sent, failed }
+    enum State: Equatable { case sent, unconfirmed, failed }
 
     let id: UUID
     let recipientName: String
@@ -1095,11 +1095,19 @@ struct AIChatMessageView: View {
                     ZStack {
                         Circle()
                             .fill(msg.state == .sent
-                                ? Color.green.opacity(0.14) : Color.red.opacity(0.14))
+                                ? Color.green.opacity(0.14)
+                                : msg.state == .unconfirmed
+                                    ? Color.orange.opacity(0.14)
+                                    : Color.red.opacity(0.14))
                         Image(systemName: msg.state == .sent
-                            ? "checkmark" : "xmark")
+                            ? "checkmark"
+                            : msg.state == .unconfirmed
+                                ? "questionmark"
+                                : "xmark")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(msg.state == .sent ? .green : .red)
+                            .foregroundStyle(
+                                msg.state == .sent ? .green
+                                    : msg.state == .unconfirmed ? .orange : .red)
                     }
                     .frame(width: 30, height: 30)
 
@@ -1108,7 +1116,9 @@ struct AIChatMessageView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                         HStack(spacing: 5) {
-                            Text(msg.state == .sent ? "Sent" : "Failed")
+                            Text(msg.state == .sent ? "Sent"
+                                : msg.state == .unconfirmed ? "Handed to Messages"
+                                : "Failed")
                             if msg.recipientHandle != msg.recipientName {
                                 Text("\u{00B7}")
                                 Text(msg.recipientHandle)
@@ -1145,7 +1155,9 @@ struct AIChatMessageView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(
-                            (msg.state == .sent ? Color.green : Color.red).opacity(0.22),
+                            (msg.state == .sent ? Color.green
+                                : msg.state == .unconfirmed ? Color.orange
+                                : Color.red).opacity(0.22),
                             lineWidth: 0.7)
                 }
             }

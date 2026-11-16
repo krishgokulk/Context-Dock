@@ -175,14 +175,16 @@ enum AppleMessagesMCPCapabilities {
                         to: recipient, filePath: filePath, body: body.isEmpty ? nil : body)
                     if res.success {
                         await emitSentRow(
-                            recipient: recipient, fileName: (filePath as NSString).lastPathComponent,
+                            recipient: recipient,
+                            fileName: (filePath as NSString).lastPathComponent,
+                            delivery: res.delivery,
                             scope: request.chatScope)
                     }
                     return .init(success: res.success, output: res.message)
                 }
                 let res = await MessagesAutomation.sendMessage(to: recipient, body: body)
                 if res.success {
-                    await emitSentRow(recipient: recipient, fileName: nil, scope: request.chatScope)
+                    await emitSentRow(recipient: recipient, fileName: nil, delivery: res.delivery, scope: request.chatScope)
                 }
                 return .init(success: res.success, output: res.message)
             }
@@ -190,7 +192,11 @@ enum AppleMessagesMCPCapabilities {
     }
 
     @MainActor
-    private static func emitSentRow(recipient: String, fileName: String?, scope: GeneralChatScope?) {
+    private static func emitSentRow(
+        recipient: String, fileName: String?,
+        delivery: MessagesChatDBReader.DeliveryStatus = .unconfirmed,
+        scope: GeneralChatScope?
+    ) {
         let resolved = MessagesAutomation.resolveRecipient(recipient)
         let name: String
         let handle: String
@@ -207,7 +213,13 @@ enum AppleMessagesMCPCapabilities {
             subtitle: handle != name ? handle : "",
             detail: fileName ?? "",
             bundleID: "com.apple.MobileSMS")
-        row.messageSentState = .sent
+        row.messageSentState = {
+            switch delivery {
+            case .confirmed: return .sent
+            case .unconfirmed, .accessDenied: return .unconfirmed
+            case .failed: return .failed
+            }
+        }()
         ChatResultRowCollector.shared.add([row], scope: scope)
     }
 

@@ -233,14 +233,14 @@ enum MessagesAutomation {
 
     // MARK: - Send Message (Rung 3 AppleScript -> Rung 4 UI Fallback + Verified Read-Back)
 
-    static func sendMessage(to recipient: String, body: String) async -> (success: Bool, message: String, verified: Bool) {
+    static func sendMessage(to recipient: String, body: String) async -> (success: Bool, message: String, delivery: MessagesChatDBReader.DeliveryStatus) {
         let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRecipient.isEmpty else {
-            return (false, "No recipient provided.", false)
+            return (false, "No recipient provided.", .accessDenied)
         }
         guard !trimmedBody.isEmpty else {
-            return (false, "No message body provided.", false)
+            return (false, "No message body provided.", .accessDenied)
         }
 
         // 1. Resolve contact handle
@@ -252,7 +252,7 @@ enum MessagesAutomation {
             displayName = contact.name
         case .ambiguous(let contacts):
             let options = contacts.prefix(4).map { "\($0.name) (\($0.handle))" }.joined(separator: ", ")
-            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which one to message.", false)
+            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which one to message.", .accessDenied)
         case .notFound:
             targetHandle = trimmedRecipient
             displayName = trimmedRecipient
@@ -282,14 +282,13 @@ enum MessagesAutomation {
         let scriptResult = AppleAppsAPI.shared.handleAppleScript(script) ?? ""
         if scriptResult.hasPrefix("SENT_") {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            let verified = MessagesChatDBReader.verifySentMessage(to: targetHandle, textSnippet: trimmedBody)
-            let readback = verified ? " (Verified in Messages history)" : ""
-            return (true, "Sent message to \(displayName)\(readback).", verified)
+            let delivery = MessagesChatDBReader.checkDelivery(to: targetHandle, textSnippet: trimmedBody)
+            return (true, "Handed message to Messages for \(displayName)\(delivery.statusNote).", delivery)
         }
 
         // 3. Fallback to native UI automation (imessage:// URL + text entry + Enter)
         guard let app = await activateOrLaunchMessages() else {
-            return (false, "Could not launch Messages.", false)
+            return (false, "Could not launch Messages.", .accessDenied)
         }
 
         let encoded = targetHandle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? targetHandle
@@ -303,26 +302,25 @@ enum MessagesAutomation {
                 postEnter(to: app.processIdentifier)
 
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                let verified = MessagesChatDBReader.verifySentMessage(to: targetHandle, textSnippet: trimmedBody)
-                let readback = verified ? " (Verified via chat.db)" : ""
-                return (true, "Sent message to \(displayName)\(readback).", verified)
+                let delivery = MessagesChatDBReader.checkDelivery(to: targetHandle, textSnippet: trimmedBody)
+                return (true, "Handed message to Messages for \(displayName)\(delivery.statusNote).", delivery)
             }
         }
 
-        return (false, "Could not send message to \(displayName).", false)
+        return (false, "Could not send message to \(displayName).", .accessDenied)
     }
 
     // MARK: - Send File
 
     static func sendFile(
         to recipient: String, filePath: String, body: String?
-    ) async -> (success: Bool, message: String) {
+    ) async -> (success: Bool, message: String, delivery: MessagesChatDBReader.DeliveryStatus) {
         let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRecipient.isEmpty else {
-            return (false, "No recipient provided.")
+            return (false, "No recipient provided.", .accessDenied)
         }
         guard FileManager.default.fileExists(atPath: filePath) else {
-            return (false, "No file at \(filePath).")
+            return (false, "No file at \(filePath).", .accessDenied)
         }
 
         let targetHandle: String
@@ -333,7 +331,7 @@ enum MessagesAutomation {
             displayName = contact.name
         case .ambiguous(let contacts):
             let options = contacts.prefix(4).map { "\($0.name) (\($0.handle))" }.joined(separator: ", ")
-            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which one to message.")
+            return (false, "Multiple contacts found for '\(trimmedRecipient)': \(options). Please specify which one to message.", .accessDenied)
         case .notFound:
             targetHandle = trimmedRecipient
             displayName = trimmedRecipient
@@ -363,9 +361,11 @@ enum MessagesAutomation {
         let result = AppleAppsAPI.shared.handleAppleScript(script) ?? ""
         if result.hasPrefix("SENT_") {
             let fileName = (filePath as NSString).lastPathComponent
-            return (true, "Sent \(fileName) to \(displayName) via Messages.")
+            let delivery: MessagesChatDBReader.DeliveryStatus =
+                MessagesChatDBReader.isAccessible ? .unconfirmed : .accessDenied
+            return (true, "Handed \(fileName) to Messages for \(displayName)\(delivery.statusNote).", delivery)
         }
-        return (false, "Could not send file to \(displayName) via Messages.")
+        return (false, "Could not send file to \(displayName) via Messages.", .accessDenied)
     }
 
     // MARK: - AX Helpers
