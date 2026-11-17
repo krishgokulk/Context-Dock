@@ -39,6 +39,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "subject", description: "Optional subject filter", required: false),
                 ]),
                 riskLevel: .low,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -80,6 +81,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "limit", description: "Maximum messages to return (default 20)", required: false),
                 ]),
                 riskLevel: .low,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -125,6 +127,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "body", description: "Message body text", required: true),
                 ]),
                 riskLevel: .high,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -156,6 +159,7 @@ enum AppleMailMCPCapabilities {
                 appBundleID: "com.apple.mail",
                 inputSchema: .init(fields: []),
                 riskLevel: .low,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { _ in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -184,6 +188,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "body", description: "Message body", required: false),
                 ]),
                 riskLevel: .medium,
+                runsWithoutAdapter: true,
                 surface: .opensApp  // opens the Mail composer window (#307)
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -218,6 +223,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "limit", description: "How many recent inbox messages (default 10)", required: false)
                 ]),
                 riskLevel: .low,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
@@ -242,6 +248,7 @@ enum AppleMailMCPCapabilities {
                     .init(name: "id", description: "Message id from mail.recent; leave empty for the latest message", required: false)
                 ]),
                 riskLevel: .low,
+                runsWithoutAdapter: true,
                 needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
