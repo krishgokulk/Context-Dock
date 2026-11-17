@@ -490,6 +490,11 @@ enum AppScopedChatService {
             !candidates.contains(where: { Self.isMessagesApp(bundleId: $0.bundleId) })
         {
             candidates.append((name: "Messages", bundleId: "com.apple.MobileSMS"))
+        } else if namesClockApp(query),
+            !candidates.contains(where: { $0.bundleId.lowercased() == "com.apple.clock" }),
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.clock") != nil
+        {
+            candidates.append((name: "Clock", bundleId: "com.apple.clock"))
         }
 
         // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
@@ -547,6 +552,17 @@ enum AppScopedChatService {
             "via imessage", "via i message", "via message", "message to ", "send a message"
         ]
         return variants.contains(where: q.contains)
+    }
+
+    /// Whether the query contains a timer/alarm intent that belongs to Clock, not to the
+    /// current scoped app — "set a timer for 1 min" is always Clock, never Mail (#188).
+    nonisolated static func namesClockApp(_ query: String) -> Bool {
+        let q = query.lowercased()
+        let clockIntents = [
+            "set a timer", "start a timer", "timer for", "set timer",
+            "set an alarm", "alarm for", "set alarm", "stopwatch"
+        ]
+        return clockIntents.contains(where: q.contains)
     }
 
     /// Whether the sentence points at this app, rather than merely containing its name.
@@ -641,6 +657,8 @@ enum AppScopedChatService {
             (["note", "notes"], "com.apple.Notes", "Notes"),
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
+            // Timer/alarm intents belong to Clock, not to the scoped app (#188).
+            (["timer", "alarm", "stopwatch"], "com.apple.clock", "Clock"),
         ]
         // Whole words, not substrings.
         //

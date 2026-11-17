@@ -2255,6 +2255,28 @@ extension DockCore {
     /// Pure: whether a query may start an installed extension whose trigger words it matches.
     static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
 
+    /// True when a query looks like a shell command the on-device Foundation Models cannot
+    /// execute — e.g. "run curl …" or "curl http://…" — and would mis-select
+    /// app_chat_history for the program name. Accepts an injectable `isProgram` for
+    /// deterministic unit tests (#188).
+    static func looksLikeOnDeviceShellQuery(
+        _ query: String,
+        isProgram: (String) -> Bool = { name in
+            ["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/usr/local/bin"]
+                .contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") }
+        }
+    ) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if GlobalFallbacks.looksLikeShellCommand(trimmed, isProgram: isProgram) { return true }
+        let lower = trimmed.lowercased()
+        for verb in ["run ", "execute ", "exec "] where lower.hasPrefix(verb) {
+            let rest = String(trimmed.dropFirst(verb.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if GlobalFallbacks.looksLikeShellCommand(rest, isProgram: isProgram) { return true }
+        }
+        return false
+    }
+
     /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
     /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
     /// `AppleMessagesMCPCapabilities`). Genuine cross-app contextual share payloads (`"send this file
@@ -3888,6 +3910,19 @@ extension DockCore {
                         }
                     }
                 } else if provider == .onDevice {
+                    // (#188) On-device Foundation Models have no shell capability; they
+                    // mis-select app_chat_history for "run curl …" and similar. Answer
+                    // immediately without entering the model loop.
+                    if DockCore.looksLikeOnDeviceShellQuery(query) {
+                        await MainActor.run {
+                            self.l2.chatMessages.append(
+                                AIChatMessage(role: .assistant,
+                                              content: "I can't run commands here."))
+                            self.l2.isLoading = false
+                            self.finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
                     let cliCommand: String? = scopedBundleId.hasPrefix("cli://")
                         ? String(scopedBundleId.dropFirst("cli://".count))
                         : nil
