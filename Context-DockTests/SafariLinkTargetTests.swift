@@ -63,6 +63,19 @@ struct SafariLinkTargetTests {
         #expect(url?.absoluteString == "https://openai.com/api/")
     }
 
+    @Test("explicitURL preserves balanced parens inside URL path (Wikipedia-style)")
+    func explicitURLBalancedParens() {
+        let url = SafariPageLinkRules.explicitURL(
+            in: "follow https://en.wikipedia.org/wiki/Swift_(programming_language)")
+        #expect(url?.absoluteString == "https://en.wikipedia.org/wiki/Swift_(programming_language)")
+    }
+
+    @Test("explicitURL strips unbalanced outer parentheses")
+    func explicitURLUnbalancedParens() {
+        let url = SafariPageLinkRules.explicitURL(in: "(https://example.com/api)")
+        #expect(url?.absoluteString == "https://example.com/api")
+    }
+
     // MARK: - Explicit URL target selection (the Issue #180 bug)
 
     @Test("Explicit URL targets the exact on-page link, never a different domain match")
@@ -79,6 +92,27 @@ struct SafariLinkTargetTests {
         let links = openAIPageLinks()
         let matches = DockCoreLinkTargetTestHarness.rankedLinks(
             links, for: "follow a link https://openai.com/research/")
+        #expect(matches.isEmpty)
+    }
+
+    @Test("Explicit URL path comparison is case-sensitive")
+    func explicitURLCaseSensitive() {
+        // /Report ≠ /report — different resources on a case-sensitive server
+        let links = [
+            link("Report", url: "https://example.com/Report"),
+            link("report", url: "https://example.com/report"),
+        ]
+        let matches = DockCoreLinkTargetTestHarness.rankedLinks(
+            links, for: "open https://example.com/Report")
+        #expect(matches.count == 1)
+        #expect(matches.first?.url == "https://example.com/Report")
+    }
+
+    @Test("Explicit URL not found by prefix — returns empty, never substitutes /api-v2 for /api")
+    func explicitURLNoPrefixFallback() {
+        let links = [link("API v2", url: "https://example.com/api-v2")]
+        let matches = DockCoreLinkTargetTestHarness.rankedLinks(
+            links, for: "follow https://example.com/api")
         #expect(matches.isEmpty)
     }
 
@@ -147,6 +181,21 @@ struct SafariLinkTargetTests {
 /// so the ranking logic can be exercised without a live CoreData or SafariBridge stack.
 enum DockCoreLinkTargetTestHarness {
 
+    // Mirror of DockCore+AIChat's canonicalURL. Scheme+host lowercased, path case-preserved,
+    // trailing slash stripped. Changes to the production function must be reflected here.
+    static func canonicalURL(_ urlStr: String) -> String {
+        guard let url = URL(string: urlStr) else { return urlStr }
+        var result = url.scheme.map { $0.lowercased() + "://" } ?? ""
+        result += url.host.map { $0.lowercased() } ?? ""
+        if let port = url.port { result += ":\(port)" }
+        var path = url.path
+        if path.hasSuffix("/"), path.count > 1 { path = String(path.dropLast()) }
+        result += path
+        if let query = url.query { result += "?\(query)" }
+        if let fragment = url.fragment { result += "#\(fragment)" }
+        return result
+    }
+
     static func rankedLinks(
         _ links: [PageLinkAction], for query: String
     ) -> [PageLinkAction] {
@@ -154,10 +203,8 @@ enum DockCoreLinkTargetTestHarness {
         // implementation. Changes to the production function must be reflected here.
 
         if let target = SafariPageLinkRules.explicitURL(in: query) {
-            let targetStr = target.absoluteString.lowercased()
-            let exact = links.filter { $0.url.lowercased() == targetStr }
-            if !exact.isEmpty { return exact }
-            return links.filter { $0.url.lowercased().hasPrefix(targetStr) }
+            let targetNorm = canonicalURL(target.absoluteString)
+            return links.filter { canonicalURL($0.url) == targetNorm }
         }
 
         let ignored: Set<String> = [

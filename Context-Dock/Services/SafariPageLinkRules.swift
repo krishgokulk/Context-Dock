@@ -93,18 +93,46 @@ enum SafariPageLinkRules {
     ///
     /// "follow a link https://openai.com/api/" → `URL("https://openai.com/api/")`
     /// "open the pricing link" → nil (no literal URL present)
+    /// "follow https://en.wikipedia.org/wiki/Swift_(programming_language)" → the full URL with parens
     static func explicitURL(in query: String) -> URL? {
-        let words = query.components(separatedBy: .whitespaces)
-        for word in words {
-            let cleaned = word.trimmingCharacters(
-                in: CharacterSet(charactersIn: ".,;:\"'()[]<>"))
-            guard let url = URL(string: cleaned),
-                  let scheme = url.scheme, scheme.hasPrefix("http"),
-                  url.host != nil
-            else { continue }
-            return url
+        // Characters that may trail a URL in prose but are never meaningful URL path chars.
+        let simpleStrip = CharacterSet(charactersIn: ".,;:\"'[]<>")
+        for word in query.components(separatedBy: .whitespaces) {
+            // 1. Strip simple surrounding punctuation first (trailing "." is never a URL path end).
+            let stripped = word.trimmingCharacters(in: simpleStrip)
+            if let url = httpURL(stripped) { return url }
+            // 2. Strip a matching outer paren pair: "(https://example.com)" → valid URL.
+            if stripped.first == "(" && stripped.last == ")" {
+                let inner = String(stripped.dropFirst().dropLast())
+                if let url = httpURL(inner) { return url }
+            }
+            // 3. Strip only unbalanced outer parens so "Swift_(programming_language)" survives
+            //    but a stray trailing ")" is removed.
+            if let url = httpURL(strippingUnbalancedParens(stripped)) { return url }
         }
         return nil
+    }
+
+    private static func httpURL(_ s: String) -> URL? {
+        guard let url = URL(string: s),
+              let scheme = url.scheme, scheme.hasPrefix("http"),
+              url.host != nil
+        else { return nil }
+        return url
+    }
+
+    private static func strippingUnbalancedParens(_ s: String) -> String {
+        var result = s
+        let opens = result.filter { $0 == "(" }.count
+        let closes = result.filter { $0 == ")" }.count
+        if closes > opens {
+            var excess = closes - opens
+            while excess > 0, result.last == ")" { result = String(result.dropLast()); excess -= 1 }
+        } else if opens > closes {
+            var excess = opens - closes
+            while excess > 0, result.first == "(" { result = String(result.dropFirst()); excess -= 1 }
+        }
+        return result
     }
 
     // MARK: - Opening one of them

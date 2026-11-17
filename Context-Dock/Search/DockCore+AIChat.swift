@@ -4668,17 +4668,31 @@ extension DockCore {
         return SafariPageLinkRules.opensAPageLink(query)
     }
 
+    // Scheme and host are case-insensitive (RFC 3986); path, query and fragment are not.
+    // Strip a trailing slash so https://example.com/api and https://example.com/api/ match.
+    private func canonicalURL(_ urlStr: String) -> String {
+        guard let url = URL(string: urlStr) else { return urlStr }
+        var result = url.scheme.map { $0.lowercased() + "://" } ?? ""
+        result += url.host.map { $0.lowercased() } ?? ""
+        if let port = url.port { result += ":\(port)" }
+        var path = url.path
+        if path.hasSuffix("/"), path.count > 1 { path = String(path.dropLast()) }
+        result += path
+        if let query = url.query { result += "?\(query)" }
+        if let fragment = url.fragment { result += "#\(fragment)" }
+        return result
+    }
+
     private func rankedSafariPageLinks(
         _ links: [PageLinkAction], for query: String
     ) -> [PageLinkAction] {
         // Explicit URL in query: match against it exactly; never substitute a different link.
         // Returns the matching on-page link(s), or empty if the URL isn't found on this page
         // (the caller navigates to the URL directly in that case).
+        // No prefix fallback: https://example.com/api ≠ https://example.com/api-v2.
         if let target = SafariPageLinkRules.explicitURL(in: query) {
-            let targetStr = target.absoluteString.lowercased()
-            let exact = links.filter { $0.url.lowercased() == targetStr }
-            if !exact.isEmpty { return exact }
-            return links.filter { $0.url.lowercased().hasPrefix(targetStr) }
+            let targetNorm = canonicalURL(target.absoluteString)
+            return links.filter { canonicalURL($0.url) == targetNorm }
         }
 
         let ignored: Set<String> = [
