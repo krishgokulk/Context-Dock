@@ -2255,6 +2255,71 @@ extension DockCore {
     /// Pure: whether a query may start an installed extension whose trigger words it matches.
     static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
 
+    /// True when a query looks like a shell command the on-device Foundation Models cannot
+    /// execute — e.g. "run curl …" or "curl http://…" — and would mis-select
+    /// app_chat_history for the program name. Accepts an injectable `isProgram` for
+    /// deterministic unit tests (#188).
+    static func looksLikeOnDeviceShellQuery(
+        _ query: String,
+        isProgram: (String) -> Bool = { name in
+            // Sandbox-safe: FileManager.isExecutableFile always returns false inside the app
+            // sandbox, so we keep a static list of common Unix programs (#188).
+            Self.sandboxSafeKnownPrograms.contains(name)
+        }
+    ) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if GlobalFallbacks.looksLikeShellCommand(trimmed, isProgram: isProgram) { return true }
+        let lower = trimmed.lowercased()
+        for verb in ["run ", "execute ", "exec "] where lower.hasPrefix(verb) {
+            let rest = String(trimmed.dropFirst(verb.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if GlobalFallbacks.looksLikeShellCommand(rest, isProgram: isProgram) { return true }
+        }
+        return false
+    }
+
+    /// Programs a sandboxed app can't stat via FileManager but which the on-device model may
+    /// name in a shell-command phrasing (#188).
+    private static let sandboxSafeKnownPrograms: Set<String> = [
+        "curl", "wget", "git", "ls", "grep", "cat", "echo", "find", "sed", "awk", "xargs",
+        "npm", "yarn", "npx", "pnpm", "node", "deno", "bun",
+        "python", "python3", "pip", "pip3", "ruby", "gem", "bundle", "rails",
+        "brew", "port", "ssh", "scp", "rsync", "sftp",
+        "tar", "zip", "unzip", "gzip", "gunzip", "bzip2",
+        "make", "cmake", "ninja", "meson",
+        "xcode-select", "swift", "swiftc", "clang", "clang++", "gcc", "g++",
+        "go", "cargo", "rustc", "mvn", "gradle", "java", "javac",
+        "docker", "kubectl", "helm", "terraform", "ansible", "vagrant",
+        "ffmpeg", "convert", "jq", "yq", "openssl", "gpg",
+        "ps", "top", "kill", "killall", "lsof", "netstat", "ping", "nmap",
+        "chmod", "chown", "ln", "mkdir", "rmdir", "rm", "mv", "cp", "touch",
+        "head", "tail", "sort", "uniq", "wc", "diff", "patch", "tr",
+        "base64", "md5", "shasum", "which", "type", "env", "export",
+        "source", "bash", "zsh", "sh", "fish", "pwsh", "osascript",
+    ]
+
+    /// Parses a natural-language timer/countdown request and returns the duration in seconds.
+    /// Returns nil when the query is not a timer request or no duration is found (#188).
+    static func parseOnDeviceTimerSeconds(_ query: String) -> Int? {
+        let lower = query.lowercased().trimmingCharacters(in: .whitespaces)
+        guard lower.contains("timer") || lower.contains("countdown") || lower.contains("alarm")
+            || lower.range(of: #"\bremind\b.*\bin\b"#, options: .regularExpression) != nil
+        else { return nil }
+        let pattern = #"(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|seconds?|secs?)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+        else { return nil }
+        var total = 0
+        for match in regex.matches(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
+            guard let numR = Range(match.range(at: 1), in: lower),
+                  let unitR = Range(match.range(at: 2), in: lower),
+                  let n = Double(lower[numR]) else { continue }
+            let unit = String(lower[unitR])
+            let mult = unit.hasPrefix("h") ? 3600 : unit.hasPrefix("m") ? 60 : 1
+            total += max(1, Int(n) * mult)
+        }
+        return total > 0 ? total : nil
+    }
+
     /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
     /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
     /// `AppleMessagesMCPCapabilities`). Genuine cross-app contextual share payloads (`"send this file
@@ -3888,6 +3953,31 @@ extension DockCore {
                         }
                     }
                 } else if provider == .onDevice {
+                    // (#188) On-device Foundation Models have no shell capability; they
+                    // mis-select app_chat_history for "run curl …" and similar. Answer
+                    // immediately without entering the model loop.
+                    if DockCore.looksLikeOnDeviceShellQuery(query) {
+                        await MainActor.run {
+                            self.l2.chatMessages.append(
+                                AIChatMessage(role: .assistant,
+                                              content: "I can't run commands here."))
+                            self.l2.isLoading = false
+                            self.finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                    // (#188) Timer/countdown requests: start the Dynamic Notch timer directly so
+                    // the model never hallucinates "Timer started" without actually doing anything.
+                    if let timerSecs = DockCore.parseOnDeviceTimerSeconds(query) {
+                        await MainActor.run {
+                            DynamicNotchState.shared.startTimer(seconds: timerSecs, label: "Timer")
+                            self.l2.chatMessages.append(
+                                AIChatMessage(role: .assistant, content: "⏱ Timer started."))
+                            self.l2.isLoading = false
+                            self.finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
                     let cliCommand: String? = scopedBundleId.hasPrefix("cli://")
                         ? String(scopedBundleId.dropFirst("cli://".count))
                         : nil

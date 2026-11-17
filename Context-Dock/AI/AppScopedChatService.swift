@@ -490,6 +490,13 @@ enum AppScopedChatService {
             !candidates.contains(where: { Self.isMessagesApp(bundleId: $0.bundleId) })
         {
             candidates.append((name: "Messages", bundleId: "com.apple.MobileSMS"))
+        } else if namesClockApp(query),
+            AppSettings.shared.selectedAIProvider != .onDevice,
+            !candidates.contains(where: { $0.bundleId.lowercased() == "com.apple.clock" })
+        {
+            // Clock.app is iOS-only; this candidate triggers the "Connect Clock" prompt
+            // for cloud providers. On-device uses start_notch_timer directly (#188).
+            candidates.append((name: "Clock", bundleId: "com.apple.clock"))
         }
 
         // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
@@ -547,6 +554,17 @@ enum AppScopedChatService {
             "via imessage", "via i message", "via message", "message to ", "send a message"
         ]
         return variants.contains(where: q.contains)
+    }
+
+    /// Whether the query contains a timer/alarm intent that belongs to Clock, not to the
+    /// current scoped app — "set a timer for 1 min" is always Clock, never Mail (#188).
+    nonisolated static func namesClockApp(_ query: String) -> Bool {
+        let q = query.lowercased()
+        let clockIntents = [
+            "set a timer", "start a timer", "timer for", "set timer",
+            "set an alarm", "alarm for", "set alarm", "stopwatch"
+        ]
+        return clockIntents.contains(where: q.contains)
     }
 
     /// Whether the sentence points at this app, rather than merely containing its name.
@@ -641,6 +659,8 @@ enum AppScopedChatService {
             (["note", "notes"], "com.apple.Notes", "Notes"),
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
+            // Timer/alarm intents belong to Clock, not to the scoped app (#188).
+            (["timer", "alarm", "stopwatch"], "com.apple.clock", "Clock"),
         ]
         // Whole words, not substrings.
         //
@@ -1469,6 +1489,21 @@ enum AppScopedChatService {
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
+
+        // (#188) On-device pre-guards: short-circuit before routing so the model never runs.
+        if provider == .onDevice {
+            if DockCore.looksLikeOnDeviceShellQuery(query) {
+                return Answer(
+                    text: "On‑device intelligence can't run shell commands — try switching to a cloud provider for that.",
+                    toolChips: [])
+            }
+            if let timerSecs = DockCore.parseOnDeviceTimerSeconds(query) {
+                await MainActor.run {
+                    DynamicNotchState.shared.startTimer(seconds: timerSecs, label: "Timer")
+                }
+                return Answer(text: "⏱ Timer started.", toolChips: [])
+            }
+        }
 
         // Rows belong to the turn that read them. Clearing here means last turn's notes can
         // never appear under this turn's answer, which is worse than showing none — a stale

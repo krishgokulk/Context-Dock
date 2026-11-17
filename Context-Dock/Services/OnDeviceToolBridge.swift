@@ -221,6 +221,46 @@ struct ShellCommandTool: Tool {
     }
 }
 
+// MARK: - StartNotchTimerTool
+
+/// Starts a countdown timer displayed natively in the Dynamic Notch (#188).
+/// Use this for all timer, alarm, and countdown requests instead of run_shell_command.
+@available(macOS 26.0, *)
+struct StartNotchTimerTool: Tool {
+    let name = "start_notch_timer"
+    let description = "Start a countdown timer shown in the Dynamic Notch. Use for any timer, alarm, or countdown request."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "Duration in seconds. Convert from natural language: '1 min' → 60, '5 minutes' → 300, '1 hour 30 min' → 5400.")
+        var seconds: Int
+
+        @Guide(description: "Short label shown in the timer display, e.g. 'Tea', 'Pomodoro', 'Pasta'. Default: 'Timer'.")
+        var label: String
+
+        init() {
+            self.seconds = 60
+            self.label = "Timer"
+        }
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let secs = max(1, arguments.seconds)
+        let label = arguments.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Timer" : arguments.label
+        await MainActor.run {
+            DynamicNotchState.shared.startTimer(seconds: secs, label: label)
+        }
+        let mins = secs / 60
+        let rem = secs % 60
+        let display: String
+        if mins > 0, rem > 0 { display = "\(mins)m \(rem)s" }
+        else if mins > 0 { display = "\(mins)m" }
+        else { display = "\(secs)s" }
+        return "⏱ \(label) timer started — \(display) countdown in the notch."
+    }
+}
+
 @available(macOS 26.0, *)
 struct SpawnWorkerTool: Tool {
     let name = "spawn_worker"
@@ -1342,6 +1382,7 @@ final class OnDeviceToolSession {
             ResolveMetadataTool(gate: gate),
             ShellCommandTool(axContext: axContext, recorder: recorder, gate: gate),
             SpawnWorkerTool(gate: gate),
+            StartNotchTimerTool(),
             SendKeysTool(),
             // Vision tools
             OCRTool(gate: gate),
@@ -1553,6 +1594,7 @@ final class OnDeviceToolSession {
         axContext: AXContext
     ) -> String {
         base
+            + "\n\nFor timer, alarm, countdown, or stopwatch requests, always use start_notch_timer — never use run_shell_command with sleep or nohup for timers.\n"
             + appMenuInstructions(for: bundleId, axContext: axContext)
             + cliInstructions(for: bundleId)
     }

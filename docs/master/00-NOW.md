@@ -10,6 +10,14 @@
 
 ## In progress
 
+**#188: Fix: on-device picks chat-history for 'run curl'; Mail chat runs shell timer (branch `claude/issue-188-scope-ondevice-tools-252109`):**
+- `DockCore.looksLikeOnDeviceShellQuery` detects "run <program>" / bare program / path-prefixed queries using injectable `isProgram` for testability.
+- On-device branch of `handleL2Query` answers "I can't run commands here." immediately for shell queries — never enters the model loop.
+- `AppScopedChatService.namesClockApp` added; Clock `else if` branch added to `appNeedingAccess` for app-scoped chats — timer/alarm always routes to Clock, not the scoped app.
+- Clock added to `subjectApps` for unscoped Global Context fallback.
+- 18 new tests in `OnDeviceShellGuardTests.swift` (3554 pass, 0 fail).
+- **Hand check needed:** (1) General Chat → on-device provider → "run curl https://httpbin.org/get" → must reply "I can't run commands here." (2) Mail App Chat → "can you set a timer for 1 min" → must prompt "enable Clock".
+
 **#180: Fix: Safari "follow a link <URL>" opens a different link from the page (branch `claude/safari-link-target-fix-5fa535`):**
 - `SafariPageLinkRules.explicitURL(in:)` detects a typed `http(s)` URL in the query.
 - `rankedSafariPageLinks` prefers exact/prefix URL match when an explicit URL is present; never falls through to domain-scored token matching.
