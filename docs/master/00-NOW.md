@@ -10,27 +10,11 @@
 
 ## In progress
 
-**#52: Notes count grounding — "how many notes?" must return live count (branch `claude/issue-52-notes-count-d92d74`):**
-- `notes.count` capability calls `AppleNotesMCPServer.noteCount()` → `AppleNotesExecutionService.noteCount()` (one Apple Event, never touches the metadata index).
-- Fallback to `cachedCount` only when the Apple Event fails and a cached value exists.
-- `NotesCountRoutingTests.swift` added: registration, risk level, count ≠ search distinction, disabled-guard path.
-- **Hand check needed:** Notes App Chat → "how many notes do i have?" → must return live count matching Notes.app total.
-
-**#188: Fix: on-device picks chat-history for 'run curl'; Mail chat runs shell timer (branch `claude/issue-188-scope-ondevice-tools-252109`):**
-- `DockCore.looksLikeOnDeviceShellQuery` detects "run <program>" / bare program / path-prefixed queries using injectable `isProgram` for testability.
-- On-device branch of `handleL2Query` answers "I can't run commands here." immediately for shell queries — never enters the model loop.
-- `AppScopedChatService.namesClockApp` added; Clock `else if` branch added to `appNeedingAccess` for app-scoped chats — timer/alarm always routes to Clock, not the scoped app.
-- Clock added to `subjectApps` for unscoped Global Context fallback.
-- 18 new tests in `OnDeviceShellGuardTests.swift` (3554 pass, 0 fail).
-- **Hand check needed:** (1) General Chat → on-device provider → "run curl https://httpbin.org/get" → must reply "I can't run commands here." (2) Mail App Chat → "can you set a timer for 1 min" → must prompt "enable Clock".
-
-**#180: Fix: Safari "follow a link <URL>" opens a different link from the page (branch `claude/safari-link-target-fix-5fa535`):**
-- `SafariPageLinkRules.explicitURL(in:)` detects a typed `http(s)` URL in the query.
-- `rankedSafariPageLinks` prefers exact/prefix URL match when an explicit URL is present; never falls through to domain-scored token matching.
-- Call site distinguishes: `count==1` auto-open, `count>1` ambiguous (present options), `count==0` with explicit URL navigates directly, `count==0` without shows all links.
-- Added "follow" to `opensAPageLink` verbs.
-- 12 tests in `SafariLinkTargetTests` + extended `SafariPageLinkRulesTests`.
-- **Hand check needed:** Safari App Chat → "follow a link https://openai.com/api/" on a page with other openai.com links → must open `/api/`, not blog or pricing.
+**#55: Fix: ask agent dispatches only against adapter actions — built-in capability registry unreachable (branch `claude/issue-55-ask-capabilities-885df4`):**
+- Root cause: `ChatRouteResolver.routes` applied word-overlap matching to built-in capabilities even for question queries. The app name ("notes") was stripped from query terms, leaving {"how", "many", "have"} which match nothing in `notes.count` or `notes.search`. Only adapter actions (New Note) appeared as candidates, so a counting question created a blank note.
+- Fix in `ChatRouteResolver.swift` (lines 465-481): question queries (`!isActionRequest`) include all read-only capabilities from `CapabilityRegistry` without term-matching; action queries still require word overlap.
+- 6 tests in `AskCapabilityRoutingTests.swift`: count-query routes, search-query routes, all-read-only-caps for a generic question, unattendedRoute finds a candidate, action queries still filter, `asCandidate()` sets `capabilityID` not `adapterActionID`.
+- **Hand check needed:** Notes App Chat → "how many notes do i have?" → must return a count (not create a blank note).
 
 ## Queued (next)
 
@@ -39,6 +23,21 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#52: Notes count grounding — "how many notes?" returns live count (PR #465, merged 2026-11-17):**
+- `AppleNotesExecutionService.noteCount()` uses one Apple Event to the Notes.app process, never the metadata index.
+- Fallback to `cachedCount` only on Apple Event failure. `NotesCountRoutingTests.swift` added.
+
+**#354: Mark mail MCP capabilities `runsWithoutAdapter` (PR #464, merged 2026-11-17):**
+- Mail MCP capabilities now appear in scoped chat tool blocks.
+
+**#188: on-device shell guard + Mail→Clock scope boundary (PR #463, merged 2026-11-17):**
+- `DockCore.looksLikeOnDeviceShellQuery` blocks shell queries on-device. Clock scope boundary routes timer/alarm to Clock.app.
+- 18 new tests in `OnDeviceShellGuardTests.swift`.
+
+**#180: Safari explicit URL target selection — never substitute a different link (PR #462, merged 2026-11-17):**
+- `SafariPageLinkRules.explicitURL(in:)` detects a typed `http(s)` URL; `rankedSafariPageLinks` prefers exact/prefix match.
+- 12 tests in `SafariLinkTargetTests`.
 
 **#233: App chat retracts notes.create on subsequent turn (PR #461, merged 2026-11-16):**
 - `DockCore+AIChat.swift` chatHistory builder appends `[Capability writes this turn: …]` marker; `ScopedTurnRunner` suppresses `claimsUnperformedWork` when no tools ran and history carries the marker. 3536 tests pass. Hand check confirmed.

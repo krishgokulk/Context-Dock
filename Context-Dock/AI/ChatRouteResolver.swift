@@ -464,11 +464,22 @@ enum ChatRouteResolver {
 
         // Built-in first-party capabilities (EventKit Calendar, Reminders, Contacts,
         // Music, Photos, Messages, Notes, Finder, Safari, Mail).
+        //
+        // For question queries the term filter cannot be applied: the app's own name
+        // ("notes") is stripped from the query terms, leaving only words like "how",
+        // "many", or "have" that match nothing in notes.count or notes.search. When
+        // the word filter was the only gate, a counting question reached only the Notes
+        // adapter action (New Note) and created a blank note — the recorded bug.
+        // All read-only capabilities are included for question queries; term-matching
+        // still narrows the list for action requests where intent guides the choice.
         let registeredCaps = CapabilityRegistry.shared.capabilities(for: bundleId)
+        let isQuestion = !isActionRequest(query)
         for cap in registeredCaps
         where (cap.appBundleID?.caseInsensitiveCompare(bundleId) == .orderedSame
                || (cap.appBundleID == nil && cap.id.lowercased().hasPrefix(appName.lowercased())))
-            && (matches(cap.title) || matches(cap.id) || matches(AppAdapterCapabilityCatalog.verbSynonyms(for: cap.id))) {
+            && (isQuestion
+                ? cap.riskLevel == .low
+                : (matches(cap.title) || matches(cap.id) || matches(AppAdapterCapabilityCatalog.verbSynonyms(for: cap.id)))) {
             routes.append(
                 ChatRoute(
                     id: "capability:\(cap.id)",
