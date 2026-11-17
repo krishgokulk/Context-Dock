@@ -2,6 +2,8 @@ import Foundation
 
 // First-party Apple Notes MCP capabilities registered in CapabilityRegistry.
 // Risk levels:
+//   notes.count           → .low   (live Apple Event count — never touches the metadata index)
+//   notes.recent          → .low   (metadata index; triggers refresh if cold)
 //   notes.search          → .low   (metadata only, no approval)
 //   notes.link_related    → .low   (metadata only, no approval)
 //   notes.read            → .low   (approval handled inside executor; persistent read skips UI)
