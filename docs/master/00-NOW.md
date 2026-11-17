@@ -10,6 +10,12 @@
 
 ## In progress
 
+**#52: Notes count grounding — "how many notes?" must return live count (branch `claude/issue-52-notes-count-d92d74`):**
+- `notes.count` capability calls `AppleNotesMCPServer.noteCount()` → `AppleNotesExecutionService.noteCount()` (one Apple Event, never touches the metadata index).
+- Fallback to `cachedCount` only when the Apple Event fails and a cached value exists.
+- `NotesCountRoutingTests.swift` added: registration, risk level, count ≠ search distinction, disabled-guard path.
+- **Hand check needed:** Notes App Chat → "how many notes do i have?" → must return live count matching Notes.app total.
+
 **#188: Fix: on-device picks chat-history for 'run curl'; Mail chat runs shell timer (branch `claude/issue-188-scope-ondevice-tools-252109`):**
 - `DockCore.looksLikeOnDeviceShellQuery` detects "run <program>" / bare program / path-prefixed queries using injectable `isProgram` for testability.
 - On-device branch of `handleL2Query` answers "I can't run commands here." immediately for shell queries — never enters the model loop.
