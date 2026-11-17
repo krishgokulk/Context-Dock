@@ -2298,6 +2298,28 @@ extension DockCore {
         "source", "bash", "zsh", "sh", "fish", "pwsh", "osascript",
     ]
 
+    /// Parses a natural-language timer/countdown request and returns the duration in seconds.
+    /// Returns nil when the query is not a timer request or no duration is found (#188).
+    static func parseOnDeviceTimerSeconds(_ query: String) -> Int? {
+        let lower = query.lowercased().trimmingCharacters(in: .whitespaces)
+        guard lower.contains("timer") || lower.contains("countdown") || lower.contains("alarm")
+            || lower.range(of: #"\bremind\b.*\bin\b"#, options: .regularExpression) != nil
+        else { return nil }
+        let pattern = #"(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|seconds?|secs?)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+        else { return nil }
+        var total = 0
+        for match in regex.matches(in: lower, range: NSRange(lower.startIndex..., in: lower)) {
+            guard let numR = Range(match.range(at: 1), in: lower),
+                  let unitR = Range(match.range(at: 2), in: lower),
+                  let n = Double(lower[numR]) else { continue }
+            let unit = String(lower[unitR])
+            let mult = unit.hasPrefix("h") ? 3600 : unit.hasPrefix("m") ? 60 : 1
+            total += max(1, Int(n) * mult)
+        }
+        return total > 0 ? total : nil
+    }
+
     /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
     /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
     /// `AppleMessagesMCPCapabilities`). Genuine cross-app contextual share payloads (`"send this file
@@ -3939,6 +3961,18 @@ extension DockCore {
                             self.l2.chatMessages.append(
                                 AIChatMessage(role: .assistant,
                                               content: "I can't run commands here."))
+                            self.l2.isLoading = false
+                            self.finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                    // (#188) Timer/countdown requests: start the Dynamic Notch timer directly so
+                    // the model never hallucinates "Timer started" without actually doing anything.
+                    if let timerSecs = DockCore.parseOnDeviceTimerSeconds(query) {
+                        await MainActor.run {
+                            DynamicNotchState.shared.startTimer(seconds: timerSecs, label: "Timer")
+                            self.l2.chatMessages.append(
+                                AIChatMessage(role: .assistant, content: "⏱ Timer started."))
                             self.l2.isLoading = false
                             self.finishL2AIRequest(l2RequestID)
                         }

@@ -1490,6 +1490,21 @@ enum AppScopedChatService {
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
 
+        // (#188) On-device pre-guards: short-circuit before routing so the model never runs.
+        if provider == .onDevice {
+            if DockCore.looksLikeOnDeviceShellQuery(query) {
+                return Answer(
+                    text: "On‑device intelligence can't run shell commands — try switching to a cloud provider for that.",
+                    toolChips: [])
+            }
+            if let timerSecs = DockCore.parseOnDeviceTimerSeconds(query) {
+                await MainActor.run {
+                    DynamicNotchState.shared.startTimer(seconds: timerSecs, label: "Timer")
+                }
+                return Answer(text: "⏱ Timer started.", toolChips: [])
+            }
+        }
+
         // Rows belong to the turn that read them. Clearing here means last turn's notes can
         // never appear under this turn's answer, which is worse than showing none — a stale
         // card looks current.

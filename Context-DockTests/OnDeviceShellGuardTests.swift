@@ -65,6 +65,28 @@ struct OnDeviceShellGuardTests {
     }
 }
 
+@Suite("On-device timer parser (#188)")
+struct OnDeviceTimerParserTests {
+
+    @Test("Common timer phrasings return correct seconds")
+    func commonPhrasing() {
+        #expect(DockCore.parseOnDeviceTimerSeconds("set a timer for 1 minute") == 60)
+        #expect(DockCore.parseOnDeviceTimerSeconds("timer for 30 seconds") == 30)
+        #expect(DockCore.parseOnDeviceTimerSeconds("5 minute timer") == 300)
+        #expect(DockCore.parseOnDeviceTimerSeconds("set a 2 hour countdown") == 7200)
+        #expect(DockCore.parseOnDeviceTimerSeconds("1 hour 30 min timer") == 5400)
+        #expect(DockCore.parseOnDeviceTimerSeconds("can you set a timer for 1 min") == 60)
+    }
+
+    @Test("Non-timer queries return nil")
+    func nonTimerQueries() {
+        #expect(DockCore.parseOnDeviceTimerSeconds("what time is it") == nil)
+        #expect(DockCore.parseOnDeviceTimerSeconds("run curl https://example.com") == nil)
+        #expect(DockCore.parseOnDeviceTimerSeconds("check my calendar") == nil)
+        #expect(DockCore.parseOnDeviceTimerSeconds("the old timer ran out") == nil)
+    }
+}
+
 @Suite("Clock scope boundary — app-scoped timer (#188)")
 struct ClockAppScopeTests {
 
