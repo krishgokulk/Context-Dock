@@ -15,6 +15,31 @@ import AppKit
 import Combine
 import SwiftUI
 
+// MARK: - Notch Timer
+
+struct NotchTimerEntry {
+    let id: UUID
+    let totalSeconds: Int
+    var remainingSeconds: Int
+    let label: String
+
+    var isFinished: Bool { remainingSeconds <= 0 }
+
+    var progress: Double {
+        guard totalSeconds > 0 else { return 1 }
+        return Double(totalSeconds - remainingSeconds) / Double(totalSeconds)
+    }
+
+    var formattedRemaining: String {
+        let total = max(0, remainingSeconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%d:%02d", m, s)
+    }
+}
+
 @MainActor
 final class DynamicNotchState: ObservableObject {
     static let shared = DynamicNotchState()
@@ -22,9 +47,13 @@ final class DynamicNotchState: ObservableObject {
     @Published var isExpanded: Bool = false
     @Published var selectedPage: Int = 0
     @Published var dragOffset: CGFloat = 0
+    @Published var activeTimer: NotchTimerEntry? = nil
 
     private var accumulatedScroll: CGFloat = 0
     private var isTrackingScroll = false
+    private var timerTask: Task<Void, Never>? = nil
+
+    var pageCount: Int { activeTimer != nil ? 4 : 3 }
 
     func toggleExpand() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
@@ -46,6 +75,48 @@ final class DynamicNotchState: ObservableObject {
         }
     }
 
+    func startTimer(seconds: Int, label: String = "Timer") {
+        timerTask?.cancel()
+        activeTimer = NotchTimerEntry(
+            id: UUID(), totalSeconds: seconds, remainingSeconds: seconds, label: label)
+        expand(page: 3)
+        timerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self else { return }
+                guard self.activeTimer != nil else { return }
+                self.activeTimer?.remainingSeconds -= 1
+                if self.activeTimer?.isFinished == true {
+                    self.onTimerFinished()
+                    return
+                }
+            }
+        }
+    }
+
+    func cancelTimer() {
+        timerTask?.cancel()
+        timerTask = nil
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            activeTimer = nil
+            if selectedPage == 3 { selectedPage = 0 }
+        }
+    }
+
+    private func onTimerFinished() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                self.activeTimer = nil
+                if self.selectedPage == 3 {
+                    self.selectedPage = 0
+                    self.isExpanded = false
+                }
+            }
+        }
+    }
+
     /// Handles two-finger trackpad horizontal swipe gestures with real-time feedback and spring snapping
     func handleTrackpadScroll(dx: CGFloat, phase: NSEvent.Phase) {
         if phase.contains(.began) {
@@ -56,8 +127,9 @@ final class DynamicNotchState: ObservableObject {
         if phase.contains(.changed) || (phase == [] && isTrackingScroll) {
             accumulatedScroll += dx
             let translation = accumulatedScroll
+            let last = pageCount - 1
             // Resistance / rubber-band at outer edges
-            if (selectedPage == 0 && translation > 0) || (selectedPage == 2 && translation < 0) {
+            if (selectedPage == 0 && translation > 0) || (selectedPage == last && translation < 0) {
                 dragOffset = translation * 0.25
             } else {
                 dragOffset = translation
@@ -68,7 +140,7 @@ final class DynamicNotchState: ObservableObject {
             isTrackingScroll = false
             let threshold: CGFloat = 35
             withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                if accumulatedScroll < -threshold && selectedPage < 2 {
+                if accumulatedScroll < -threshold && selectedPage < pageCount - 1 {
                     selectedPage += 1
                 } else if accumulatedScroll > threshold && selectedPage > 0 {
                     selectedPage -= 1
@@ -122,6 +194,7 @@ struct DynamicNotchLiveActivityView: View {
 
     private var hasActiveStatus: Bool {
         mediaObserver.isPlaying || shelfStore.items.count > 0 || actionFeedback.progressTitle != nil
+            || notchState.activeTimer != nil
     }
 
     private var islandWidth: CGFloat {
@@ -199,7 +272,9 @@ struct DynamicNotchLiveActivityView: View {
                         .onTapGesture {
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                                 notchState.expand()
-                                if shelfStore.items.count > 0 {
+                                if notchState.activeTimer != nil {
+                                    notchState.selectedPage = 3
+                                } else if shelfStore.items.count > 0 {
                                     notchState.selectedPage = 1
                                 } else if mediaObserver.isPlaying {
                                     notchState.selectedPage = 0
@@ -297,6 +372,13 @@ struct DynamicNotchLiveActivityView: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(.pink)
                         }
+                    } else if let timer = notchState.activeTimer {
+                        Image(systemName: timer.isFinished ? "checkmark.circle.fill" : "timer")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(timer.isFinished ? .green : .orange)
+                        Text(timer.formattedRemaining)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
                     } else if let running = actionFeedback.progressTitle {
                         Circle().fill(Color.orange).frame(width: 6, height: 6)
                         Text(running).font(.system(size: 10, weight: .medium)).lineLimit(1).foregroundStyle(.white)
@@ -346,6 +428,7 @@ struct DynamicNotchLiveActivityView: View {
                 .frame(height: max(notchH, 32) + 4)
 
             // 2. Interactive Sliding Page Carousel (Smooth Drag & Swipe Switching)
+            let totalPages = notchState.pageCount
             GeometryReader { geo in
                 HStack(alignment: .top, spacing: 0) {
                     mediaPage
@@ -354,8 +437,12 @@ struct DynamicNotchLiveActivityView: View {
                         .frame(width: pageWidth)
                     launcherPage
                         .frame(width: pageWidth)
+                    if notchState.activeTimer != nil {
+                        timerPage
+                            .frame(width: pageWidth)
+                    }
                 }
-                .frame(width: pageWidth * 3, alignment: .leading)
+                .frame(width: pageWidth * CGFloat(totalPages), alignment: .leading)
                 .offset(x: -CGFloat(selectedPage) * pageWidth + notchState.dragOffset)
                 .animation(.spring(response: 0.35, dampingFraction: 0.82), value: selectedPage)
             }
@@ -366,7 +453,8 @@ struct DynamicNotchLiveActivityView: View {
                 DragGesture(minimumDistance: 10)
                     .onChanged { value in
                         let translation = value.translation.width
-                        if (selectedPage == 0 && translation > 0) || (selectedPage == 2 && translation < 0) {
+                        let last = totalPages - 1
+                        if (selectedPage == 0 && translation > 0) || (selectedPage == last && translation < 0) {
                             notchState.dragOffset = translation * 0.25
                         } else {
                             notchState.dragOffset = translation
@@ -379,7 +467,7 @@ struct DynamicNotchLiveActivityView: View {
                         let threshold: CGFloat = 35
 
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            if totalMove < -threshold && selectedPage < 2 {
+                            if totalMove < -threshold && selectedPage < totalPages - 1 {
                                 selectedPage += 1
                             } else if totalMove > threshold && selectedPage > 0 {
                                 selectedPage -= 1
@@ -393,7 +481,7 @@ struct DynamicNotchLiveActivityView: View {
 
             // 3. Page Indicator Dots (DynamicBar / Drooppy Parity)
             HStack(spacing: 6) {
-                ForEach(0..<3) { index in
+                ForEach(0..<notchState.pageCount, id: \.self) { index in
                     pageDot(index: index)
                 }
             }
@@ -828,6 +916,55 @@ struct DynamicNotchLiveActivityView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Page 3: Native Notch Timer
+
+    @ViewBuilder
+    private var timerPage: some View {
+        if let entry = notchState.activeTimer {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.12), lineWidth: 3)
+                        .frame(width: 56, height: 56)
+                    Circle()
+                        .trim(from: 0, to: entry.isFinished ? 1 : CGFloat(entry.progress))
+                        .stroke(entry.isFinished ? Color.green : Color.orange,
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 56, height: 56)
+                        .animation(.linear(duration: 1), value: entry.progress)
+                    VStack(spacing: 1) {
+                        Text(entry.formattedRemaining)
+                            .font(.system(size: 15, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .contentTransition(.numericText(countsDown: true))
+                            .animation(.easeInOut(duration: 0.3), value: entry.remainingSeconds)
+                    }
+                }
+
+                Text(entry.isFinished ? "Done!" : entry.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(entry.isFinished ? .green : .white.opacity(0.65))
+                    .animation(.easeInOut, value: entry.isFinished)
+
+                if !entry.isFinished {
+                    Button {
+                        notchState.cancelTimer()
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.1), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

@@ -491,10 +491,11 @@ enum AppScopedChatService {
         {
             candidates.append((name: "Messages", bundleId: "com.apple.MobileSMS"))
         } else if namesClockApp(query),
+            AppSettings.shared.selectedAIProvider != .onDevice,
             !candidates.contains(where: { $0.bundleId.lowercased() == "com.apple.clock" })
         {
             // Clock.app is iOS-only; this candidate triggers the "Connect Clock" prompt
-            // which blocks the shell-timer fallback in scoped chats (#188).
+            // for cloud providers. On-device uses start_notch_timer directly (#188).
             candidates.append((name: "Clock", bundleId: "com.apple.clock"))
         }
 

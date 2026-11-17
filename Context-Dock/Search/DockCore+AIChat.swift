@@ -2262,8 +2262,9 @@ extension DockCore {
     static func looksLikeOnDeviceShellQuery(
         _ query: String,
         isProgram: (String) -> Bool = { name in
-            ["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/usr/local/bin"]
-                .contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") }
+            // Sandbox-safe: FileManager.isExecutableFile always returns false inside the app
+            // sandbox, so we keep a static list of common Unix programs (#188).
+            Self.sandboxSafeKnownPrograms.contains(name)
         }
     ) -> Bool {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2276,6 +2277,26 @@ extension DockCore {
         }
         return false
     }
+
+    /// Programs a sandboxed app can't stat via FileManager but which the on-device model may
+    /// name in a shell-command phrasing (#188).
+    private static let sandboxSafeKnownPrograms: Set<String> = [
+        "curl", "wget", "git", "ls", "grep", "cat", "echo", "find", "sed", "awk", "xargs",
+        "npm", "yarn", "npx", "pnpm", "node", "deno", "bun",
+        "python", "python3", "pip", "pip3", "ruby", "gem", "bundle", "rails",
+        "brew", "port", "ssh", "scp", "rsync", "sftp",
+        "tar", "zip", "unzip", "gzip", "gunzip", "bzip2",
+        "make", "cmake", "ninja", "meson",
+        "xcode-select", "swift", "swiftc", "clang", "clang++", "gcc", "g++",
+        "go", "cargo", "rustc", "mvn", "gradle", "java", "javac",
+        "docker", "kubectl", "helm", "terraform", "ansible", "vagrant",
+        "ffmpeg", "convert", "jq", "yq", "openssl", "gpg",
+        "ps", "top", "kill", "killall", "lsof", "netstat", "ping", "nmap",
+        "chmod", "chown", "ln", "mkdir", "rmdir", "rm", "mv", "cp", "touch",
+        "head", "tail", "sort", "uniq", "wc", "diff", "patch", "tr",
+        "base64", "md5", "shasum", "which", "type", "env", "export",
+        "source", "bash", "zsh", "sh", "fish", "pwsh", "osascript",
+    ]
 
     /// Pure: whether a turn scoped to Messages (`com.apple.MobileSMS`) should skip `CrossAppNLHandler`
     /// and stay in the Messages ladder (`ScopedRoutePolicy`, `AgentSourceAuthority`, and
