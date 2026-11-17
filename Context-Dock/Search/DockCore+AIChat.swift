@@ -3207,8 +3207,10 @@ extension DockCore {
                         if !pageLinks.isEmpty { source = "Safari current page" }
                     }
                     let matches = self.rankedSafariPageLinks(pageLinks, for: query)
+                    let explicitTarget = SafariPageLinkRules.explicitURL(in: query)
                     await MainActor.run {
-                        if let best = matches.first {
+                        if matches.count == 1, let best = matches.first {
+                            // Single confident match — open it directly.
                             SafariTabManager.shared.openURL(best.url)
                             l2.chatMessages.append(
                                 AIChatMessage(
@@ -3219,6 +3221,29 @@ extension DockCore {
                                         "Read current page links from \(source)",
                                         "Matched the request to \(best.domain)",
                                         "Opened the exact page link",
+                                    ]))
+                        } else if matches.count > 1 {
+                            // Multiple near-matches — the query is ambiguous; present options.
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: "I found several links that could match. Which one did you mean?",
+                                    pageLinks: Array(matches.prefix(20)),
+                                    trace: [
+                                        "Read current page links from \(source)",
+                                        "Multiple near-matches — presenting options",
+                                    ]))
+                        } else if let target = explicitTarget {
+                            // Explicit URL not found as an on-page link — navigate directly.
+                            SafariTabManager.shared.openURL(target.absoluteString)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: "Navigated to \(target.absoluteString) (not found as a link on this page, so opened directly).",
+                                    pageLinks: [],
+                                    trace: [
+                                        "Read current page links from \(source)",
+                                        "Explicit URL not on page — opened directly",
                                     ]))
                         } else {
                             l2.chatMessages.append(
@@ -4646,16 +4671,26 @@ extension DockCore {
     private func rankedSafariPageLinks(
         _ links: [PageLinkAction], for query: String
     ) -> [PageLinkAction] {
+        // Explicit URL in query: match against it exactly; never substitute a different link.
+        // Returns the matching on-page link(s), or empty if the URL isn't found on this page
+        // (the caller navigates to the URL directly in that case).
+        if let target = SafariPageLinkRules.explicitURL(in: query) {
+            let targetStr = target.absoluteString.lowercased()
+            let exact = links.filter { $0.url.lowercased() == targetStr }
+            if !exact.isEmpty { return exact }
+            return links.filter { $0.url.lowercased().hasPrefix(targetStr) }
+        }
+
         let ignored: Set<String> = [
-            "open", "visit", "this", "that", "page", "link", "links", "from", "the", "please",
-            "guide", "site", "website", "want", "think",
+            "open", "follow", "visit", "this", "that", "page", "link", "links", "from", "the",
+            "please", "guide", "site", "website", "want", "think",
         ]
         let tokens = query.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count > 2 && !ignored.contains($0) }
         guard !tokens.isEmpty else { return [] }
 
-        return links.compactMap { link -> (PageLinkAction, Int)? in
+        let scored: [(PageLinkAction, Int)] = links.compactMap { link in
             let title = link.title.lowercased()
             let domain = link.domain.lowercased()
             let url = link.url.lowercased()
@@ -4671,7 +4706,15 @@ extension DockCore {
             if $0.1 != $1.1 { return $0.1 > $1.1 }
             return $0.0.title.count < $1.0.title.count
         }
-        .map(\.0)
+
+        guard let (top, topScore) = scored.first else { return [] }
+        // Require at least a title or domain hit, and a clear lead over runner-up.
+        // If the query is ambiguous, return all near-matches so the caller can present them.
+        guard topScore >= 4 else { return scored.map(\.0) }
+        if let (_, second) = scored.dropFirst().first, topScore - second < 3 {
+            return scored.map(\.0)   // ambiguous — caller presents options, not auto-open
+        }
+        return [top]
     }
 
     private func safariPageLinks(
