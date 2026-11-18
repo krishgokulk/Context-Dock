@@ -77,14 +77,41 @@ enum AppAccessPolicy {
         }
     }
 
+    /// Whether a `.verifiedMenu` route may run a specific menu path at a given access level.
+    ///
+    /// A safe path at `.menuOnly` (e.g. `Window ▸ Minimize`) is allowed. An outbound or
+    /// destructive path (e.g. `Message ▸ Send`, `Message ▸ Reply`) is not: observing a menu
+    /// command exists is not permission to send something to another person. Those actions
+    /// require `.adapter` access or an explicit user consent grant.
+    ///
+    /// Pass an empty `menuPath` when the path is not known (e.g. in a route-level capability
+    /// filter); the check then falls back to the route-only answer.
+    static func allows(
+        _ route: DoraXActionCandidate.ExecutionRoute,
+        at level: AppAccessLevel,
+        menuPath: [String]
+    ) -> Bool {
+        guard allows(route, at: level) else { return false }
+        // Only `.menuOnly` needs the extra path check; `.adapter` already permits everything.
+        guard level == .menuOnly, route == .verifiedMenu, !menuPath.isEmpty else { return true }
+        return !AppMenuConsentStore.shared.isDestructive(path: menuPath)
+    }
+
     /// What to tell the user when a request needs more than they have granted.
     ///
     /// Four situations that used to share one sentence. "Add it to App Adapters" is the
     /// right answer to only one of them, and saying it for the others sends the user to
     /// Settings to fix something Settings cannot fix.
     static func explanation(
-        for appName: String, level: AppAccessLevel, wantedRead: Bool
+        for appName: String, level: AppAccessLevel, wantedRead: Bool, menuPath: [String] = []
     ) -> String {
+        if level == .menuOnly, !menuPath.isEmpty,
+            AppMenuConsentStore.shared.isDestructive(path: menuPath)
+        {
+            return "That action sends something to another person. \(appName) isn't fully "
+                + "connected, so outbound menu commands need an App Adapter — add it in "
+                + "Settings → App Adapters → Choose App, or use the action directly in the app."
+        }
         switch level {
         case .adapter:
             return "\(appName) is connected, but that particular capability isn't available."

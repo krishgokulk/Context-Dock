@@ -74,6 +74,44 @@ struct ContextDockChatAuthorityTests {
         }
     }
 
+    // MARK: - Outbound menu gating (Issue #68)
+
+    /// Safe menu commands (view, window, navigation) run freely at `.menuOnly`.
+    @Test func safeMenuPathAllowedAtMenuOnly() {
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["Window", "Minimize"]))
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["Edit", "Select All"]))
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["View", "Show Toolbar"]))
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["History", "Forward"]))
+    }
+
+    /// Outbound menu commands (Send, Reply, Forward outside History/Go, Share) are blocked at `.menuOnly`.
+    @Test func outboundMenuPathBlockedAtMenuOnly() {
+        #expect(!AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["Message", "Send"]))
+        #expect(!AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["Message", "Reply"]))
+        #expect(!AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["Message", "Forward"]))
+        #expect(!AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["File", "Share"]))
+        #expect(!AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: ["File", "Share…"]))
+    }
+
+    /// All menu paths are allowed at `.adapter`, including outbound ones.
+    @Test func outboundMenuPathAllowedAtAdapter() {
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .adapter, menuPath: ["Message", "Send"]))
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .adapter, menuPath: ["Message", "Reply"]))
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .adapter, menuPath: ["File", "Share"]))
+    }
+
+    /// An empty path falls back to the route-only answer (no spurious block).
+    @Test func emptyMenuPathDoesNotBlock() {
+        #expect(AppAccessPolicy.allows(.verifiedMenu, at: .menuOnly, menuPath: []))
+    }
+
+    /// The explanation names the outbound block when a path triggers it.
+    @Test func explanationNamesOutboundBlock() {
+        let msg = AppAccessPolicy.explanation(
+            for: "Mail", level: .menuOnly, wantedRead: false, menuPath: ["Message", "Send"])
+        #expect(msg.contains("sends something to another person"))
+    }
+
     @Test func mcpWritesRequireExactActionApproval() {
         let write = ChatRoute(
             id: "mcp:reminders.create", kind: .mcpTool,

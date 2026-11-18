@@ -93,8 +93,12 @@ final class ScopedCommandExecutor {
             .filter { !$0.isEmpty }
         guard !path.isEmpty else { return (false, "No menu path given.", -1) }
         let bundle = nonEmpty(invocation.arguments["bundleId"]) ?? configuration.bundleId
-        guard AppAccessPolicy.allows(.verifiedMenu, at: AppAccessPolicy.level(for: bundle)) else {
-            return (false, "\(configuration.appName) has not granted menu control.", -1)
+        guard AppAccessPolicy.allows(.verifiedMenu, at: AppAccessPolicy.level(for: bundle),
+                                     menuPath: path) else {
+            let level = AppAccessPolicy.level(for: bundle)
+            let msg = AppAccessPolicy.explanation(
+                for: configuration.appName, level: level, wantedRead: false, menuPath: path)
+            return (false, msg, -1)
         }
         onStatus?("Running \(path.joined(separator: " ▸ "))…")
         let (ok, output) = await AppAdapterManager.shared.runMenuPath(
