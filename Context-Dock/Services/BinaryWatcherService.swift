@@ -121,27 +121,12 @@ class BinaryWatcherService: ObservableObject {
     }
 
     private static func readLoginShellPATH() async -> String {
-        await Task.detached(priority: .utility) {
-            // Use the user's actual shell (respects fish, bash, zsh etc.)
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: shell)
-            // -l = login shell → sources profile files → full PATH
-            process.arguments = ["-l", "-c", "echo $PATH"]
-            let outPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError  = Pipe()  // suppress errors silently
-            guard (try? process.run()) != nil else { return "" }
-            // 3-second timeout so a broken shell profile doesn't hang startup
-            let deadline = Date().addingTimeInterval(3)
-            while process.isRunning && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-            if process.isRunning { process.terminate() }
-            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }.value
+        // Use the user's actual shell (respects fish, bash, zsh etc.)
+        // -l = login shell → sources profile files → full PATH
+        // 3-second timeout so a broken shell profile doesn't hang startup
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let result = await ShellProcess.run(shell, arguments: ["-l", "-c", "echo $PATH"], timeout: 3)
+        return result?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     func stopWatching() {

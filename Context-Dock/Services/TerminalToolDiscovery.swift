@@ -60,20 +60,7 @@ struct TerminalToolDiscovery {
     }
 
     private static func isInstalled(_ tool: String) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = [tool]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        ShellProcess.check("/usr/bin/which", arguments: [tool])
     }
 
     private static func discoverCustomExecutables(excluding known: Set<String>) -> [String] {

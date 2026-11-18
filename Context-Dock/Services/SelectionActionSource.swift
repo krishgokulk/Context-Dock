@@ -480,26 +480,14 @@ final class SelectionActionSource: SelectionActionProviding {
                     output = base.deletingLastPathComponent()
                         .appendingPathComponent("\(base.lastPathComponent).\(suffix)")
                 }
-                let process = Process()
-                process.executableURL = sips
                 var args = ["-s", "format", format]
                 if let quality {
                     args += ["-s", "formatOptions", quality]
                 }
                 args += [url.path, "--out", output.path]
-                process.arguments = args
-                process.standardInput = FileHandle.nullDevice
-                process.standardOutput = FileHandle.nullDevice
-                process.standardError = FileHandle.nullDevice
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    if process.terminationStatus == 0 {
-                        outputs.append(output)
-                    } else {
-                        failed += 1
-                    }
-                } catch {
+                if ShellProcess.check(sips.path, arguments: args) {
+                    outputs.append(output)
+                } else {
                     failed += 1
                 }
             }
@@ -538,30 +526,17 @@ final class SelectionActionSource: SelectionActionProviding {
         }
         effectiveHost.showFeedback(title: "Creating ZIP…", icon: "archivebox", success: true)
         Task.detached { [weak self] in
-            let process = Process()
-            process.executableURL = tool
-            process.currentDirectoryURL = parent
-            process.arguments =
+            let zipArgs: [String] =
                 urls.count == 1
                 ? ["-c", "-k", "--sequesterRsrc", "--keepParent", urls[0].lastPathComponent, output.path]
                 : ["-r", output.path] + urls.map(\.lastPathComponent)
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-                await MainActor.run {
-                    if process.terminationStatus == 0 {
-                        NSWorkspace.shared.activateFileViewerSelecting([output])
-                        self?.effectiveHost.showFeedback(title: "Created \(output.lastPathComponent)", icon: "archivebox", success: true)
-                    } else {
-                        self?.effectiveHost.showFeedback(title: "ZIP failed", icon: "exclamationmark.triangle", success: false)
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self?.effectiveHost.showFeedback(title: error.localizedDescription, icon: "exclamationmark.triangle", success: false)
+            let result = ShellProcess.runSync(tool.path, arguments: zipArgs, workingDirectory: parent)
+            await MainActor.run {
+                if result?.succeeded == true {
+                    NSWorkspace.shared.activateFileViewerSelecting([output])
+                    self?.effectiveHost.showFeedback(title: "Created \(output.lastPathComponent)", icon: "archivebox", success: true)
+                } else {
+                    self?.effectiveHost.showFeedback(title: "ZIP failed", icon: "exclamationmark.triangle", success: false)
                 }
             }
         }

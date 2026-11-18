@@ -1414,17 +1414,8 @@ final class DoraXMCPServer: ObservableObject {
     private static func captureScreen() -> String {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("dorax-mcp-\(Int(Date().timeIntervalSince1970)).png")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", path.path]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return "Couldn't take a screenshot: \(error.localizedDescription)"
+        guard ShellProcess.runSync("/usr/sbin/screencapture", arguments: ["-x", path.path]) != nil else {
+            return "Couldn't take a screenshot: screencapture failed to launch"
         }
         guard FileManager.default.fileExists(atPath: path.path),
             (try? Data(contentsOf: path))?.isEmpty == false

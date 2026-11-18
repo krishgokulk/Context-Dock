@@ -67,37 +67,20 @@ enum MarkItDownService {
     ) -> Conversion? {
         guard supports(input), let executableURL else { return nil }
 
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = [input.isFileURL ? input.path : input.absoluteString]
-
         var environment = ProcessInfo.processInfo.environment
         let paths = [
             "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
             "\(NSHomeDirectory())/.local/bin",
         ]
         environment["PATH"] = (paths + [environment["PATH"] ?? ""]).joined(separator: ":")
-        process.environment = environment
 
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        // Drain stdout before waiting so large documents cannot fill the pipe and deadlock.
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0,
-            let raw = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !raw.isEmpty
-        else { return nil }
+        guard let result = ShellProcess.runSync(
+            executableURL.path,
+            arguments: [input.isFileURL ? input.path : input.absoluteString],
+            environment: environment
+        ), result.succeeded else { return nil }
+        let raw = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
 
         let compacted = compact(raw, for: query, limit: max(1_000, characterBudget))
         return Conversion(markdown: compacted, wasTruncated: compacted.count < raw.count)

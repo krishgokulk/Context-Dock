@@ -229,43 +229,16 @@ final class AppDictionaryStore {
     /// Run `sdef <app path>`, capturing its XML. Hard watchdog: a hung scan must never
     /// pin a task forever — the pattern is the P8 CLI scanner's, at 20 s.
     private nonisolated static func sdefOutput(at appURL: URL) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sdef")
-        process.arguments = [appURL.path]
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        let timeout: TimeInterval = 20
-        var timedOut = false
-        let killer = DispatchWorkItem {
-            if process.isRunning {
-                timedOut = true
-                process.terminate()
-            }
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let drained: (output: Data, error: Data) = await withCheckedContinuation {
-            continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let out = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let err = errPipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: (out, err))
-            }
-        }
-        process.waitUntilExit()
-        killer.cancel()
-        if timedOut {
+        guard let result = await ShellProcess.run(
+            "/usr/bin/sdef",
+            arguments: [appURL.path],
+            timeout: 20
+        ) else {
             throw NSError(
                 domain: "AppDictionaryStore", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "sdef timed out after 20 s."])
         }
-        _ = String(data: drained.error, encoding: .utf8)
-        return (String(data: drained.output, encoding: .utf8) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: App facts

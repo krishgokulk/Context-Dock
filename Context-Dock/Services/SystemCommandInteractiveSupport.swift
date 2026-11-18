@@ -180,19 +180,8 @@ enum SystemCommandInteractiveRunner {
         _ arguments: [String],
         value: String
     ) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
         var environment = ProcessInfo.processInfo.environment
         environment["CD_QUERY"] = value
-        process.environment = environment
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8)
+        return ShellProcess.runSync(executable, arguments: arguments, environment: environment)?.stdout
     }
 }

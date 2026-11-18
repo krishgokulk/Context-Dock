@@ -125,18 +125,22 @@ class ShortcutRunner {
 
         try process.run()
 
-        // Write JSON payload to stdin
+        // Write JSON payload to stdin, then close so the shortcut can read EOF
         if let data = payload.data(using: .utf8) {
             inputPipe.fileHandleForWriting.write(data)
         }
         inputPipe.fileHandleForWriting.closeFile()
 
-        // Wait for completion
-        process.waitUntilExit()
-
-        // Read output
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain both output pipes concurrently with waitUntilExit.
+        // waitUntilExit before readDataToEndOfFile deadlocks if output exceeds the 64 KB pipe buffer.
+        let grp = DispatchGroup()
+        let outBox = NSMutableData(); let errBox = NSMutableData()
+        grp.enter(); Thread.detachNewThread { outBox.setData(outputPipe.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { errBox.setData(errorPipe.fileHandleForReading.readDataToEndOfFile()); grp.leave() }
+        grp.enter(); Thread.detachNewThread { process.waitUntilExit(); grp.leave() }
+        grp.wait()
+        let outputData = outBox as Data
+        let errorData = errBox as Data
 
         let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let error = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -202,28 +206,8 @@ class ShortcutRunner {
 
     /// Check if ILauncher Runner v2 is installed
     func isRunnerInstalled() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
-        process.arguments = ["list"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                return output.contains("ILauncher Runner v2")
-            }
-        } catch {
-            #if DEBUG
-            print("❌ Failed to check Runner installation: \(error)")
-            #endif
-        }
-
-        return false
+        guard let result = ShellProcess.runSync("/usr/bin/shortcuts", arguments: ["list"]) else { return false }
+        return result.stdout.contains("ILauncher Runner v2")
     }
 
     // MARK: - Direct Input Mode (No Runner v2 Needed!)
@@ -321,6 +305,8 @@ class ShortcutRunner {
         // Setup process pipes
         if needsStdinInput {
             process.standardInput = inputPipe
+        } else {
+            process.standardInput = FileHandle.nullDevice
         }
         process.standardOutput = outputPipe
         process.standardError = errorPipe
@@ -337,10 +323,16 @@ class ShortcutRunner {
             inputPipe.fileHandleForWriting.closeFile()
         }
 
-        process.waitUntilExit()
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain both output pipes concurrently with waitUntilExit.
+        // waitUntilExit before readDataToEndOfFile deadlocks if output exceeds the 64 KB pipe buffer.
+        let drainGrp = DispatchGroup()
+        let outBox = NSMutableData(); let errBox = NSMutableData()
+        drainGrp.enter(); Thread.detachNewThread { outBox.setData(outputPipe.fileHandleForReading.readDataToEndOfFile()); drainGrp.leave() }
+        drainGrp.enter(); Thread.detachNewThread { errBox.setData(errorPipe.fileHandleForReading.readDataToEndOfFile()); drainGrp.leave() }
+        drainGrp.enter(); Thread.detachNewThread { process.waitUntilExit(); drainGrp.leave() }
+        drainGrp.wait()
+        let outputData = outBox as Data
+        let errorData = errBox as Data
 
         let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let error = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

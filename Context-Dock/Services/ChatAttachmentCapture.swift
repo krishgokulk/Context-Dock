@@ -60,18 +60,7 @@ enum ChatAttachmentCapture {
             .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
         let args: [String] = (interactive ? ["-i"] : ["-x"]) + [url.path]
         Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = args
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                return
-            }
+            guard ShellProcess.runSync("/usr/sbin/screencapture", arguments: args) != nil else { return }
             await MainActor.run { deliver(url) }
         }
     }
