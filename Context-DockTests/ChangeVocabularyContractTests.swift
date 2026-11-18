@@ -60,6 +60,21 @@ struct ChangeVocabularyContractTests {
         "app.menu.click": "close this window",
         "capture.area": "take a screenshot of this area",
         "capture.text": "capture the text on screen",
+        // Calendar capabilities.
+        "calendar.create": "create a calendar event for lunch tomorrow",
+        "calendar.delete": "delete my 3pm meeting",
+        "calendar.update": "update my 3pm meeting to 4pm",
+        // Contacts capabilities.
+        "contacts.create": "create a contact for john smith",
+        // Notes capabilities.
+        "notes.delete": "delete this note",
+        "notes.export": "export this note as pdf",
+        // System capabilities.
+        "system.captureScreenshot": "take a screenshot",
+        // Terminal capabilities.
+        "terminal.runCommand": "run this command in terminal",
+        // Window capabilities.
+        "window.arrange": "arrange my windows",
     ]
 
     /// Capabilities nobody asks for by name.
@@ -73,11 +88,6 @@ struct ChangeVocabularyContractTests {
     private static let dispatchedWithoutPhrasing: Set<String> = [
         // Mechanisms: chosen by the model, not asked for.
         "appadapter.run", "mcp.call", "menu.execute", "extension.run", "finder.directAction",
-        // Adapters without an eval pass yet. Each is a row waiting to be written, and the
-        // reason this set is a list rather than a wildcard.
-        "calendar.create", "calendar.delete", "calendar.update", "contacts.create",
-        "notes.delete", "notes.export", "system.captureScreenshot", "terminal.runCommand",
-        "window.arrange",
     ]
 
     /// Global commands are excused as a class, not one id at a time.
