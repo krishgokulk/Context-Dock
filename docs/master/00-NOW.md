@@ -10,11 +10,10 @@
 
 ## In progress
 
-**#43: Shell process hygiene — 54 files run a child Process with inherited stdin and/or wait-before-read (branch `claude/issue-43-shell-process-hygiene-f0f53d`):**
-- Root cause: three hazard patterns: (1) no `standardInput = FileHandle.nullDevice` → SIGTTIN in test runner; (2) `waitUntilExit()` before `readDataToEndOfFile()` → deadlock when pipe buffer fills at 64 KB; (3) sequential two-pipe reads (stdout then stderr) → deadlock when stderr fills before stdout EOF.
-- `ShellProcess.swift` unified helper already in place: `runSync`, `run` (async), `check` with concurrent drain + SIGTERM→SIGKILL timeout.
-- Migrated: `TerminalToolDiscovery`, `LocalInstallationCheck`, `SystemCommandInteractiveSupport`, `ShortcutsCatalog`, `ProcessMonitorService`, `MarkItDownService`, `AppDictionaryStore`, `ScreenCaptureService`, `ChatAttachmentCapture`, `FileTypeToolRegistry`, `AppKnowledgeService`, `SelectionActionSource`, `CustomListProviderService`, `BinaryWatcherService`, `DoraXMCPServer`, `UTCPDirectExecutor`, `AdapterPackImporter`, `FileSearchService`, `TerminalPackageManager.refreshManText`; fixed wait-before-read in `ShortcutRunner` (3 functions).
-- `ShellProcessTests.swift` added: stdin-null hang test, >128 KB output deadlock test, timeout cancellation test.
+**#65: Test host isolation — `DoraXMCPServer` binds port 8213 and collides with the running dev app (branch `claude/issue-65-test-host-isolation-6248fe`):**
+- `DoraXMCPServer.start()` now guards on `!AppDelegate.isHostingTests` — a no-op in the test host prevents `NWError error 48 — Address already in use`.
+- `startIfEnabled()` delegates to `start()`, so the guard covers both entry points.
+- `DoraXMCPServerTests.swift` added: two tests verify `isRunning` stays false when `isHostingTests` is true (plain `start()` and `startIfEnabled()` with UserDefaults key set).
 - `./scripts/check.sh --full` pending.
 
 ## Queued (next)
@@ -24,6 +23,9 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#43: Shell process hygiene — 54 files run a child Process with inherited stdin and/or wait-before-read (PR #467, merged 2026-11-18):**
+- Migrated 20 call sites to `ShellProcess.runSync`/`ShellProcess.run`; fixed 3-thread DispatchGroup drain in `ShortcutRunner`; added `ShellProcessTests.swift`.
 
 **#55: Fix: ask agent dispatches only against adapter actions — built-in capability registry unreachable (PR #466, merged 2026-11-17):**
 - `ChatRouteResolver` question queries now include all read-only capabilities from `CapabilityRegistry` without term-matching; action queries still require word overlap.
