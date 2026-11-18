@@ -3804,13 +3804,22 @@ extension DockCore {
                     // post-turn card insertion and Safari command dispatch.
                     let streamMessageID = UUID()
                     let turnScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    // Captured text (from Capture Text / Selection) must reach the
+                    // service's prompt assembly. The service has no capturedText
+                    // parameter, so prepend it to the query as a labelled block.
+                    let queryForService: String = {
+                        guard let txt = submittedContextDockText else { return query }
+                        return "Captured text:\n\(txt)\n\n\(query)"
+                    }()
                     let answer = try await AppScopedChatService.send(
                         scope: turnScope,
                         appName: scopedAppName.isEmpty
                             ? (frontmostName ?? frontmost.name) : scopedAppName,
-                        query: query,
+                        query: queryForService,
                         history: chatHistory,
                         attachments: submittedContextDockFiles,
+                        extraAppNames: AppChatConversation.shared.extraConnectedAppNames,
+                        finderSelection: submittedSelectedFiles,
                         onStream: { event in
                             Task { @MainActor in
                                 self.applyDockStreamEvent(
@@ -3842,7 +3851,8 @@ extension DockCore {
                             mcpToolsRan: answer.toolChips,
                             evidenceReceipts: answer.evidenceReceipts,
                             subjectiveEvaluation: answer.subjectiveEvaluation,
-                            trace: self.l2.routerTrace)
+                            trace: self.l2.routerTrace,
+                            actionChoices: answer.routeChoices)
                         msg.savedSkill = answer.savedSkill
                         msg.pendingWriteSkillOffer = answer.pendingWriteSkillOffer
                         msg = self.tagMessageWithProposal(msg)
