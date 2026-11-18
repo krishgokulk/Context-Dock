@@ -10,12 +10,11 @@
 
 ## In progress
 
-**#470: Provider capability profiles — let any provider execute app actions (branch `claude/issue-470-provider-capability-profiles-2c0ab7`):**
-- Added `ProviderCapabilityProfile` struct (`.full` / `.readOnly` / `.answerOnly` presets + `Tier` enum for settings display).
-- `AIProvider.capabilityProfile` property: API providers (anthropic, openAI, googleGemini, ollama, etc.) get `.full`; local/subscription providers get `.answerOnly`.
-- `ProviderActionNotice` now gates on `profile.canExecuteActions` instead of `supportsNativeTools` directly; added `mutationHandoffNote()` for one-tap switch UI.
-- `AIProviderRow` in Settings shows capability tier badge (✦ Full / ◎ Read / ○ Answer).
-- `ProviderCapabilityProfileTests.swift` + updated `ProviderActionNoticeTests.swift`.
+**#68: Mail adapter — registry has only `mail.recent`; writes go through the menu route (Enforce `.menuOnly` outbound gating, branch `claude/issue-68-menu-only-outbound-d9c16c`):**
+- Added `AppAccessPolicy.allows(_:at:menuPath:)` overload: for `.menuOnly` + `.verifiedMenu`, blocks any path `AppMenuConsentStore.isDestructive` flags (Send, Reply, Forward, Share, etc.).
+- Updated `AppAccessPolicy.explanation(for:level:wantedRead:menuPath:)` to surface a user-facing message for the new block.
+- `ScopedCommandExecutor.runMenu` passes the resolved path to the new overload and returns the explanation on refusal.
+- 5 new tests in `ContextDockChatAuthorityTests.swift` covering safe paths, outbound paths, adapter bypass, empty-path fallback, explanation text.
 - `./scripts/check.sh --full` pending.
 
 ## Queued (next)
@@ -25,6 +24,10 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#470: Provider capability profiles — per-provider action tier and mutation handoff notice (PR #471, merged 2026-11-18):**
+- Added `ProviderCapabilityProfile` struct (`.full` / `.readOnly` / `.answerOnly` presets + `Tier` enum for settings display).
+- `AIProvider.capabilityProfile` maps each provider; `ProviderActionNotice` gates on `profile.canExecuteActions`; Settings shows tier badge.
 
 **#64: Change vocabulary — derive from registry instead of maintaining by hand (PR #469, merged 2026-11-18):**
 - Moved 9 capabilities from `dispatchedWithoutPhrasing` into `phrasing`; added "arrange" to `requestsChange` verbs.
