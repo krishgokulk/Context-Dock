@@ -831,6 +831,9 @@ final class GeneralAIActionResolver {
             // reminders.update. "move" already covers "move these to tomorrow", but nobody
             // says that when they mean a date — they say reschedule.
             "reschedule",
+            // window.arrange. Unambiguous as a verb and not a common noun in read-shaped
+            // phrasing, so it carries no risk of turning a question into an instruction.
+            "arrange",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })

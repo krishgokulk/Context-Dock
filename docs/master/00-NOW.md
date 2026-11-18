@@ -10,10 +10,9 @@
 
 ## In progress
 
-**#65: Test host isolation — `DoraXMCPServer` binds port 8213 and collides with the running dev app (branch `claude/issue-65-test-host-isolation-6248fe`):**
-- `DoraXMCPServer.start()` now guards on `!AppDelegate.isHostingTests` — a no-op in the test host prevents `NWError error 48 — Address already in use`.
-- `startIfEnabled()` delegates to `start()`, so the guard covers both entry points.
-- `DoraXMCPServerTests.swift` added: two tests verify `isRunning` stays false when `isHostingTests` is true (plain `start()` and `startIfEnabled()` with UserDefaults key set).
+**#64: Change vocabulary — derive from registry instead of maintaining by hand (branch `claude/issue-64-change-vocabulary-36f83f`):**
+- Moved 9 capabilities from `dispatchedWithoutPhrasing` into `phrasing` in `ChangeVocabularyContractTests.swift`: `calendar.create`, `calendar.delete`, `calendar.update`, `contacts.create`, `notes.delete`, `notes.export`, `system.captureScreenshot`, `terminal.runCommand`, `window.arrange`.
+- Added "arrange" to `requestsChange` verbs in `GeneralAIActionResolver.swift` (the only verb missing for the new phrasings).
 - `./scripts/check.sh --full` pending.
 
 ## Queued (next)
@@ -23,6 +22,12 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#65: Test host isolation — `DoraXMCPServer` binds port 8213 and collides with the running dev app (PR #468, merged 2026-11-18):**
+- `DoraXMCPServer.start()` guards on `!AppDelegate.isHostingTests` — prevents `NWError error 48 — Address already in use`.
+- `startIfEnabled()` delegates to `start()`, so the guard covers both entry points.
+- `DoraXMCPServerTests.swift`: two tests verify `isRunning` stays false when `isHostingTests` is true.
+- `./scripts/check.sh --full` passed with 3572 tests (0 failed).
 
 **#43: Shell process hygiene — 54 files run a child Process with inherited stdin and/or wait-before-read (PR #467, merged 2026-11-18):**
 - Migrated 20 call sites to `ShellProcess.runSync`/`ShellProcess.run`; fixed 3-thread DispatchGroup drain in `ShortcutRunner`; added `ShellProcessTests.swift`.
