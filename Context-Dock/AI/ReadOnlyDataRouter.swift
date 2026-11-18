@@ -15,7 +15,7 @@
 import Foundation
 
 enum ReadOnlyDataDomain: String, Equatable {
-    case messages, mail, calendar, reminders, contacts, notes, photos
+    case messages, mail, calendar, reminders, contacts, notes, photos, screenshots
     var displayName: String {
         switch self {
         case .messages: return "Messages"
@@ -25,6 +25,15 @@ enum ReadOnlyDataDomain: String, Equatable {
         case .contacts: return "Contacts"
         case .notes: return "Notes"
         case .photos: return "Photos"
+        case .screenshots: return "Screenshots"
+        }
+    }
+    /// Whether macOS already gates access via TCC or Automation privacy, making the
+    /// "Enable [App]?" prompt in General Chat redundant for read-only queries.
+    var isOSPrimitive: Bool {
+        switch self {
+        case .calendar, .reminders, .contacts, .notes, .screenshots: return true
+        case .messages, .mail, .photos: return false
         }
     }
     /// macOS-style one-line justification shown under the approval prompt.
@@ -37,6 +46,7 @@ enum ReadOnlyDataDomain: String, Equatable {
         case .contacts: return "DoraX will read your contacts to answer this request."
         case .notes: return "DoraX will read your notes to answer this request."
         case .photos: return "DoraX will read photo metadata to answer your request."
+        case .screenshots: return "DoraX will search your screenshots using Spotlight."
         }
     }
 }
@@ -90,7 +100,8 @@ enum ReadOnlyDataRouter {
             (.calendar, ["calendar", "event", "meeting", "schedule", "appointment"]),
             (.reminders, ["reminder", "to-do", "todo", "task"]),
             (.notes, ["note about", "notes about", "my note", "my notes", "note", "notes"]),
-            (.photos, ["photo", "picture", "screenshot", "image of mine"]),
+            (.photos, ["photo", "picture", "image of mine"]),
+            (.screenshots, ["screenshot"]),
         ]
         // The head noun decides, and in English it comes last: "my bookmarks note" is a
         // note about bookmarks, and "my notes reminder" is a reminder. Taking the first

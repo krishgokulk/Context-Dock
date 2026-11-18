@@ -1217,6 +1217,7 @@ extension DockCore {
             case .reminders: return await remindersReadAnswer(query: query)
             case .contacts: return await contactsReadAnswer(query: query)
             case .notes: return await notesReadAnswer(query: query)
+            case .screenshots: return await screenshotsReadAnswer(query: query)
             default:
                 // Approved, but no direct local read wired yet — let the existing Apple-data
                 // enrichment / tool-loop fetch it (they read via MCP/automation).
@@ -1693,6 +1694,48 @@ extension DockCore {
         }.joined(separator: "\n")
         return await summarizeGroundedData(
             userQuery: query, dataLabel: "contacts", dataBlock: lines)
+    }
+
+    private func screenshotsReadAnswer(query: String) async -> String {
+        await MainActor.run { aiMode.loadingStatus = "Searching for screenshots…" }
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        process.arguments = [
+            "kMDItemIsScreenCapture == 1",
+            "-onlyin", NSHomeDirectory(),
+        ]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            await MainActor.run { aiMode.loadingStatus = nil }
+            return "Spotlight search for screenshots failed — \(error.localizedDescription)"
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let paths = output.split(separator: "\n").map(String.init)
+        await MainActor.run { aiMode.loadingStatus = nil }
+        guard !paths.isEmpty else {
+            return "No screenshots found on this Mac via Spotlight."
+        }
+        let fm = FileManager.default
+        let entries: [(path: String, date: Date)] = paths.compactMap { path in
+            guard let attrs = try? fm.attributesOfItem(atPath: path),
+                  let date = attrs[.creationDate] as? Date else { return nil }
+            return (path, date)
+        }.sorted { $0.date > $1.date }
+        let lines = entries.prefix(20).map { entry -> String in
+            let df = DateFormatter()
+            df.dateStyle = .medium
+            df.timeStyle = .short
+            let name = (entry.path as NSString).lastPathComponent
+            return "• \(name) — \(df.string(from: entry.date))\n  \(entry.path)"
+        }.joined(separator: "\n")
+        return await summarizeGroundedData(
+            userQuery: query, dataLabel: "screenshots", dataBlock: lines)
     }
 
     /// Ground the selected provider in locally-read data for summarization only. The provider

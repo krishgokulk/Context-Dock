@@ -200,6 +200,49 @@ enum ScopedTurnRunner {
             }
         }
 
+        // U2e: A capability call written as text — `{"capability_call": {…}}` or
+        // `{"finder.copyFiles": {…}}`. Non-tool providers can only request capabilities
+        // this way. Recovered through the same executor and approval path a real tool
+        // call uses.
+        if !pageAnswerOnly, !Task.isCancelled {
+            let capCall: (id: String, arguments: [String: Any])? = {
+                if let kc = ChatAnswerSanitizer.knownCall(in: text), kc.kind == "capability_call" {
+                    let id = kc.arguments["capability_id"] as? String ?? ""
+                    return (id, kc.arguments)
+                }
+                if let ic = ChatAnswerSanitizer.capabilityIDCall(in: text) {
+                    return (ic.id, ic.arguments)
+                }
+                return nil
+            }()
+            if let capCall, !capCall.id.isEmpty {
+                log.notice("recovering a capability call written as text: \(capCall.id, privacy: .public)")
+                recorder?.noteVerifier("prose_capability_call")
+                onStatus?("Running \(capCall.id)…")
+                var input: [String: String] = [:]
+                for (key, value) in capCall.arguments where key != "capability_id" {
+                    input[key] = String(describing: value)
+                }
+                let authorisation: AIConversationScope
+                if !scope.bundleId.isEmpty {
+                    authorisation = .contextDock(bundleID: scope.bundleId, appName: scope.appName)
+                } else {
+                    authorisation = .general
+                }
+                let outcome = await ChatCapabilityCallRecovery.run(
+                    capabilityID: capCall.id, arguments: input, query: query,
+                    context: scope.userContext, scope: authorisation, chatScope: scope.chatScope)
+                text = outcome.text
+                if outcome.succeeded {
+                    executed.append(.init(command: capCall.id, output: outcome.output, success: true))
+                }
+                ChatConsoleLog.shared.append(
+                    .tool, title: capCall.id,
+                    output: outcome.output.isEmpty ? "(no output)" : outcome.output,
+                    success: outcome.succeeded, scope: scope.chatScope)
+            }
+        }
+
         onStatus?(executed.isEmpty ? "Preparing the response…" : "Reading the tool results…")
 
         // "I can't tell from what I have" is a request for another round.

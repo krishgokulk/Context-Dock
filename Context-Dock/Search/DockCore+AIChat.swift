@@ -327,7 +327,7 @@ extension DockCore {
             ("com.apple.reminders", ["reminders", "reminder", "todo", "to-do", "to do"]),
             ("com.apple.notes", ["notes", "note"]),
             ("com.apple.mail", ["mail", "email", "inbox"]),
-            ("com.apple.photos", ["photos", "photo", "picture", "screenshot"]),
+            ("com.apple.photos", ["photos", "photo", "picture"]),
             ("com.apple.mobilesms", ["messages", "message", "imessage"]),
             ("com.apple.addressbook", ["contacts", "contact"]),
             ("com.apple.safari", ["safari", "tab", "tabs"]),

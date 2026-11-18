@@ -446,6 +446,11 @@ enum AppScopedChatService {
     static func appNeedingAccess(
         query: String, scope: GeneralChatScope, attachedAppNames: [String]
     ) -> EnableAppRequest? {
+        // U2c: OS system primitives (calendar, reminders, contacts, notes, screenshots)
+        // are readable directly through ReadOnlyDataRouter without enabling an app scope.
+        if scope.isGeneralChat, ReadOnlyDataRouter.domain(for: query)?.isOSPrimitive == true {
+            return nil
+        }
         // App threads ask too. A Safari conversation told to "add this page to my notes"
         // needs Notes, and until now nothing asked: the capability layer correctly hid
         // Notes' tools, and the request then fell through to driving Notes' MENU BAR from
@@ -1886,6 +1891,11 @@ enum AppScopedChatService {
             if case .app(let id) = scope { return id }
             if case .folder = scope { return ChatAppDirectory.finderBundleID }
             if let id = routingBundleId, !id.isEmpty { return id }
+            // U2a: General Chat and thread scopes never bleed the previous frontmost app.
+            // Falling back to previousFrontmostApp/frontmostApplication pinned General Chat
+            // to whatever app happened to be open, injecting its profile and menus.
+            if case .general = scope { return "" }
+            if case .thread = scope { return "" }
             if let prev = AppDelegate.shared?.previousFrontmostApp,
                let id = prev.bundleIdentifier, id != Bundle.main.bundleIdentifier {
                 return id
