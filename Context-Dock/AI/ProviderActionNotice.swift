@@ -21,7 +21,7 @@ enum ProviderActionNotice {
         producedEvidence: Bool = false
     ) -> String? {
         guard intent == .act || intent == .workflow else { return nil }
-        guard !provider.supportsNativeTools else { return nil }
+        guard !provider.capabilityProfile.canExecuteActions else { return nil }
         guard !producedEvidence else { return nil }
 
         // Claude Code is not a model that cannot act — it is an agent with its own tools,
@@ -38,6 +38,21 @@ enum ProviderActionNotice {
             + "its own toolset, so this chat's app actions — menu commands, adapter actions, "
             + "linked tools — are not available to it. Pick a provider that carries them in "
             + "Settings → AI Providers to run this from here."
+    }
+
+    /// One-tap handoff notice shown when the active provider cannot execute the requested
+    /// mutation. Unlike `note(provider:intent:producedEvidence:)` — which is appended after
+    /// a model answer — this is shown *before* sending the turn, as a UI nudge.
+    ///
+    /// Returns nil when the provider is capable or when the intent does not require actions.
+    static func mutationHandoffNote(
+        provider: AIProvider, intent: FrontmostAppTaskPlan.Intent
+    ) -> String? {
+        guard intent == .act || intent == .workflow else { return nil }
+        guard !provider.capabilityProfile.canExecuteActions else { return nil }
+
+        return "\(name(for: provider)) can answer questions but can't execute actions. "
+            + "Switch to a provider with Full capability in Settings → AI Providers to run this."
     }
 
     /// Named precisely, because `shortName` calls both the Anthropic API and the Claude Code

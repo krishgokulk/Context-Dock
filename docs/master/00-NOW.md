@@ -10,9 +10,12 @@
 
 ## In progress
 
-**#64: Change vocabulary — derive from registry instead of maintaining by hand (branch `claude/issue-64-change-vocabulary-36f83f`):**
-- Moved 9 capabilities from `dispatchedWithoutPhrasing` into `phrasing` in `ChangeVocabularyContractTests.swift`: `calendar.create`, `calendar.delete`, `calendar.update`, `contacts.create`, `notes.delete`, `notes.export`, `system.captureScreenshot`, `terminal.runCommand`, `window.arrange`.
-- Added "arrange" to `requestsChange` verbs in `GeneralAIActionResolver.swift` (the only verb missing for the new phrasings).
+**#470: Provider capability profiles — let any provider execute app actions (branch `claude/issue-470-provider-capability-profiles-2c0ab7`):**
+- Added `ProviderCapabilityProfile` struct (`.full` / `.readOnly` / `.answerOnly` presets + `Tier` enum for settings display).
+- `AIProvider.capabilityProfile` property: API providers (anthropic, openAI, googleGemini, ollama, etc.) get `.full`; local/subscription providers get `.answerOnly`.
+- `ProviderActionNotice` now gates on `profile.canExecuteActions` instead of `supportsNativeTools` directly; added `mutationHandoffNote()` for one-tap switch UI.
+- `AIProviderRow` in Settings shows capability tier badge (✦ Full / ◎ Read / ○ Answer).
+- `ProviderCapabilityProfileTests.swift` + updated `ProviderActionNoticeTests.swift`.
 - `./scripts/check.sh --full` pending.
 
 ## Queued (next)
@@ -22,6 +25,10 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#64: Change vocabulary — derive from registry instead of maintaining by hand (PR #469, merged 2026-11-18):**
+- Moved 9 capabilities from `dispatchedWithoutPhrasing` into `phrasing`; added "arrange" to `requestsChange` verbs.
+- `./scripts/check.sh --full` passed with 3572 tests (0 failed).
 
 **#65: Test host isolation — `DoraXMCPServer` binds port 8213 and collides with the running dev app (PR #468, merged 2026-11-18):**
 - `DoraXMCPServer.start()` guards on `!AppDelegate.isHostingTests` — prevents `NWError error 48 — Address already in use`.
