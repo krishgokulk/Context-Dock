@@ -321,51 +321,27 @@ final class CustomListProviderService {
         interpreter: SystemCommandActionType,
         env: [String: String]
     ) -> String {
-        let process = Process()
+        let exe: String
+        let args: [String]
         switch interpreter {
         case .bash:
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", script]
+            exe = "/bin/zsh"; args = ["-lc", script]
         case .applescript:
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", script]
+            exe = "/usr/bin/osascript"; args = ["-e", script]
         case .jxa:
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-l", "JavaScript", "-e", script]
+            exe = "/usr/bin/osascript"; args = ["-l", "JavaScript", "-e", script]
         case .scriptFile:
             let path = (script as NSString).expandingTildeInPath
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", "\(path.replacingOccurrences(of: "\"", with: "\\\""))"]
+            exe = "/bin/zsh"
+            args = ["-lc", "\(path.replacingOccurrences(of: "\"", with: "\\\""))"]
         case .url, .file, .aiPrompt:
             return ""  // not meaningful as a rows source
         }
-
         var environment = ProcessInfo.processInfo.environment
         for (k, v) in env { environment[k] = v }
-        process.environment = environment
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return ""
-        }
-
         // Kill a script that overruns rather than blocking this queue forever — a
         // `curl` with no network would otherwise leave the panel permanently busy.
-        let watchdog = DispatchWorkItem {
-            if process.isRunning { process.terminate() }
-        }
-        DispatchQueue.global(qos: .utility)
-            .asyncAfter(deadline: .now() + scriptTimeout, execute: watchdog)
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        watchdog.cancel()
-        return String(data: data, encoding: .utf8) ?? ""
+        return ShellProcess.runSync(exe, arguments: args, environment: environment, timeout: scriptTimeout)?.stdout ?? ""
     }
 
     /// Parse stdout into rows. Each non-empty line is a JSON object; a line that

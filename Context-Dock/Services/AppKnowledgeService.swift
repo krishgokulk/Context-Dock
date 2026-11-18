@@ -199,26 +199,10 @@ enum AppKnowledgeService {
 
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: exe)
-                process.arguments = args
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-                process.standardInput = FileHandle.nullDevice
-                do { try process.run() } catch {
-                    continuation.resume(returning: ""); return
-                }
-                // A context reader sits between the user pressing Send and the model
-                // being called, so it gets a short leash.
-                let watchdog = DispatchWorkItem {
-                    if process.isRunning { process.terminate() }
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 4, execute: watchdog)
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                watchdog.cancel()
-                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+                // Short leash: a context reader sits between the user pressing Send and the
+                // model being called.
+                let result = ShellProcess.runSync(exe, arguments: args, timeout: 4)
+                continuation.resume(returning: result?.stdout ?? "")
             }
         }
     }

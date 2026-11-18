@@ -174,21 +174,9 @@ final class ProcessMonitorService {
     }
 
     private func readPSRows() -> [PSRow] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,%cpu=,rss=,comm="]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return []
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        guard let result = ShellProcess.runSync("/bin/ps", arguments: ["-axo", "pid=,%cpu=,rss=,comm="]) else { return [] }
+        let text = result.stdout
+        guard !text.isEmpty else { return [] }
 
         var rows: [PSRow] = []
         let selfPID = ProcessInfo.processInfo.processIdentifier

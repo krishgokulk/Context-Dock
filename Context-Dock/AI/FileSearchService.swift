@@ -234,21 +234,9 @@ nonisolated enum FileSearchService {
             return "kMDItemDisplayName == '*\(safe)*'cd"
         }
         guard !clauses.isEmpty else { return [] }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-        process.arguments = roots.flatMap { ["-onlyin", $0] } + [clauses.joined(separator: " && ")]
-        process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do { try process.run() } catch { return [] }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-            if process.isRunning { process.terminate() }
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").map(String.init)
+        let args = roots.flatMap { ["-onlyin", $0] } + [clauses.joined(separator: " && ")]
+        guard let result = ShellProcess.runSync("/usr/bin/mdfind", arguments: args, timeout: timeout) else { return [] }
+        return result.stdout.split(separator: "\n").map(String.init)
     }
 
     // MARK: - What the model reads

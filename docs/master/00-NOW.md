@@ -10,11 +10,12 @@
 
 ## In progress
 
-**#55: Fix: ask agent dispatches only against adapter actions — built-in capability registry unreachable (branch `claude/issue-55-ask-capabilities-885df4`):**
-- Root cause: `ChatRouteResolver.routes` applied word-overlap matching to built-in capabilities even for question queries. The app name ("notes") was stripped from query terms, leaving {"how", "many", "have"} which match nothing in `notes.count` or `notes.search`. Only adapter actions (New Note) appeared as candidates, so a counting question created a blank note.
-- Fix in `ChatRouteResolver.swift` (lines 465-481): question queries (`!isActionRequest`) include all read-only capabilities from `CapabilityRegistry` without term-matching; action queries still require word overlap.
-- 6 tests in `AskCapabilityRoutingTests.swift`: count-query routes, search-query routes, all-read-only-caps for a generic question, unattendedRoute finds a candidate, action queries still filter, `asCandidate()` sets `capabilityID` not `adapterActionID`.
-- **Hand check needed:** Notes App Chat → "how many notes do i have?" → must return a count (not create a blank note).
+**#43: Shell process hygiene — 54 files run a child Process with inherited stdin and/or wait-before-read (branch `claude/issue-43-shell-process-hygiene-f0f53d`):**
+- Root cause: three hazard patterns: (1) no `standardInput = FileHandle.nullDevice` → SIGTTIN in test runner; (2) `waitUntilExit()` before `readDataToEndOfFile()` → deadlock when pipe buffer fills at 64 KB; (3) sequential two-pipe reads (stdout then stderr) → deadlock when stderr fills before stdout EOF.
+- `ShellProcess.swift` unified helper already in place: `runSync`, `run` (async), `check` with concurrent drain + SIGTERM→SIGKILL timeout.
+- Migrated: `TerminalToolDiscovery`, `LocalInstallationCheck`, `SystemCommandInteractiveSupport`, `ShortcutsCatalog`, `ProcessMonitorService`, `MarkItDownService`, `AppDictionaryStore`, `ScreenCaptureService`, `ChatAttachmentCapture`, `FileTypeToolRegistry`, `AppKnowledgeService`, `SelectionActionSource`, `CustomListProviderService`, `BinaryWatcherService`, `DoraXMCPServer`, `UTCPDirectExecutor`, `AdapterPackImporter`, `FileSearchService`, `TerminalPackageManager.refreshManText`; fixed wait-before-read in `ShortcutRunner` (3 functions).
+- `ShellProcessTests.swift` added: stdin-null hang test, >128 KB output deadlock test, timeout cancellation test.
+- `./scripts/check.sh --full` pending.
 
 ## Queued (next)
 
@@ -23,6 +24,10 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#55: Fix: ask agent dispatches only against adapter actions — built-in capability registry unreachable (PR #466, merged 2026-11-17):**
+- `ChatRouteResolver` question queries now include all read-only capabilities from `CapabilityRegistry` without term-matching; action queries still require word overlap.
+- 6 tests in `AskCapabilityRoutingTests.swift`. Hand check passed: "how many notes do i have?" returns a count, not a blank note.
 
 **#52: Notes count grounding — "how many notes?" returns live count (PR #465, merged 2026-11-17):**
 - `AppleNotesExecutionService.noteCount()` uses one Apple Event to the Notes.app process, never the metadata index.

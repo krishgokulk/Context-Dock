@@ -141,35 +141,18 @@ actor UTCPDirectExecutor {
         execution: UTCPExecution.CLIExecution,
         arguments: [String: Any]
     ) async -> (success: Bool, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-
         var fullArgs: [String] = [execution.command]
         fullArgs.append(contentsOf: execution.args)
-
         for (k, v) in arguments {
             fullArgs.append("--\(k)")
             fullArgs.append("\(v)")
         }
 
-        process.arguments = fullArgs
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            let success = (process.terminationStatus == 0)
-
-            let compacted = AgentToolResultStore.compactForModel(output, toolName: execution.command)
-            return (success, compacted)
-        } catch {
-            return (false, "UTCP CLI execution error: \(error.localizedDescription)")
+        guard let result = await ShellProcess.run("/usr/bin/env", arguments: fullArgs) else {
+            return (false, "UTCP CLI execution error: failed to launch or timed out")
         }
+        let output = result.stdout + result.stderr
+        let compacted = AgentToolResultStore.compactForModel(output, toolName: execution.command)
+        return (result.succeeded, compacted)
     }
 }

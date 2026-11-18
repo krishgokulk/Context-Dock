@@ -130,20 +130,10 @@ enum LocalInstallationCheck {
     }
 
     private static func pathFromWhich(_ executable: String) -> String? {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = [executable]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let output, !output.isEmpty, FileManager.default.isExecutableFile(atPath: output)
+        guard let result = ShellProcess.runSync("/usr/bin/which", arguments: [executable]),
+              result.succeeded else { return nil }
+        let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty, FileManager.default.isExecutableFile(atPath: output)
         else { return nil }
         return output
     }

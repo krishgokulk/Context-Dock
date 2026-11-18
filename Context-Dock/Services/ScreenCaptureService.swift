@@ -51,27 +51,20 @@ final class ScreenCaptureService: @unchecked Sendable {
                 if !isSavedImage { try? FileManager.default.removeItem(at: url) }
             }
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            let args: [String]
             switch kind {
             case .screenshot:
                 // No -x: let screencapture play the native shutter sound so the user gets
                 // audible feedback that the full-screen shot was taken.
-                process.arguments = [url.path]
+                args = [url.path]
             case .area:
-                process.arguments = ["-i", url.path]
+                args = ["-i", url.path]
             case .text:
                 // -x mutes the shutter: a text snip is not a screenshot, and the Tink
                 // below is the confirmation that matters.
-                process.arguments = ["-i", "-x", url.path]
+                args = ["-i", "-x", url.path]
             }
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
+            guard let result = ShellProcess.runSync("/usr/sbin/screencapture", arguments: args) else {
                 await MainActor.run {
                     AppToast.show(
                         "Capture failed to start", icon: "exclamationmark.triangle", tint: .orange)
@@ -81,7 +74,7 @@ final class ScreenCaptureService: @unchecked Sendable {
             // Escape on the picker exits non-zero and writes nothing — that is a
             // deliberate cancel, so stay silent. A zero exit with no file is a real
             // failure and must say so.
-            guard process.terminationStatus == 0 else { return }
+            guard result.succeeded else { return }
             guard let data = try? Data(contentsOf: url), !data.isEmpty else {
                 await MainActor.run {
                     AppToast.show(

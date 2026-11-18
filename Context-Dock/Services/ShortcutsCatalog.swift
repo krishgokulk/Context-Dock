@@ -150,22 +150,10 @@ final class ShortcutsCatalog: ObservableObject {
 
     /// Run `shortcuts list` and return the user's shortcut names, sorted.
     nonisolated private static func enumerate() -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
-        process.arguments = ["list"]
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-
-        do { try process.run() } catch { return [] }
-
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0,
-            let text = String(data: data, encoding: .utf8)
-        else { return [] }
+        guard let result = ShellProcess.runSync("/usr/bin/shortcuts", arguments: ["list"]),
+              result.succeeded else { return [] }
+        let text = result.stdout
+        guard !text.isEmpty else { return [] }
 
         var seen = Set<String>()
         return text

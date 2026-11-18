@@ -135,21 +135,12 @@ class TerminalPackageManager: ObservableObject {
         let command = packages[index].command
         guard !command.isEmpty else { return nil }
 
-        let text = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            // MANWIDTH keeps lines from wrapping to the terminal width of whoever ran it.
-            process.arguments = ["-lc", "MANWIDTH=100 man \(command) 2>/dev/null | col -b"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { _ in
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
-            }
-            process.standardInput = FileHandle.nullDevice
-            do { try process.run() } catch { continuation.resume(returning: "") }
-        }
+        // MANWIDTH keeps lines from wrapping to the terminal width of whoever ran it.
+        let text = await ShellProcess.run(
+            "/bin/zsh",
+            arguments: ["-lc", "MANWIDTH=100 man \(command) 2>/dev/null | col -b"],
+            timeout: 15
+        ).map { $0.stdout } ?? ""
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         await MainActor.run {

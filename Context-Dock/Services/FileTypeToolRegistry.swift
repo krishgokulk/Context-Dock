@@ -1002,15 +1002,7 @@ struct FileToolsSettingsView: View {
             let formulae = Array(Set(entries.compactMap { $0.effectiveBrewName }))
             for formula in formulae {
                 _ = await Task.detached(priority: .background) { () -> Bool in
-                    let p = Process()
-                    p.executableURL = URL(fileURLWithPath: brewPath)
-                    p.arguments = ["install", formula]
-                    p.standardInput = FileHandle.nullDevice
-                    p.standardOutput = FileHandle.nullDevice
-                    p.standardError = FileHandle.nullDevice
-                    guard (try? p.run()) != nil else { return false }
-                    p.waitUntilExit()
-                    return p.terminationStatus == 0
+                    ShellProcess.check(brewPath, arguments: ["install", formula])
                 }.value
             }
             await BinaryWatcherService.shared.scanNow(skipHelpScan: false)
