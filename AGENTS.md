@@ -70,6 +70,11 @@ Agents open the Corner with `scripts/corner.sh`, never synthetic ⌘⌘ / ⌥⌥
 global key monitor that synthetic events do not reach. It prints the app's own state (scope,
 phase, centred, on screen); DEBUG builds only (`App/DevCornerRemote.swift`).
 
+**Hand-check scope:** use `corner.sh general` (General Chat, no `--app`). Never launch Calculator,
+Safari, Terminal, or any other app just to have a neutral scope — it annoys the owner and may leak
+private context. If an App Pet scope is needed, use an app that is **already running** and holds
+nothing private. Clean up with `corner.sh clear` afterward.
+
 Why: raw `xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
 agents' build — launching a `~/Library/Developer/Xcode/DerivedData` path has shipped a **stale app**
 before. `dev-run.sh` is the single source of truth for which binary runs.
