@@ -132,6 +132,7 @@ final class DoraXMCPServer: ObservableObject {
     }
 
     func start() {
+        guard !AppDelegate.isHostingTests else { return }
         guard listener == nil else { return }
         do {
             let parameters = NWParameters.tcp
