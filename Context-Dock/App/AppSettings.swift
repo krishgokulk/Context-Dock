@@ -751,6 +751,20 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// What this provider is authorised to do in DoraX — used to filter injected tools,
+    /// gate the approval card, surface the tier badge in Settings, and show the one-tap
+    /// handoff when a mutation request arrives on a read-only or answer-only provider.
+    var capabilityProfile: ProviderCapabilityProfile {
+        switch self {
+        case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible, .kimi,
+             .claudeBridge, .chatGPTBridge:
+            return .full
+        // The CLI is an agent with its own tools; DoraX runs it with none. Answers only.
+        case .claudeCode, .chatGPTSubscription, .onDevice, .shortcuts:
+            return .answerOnly
+        }
+    }
+
     var shortName: String {
         switch self {
         case .onDevice: return "Apple Intelligence"

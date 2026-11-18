@@ -4087,6 +4087,18 @@ struct AIProviderRow: View {
                         }
                     }
 
+                    HStack(spacing: 4) {
+                        let tier = provider.capabilityProfile.tier
+                        Text(tier.symbol)
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(tier.shortLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(tierColor(for: provider.capabilityProfile.tier))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(tierColor(for: provider.capabilityProfile.tier).opacity(0.12), in: Capsule())
+
                     Text(provider.description)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -4112,6 +4124,14 @@ struct AIProviderRow: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func tierColor(for tier: ProviderCapabilityProfile.Tier) -> Color {
+        switch tier {
+        case .full: return .green
+        case .readOnly: return .blue
+        case .answerOnly: return .secondary
+        }
     }
 
     private var rowAccent: Color {
