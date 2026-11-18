@@ -195,14 +195,23 @@ struct FrontmostAppTaskPlan: Equatable {
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
-        // U2f: Capability-driven tool selection replaces brittle keyword gates.
-        // The registry knows which capabilities are registered for this app; the implied
-        // tool names are derived from those capabilities rather than substring matching
-        // on the query, eliminating false positives ("passport" ≠ file, "screenshot" ≠ file).
+        // U2f: find_files uses capability-driven selection to avoid false positives
+        // ("passport" and "screenshot" matched fileTerms but are not file requests).
+        // Finder always gets find_files; other apps get it only when the registry says so.
         let capabilityTools = CapabilityRegistry.shared.impliedToolNames(for: bundleId.isEmpty ? nil : bundleId)
         tools.formUnion(capabilityTools)
-        // Finder always gets find_files regardless of registered capabilities.
         if id.contains("finder") { tools.insert("find_files") }
+        // Output files and shortcuts stay keyword-gated — no false-positive history,
+        // and no registry capability backs them.
+        let outputTerms = ["csv", "markdown", ".md", "docx", "word document", "text file",
+                           "spreadsheet", "save it as a file", "output file", "export"]
+        if outputTerms.contains(where: { lower.contains($0) }) {
+            tools.insert("write_output_file")
+        }
+        let shortcutTerms = ["shortcut", "automation", "run my ", "siri"]
+        if shortcutTerms.contains(where: { lower.contains($0) }) {
+            tools.formUnion(["list_shortcuts", "run_shortcut"])
+        }
         // read_attachment is retired (#413 H6): read_file reads an attachment by path, by
         // filename, or with no path when one file is attached.
         if hasAttachments { tools.insert("read_file") }

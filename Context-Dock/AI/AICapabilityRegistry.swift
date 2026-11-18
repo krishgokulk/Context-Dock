@@ -260,12 +260,6 @@ final class CapabilityRegistry {
             if id.hasPrefix("finder.") || id.contains("file") {
                 tools.insert("find_files")
             }
-            if id.contains("export") || id.contains("output") || id.contains("write_file") {
-                tools.insert("write_output_file")
-            }
-            if id.hasPrefix("shortcuts.") || id.contains("shortcut") {
-                tools.formUnion(["list_shortcuts", "run_shortcut"])
-            }
         }
         return tools
     }
