@@ -3076,8 +3076,6 @@ extension DockCore {
             return
         }
 
-        let grantedApps = AppChatConversation.shared.grantedAppsMap
-
         // Use the user's selected AI provider in L2 context dock (respects Settings → AI Provider).
         let provider: AIProvider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? AppSettings.shared.getAPIKey(for: provider) : ""
@@ -3524,14 +3522,12 @@ extension DockCore {
                 {
                     browserPageBlock = directBlock
                 }
-                var browserPageReceipts: [DoraXActionReceipt] = []
                 if let evidence = BrowserPageReadEvidence.parse(
                     promptBlock: browserPageBlock,
                     browserName: scopedAppName.isEmpty ? "Browser" : scopedAppName,
                     source: SafariBrowserBridge.shared.isFresh
                         ? "Context Dock Safari Extension" : "live browser reader")
                 {
-                    browserPageReceipts.append(evidence.receipt)
                     await MainActor.run {
                         evidence.traceLines.forEach { self.dockTraceStep($0) }
                     }
@@ -3801,148 +3797,65 @@ extension DockCore {
                 }
 
                 if provider != .onDevice && provider != .shortcuts {
-                    let complexityRoute = TaskComplexityRouter.route(query)
-                    await MainActor.run {
-                        self.dockTraceStep("Complexity: \(complexityRoute.rawValue)")
-                    }
-                    // In a CLI tool scope every status names the tool and the step, so the
-                    // user can follow the agent: help probe → chosen subcommand → result.
-                    let cliTool = self.cliScopeToolCommand(for: scopedBundleId)
-                    // The bubble the answer is written into while it is being written. The
-                    // finished message replaces it, so nothing is shown twice.
+                    // Route through the shared AppScopedChatService pipeline. Prompt
+                    // assembly, skill-replay, TurnRecorder, SolvedSkillCapture and
+                    // ScopedTurnRunner all run inside the service. The dock provides
+                    // only the stream/status hooks and applies its Corner-specific
+                    // post-turn card insertion and Safari command dispatch.
                     let streamMessageID = UUID()
-                    // The execution stage is shared with the chat window: the same executor
-                    // (menu commands, adapter actions, MCP, the CLI boundary, then the shell),
-                    // the same round budget, and the same checks on what the answer claims to
-                    // have done. This was ~200 lines of the dock's own copy, and the copy is
-                    // why the two surfaces behaved differently for the same question.
-                    // Rows belong to the turn that read them; last turn's are dropped here so
-                    // a stale card can never appear under a new answer.
-                    await MainActor.run {
-                        ChatResultRowCollector.shared.begin(
-                            scope: GeneralChatScope(dockBundleId: scopedBundleId))
-                        // #205: reset solved-skill collector for this turn
-                        SolvedSkillToolCallCollector.shared.begin(
-                            scope: GeneralChatScope(dockBundleId: scopedBundleId))
-                    }
-                    let outcome = try await ScopedTurnRunner.run(
+                    let turnScope = GeneralChatScope(dockBundleId: scopedBundleId)
+                    let answer = try await AppScopedChatService.send(
+                        scope: turnScope,
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
                         query: query,
-                        systemPrompt: activeContextPrompt,
-                        scope: .init(
-                            chatScope: GeneralChatScope(dockBundleId: scopedBundleId),
-                            bundleId: scopedBundleId,
-                            appName: scopedAppName.isEmpty
-                                ? (frontmostName ?? frontmost.name) : scopedAppName,
-                            cliTool: cliTool,
-                            approvalOrigin: .dock,
-                            userContext: scopedConversationContext,
-                            taskPlan: frontmostTaskPlan),
-                        provider: provider,
-                        apiKey: apiKey,
                         history: chatHistory,
-                        grantedApps: grantedApps,
-                        imageAttachments: scopedImageAttachments,
-                        promptSections: activeContextAssembly.sections,
+                        attachments: submittedContextDockFiles,
                         onStream: { event in
                             Task { @MainActor in
                                 self.applyDockStreamEvent(
-                                    event, messageID: streamMessageID, requestID: l2RequestID)
+                                    event, messageID: streamMessageID,
+                                    requestID: l2RequestID)
                             }
                         },
                         onStatus: { status in
                             Task { @MainActor in
                                 self.setL2LoadingStatus(status, requestID: l2RequestID)
                             }
-                        })
-                    // Whatever was streamed has served its purpose: everything below can
-                    // still change the answer — a recovered tool call, an independent review
-                    // — and the message that lands is the one that counts.
+                        }
+                    )
                     await MainActor.run { self.clearDockStreamMessage(streamMessageID) }
-                    var finalResponse = outcome.text
-                    var executed = outcome.executed
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
-
-                    // Run inside the shared turn, alongside the checks it belongs with.
-                    let subjectiveEvaluation = outcome.subjectiveEvaluation
-
-                    var toolsRan = memoryToolChips + outcome.mcpToolsRan
-                        + executed.map(\.command)
-                    await self.setL2LoadingStatus(
-                        cliTool.map { "Reading the \($0) output…" } ?? "Checking the result…",
-                        requestID: l2RequestID)
-                    // Fallback: model emitted a raw mcp_call as its final text (not via the loop).
-                    if let resolved = await self.resolveMCPToolCall(
-                        in: finalResponse, bundleId: scopedBundleId, userQuery: query,
-                        provider: provider, apiKey: apiKey, history: chatHistory,
-                        systemPrompt: activeContextPrompt,
-                        appName: scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName)
-                    {
-                        finalResponse = resolved.answer
-                        toolsRan += resolved.toolsRan
-                    }
-                    // Fallback: model emitted a raw menu_call / adapter_call as its FINAL text
-                    // (narrated "I'll minimize…" + JSON) instead of routing it through the tool
-                    // loop, so the executor never ran it. Execute it now and replace the JSON
-                    // blob with a plain confirmation.
-                    if let applied = await self.resolveTypedAppInvocation(
-                        in: finalResponse,
-                        scopedBundleId: scopedBundleId,
-                        scopeName: scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName,
-                        userQuery: query,
-                        requestID: l2RequestID,
-                        context: scopedConversationContext)
-                    {
-                        finalResponse = applied.answer
-                        toolsRan += applied.toolsRan
-                    }
                     await MainActor.run {
-                        // #205: save this turn as a solved skill when it qualifies
-                        let captureScope = GeneralChatScope(dockBundleId: scopedBundleId)
-                        var captureAnswer = AppScopedChatService.Answer(
-                            text: finalResponse, toolChips: [])
-                        captureAnswer.evidenceReceipts =
-                            browserPageReceipts + executed.map(DoraXActionReceipt.init)
-                        let captureOutcome = SolvedSkillCapture.captureIfEligible(
-                            query: query, scope: captureScope, answer: captureAnswer,
-                            toolCalls: SolvedSkillToolCallCollector.shared.take(scope: captureScope))
-                        // The records this turn's capabilities actually read, drawn as cards
-                        // through the same mapper the chat window uses. The dock used to be
-                        // the only surface with note rows, and only inside its own Notes
-                        // branch; now every surface draws whatever any capability read.
-                        let rows = ChatResultRowMapper.map(
-                            ChatResultRowCollector.shared.take(
-                                scope: GeneralChatScope(dockBundleId: scopedBundleId)))
+                        let rows = ChatResultRowMapper.map(answer.rows)
                         var msg = AIChatMessage(
-                            role: .assistant, content: finalResponse,
+                            role: .assistant, content: answer.text,
                             appLaunches: rows.apps,
                             recentFiles: rows.files,
                             noteResults: rows.notes,
                             reminderResults: rows.reminders,
                             messageResults: rows.messages,
                             pageLinks: rows.links,
-                            mcpToolsRan: toolsRan,
-                            evidenceReceipts: browserPageReceipts
-                                + executed.map(DoraXActionReceipt.init),
-                            subjectiveEvaluation: subjectiveEvaluation,
+                            mcpToolsRan: answer.toolChips,
+                            evidenceReceipts: answer.evidenceReceipts,
+                            subjectiveEvaluation: answer.subjectiveEvaluation,
                             trace: self.l2.routerTrace)
-                        msg.savedSkill = captureOutcome.savedSkill
-                        msg.pendingWriteSkillOffer = captureOutcome.pendingWriteSkillOffer
+                        msg.savedSkill = answer.savedSkill
+                        msg.pendingWriteSkillOffer = answer.pendingWriteSkillOffer
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
-                        if !activeContextPrompt.isEmpty {
+                        if !answer.text.isEmpty {
                             extractAndInsertDockApprovalCards(
                                 from: msg.content, intoMessageAt: msg.id)
                         }
                         finishL2AIRequest(l2RequestID)
                     }
-                    // Dispatch any Safari browser control tags embedded in the response
+                    // Dispatch any Safari browser control tags embedded in the response.
                     if safariCommandScopeAllowed,
-                        case .safariCommand(let cmd) = parseL2AIResponse(finalResponse)
+                        case .safariCommand(let cmd) = parseL2AIResponse(answer.text)
                     {
                         let result = await SafariCommandBridge.shared.execute(cmd)
                         if !result.isEmpty {
