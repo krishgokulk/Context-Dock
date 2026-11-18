@@ -1698,6 +1698,24 @@ extension DockCore {
 
     private func screenshotsReadAnswer(query: String) async -> String {
         await MainActor.run { aiMode.loadingStatus = "Searching for screenshots…" }
+        let saveDir = await MainActor.run { AppSettings.shared.captureSaveDirectory }
+        let fm = FileManager.default
+        var allPaths = Set<String>()
+        // 1. The app's own screenshot folder (user-configurable in Settings → Hotkeys).
+        if let enumerator = fm.enumerator(
+            at: saveDir, includingPropertiesForKeys: [.creationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+        {
+            for case let fileURL as URL in enumerator {
+                let name = fileURL.lastPathComponent.lowercased()
+                if name.hasSuffix(".png") || name.hasSuffix(".jpg") || name.hasSuffix(".jpeg") {
+                    if name.hasPrefix("screenshot") || name.contains("screen shot") {
+                        allPaths.insert(fileURL.path)
+                    }
+                }
+            }
+        }
+        // 2. Spotlight's kMDItemIsScreenCapture for system screenshots outside the app folder.
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
@@ -1707,22 +1725,19 @@ extension DockCore {
         ]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
+        if let _ = try? process.run() {
             process.waitUntilExit()
-        } catch {
-            await MainActor.run { aiMode.loadingStatus = nil }
-            return "Spotlight search for screenshots failed — \(error.localizedDescription)"
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            for line in output.split(separator: "\n") {
+                allPaths.insert(String(line))
+            }
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        let paths = output.split(separator: "\n").map(String.init)
         await MainActor.run { aiMode.loadingStatus = nil }
-        guard !paths.isEmpty else {
-            return "No screenshots found on this Mac via Spotlight."
+        guard !allPaths.isEmpty else {
+            return "No screenshots found in \(saveDir.path) or via Spotlight."
         }
-        let fm = FileManager.default
-        let entries: [(path: String, date: Date)] = paths.compactMap { path in
+        let entries: [(path: String, date: Date)] = allPaths.compactMap { path in
             guard let attrs = try? fm.attributesOfItem(atPath: path),
                   let date = attrs[.creationDate] as? Date else { return nil }
             return (path, date)
