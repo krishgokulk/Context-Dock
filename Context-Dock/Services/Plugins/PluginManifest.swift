@@ -73,16 +73,21 @@ struct PluginAction: Codable, Equatable {
     /// Name of another action that reverses this one.
     var undo: String?
     var success: PluginActionFeedback?
+    /// When `"container"`, the action runs inside an Apple container micro-VM via
+    /// `/usr/bin/container` (macOS 26+). Falls back to unsandboxed with a diagnostic
+    /// when the CLI is unavailable. Only applies to `bash` and `scriptFile` actions.
+    var sandbox: String?
 
     init(type: String, script: String? = nil, value: String? = nil, app: String? = nil,
          key: String? = nil, title: String? = nil, risk: PluginRisk = .read,
-         optimistic: String? = nil, undo: String? = nil, success: PluginActionFeedback? = nil) {
+         optimistic: String? = nil, undo: String? = nil, success: PluginActionFeedback? = nil,
+         sandbox: String? = nil) {
         self.type = type; self.script = script; self.value = value; self.app = app
         self.key = key; self.title = title; self.risk = risk; self.optimistic = optimistic
-        self.undo = undo; self.success = success
+        self.undo = undo; self.success = success; self.sandbox = sandbox
     }
 
-    enum CodingKeys: String, CodingKey { case type, script, value, app, key, title, risk, optimistic, undo, success }
+    enum CodingKeys: String, CodingKey { case type, script, value, app, key, title, risk, optimistic, undo, success, sandbox }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -105,6 +110,7 @@ struct PluginAction: Codable, Equatable {
         optimistic = try c.decodeIfPresent(String.self, forKey: .optimistic)
         undo = try c.decodeIfPresent(String.self, forKey: .undo)
         success = try c.decodeIfPresent(PluginActionFeedback.self, forKey: .success)
+        sandbox = try c.decodeIfPresent(String.self, forKey: .sandbox)
     }
 
     var isScript: Bool { PluginScriptType(rawValue: type) != nil }

@@ -160,10 +160,12 @@ struct DynamicNotchLiveActivityView: View {
     @ObservedObject private var shelfStore = DropShelfStore.shared
     @ObservedObject private var notchState = DynamicNotchState.shared
     @ObservedObject private var approvalCenter = ApprovalCenter.shared
+    @ObservedObject private var pinStore = NotchPinStore.shared
 
     var onExpand: () -> Void
 
     @State private var isHovered = false
+    @State private var showNotchPicker = false
     @State private var hoverExpandWorkItem: DispatchWorkItem?
     @State private var hoverCollapseWorkItem: DispatchWorkItem?
 
@@ -881,6 +883,38 @@ struct DynamicNotchLiveActivityView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Tile frontmost window to right half")
+
+                        Divider()
+                            .frame(height: 14)
+                            .background(Color.white.opacity(0.15))
+                            .padding(.horizontal, 2)
+
+                        Button {
+                            showNotchPicker.toggle()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text("Notch")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundStyle(.cyan.opacity(0.9))
+                            .padding(.horizontal, 6)
+                            .frame(height: 22)
+                            .background(Color.cyan.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(Color.cyan.opacity(0.3), lineWidth: 0.5)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showNotchPicker) {
+                            NotchActionPickerSheet(
+                                bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                                appName: NSWorkspace.shared.frontmostApplication?.localizedName
+                                    ?? "this app"
+                            )
+                        }
                     }
                 }
 
@@ -894,7 +928,21 @@ struct DynamicNotchLiveActivityView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.white)
                         .onSubmit {
-                            if !prompt.query.isEmpty {
+                            let lower = prompt.query.lowercased()
+                            let isNotchIntent = lower.contains("notch")
+                                && (lower.hasPrefix("add ") || lower.hasPrefix("create ")
+                                    || lower.hasPrefix("make ") || lower.hasPrefix("pin "))
+                            if isNotchIntent {
+                                prompt.query = ""
+                                if let app = NSWorkspace.shared.frontmostApplication,
+                                   let bundleID = app.bundleIdentifier {
+                                    Task { @MainActor in
+                                        _ = await AgenticAIPackBuilder.build(
+                                            bundleID: bundleID,
+                                            appName: app.localizedName ?? "")
+                                    }
+                                }
+                            } else if !prompt.query.isEmpty {
                                 _ = prompt.submit()
                             }
                         }
@@ -914,13 +962,16 @@ struct DynamicNotchLiveActivityView: View {
                 .frame(height: 28)
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
 
-                HStack(spacing: 8) {
-                    quickChip(title: "Now Playing", icon: "music.note") { notchState.selectedPage = 0 }
-                    quickChip(title: "Drop Shelf", icon: "tray.fill") { notchState.selectedPage = 1 }
-                    quickChip(title: "Clipboard", icon: "doc.on.clipboard") {
-                        CornerDockController.shared.showClipboardBoard()
+                NotchActionPillRow(
+                    bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                    onFallbackPick: { page in
+                        if page == 2 {
+                            CornerDockController.shared.showClipboardBoard()
+                        } else {
+                            notchState.selectedPage = page
+                        }
                     }
-                }
+                )
             }
         }
     }

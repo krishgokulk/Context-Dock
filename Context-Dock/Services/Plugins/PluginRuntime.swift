@@ -256,7 +256,8 @@ final class PluginRuntime: ObservableObject {
                 message: "\"\(action.type)\" is not something this app can run", kind: .blocked))
         }
         let result = await runner.run(
-            type: type, script: script, env: env, timeout: 30, workingDirectory: nil)
+            type: type, script: script, env: env, timeout: 30, workingDirectory: nil,
+            sandbox: action.sandbox)
         // A script that answers with `{ "state": { … } }` is changing what the plugin
         // remembers — a swap, a chosen item — and the data is asked again with it.
         if case .success(let run) = result,
