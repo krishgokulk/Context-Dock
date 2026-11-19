@@ -1726,8 +1726,8 @@ extension DockCore {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         if let _ = try? process.run() {
-            process.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             let output = String(data: data, encoding: .utf8) ?? ""
             for line in output.split(separator: "\n") {
                 allPaths.insert(String(line))

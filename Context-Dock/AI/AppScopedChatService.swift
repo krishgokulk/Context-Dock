@@ -1596,6 +1596,17 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // U2c/U2d: OS system primitives (calendar, reminders, contacts, notes, screenshots)
+        // are answered from local data before the provider runs. Without this the query
+        // reaches the AI provider which hallucinates about data it cannot see.
+        if scope.isGeneralChat,
+           ReadOnlyDataRouter.domain(for: query)?.isOSPrimitive == true,
+           let readAnswer = await DockEngine.shared.core.readOnlyCapabilityAnswer(query: query)
+        {
+            log.notice("stage: read-only OS primitive")
+            onStatus?("Reading local data…")
+            return Answer(text: readAnswer, toolChips: [])
+        }
         // The question needs an app and named none. Ask which, rather than answering from
         // nothing and leaving the user to work out that the app had to be enabled first.
         let suggestions = appSuggestionForUnnamedRequest(
