@@ -1620,6 +1620,7 @@ extension AppChatPromptModel {
     /// start with what is typed has no ghost, rather than the top match's.
     var globalGhostCompletion: String {
         guard isGlobalScope else { return "" }
+        let title: String
         if let focused = focusedRow {
             title = focused.title
         } else if let first = rows.first {
