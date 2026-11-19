@@ -139,6 +139,7 @@ final class SafariBrowserBridge: ObservableObject {
     private init() {
         loadStoredContext()
         registerDarwinObserver()
+        warmUpTabCacheIfNeeded()
     }
 
     deinit {
@@ -167,6 +168,34 @@ final class SafariBrowserBridge: ObservableObject {
     }
 
     // MARK: - Private
+
+    // MARK: - Cold-Cache Tab Synchronization
+
+    /// True when the extension has never sent a payload (e.g. first launch, extension disabled).
+    var isCold: Bool { latestContext == nil }
+
+    /// When the extension has never sent data, seed `SafariTabManager`'s AppleScript cache so
+    /// capabilities like `dorax_browser_tabs` have something to serve immediately.
+    /// Falls back to AppleScript only — it is not called when the extension is live.
+    private func warmUpTabCacheIfNeeded() {
+        guard latestContext == nil else { return }
+        Task.detached(priority: .background) {
+            await SafariTabManager.shared.fetchTabs()
+        }
+    }
+
+    /// Returns available Safari tabs.
+    ///
+    /// Prefers `SafariTabManager.cachedTabs()` (AppleScript result or already cached)
+    /// over re-fetching synchronously. Use this instead of calling the manager directly when
+    /// you need a cold-safe tab list without blocking the calling coroutine.
+    func tabsForAI() async -> [SafariTab] {
+        // Try the warm cache first (may already be populated by warmUpTabCacheIfNeeded).
+        let cached = SafariTabManager.shared.cachedTabs()
+        if !cached.isEmpty { return cached }
+        // Cold path: fetch now.
+        return await SafariTabManager.shared.fetchTabs()
+    }
 
     private func loadStoredContext() {
         guard

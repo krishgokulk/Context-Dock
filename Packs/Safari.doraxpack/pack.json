@@ -60,6 +60,13 @@
       "name": "Reader Content Extractor",
       "url_pattern": "*",
       "script_file": "reader-extract.js"
+    },
+    {
+      "id": "safari.extractStructured",
+      "name": "Structured Article Extractor",
+      "url_pattern": "*",
+      "script_file": "extract-article-and-links.js",
+      "exclude_sensitive_urls": true
     }
   ]
 }

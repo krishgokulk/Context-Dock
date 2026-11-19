@@ -333,7 +333,15 @@ enum StorePackInstaller {
         persistToDisk: Bool = !AppDelegate.isHostingTests
     ) throws -> StorePackBindResult {
         let manifest = pack.toPluginManifest()
-        return try install(manifest, persistToDisk: persistToDisk)
+        let result = try install(manifest, persistToDisk: persistToDisk)
+
+        // Register extension hooks into ExtensionHookRegistry so they are discoverable
+        // by the capability layer and callable via SafariExtensionCommandBridge.
+        if let hooks = pack.metadata.extensionHooks, !hooks.isEmpty {
+            ExtensionHookRegistry.shared.register(hooks: hooks, packID: pack.metadata.id)
+        }
+
+        return result
     }
 
     static func installAllV2(
