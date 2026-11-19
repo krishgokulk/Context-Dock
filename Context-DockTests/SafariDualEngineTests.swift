@@ -75,6 +75,7 @@ struct SafariEscalationPolicyTests {
 // MARK: - U5a: Sensitive URL Withholding
 
 @Suite("Sensitive URL blocking")
+@MainActor
 struct SensitiveURLBlockingTests {
 
     @Test("Banking domains are withheld")
@@ -221,7 +222,7 @@ struct DoraxExtensionHookDecodingTests {
     @Test("extension_hooks decode correctly from pack.json")
     func decodesExtensionHooks() throws {
         let data = Data(packJSONFragment.utf8)
-        let pack = try JSONDecoder().decode(DoraxPackV2.PackMetadata.self, from: data)
+        let pack = try JSONDecoder().decode(DoraxPackMetadata.self, from: data)
         let hooks = pack.extensionHooks ?? []
 
         #expect(hooks.count == 2)
@@ -245,7 +246,7 @@ struct DoraxExtensionHookDecodingTests {
           "keywords": [], "capabilities": []
         }
         """
-        let pack = try JSONDecoder().decode(DoraxPackV2.PackMetadata.self, from: Data(minimalJSON.utf8))
+        let pack = try JSONDecoder().decode(DoraxPackMetadata.self, from: Data(minimalJSON.utf8))
         #expect(pack.extensionHooks == nil)
     }
 }
@@ -275,7 +276,7 @@ struct SafariBrowserBridgeColdCacheTests {
 struct SafariExtensionCommandBridgeTimeoutTests {
 
     @Test("awaitResult returns nil and bridge throws timedOut when no result file appears",
-         .timeLimit(.seconds(3)))
+         .timeLimit(.minutes(1)))
     func timeoutWhenNoResultFile() async {
         // Verify that the bridge correctly times out when the extension doesn't reply.
         // We can't invoke `run()` (private) or trigger a real AX click without Safari,

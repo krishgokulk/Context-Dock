@@ -28,7 +28,7 @@ struct ExtensionHookCapability: Identifiable, Equatable {
 /// Registered by `StorePackInstaller.installV2` and `installAllV2`; cleared on uninstall.
 final class ExtensionHookRegistry {
     static let shared = ExtensionHookRegistry()
-    private init() {}
+    init() {}
 
     private(set) var capabilities: [ExtensionHookCapability] = []
 
