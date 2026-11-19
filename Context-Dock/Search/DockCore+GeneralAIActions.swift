@@ -1702,16 +1702,16 @@ extension DockCore {
         let fm = FileManager.default
         var allPaths = Set<String>()
         // 1. The app's own screenshot folder (user-configurable in Settings → Hotkeys).
+        //    The user chose this folder for screenshots, so every image in it is one —
+        //    no filename filter. Covers macOS screenshots, Shottr, CleanShot, etc.
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "webp", "heic", "tiff", "bmp"]
         if let enumerator = fm.enumerator(
             at: saveDir, includingPropertiesForKeys: [.creationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
         {
             for case let fileURL as URL in enumerator {
-                let name = fileURL.lastPathComponent.lowercased()
-                if name.hasSuffix(".png") || name.hasSuffix(".jpg") || name.hasSuffix(".jpeg") {
-                    if name.hasPrefix("screenshot") || name.contains("screen shot") {
-                        allPaths.insert(fileURL.path)
-                    }
+                if imageExts.contains(fileURL.pathExtension.lowercased()) {
+                    allPaths.insert(fileURL.path)
                 }
             }
         }
