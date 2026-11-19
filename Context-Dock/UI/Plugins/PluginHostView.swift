@@ -54,6 +54,8 @@ final class PluginHostModel: ObservableObject {
             return .strip(current, family: manifest.views.widget?.family ?? .medium)
         case .panel:
             return Self.traits(for: .panel, compact: compact)
+        case .notch:
+            return .notchPage
         }
     }
 
@@ -72,6 +74,8 @@ final class PluginHostModel: ObservableObject {
             if let root = manifest.views.icon.flatMap(\.root) { return root }
             guard let capsule = manifest.views.icon?.capsule else { return nil }
             return PluginNode(component: "capsule", children: capsule)
+        case .notch:
+            return manifest.views.notch?.page ?? manifest.views.notch?.wing
         }
     }
 

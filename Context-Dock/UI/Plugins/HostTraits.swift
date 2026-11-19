@@ -75,12 +75,23 @@ struct HostTraits: Equatable {
             width: points, maxHeight: (screenHeight * 0.7).rounded(.down))
     }
 
+    /// 44×32 pt closed-island wing badge.
+    static let notchWing = HostTraits(
+        presentation: .notch, widthClass: .compact, keyboardOwner: false,
+        liveBudget: .low, width: 44, maxHeight: 32)
+
+    /// 314×96 pt Page 2 frontmost-app card.
+    static let notchPage = HostTraits(
+        presentation: .notch, widthClass: .compact, keyboardOwner: false,
+        liveBudget: .full, width: 314, maxHeight: 96)
+
     /// The Creator previews any presentation at the size its real host would give it.
     static func creatorPreview(_ presentation: PluginPresentation) -> HostTraits {
         switch presentation {
         case .icon, .widget: return .strip(presentation)
         case .panel: return .dockSheet
         case .window: return .window(.regular, screenHeight: 900)
+        case .notch: return .notchPage
         }
     }
 }

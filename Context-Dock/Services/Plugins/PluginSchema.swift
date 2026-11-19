@@ -141,6 +141,9 @@ enum PluginSchema {
         if let window = m.views.window, window.root == nil {
             error("views.window", "window has no root to render")
         }
+        if let notch = m.views.notch, notch.wing == nil, notch.page == nil {
+            error("views.notch", "notch declares neither wing nor page — nothing to render")
+        }
 
         // 1–4. views
         // State keys bind like data: `{{from}}` reads from what the plugin remembers before

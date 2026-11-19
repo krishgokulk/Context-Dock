@@ -43,6 +43,9 @@ struct PluginPreviewHarness: View {
                 out.append(.strip(.widget, family: manifest.views.widget?.family ?? .medium))
             case .window:
                 out.append(.window(manifest.views.window?.width ?? .regular, screenHeight: 900))
+            case .notch:
+                if manifest.views.notch?.wing != nil { out.append(.notchWing) }
+                if manifest.views.notch?.page != nil { out.append(.notchPage) }
             }
         }
         return out
@@ -61,6 +64,9 @@ struct PluginPreviewHarness: View {
             if let root = manifest.views.icon.flatMap(\.root) { return root }
             guard let capsule = manifest.views.icon?.capsule else { return nil }
             return PluginNode(component: "capsule", children: capsule)
+        case .notch:
+            if traits == .notchWing { return manifest.views.notch?.wing }
+            return manifest.views.notch?.page ?? manifest.views.notch?.wing
         }
     }
 
