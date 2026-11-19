@@ -324,6 +324,35 @@ enum StorePackInstaller {
         }
         """
     }
+
+    // MARK: - .doraxpack v2 Support
+
+    @discardableResult
+    static func installV2(
+        _ pack: DoraxPackV2,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) throws -> StorePackBindResult {
+        let manifest = pack.toPluginManifest()
+        return try install(manifest, persistToDisk: persistToDisk)
+    }
+
+    static func installAllV2(
+        from directory: URL,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) -> [StorePackBindResult] {
+        let packURLs = DoraxPackV2Loader.discoverPacks(in: directory)
+        var results: [StorePackBindResult] = []
+        for url in packURLs {
+            do {
+                let pack = try DoraxPackV2Loader.load(from: url)
+                let result = try installV2(pack, persistToDisk: persistToDisk)
+                results.append(result)
+            } catch {
+                NSLog("Context-Dock: failed to install .doraxpack at \(url.lastPathComponent) — \(error)")
+            }
+        }
+        return results
+    }
 }
 
 // MARK: - Curated Store Pack Catalog

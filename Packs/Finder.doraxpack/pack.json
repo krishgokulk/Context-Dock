@@ -1,0 +1,66 @@
+{
+  "format_version": 2,
+  "id": "finder",
+  "name": "Finder",
+  "version": "2.0.0",
+  "icon": "folder.fill",
+  "description": "File organization, trash, search, and metadata for the macOS Finder.",
+  "bundle_id": "com.apple.finder",
+  "keywords": ["finder", "files", "folders", "search", "organize", "trash", "metadata"],
+  "capabilities": [
+    {
+      "id": "finder.inspectFolder",
+      "name": "Inspect Folder Contents",
+      "intent": "List and categorize files in the current or selected Finder folder.",
+      "triggers": ["what is in this folder", "list files", "show folder contents", "summarize folder"],
+      "type": "aiPrompt",
+      "script": "Inspect the current Finder folder and group files by type and recent modification date.",
+      "safety": "read"
+    },
+    {
+      "id": "finder.recentDownloads",
+      "name": "Recent Downloads",
+      "intent": "Show files added to ~/Downloads in the last 24 hours.",
+      "triggers": ["recent downloads", "new downloads", "what did i download"],
+      "type": "aiPrompt",
+      "script": "List files in ~/Downloads modified in the last 24 hours, grouped by type.",
+      "safety": "read"
+    },
+    {
+      "id": "finder.newFolder",
+      "name": "Create New Folder",
+      "intent": "Create a new folder in the active Finder window.",
+      "triggers": ["new folder", "create folder", "make directory"],
+      "type": "menubar",
+      "menu_path": ["File", "New Folder"],
+      "safety": "write"
+    },
+    {
+      "id": "finder.getInfo",
+      "name": "Get Info",
+      "intent": "Show metadata and permissions for the selected file or folder.",
+      "triggers": ["get info", "file info", "show metadata", "file details"],
+      "type": "menubar",
+      "menu_path": ["File", "Get Info"],
+      "safety": "read"
+    },
+    {
+      "id": "finder.moveToTrash",
+      "name": "Move to Trash",
+      "intent": "Move the selected items to the Trash.",
+      "triggers": ["trash", "delete", "move to trash", "remove file"],
+      "type": "menubar",
+      "menu_path": ["File", "Move to Trash"],
+      "safety": "write"
+    },
+    {
+      "id": "finder.spotlight",
+      "name": "Spotlight Search",
+      "intent": "Search for files using Spotlight metadata queries.",
+      "triggers": ["search files", "find file", "spotlight", "locate"],
+      "type": "aiPrompt",
+      "script": "Search for files matching the user's query using mdfind.",
+      "safety": "read"
+    }
+  ]
+}

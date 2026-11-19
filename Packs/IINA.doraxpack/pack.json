@@ -1,0 +1,64 @@
+{
+  "format_version": 2,
+  "id": "iina",
+  "name": "IINA",
+  "version": "2.0.0",
+  "icon": "play.rectangle.fill",
+  "description": "Playback control, media inspection, and playlist management for IINA.",
+  "bundle_id": "com.colliderli.iina",
+  "keywords": ["iina", "video", "media", "player", "playback", "playlist", "subtitle"],
+  "capabilities": [
+    {
+      "id": "iina.nowPlaying",
+      "name": "Now Playing",
+      "intent": "Show what is currently playing in IINA with time position.",
+      "triggers": ["what is playing", "now playing", "current video", "playback status"],
+      "type": "aiPrompt",
+      "script": "Query IINA for the currently playing media file, position, and duration.",
+      "safety": "read"
+    },
+    {
+      "id": "iina.playPause",
+      "name": "Play / Pause",
+      "intent": "Toggle playback in IINA.",
+      "triggers": ["play", "pause", "toggle playback", "resume"],
+      "type": "menubar",
+      "menu_path": ["Playback", "Pause"],
+      "safety": "read"
+    },
+    {
+      "id": "iina.mediaInfo",
+      "name": "Media Info",
+      "intent": "Inspect codec, resolution, bitrate, and audio tracks of the current file.",
+      "triggers": ["media info", "file info", "codec", "resolution", "video details"],
+      "type": "aiPrompt",
+      "script": "Read the media metadata (codec, resolution, bitrate, duration, audio tracks) of the file open in IINA.",
+      "safety": "read"
+    },
+    {
+      "id": "iina.nextTrack",
+      "name": "Next in Playlist",
+      "intent": "Skip to the next item in the IINA playlist.",
+      "triggers": ["next", "skip", "next video", "next track"],
+      "type": "menubar",
+      "menu_path": ["Playback", "Next Media"],
+      "safety": "read"
+    },
+    {
+      "id": "iina.screenshot",
+      "name": "Screenshot Current Frame",
+      "intent": "Capture a screenshot of the current video frame.",
+      "triggers": ["screenshot", "capture frame", "snapshot"],
+      "type": "menubar",
+      "menu_path": ["Video", "Screenshot"],
+      "safety": "write"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "iina",
+      "binary": "iina",
+      "description": "Open files in IINA from the command line."
+    }
+  ]
+}

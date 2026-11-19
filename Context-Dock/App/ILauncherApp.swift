@@ -257,6 +257,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The plugins the app ships, written onto disk where every other plugin lives so they
         // can be read and edited by hand. Never overwrites an edited one.
         PluginEssentials.seedIfNeeded()
+        // First-party .doraxpack v2 packs: Finder, Safari, Mail, IINA, Antigravity.
+        FirstPartyPacks.loadIfNeeded()
+        // One-time migration of legacy user-installed packs to .doraxpack v2 folder format.
+        DoraxPackV2Migration.migrateInstalledPacksIfNeeded()
         // Which apps exist on this Mac, read once in the background. Nothing owned this
         // before, so the catalog was built by whichever feature happened to touch an app
         // first — and General Chat, asked about an app on an empty desktop, resolved
