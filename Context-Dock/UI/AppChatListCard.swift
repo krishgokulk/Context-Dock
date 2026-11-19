@@ -332,8 +332,8 @@ struct AppChatListCard: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85))
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
+                .fill(Color.clear)
+                .background(GlassBackground(cornerRadius: 22, isDark: nil))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)

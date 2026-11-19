@@ -1352,7 +1352,9 @@ extension DockCore {
     }
 
     func globalAppRowsBeginWithSystemCommand(_ rows: [SearchResult]) -> Bool {
-        rows.first?.id.hasPrefix("syscmd://") == true
+        guard let first = rows.first else { return false }
+        return first.id.hasPrefix("syscmd://") || first.id.hasPrefix("syscmd:")
+            || first.type == .extensionCommand
     }
 
     func globalAppRowsContainStrongApplicationMatch(
@@ -2975,7 +2977,9 @@ extension DockCore {
                 let path = item.path
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty && $0 != "-" }
-                guard path.count > 1, item.children.isEmpty else { return nil }
+                guard path.count > 1, item.children.isEmpty,
+                    !FrontmostMenuMatcher.isPlaceholderTitle(item.title)
+                else { return nil }
                 let root = path.first.map(normalizedDockPillText) ?? ""
                 guard !root.isEmpty, root != "apple" else { return nil }
                 let key = "\(bundleId):\(path.joined(separator: ">"))"
@@ -3048,7 +3052,9 @@ extension DockCore {
                 let path = item.path
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty && $0 != "-" }
-                guard path.count > 1, item.children.isEmpty else { return nil }
+                guard path.count > 1, item.children.isEmpty,
+                    !FrontmostMenuMatcher.isPlaceholderTitle(item.title)
+                else { return nil }
                 let root = path.first.map(normalizedDockPillText) ?? ""
                 guard !root.isEmpty, root != "apple" else { return nil }
                 let key = "\(bundleId):\(path.joined(separator: ">"))"

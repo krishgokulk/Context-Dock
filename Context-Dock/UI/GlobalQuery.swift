@@ -116,7 +116,22 @@ enum GlobalQuery {
     /// not a file — whose app the words name and whose title holds every asked word, never a
     /// destructive one nobody asked for. "safari history" → Show Personal History.
     static func topHit(_ rows: [AppChatRow], query: String) -> AppChatRow? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+
+        // 1. Direct System Command / Command match (e.g. "empty" -> "Empty Trash", "lock" -> "Lock Screen", "dark" -> "Dark Mode", "sleep" -> "Sleep")
         let typed = Set(words(query))
+        if let commandHit = rows.first(where: { row in
+            guard GlobalResultSection.title(for: row) == GlobalResultSection.commands else { return false }
+            guard GlobalResultSection.appName(of: row).isEmpty else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            let titleLower = row.title.lowercased()
+            return titleLower.hasPrefix(trimmed)
+        }) {
+            return commandHit
+        }
+
+        // 2. Named app's own command whose app the words name and whose title holds every asked word
         let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty })
         let asked = askedWords(in: query, appNames: appNames)
         guard !asked.isEmpty else { return nil }

@@ -67,8 +67,8 @@ struct CornerCombinedCard: ViewModifier {
                 ZStack {
                     LauncherDragBackground()
                     RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                        .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85))
-                        .background(GlassBackground(cornerRadius: Self.radius, isDark: true))
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: Self.radius, isDark: nil))
                         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
@@ -97,8 +97,8 @@ struct BoardGlass: ViewModifier {
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.85))
-                    .background(GlassBackground(cornerRadius: radius, isDark: true))
+                    .fill(Color.clear)
+                    .background(GlassBackground(cornerRadius: radius, isDark: nil))
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: radius, style: .continuous)

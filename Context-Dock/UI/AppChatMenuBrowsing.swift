@@ -1620,11 +1620,15 @@ extension AppChatPromptModel {
     /// start with what is typed has no ghost, rather than the top match's.
     var globalGhostCompletion: String {
         guard isGlobalScope else { return "" }
-        let title: String
-        if let focused = focusedRow { title = focused.title }
-        else if let first = rows.first, case .dock = first { title = first.title }
-        else if let top = globalTopMatch { title = top.title }
-        else { return "" }
+        if let focused = focusedRow {
+            title = focused.title
+        } else if let first = rows.first {
+            title = first.title
+        } else if let top = globalTopMatch {
+            title = top.title
+        } else {
+            return ""
+        }
         let typed = query
         guard !typed.isEmpty, title.count > typed.count,
             title.lowercased().hasPrefix(typed.lowercased())

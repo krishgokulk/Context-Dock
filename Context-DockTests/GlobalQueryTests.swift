@@ -93,10 +93,22 @@ struct GlobalTopHitTests {
         return .dock(pill)
     }
 
+    private func sysCommand(_ title: String) -> AppChatRow {
+        var pill = DockPill(id: "cmd-\(title)", name: title, icon: "terminal", badge: nil, execute: {})
+        pill.rankingKind = "command"
+        pill.resultSection = GlobalResultSection.commands
+        return .dock(pill)
+    }
+
     @Test func theNamedAppsCommandWithEveryAskedWordIsTheTopHit() {
         let rows = [menu("Clear History…", app: "Safari"), menu("Show Personal History", app: "Safari"),
                     menu("History", app: "Obsidian")]
         #expect(GlobalQuery.topHit(rows, query: "safari history")?.title == "Show Personal History")
+    }
+
+    @Test func aSystemCommandWhoseTitlePrefixMatchesIsTheTopHit() {
+        let rows = [menu("Empty Caches for All Profiles", app: "Safari"), sysCommand("Empty Trash")]
+        #expect(GlobalQuery.topHit(rows, query: "empty")?.title == "Empty Trash")
     }
 
     @Test func aQuitIsTheTopHitWhenItWasAskedFor() {

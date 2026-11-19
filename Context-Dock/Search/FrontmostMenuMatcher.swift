@@ -48,6 +48,7 @@ enum FrontmostMenuMatcher {
     /// then a typo rung — and that last one only for words of four letters or more, because
     /// below that an edit distance of two reaches almost anything.
     static func matches(_ item: AXMenuItem, query: String) -> Bool {
+        guard !isPlaceholderMenuItem(item) else { return false }
         let normalizedQuery = DockTextMatch.normalized(query)
         guard !normalizedQuery.isEmpty else { return true }
 
@@ -99,10 +100,28 @@ enum FrontmostMenuMatcher {
     /// Is this row worth showing at all — enabled, or reachable another way?
     static func isExposable(_ item: AXMenuItem) -> Bool {
         if isAppleRecentItem(item) { return false }
+        if isPlaceholderMenuItem(item) { return false }
         return item.isEnabled
             || hasNativeShortcut(item)
             || item.resolvedFilePath != nil
             || item.isLeaf
+    }
+
+    /// Placeholder items like "(empty)", "(none)", "(no recent items)", etc.
+    /// that apps display in submenus as non-actionable status indicators.
+    static func isPlaceholderMenuItem(_ item: AXMenuItem) -> Bool {
+        isPlaceholderTitle(item.title)
+    }
+
+    static func isPlaceholderTitle(_ title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        if trimmed.hasPrefix("(") && trimmed.hasSuffix(")") { return true }
+        let lower = trimmed.lowercased()
+        let placeholders: Set<String> = [
+            "empty", "none", "no recent items", "no items", "no actions", "nil"
+        ]
+        return placeholders.contains(lower)
     }
 
     /// A shortcut the app itself declares. An empty string is not one.
