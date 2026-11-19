@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI, AppKit, swift-testing, macOS 26.1, Xcode filesystem-synchronized groups.
 
-**Spec:** `docs/superpowers/specs/2026-08-26-developer-inspector-design.md`
+**Spec:** `docs/history/specs/2026-08-26-developer-inspector-design.md`
 
 ## Global Constraints
 

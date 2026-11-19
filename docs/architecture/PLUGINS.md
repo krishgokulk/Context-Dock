@@ -1,7 +1,7 @@
 # Plugins
 
-Architecture truth for the Global Context extension system. Design and reasoning:
-`docs/superpowers/specs/2026-09-15-plugins-design.md`. Roadmap:
+Architecture truth for the Global Context extension system. Original design (archived):
+`docs/history/specs/2026-09-15-plugins-design.md`. Roadmap:
 `docs/superpowers/plans/2026-09-15-plugins-todo.md`. Brain issue #26.
 
 ## What a plugin is

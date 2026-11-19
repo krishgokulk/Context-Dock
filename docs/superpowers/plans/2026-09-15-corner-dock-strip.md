@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI (macOS 26 Liquid Glass: `GlassEffectContainer`, `.glassEffect`, `.glassEffectID`), AppKit (`NSEvent` local monitor, `NSWorkspace`), ScreenCaptureKit, swift-testing.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-corner-dock-strip-design.md`
+**Spec:** `docs/history/specs/2026-09-15-corner-dock-strip-design.md`
 
 ## Global Constraints
 

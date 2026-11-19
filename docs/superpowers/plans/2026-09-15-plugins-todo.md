@@ -18,7 +18,7 @@ Selection Sheet and clipboard scope. Creator and Import both write packs to
 `GlobalSearchService`, `SearchPresetMerge`, `SelectionScopeExtensionPolicy`,
 `ClipboardScopeService`, `AICapabilityApprovalCenter`, `TerminalView` (SwiftTerm).
 
-**Spec:** `docs/superpowers/specs/2026-09-15-plugins-design.md`
+**Spec:** `docs/history/specs/2026-09-15-plugins-design.md`
 
 ## Global constraints
 

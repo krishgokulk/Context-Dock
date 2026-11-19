@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, swift-testing, Foundation `Process`, `URLSession` (http type only), AppKit for the built-in action types.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-plugins-design.md` §7 (data contract), §8 (inputs), §9 (permissions). Roadmap: `docs/superpowers/plans/2026-09-15-plugins-todo.md` Phase 3.
+**Spec:** `docs/history/specs/2026-09-15-plugins-design.md` §7 (data contract), §8 (inputs), §9 (permissions). Roadmap: `docs/superpowers/plans/2026-09-15-plugins-todo.md` Phase 3.
 
 ## How to read the code in this plan
 

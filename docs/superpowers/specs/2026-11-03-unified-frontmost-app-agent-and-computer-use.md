@@ -3,7 +3,7 @@
 > **Date:** 2026-11-03
 > **Status:** Shipped (PR #369, #381; menu & tier definitions superseded by 2026-11-05 and 2026-11-09-agent-harness-model.md)
 > **Target Branch:** `general-chat-agent`  
-> **References:** `docs/master/DORAX-BLUEPRINT.md`, `docs/architecture/FRONTMOST_AGENT.md`, `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/superpowers/specs/2026-09-04-settings-integrations-redesign.md`, `docs/superpowers/specs/2026-09-23-surface-cost-and-computer-use.md`
+> **References:** `docs/master/DORAX-BLUEPRINT.md`, `docs/architecture/FRONTMOST_AGENT.md`, `docs/superpowers/specs/2026-10-27-app-pets-combined-chat-design.md`, `docs/history/specs/2026-09-04-settings-integrations-redesign.md` (archived), `docs/history/specs/2026-09-23-surface-cost-and-computer-use.md` (archived)
 
 ---
 

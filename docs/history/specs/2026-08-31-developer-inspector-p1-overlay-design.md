@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-31  
 **Status:** approved in conversation, pending implementation plan  
-**Parent design:** `docs/superpowers/specs/2026-08-26-developer-inspector-design.md`  
+**Parent design:** `docs/history/specs/2026-08-26-developer-inspector-design.md` (archived)  
 **Foundation:** `docs/superpowers/plans/2026-08-31-developer-inspector-p0.md`
 
 ## Goal
