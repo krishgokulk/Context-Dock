@@ -34,14 +34,17 @@ actor SafariExtensionCommandBridge {
     /// Menu path to our extension's action inside any Safari-family app.
     private static let menuPath = ["Edit", "Extension Actions", "Context Dock"]
 
-    /// How long to wait for the extension to answer before giving up. The click,
-    /// worker wake, injection and round-trip normally land well inside this.
-    private static let timeout: TimeInterval = 5.0
+    /// Default timeout when no value is supplied. The click, worker wake, injection and
+    /// round-trip normally land well inside this.
+    static let defaultTimeout: TimeInterval = 5.0
 
     enum BridgeError: LocalizedError {
         case noContainer
         case extensionNotInMenu
         case timedOut
+        /// The page URL is withheld by the sensitive-URL policy; `reason` carries the
+        /// human-readable block message produced by `ScopedGroundingBlocks`.
+        case sensitiveURL(String)
 
         var errorDescription: String? {
             switch self {
@@ -53,8 +56,23 @@ actor SafariExtensionCommandBridge {
             case .timedOut:
                 return "The Safari extension didn't respond. Make sure Context Dock is "
                      + "enabled and has permission for this site."
+            case .sensitiveURL(let reason):
+                return "Page content withheld: \(reason)"
             }
         }
+    }
+
+    // MARK: - Extension Hook Result
+
+    /// Returned by `executeExtensionHook`. Always tagged `isUntrustedContent = true`
+    /// because DOM text from a user's real page is untrusted external input.
+    struct ExtensionHookResult {
+        let text: String
+        let hookID: String
+        /// Always `true` — callers must fence this in prompts via `[UntrustedContent]`.
+        let isUntrustedContent: Bool
+        /// Turn-trace label, e.g. "Route: Safari Extension (Live Tab)".
+        let route: String
     }
 
     /// Remembered per-app verdicts. Reaching the extension means AX-opening the app's
@@ -113,9 +131,51 @@ actor SafariExtensionCommandBridge {
         try await run(command: ["kind": "pip"], in: app)
     }
 
+    /// Execute a declarative `.doraxpack` v2 `extension_hook` on the user's real tab.
+    ///
+    /// - Parameters:
+    ///   - hookID:     The hook's stable identifier (e.g. `"safari.extractStructured"`).
+    ///   - scriptCode: JavaScript source injected into the page's isolated world.
+    ///   - pageURL:    Current page URL — used to enforce the sensitive-URL hard-block.
+    ///   - timeout:    How long to wait for the extension to reply before throwing `.timedOut`.
+    ///   - app:        Safari (or a Safari-family app) the extension is running in.
+    /// - Throws: `BridgeError.sensitiveURL` when the page is withheld by policy,
+    ///           `BridgeError.timedOut` when the extension doesn't respond within `timeout`,
+    ///           `BridgeError.extensionNotInMenu` / `BridgeError.noContainer` for setup issues.
+    func executeExtensionHook(
+        hookID: String,
+        scriptCode: String,
+        pageURL: String? = nil,
+        timeout: TimeInterval = 5.0,
+        in app: NSRunningApplication
+    ) async throws -> ExtensionHookResult {
+        // Hard-block withheld pages before dispatching any JS.
+        if let url = pageURL {
+            let blocked = await MainActor.run { ScopedGroundingBlocks.withheldPageBlock(forURL: url) }
+            if let blocked {
+                throw BridgeError.sensitiveURL(blocked)
+            }
+        }
+
+        let raw = try await run(
+            command: ["kind": "js", "code": scriptCode],
+            in: app,
+            timeout: timeout)
+
+        return ExtensionHookResult(
+            text: raw,
+            hookID: hookID,
+            isUntrustedContent: true,
+            route: SafariEscalationPolicy.routeLabel(for: hookID))
+    }
+
     // MARK: - Private
 
-    private func run(command: [String: Any], in app: NSRunningApplication) async throws -> String {
+    private func run(
+        command: [String: Any],
+        in app: NSRunningApplication,
+        timeout: TimeInterval = 5.0
+    ) async throws -> String {
         guard let pendingURL = SafariBridgeKey.pendingCommandURL,
               let bridgeDir = SafariBridgeKey.bridgeDirectory
         else { throw BridgeError.noContainer }
@@ -153,7 +213,7 @@ actor SafariExtensionCommandBridge {
         }
         verdicts[key] = (true, Date())
 
-        guard let result = await awaitResult(requestId: requestId) else {
+        guard let result = await awaitResult(requestId: requestId, timeout: timeout) else {
             throw BridgeError.timedOut
         }
         return result
@@ -161,11 +221,11 @@ actor SafariExtensionCommandBridge {
 
     /// Poll for the result file. The extension writes it from its own process, so
     /// there's no in-process signal to wait on.
-    private func awaitResult(requestId: String) async -> String? {
+    private func awaitResult(requestId: String, timeout: TimeInterval) async -> String? {
         guard let url = SafariBridgeKey.resultURL(requestId: requestId) else { return nil }
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let deadline = Date().addingTimeInterval(Self.timeout)
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if let data = try? Data(contentsOf: url),
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
