@@ -26,7 +26,8 @@ struct PluginRunFailure: Error, Equatable {
 actor PluginScriptRunner {
 
     func run(type: PluginScriptType, script: String, env: [String: String],
-             timeout: TimeInterval, workingDirectory: String?) async
+             timeout: TimeInterval, workingDirectory: String?,
+             sandbox: String? = nil) async
         -> Result<PluginRunResult, PluginRunFailure>
     {
         switch type {
@@ -50,7 +51,7 @@ actor PluginScriptRunner {
         case .bash, .applescript, .jxa, .scriptFile:
             return await spawn(
                 type: type, script: script, env: env, timeout: timeout,
-                workingDirectory: workingDirectory)
+                workingDirectory: workingDirectory, sandbox: sandbox)
         }
     }
 
@@ -88,10 +89,14 @@ actor PluginScriptRunner {
     // MARK: The process
 
     private func spawn(type: PluginScriptType, script: String, env: [String: String],
-                       timeout: TimeInterval, workingDirectory: String?) async
+                       timeout: TimeInterval, workingDirectory: String?,
+                       sandbox: String? = nil) async
         -> Result<PluginRunResult, PluginRunFailure>
     {
         let process = Process()
+        let containerPath = "/usr/bin/container"
+        let useContainer = sandbox == "container"
+            && FileManager.default.fileExists(atPath: containerPath)
         switch type {
         case .applescript:
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -101,11 +106,24 @@ actor PluginScriptRunner {
             process.arguments = ["-l", "JavaScript", "-e", script]
         case .scriptFile:
             let path = workingDirectory.map { "\($0)/\(script)" } ?? script
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", "\"\(path)\""]
+            if useContainer {
+                process.executableURL = URL(fileURLWithPath: containerPath)
+                process.arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", "\"\(path)\""]
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.arguments = ["-lc", "\"\(path)\""]
+            }
         default:
-            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", script]
+            if useContainer {
+                process.executableURL = URL(fileURLWithPath: containerPath)
+                process.arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", script]
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.arguments = ["-lc", script]
+                if sandbox == "container" {
+                    NSLog("Context-Dock PluginScriptRunner: sandbox=container requested but /usr/bin/container not found; running script unsandboxed")
+                }
+            }
         }
 
         // Merged OVER the real environment, never replacing it: a script calls git, jq, lsof,
