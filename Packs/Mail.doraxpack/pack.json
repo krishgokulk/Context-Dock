@@ -1,0 +1,57 @@
+{
+  "format_version": 2,
+  "id": "mail",
+  "name": "Mail",
+  "version": "2.0.0",
+  "icon": "envelope.fill",
+  "description": "Search, read, and draft replies in Apple Mail.",
+  "bundle_id": "com.apple.mail",
+  "keywords": ["mail", "email", "inbox", "search", "draft", "reply", "send"],
+  "capabilities": [
+    {
+      "id": "mail.searchInbox",
+      "name": "Search Mail",
+      "intent": "Search emails by sender, subject, or content.",
+      "triggers": ["search mail", "find email", "emails from", "look up mail"],
+      "type": "aiPrompt",
+      "script": "Search the user's mailbox for messages matching the query.",
+      "safety": "read"
+    },
+    {
+      "id": "mail.readCurrent",
+      "name": "Read Current Message",
+      "intent": "Read the currently selected email message.",
+      "triggers": ["read this email", "what does this say", "summarize email", "read message"],
+      "type": "aiPrompt",
+      "script": "Read and summarize the currently selected email in Mail.",
+      "safety": "read"
+    },
+    {
+      "id": "mail.unreadCount",
+      "name": "Unread Mail Count",
+      "intent": "Show the number of unread messages in the inbox.",
+      "triggers": ["unread mail", "how many emails", "inbox count", "new mail"],
+      "type": "aiPrompt",
+      "script": "Count unread messages in the Mail inbox.",
+      "safety": "read"
+    },
+    {
+      "id": "mail.draftReply",
+      "name": "Draft Reply",
+      "intent": "Draft a reply to the current message without sending.",
+      "triggers": ["reply", "draft reply", "respond to email", "write back"],
+      "type": "aiPrompt",
+      "script": "Draft a reply to the currently selected email. Show the draft for approval before sending.",
+      "safety": "write"
+    },
+    {
+      "id": "mail.newMessage",
+      "name": "New Message",
+      "intent": "Open a new blank email compose window.",
+      "triggers": ["new email", "compose", "write email", "new message"],
+      "type": "menubar",
+      "menu_path": ["File", "New Message"],
+      "safety": "write"
+    }
+  ]
+}

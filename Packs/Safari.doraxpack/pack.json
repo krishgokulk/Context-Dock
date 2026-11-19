@@ -1,0 +1,65 @@
+{
+  "format_version": 2,
+  "id": "safari",
+  "name": "Safari",
+  "version": "2.0.0",
+  "icon": "safari.fill",
+  "description": "Tab reading, history, page summarization, and link following for Safari.",
+  "bundle_id": "com.apple.Safari",
+  "keywords": ["safari", "browser", "tabs", "history", "web", "reader", "bookmarks"],
+  "capabilities": [
+    {
+      "id": "safari.summarizeTab",
+      "name": "Summarize Active Tab",
+      "intent": "Read and summarize the active Safari tab's article content.",
+      "triggers": ["summarize tab", "tldr page", "read article", "what is this page about"],
+      "type": "aiPrompt",
+      "script": "Read the active Safari page content and provide a concise summary of its key points.",
+      "safety": "read"
+    },
+    {
+      "id": "safari.listTabs",
+      "name": "List Open Tabs",
+      "intent": "Show all open Safari tabs across windows.",
+      "triggers": ["list tabs", "open tabs", "show tabs", "how many tabs"],
+      "type": "aiPrompt",
+      "script": "List all open Safari tabs with their titles and URLs.",
+      "safety": "read"
+    },
+    {
+      "id": "safari.toggleReader",
+      "name": "Toggle Reader View",
+      "intent": "Switch the frontmost Safari tab into distraction-free Reader mode.",
+      "triggers": ["reader view", "show reader", "reading mode"],
+      "type": "menubar",
+      "menu_path": ["View", "Show Reader"],
+      "safety": "read"
+    },
+    {
+      "id": "safari.recentHistory",
+      "name": "Recent Browsing History",
+      "intent": "Show recently visited pages from Safari history.",
+      "triggers": ["recent history", "browsing history", "where did i go", "visited sites"],
+      "type": "aiPrompt",
+      "script": "Query Safari browsing history for the last 24 hours.",
+      "safety": "read"
+    },
+    {
+      "id": "safari.extractLinks",
+      "name": "Extract Page Links",
+      "intent": "Extract all hyperlinks from the active Safari page.",
+      "triggers": ["extract links", "page links", "get urls", "list links"],
+      "type": "aiPrompt",
+      "script": "Extract and categorize all hyperlinks from the current Safari page.",
+      "safety": "read"
+    }
+  ],
+  "extension_hooks": [
+    {
+      "id": "safari.readerExtract",
+      "name": "Reader Content Extractor",
+      "url_pattern": "*",
+      "script_file": "reader-extract.js"
+    }
+  ]
+}

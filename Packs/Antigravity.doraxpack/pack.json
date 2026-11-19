@@ -1,0 +1,63 @@
+{
+  "format_version": 2,
+  "id": "antigravity",
+  "name": "Antigravity",
+  "version": "2.0.0",
+  "icon": "terminal.fill",
+  "description": "Dev agent skills, terminal control, and workspace management for Antigravity.",
+  "bundle_id": "dev.warp.Antigravity-macOS",
+  "keywords": ["antigravity", "terminal", "dev", "agent", "workspace", "shell", "code"],
+  "capabilities": [
+    {
+      "id": "antigravity.runCommand",
+      "name": "Run Shell Command",
+      "intent": "Execute a shell command in the Antigravity terminal.",
+      "triggers": ["run command", "execute", "shell", "terminal"],
+      "type": "aiPrompt",
+      "script": "Execute the user's shell command in the active Antigravity workspace.",
+      "safety": "write"
+    },
+    {
+      "id": "antigravity.listWorkspaces",
+      "name": "List Workspaces",
+      "intent": "Show active Antigravity workspaces and their current directories.",
+      "triggers": ["workspaces", "list workspaces", "sessions", "terminals"],
+      "type": "aiPrompt",
+      "script": "List all active Antigravity terminal workspaces with their working directories.",
+      "safety": "read"
+    },
+    {
+      "id": "antigravity.gitStatus",
+      "name": "Git Status",
+      "intent": "Show the git status of the workspace's repository.",
+      "triggers": ["git status", "repo status", "changes", "uncommitted"],
+      "type": "aiPrompt",
+      "script": "Run git status in the current workspace directory.",
+      "safety": "read"
+    },
+    {
+      "id": "antigravity.openProject",
+      "name": "Open Project",
+      "intent": "Open a project directory in a new Antigravity workspace.",
+      "triggers": ["open project", "new workspace", "open folder in terminal"],
+      "type": "aiPrompt",
+      "script": "Open the specified directory in a new Antigravity workspace tab.",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "agy",
+      "binary": "agy",
+      "description": "Antigravity CLI for workspace and agent control."
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "antigravity",
+      "transport": "stdio",
+      "command": "agy mcp-server",
+      "description": "Antigravity MCP server for terminal and workspace operations."
+    }
+  ]
+}
