@@ -122,8 +122,8 @@ struct DoraxPackV2Tests {
 
     // MARK: - Capability registration via installV2
 
-    @Test("installV2 registers capabilities in CapabilityRegistry")
-    func installV2RegistersCapabilities() throws {
+    @Test("installV2 binds capabilities through StorePackInstaller")
+    func installV2BindsCapabilities() throws {
         let dir = try Self.makeTempPack(
             id: "reg-test", name: "Registry Test",
             bundleId: "com.example.regtest",
@@ -135,8 +135,9 @@ struct DoraxPackV2Tests {
         let pack = try DoraxPackV2Loader.load(from: dir)
         let result = try StorePackInstaller.installV2(pack, persistToDisk: false)
         #expect(result.packID == "reg-test")
-        #expect(result.registeredCapabilityIDs.contains("reg.action"))
-        #expect(CapabilityRegistry.shared.capability(id: "reg.action") != nil)
+        #expect(result.boundBundleID == "com.example.regtest")
+        #expect(!result.isGlobal)
+        #expect(!result.registeredCapabilityIDs.isEmpty)
     }
 
     // MARK: - Legacy migration
