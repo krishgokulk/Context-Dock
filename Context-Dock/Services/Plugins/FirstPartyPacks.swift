@@ -65,9 +65,21 @@ enum FirstPartyPacks {
     private static func sourceTreePacksDirectories() -> [URL] {
         var candidates: [URL] = []
 
-        // Walk up from the main bundle to find the repo root.
-        // In dev builds the executable is deep inside DerivedData; the repo root
-        // has a Context-Dock/ directory with Packs/ inside it.
+        // 1. Walk up from this source file to find the repo root.
+        //    Works in local dev, worktrees, and CI runners (e.g. GitHub Actions).
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRootFromSource = thisFile
+            .deletingLastPathComponent() // Plugins
+            .deletingLastPathComponent() // Services
+            .deletingLastPathComponent() // Context-Dock
+            .deletingLastPathComponent() // repo root
+        candidates.append(repoRootFromSource.appendingPathComponent("Packs", isDirectory: true))
+
+        // 2. CI environment check ($GITHUB_WORKSPACE)
+        if let ghWorkspace = ProcessInfo.processInfo.environment["GITHUB_WORKSPACE"], !ghWorkspace.isEmpty {
+            candidates.append(URL(fileURLWithPath: ghWorkspace).appendingPathComponent("Packs", isDirectory: true))
+        }
+
         let fm = FileManager.default
         let searchRoots = [
             // Direct repo path (covers worktrees and main checkout)
