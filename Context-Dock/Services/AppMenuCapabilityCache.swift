@@ -170,6 +170,7 @@ final class AppMenuCapabilityCache {
         if normalizedTitle == "autofill" { return false }
         if normalizedTitle == "start dictation" { return false }
         if normalizedTitle == "emoji symbols" { return false }
+        if FrontmostMenuMatcher.isPlaceholderTitle(title) { return false }
         return true
     }
 

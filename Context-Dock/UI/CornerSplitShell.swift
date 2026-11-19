@@ -420,6 +420,13 @@ struct CornerSplitStrip: View {
 private struct StripChrome: ViewModifier {
     let inset: Bool
     @Environment(\.sharesOneCard) private var sharesOneCard
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var isDark: Bool {
+        if settings.appearanceMode == "light" { return false }
+        if settings.appearanceMode == "dark" { return true }
+        return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
 
     func body(content: Content) -> some View {
         if sharesOneCard {
@@ -437,6 +444,13 @@ private struct StripChrome: ViewModifier {
             content
                 .clipShape(Capsule())
                 .glassEffect(.regular.interactive(), in: Capsule())
+                .overlay {
+                    if settings.glassDarkness > 0 {
+                        Capsule()
+                            .fill(Color.black.opacity(settings.glassDarkness * (isDark ? 0.65 : 0.45)))
+                            .allowsHitTesting(false)
+                    }
+                }
                 .modifier(AppLaunchGlow(shape: Capsule()))
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }

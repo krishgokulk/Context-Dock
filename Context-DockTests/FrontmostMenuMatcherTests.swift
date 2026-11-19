@@ -209,4 +209,19 @@ struct FrontmostMenuMatcherTests {
         let kept = FrontmostMenuMatcher.allowed(specific + generic, policy: .globalContext)
         #expect(kept.map(\.title) == ["Reopen Last Closed Window", "Recently Closed"])
     }
+
+    @Test("Inert placeholder items like (empty), (none), no recent items are excluded")
+    func placeholderItemsAreExcluded() {
+        let placeholders = [
+            menuItem("(empty)", path: ["File", "Open Recent", "(empty)"]),
+            menuItem("(none)", path: ["View", "(none)"]),
+            menuItem("No Recent Items", path: ["File", "Open Recent", "No Recent Items"]),
+            menuItem("none", path: ["Options", "none"]),
+            menuItem("empty", path: ["File", "empty"])
+        ]
+        for item in placeholders {
+            #expect(!FrontmostMenuMatcher.matches(item, query: "empty"))
+            #expect(!FrontmostMenuMatcher.isExposable(item))
+        }
+    }
 }
