@@ -841,7 +841,9 @@ struct DynamicNotchLiveActivityView: View {
                     // Frontmost App Window Tiling Controls
                     HStack(spacing: 6) {
                         Button {
-                            FrontmostAppActions.tileLeft()
+                            if let app = NSWorkspace.shared.frontmostApplication {
+                                WindowManagementService.shared.execute(.left, sourceApp: app)
+                            }
                         } label: {
                             Image(systemName: "rectangle.leadinghalf.filled")
                                 .font(.system(size: 12, weight: .medium))
@@ -853,7 +855,9 @@ struct DynamicNotchLiveActivityView: View {
                         .help("Tile frontmost window to left half")
 
                         Button {
-                            FrontmostAppActions.maximize()
+                            if let app = NSWorkspace.shared.frontmostApplication {
+                                WindowManagementService.shared.execute(.fill, sourceApp: app)
+                            }
                         } label: {
                             Image(systemName: "rectangle.fill")
                                 .font(.system(size: 12, weight: .medium))
@@ -865,7 +869,9 @@ struct DynamicNotchLiveActivityView: View {
                         .help("Maximize frontmost window")
 
                         Button {
-                            FrontmostAppActions.tileRight()
+                            if let app = NSWorkspace.shared.frontmostApplication {
+                                WindowManagementService.shared.execute(.right, sourceApp: app)
+                            }
                         } label: {
                             Image(systemName: "rectangle.trailinghalf.filled")
                                 .font(.system(size: 12, weight: .medium))
@@ -1050,49 +1056,3 @@ struct EqualizerBarsView: View {
     }
 }
 
-// MARK: - Frontmost App Actions (Window Tiling & System Extensions)
-
-enum FrontmostAppActions {
-    static var frontmostApp: NSRunningApplication? {
-        NSWorkspace.shared.frontmostApplication
-    }
-
-    static func tileLeft() {
-        guard let app = frontmostApp, let screen = NSScreen.main else { return }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var focusedWindow: CFTypeRef?
-        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-           let win = focusedWindow {
-            let vis = screen.visibleFrame
-            let primH = NSScreen.screens.first?.frame.height ?? vis.height
-            let targetFrame = CGRect(x: vis.minX, y: primH - vis.maxY, width: vis.width / 2, height: vis.height)
-            _ = AXWindowControl.write(element: win as! AXUIElement, frame: targetFrame, label: "tileLeft")
-        }
-    }
-
-    static func tileRight() {
-        guard let app = frontmostApp, let screen = NSScreen.main else { return }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var focusedWindow: CFTypeRef?
-        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-           let win = focusedWindow {
-            let vis = screen.visibleFrame
-            let primH = NSScreen.screens.first?.frame.height ?? vis.height
-            let targetFrame = CGRect(x: vis.midX, y: primH - vis.maxY, width: vis.width / 2, height: vis.height)
-            _ = AXWindowControl.write(element: win as! AXUIElement, frame: targetFrame, label: "tileRight")
-        }
-    }
-
-    static func maximize() {
-        guard let app = frontmostApp, let screen = NSScreen.main else { return }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var focusedWindow: CFTypeRef?
-        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-           let win = focusedWindow {
-            let vis = screen.visibleFrame
-            let primH = NSScreen.screens.first?.frame.height ?? vis.height
-            let targetFrame = CGRect(x: vis.minX, y: primH - vis.maxY, width: vis.width, height: vis.height)
-            _ = AXWindowControl.write(element: win as! AXUIElement, frame: targetFrame, label: "maximize")
-        }
-    }
-}

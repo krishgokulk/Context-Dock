@@ -9,7 +9,7 @@ import Foundation
 enum PluginDataFormat: String, Codable { case json, jsonl, lines, raw }
 enum PluginScriptType: String, Codable { case bash, applescript, jxa, scriptFile, shortcut, http }
 enum PluginRisk: String, Codable { case read, low, medium, high }
-enum PluginPresentation: String, Codable, CaseIterable { case icon, widget, panel, window }
+enum PluginPresentation: String, Codable, CaseIterable { case icon, widget, panel, window, notch }
 /// `small` / `medium` / `large` are the iOS squares. `bar` is the dock strip's own family: a
 /// tile the height of a strip icon, `slots` icons wide, so a widget sits in the row with the
 /// apps and pins rather than towering over them.
@@ -258,15 +258,31 @@ struct PluginWindowView: Codable, Equatable {
     }
 }
 
+/// `views.notch` — compact presence on the Dynamic Island / Notch bar.
+/// - `wing`: 44×32 pt status badge shown in the closed island (port number, timestamp, build dot).
+/// - `page`: 314×96 pt frontmost-app card for Page 2 of the expanded notch, up to 4 quick-action
+///   buttons inside the safe area.
+struct PluginNotchView: Codable, Equatable {
+    var wing: PluginNode?
+    var page: PluginNode?
+
+    init(wing: PluginNode? = nil, page: PluginNode? = nil) {
+        self.wing = wing; self.page = page
+    }
+}
+
 struct PluginViews: Codable, Equatable {
     var icon: PluginIconView?
     var widget: PluginWidgetView?
     var panel: PluginPanelView?
     var window: PluginWindowView?
+    var notch: PluginNotchView?
 
     init(icon: PluginIconView? = nil, widget: PluginWidgetView? = nil,
-         panel: PluginPanelView? = nil, window: PluginWindowView? = nil) {
-        self.icon = icon; self.widget = widget; self.panel = panel; self.window = window
+         panel: PluginPanelView? = nil, window: PluginWindowView? = nil,
+         notch: PluginNotchView? = nil) {
+        self.icon = icon; self.widget = widget; self.panel = panel
+        self.window = window; self.notch = notch
     }
 }
 
@@ -575,6 +591,7 @@ struct PluginManifest: Codable, Equatable, Identifiable {
         if views.widget != nil { out.append(.widget) }
         if views.panel != nil { out.append(.panel) }
         if views.window != nil { out.append(.window) }
+        if views.notch != nil { out.append(.notch) }
         return out
     }
 
@@ -586,6 +603,8 @@ struct PluginManifest: Codable, Equatable, Identifiable {
         if let r = views.widget?.root { roots.append(r) }
         if let r = views.panel?.root { roots.append(r) }
         if let r = views.window?.root { roots.append(r) }
+        if let r = views.notch?.wing { roots.append(r) }
+        if let r = views.notch?.page { roots.append(r) }
         return roots.flatMap(\.flattened)
     }
 }
