@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI, AppKit `NSPanel`, Combine, swift-testing, Xcode project targeting macOS 26.1.
 
-**Spec:** `docs/superpowers/specs/2026-09-03-corner-ai-chat-shell-design.md`
+**Spec:** `docs/history/specs/2026-09-03-corner-ai-chat-shell-design.md`
 
 ## Global Constraints
 
@@ -474,7 +474,7 @@ git commit -m "feat(chat): add corner AI availability control"
 
 **Files:**
 - Modify only if a verified defect requires a targeted repair.
-- Update: `docs/superpowers/specs/2026-09-03-corner-ai-chat-shell-design.md` only to record verified deviations.
+- Update: `docs/history/specs/2026-09-03-corner-ai-chat-shell-design.md` only to record verified deviations.
 
 **Interfaces:**
 - Consumes all behavior completed in Tasks 1–6.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, Foundation only (no SwiftUI in this phase), swift-testing. New folder `Context-Dock/Services/Plugins/` (auto-added by the synchronized group). Tests flat in `Context-DockTests/`.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-plugins-design.md` §4, §7, §8, §8b, §14
+**Spec:** `docs/history/specs/2026-09-15-plugins-design.md` §4, §7, §8, §8b, §14
 
 ## Global Constraints
 

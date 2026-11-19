@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI, swift-testing. New folder `Context-Dock/UI/Plugins/` with `Components/` beneath it (both auto-added by the synchronized group). Tests flat in `Context-DockTests/`.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-plugins-design.md` §5 (presentations and hosts), §6 (component kit), §7 (manifest and binding). Roadmap entry: `docs/superpowers/plans/2026-09-15-plugins-todo.md` "Phase 2". Truth file: `docs/architecture/PLUGINS.md`.
+**Spec:** `docs/history/specs/2026-09-15-plugins-design.md` §5 (presentations and hosts), §6 (component kit), §7 (manifest and binding). Roadmap entry: `docs/superpowers/plans/2026-09-15-plugins-todo.md` "Phase 2". Truth file: `docs/architecture/PLUGINS.md`.
 
 **Depends on:** Phase 1 landed on branch `plugins` (`PluginManifest`, `PluginNode`, `PluginValue`, `PluginComponentCatalog`, `PluginSchema`). Do not start against an unmerged Phase 1 — those types were still moving under review on 2026-09-15.
 

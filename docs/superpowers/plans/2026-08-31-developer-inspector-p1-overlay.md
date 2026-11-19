@@ -8,8 +8,8 @@
 
 **Tech Stack:** Swift 5, SwiftUI, AppKit, Carbon `RegisterEventHotKey`, swift-testing, macOS 26.1, Xcode filesystem-synchronized groups.
 
-**Spec:** `docs/superpowers/specs/2026-08-31-developer-inspector-p1-overlay-design.md`
-**Parent spec:** `docs/superpowers/specs/2026-08-26-developer-inspector-design.md`
+**Spec:** `docs/history/specs/2026-08-31-developer-inspector-p1-overlay-design.md`
+**Parent spec:** `docs/history/specs/2026-08-26-developer-inspector-design.md`
 **Foundation:** `docs/superpowers/plans/2026-08-31-developer-inspector-p0.md` (complete; compiles)
 
 ## Global Constraints

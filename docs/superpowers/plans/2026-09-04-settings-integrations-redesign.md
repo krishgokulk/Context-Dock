@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI and AppKit on macOS 26.1, Combine, swift-testing, pure Xcode project with filesystem-synchronized groups.
 
-**Spec:** `docs/superpowers/specs/2026-09-04-settings-integrations-redesign.md`
+**Spec:** `docs/history/specs/2026-09-04-settings-integrations-redesign.md`
 
 ## Global Constraints
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5, SwiftUI, AppKit `NSPanel`, Combine, swift-testing, Xcode macOS target.
 
-**Spec:** `docs/superpowers/specs/2026-08-31-corner-dual-chat-design.md`
+**Spec:** `docs/history/specs/2026-08-31-corner-dual-chat-design.md`
 
 ## Global Constraints
 

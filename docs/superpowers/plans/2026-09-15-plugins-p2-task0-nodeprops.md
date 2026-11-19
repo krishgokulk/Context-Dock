@@ -6,7 +6,7 @@
 
 **Architecture:** one stored property, one predicate that lives in `PluginComponentCatalog` (already the single list of component names), `children` semantics untouched. `flattened` gains the node-prop subtrees, so every existing schema rule reaches row contents with no new walk.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-plugins-design.md` §6, §7. Issue: #27. Runs before Task 1 of `docs/superpowers/plans/2026-09-15-plugins-p2-renderer.md`.
+**Spec:** `docs/history/specs/2026-09-15-plugins-design.md` §6, §7. Issue: #27. Runs before Task 1 of `docs/superpowers/plans/2026-09-15-plugins-p2-renderer.md`.
 
 ## Global constraints
 

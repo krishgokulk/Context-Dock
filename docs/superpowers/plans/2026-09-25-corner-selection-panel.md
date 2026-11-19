@@ -74,7 +74,7 @@ F. Docs: §4a, inventory D10 (→ ✅ when Share and answers are in), `corner-sh
 
 ## Owner rules (2026-09-25, second message) — these govern every part
 
-1. **Follow `docs/superpowers/specs/2026-09-23-surface-cost-and-computer-use.md`.** Every row
+1. **Follow `docs/history/specs/2026-09-23-surface-cost-and-computer-use.md`.** Every row
    has a surface — `headless` < `opensApp` < `takesScreen`. **AX-driven work (clicking a
    menu, Writing Tools, setting text in another app) is `takesScreen`: it runs only when
    Computer Use is enabled for that app** (`ComputerUseConsentStore.effectiveMode(for:)`).
