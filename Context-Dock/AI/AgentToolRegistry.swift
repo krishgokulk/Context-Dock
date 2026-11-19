@@ -2637,58 +2637,10 @@ final class AgentToolRegistry {
 
         // MARK: - Apple Mail Tools
 
-        register(AgentTool(
-            name: "read_unread_mail",
-            description: "Read unread emails headlessly from Apple Mail. Returns subject, sender, and date.",
-            properties: [
-                "sender": ["type": "string", "description": "Optional sender filter."],
-                "subject": ["type": "string", "description": "Optional subject filter."],
-                "limit": ["type": "integer", "description": "Maximum unread emails to return, default 20."],
-            ],
-            required: []
-        ) { arguments, _ in
-            let limit = arguments["limit"] as? Int ?? 20
-            let sender = arguments["sender"] as? String ?? ""
-            let subject = arguments["subject"] as? String ?? ""
-            let output = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: MailAutomation.mailboxSnapshot(
-                        senderContains: sender, subjectContains: subject,
-                        unreadOnly: true, relativeDay: "", limit: limit))
-                }
-            }
-            return AgentToolResult(success: true, output: output, displayCommand: "read_unread_mail")
-        })
-
-        register(AgentTool(
-            name: "search_mail",
-            description: "Search emails headlessly in Apple Mail by query, sender, or subject.",
-            properties: [
-                "query": ["type": "string", "description": "Search keyword matching sender or subject."],
-                "sender": ["type": "string", "description": "Sender to filter by."],
-                "subject": ["type": "string", "description": "Subject to filter by."],
-                "unread_only": ["type": "boolean", "description": "Whether to return only unread emails."],
-                "limit": ["type": "integer", "description": "Maximum emails to return, default 20."],
-            ],
-            required: []
-        ) { arguments, _ in
-            let query = arguments["query"] as? String ?? ""
-            let unreadOnly = arguments["unread_only"] as? Bool ?? false
-            let limit = arguments["limit"] as? Int ?? 20
-            let filters = await AppleLiveDataContext.mailSearchFilters(
-                query: query, sender: arguments["sender"] as? String ?? "",
-                subject: arguments["subject"] as? String ?? "", day: "")
-            let sender = filters.sender
-            let output = await withCheckedContinuation { cont in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    cont.resume(returning: MailAutomation.mailboxSnapshot(
-                        senderContains: filters.sender, subjectContains: filters.subject,
-                        anyContains: filters.any,
-                        unreadOnly: unreadOnly, relativeDay: filters.day, limit: limit))
-                }
-            }
-            return AgentToolResult(success: true, output: output, displayCommand: "search_mail(\(query.isEmpty ? sender : query))")
-        })
+        // read_unread_mail and search_mail retired (H6 6/n): the model uses find_capability +
+        // run_capability("mail.unread" / "mail.search") instead. Both capabilities are registered
+        // in AppleMailMCPCapabilities and discoverable on every turn — find_capability and
+        // run_capability are always in the base tool set.
 
         register(AgentTool(
             name: "send_mail",

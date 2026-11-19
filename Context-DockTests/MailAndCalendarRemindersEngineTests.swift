@@ -13,12 +13,20 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(unread != nil)
         #expect(unread?.appBundleID == "com.apple.mail")
         #expect(unread?.riskLevel == .low)
+        #expect(unread?.runsWithoutAdapter == true)
+        #expect(unread?.inputSchema.fields.contains(where: { $0.name == "limit" }) == true)
+        #expect(unread?.inputSchema.fields.contains(where: { $0.name == "sender" }) == true)
+        #expect(unread?.inputSchema.fields.contains(where: { $0.name == "subject" }) == true)
 
         let search = registry.capability(id: "mail.search")
         #expect(search != nil)
         #expect(search?.appBundleID == "com.apple.mail")
         #expect(search?.riskLevel == .low)
+        #expect(search?.runsWithoutAdapter == true)
         #expect(search?.inputSchema.fields.contains(where: { $0.name == "query" }) == true)
+        #expect(search?.inputSchema.fields.contains(where: { $0.name == "sender" }) == true)
+        #expect(search?.inputSchema.fields.contains(where: { $0.name == "subject" }) == true)
+        #expect(search?.inputSchema.fields.contains(where: { $0.name == "limit" }) == true)
 
         let send = registry.capability(id: "mail.send")
         #expect(send != nil)
@@ -74,8 +82,8 @@ struct MailAndCalendarRemindersEngineTests {
     @Test func agentToolRegistryContainsMailAndCalendarRemindersTools() {
         let registry = AgentToolRegistry.shared
 
-        #expect(registry.tool(named: "read_unread_mail") != nil)
-        #expect(registry.tool(named: "search_mail") != nil)
+        #expect(registry.tool(named: "read_unread_mail") == nil)
+        #expect(registry.tool(named: "search_mail") == nil)
 
         let sendMail = registry.tool(named: "send_mail")
         #expect(sendMail != nil)
@@ -99,8 +107,8 @@ struct MailAndCalendarRemindersEngineTests {
         #expect(unclassified.isEmpty, "All tools must be classified in OutboundGate")
 
         #expect(OutboundGate.outboundTools.contains("send_mail"))
-        #expect(OutboundGate.localTools.contains("read_unread_mail"))
-        #expect(OutboundGate.localTools.contains("search_mail"))
+        #expect(!OutboundGate.localTools.contains("read_unread_mail"))
+        #expect(!OutboundGate.localTools.contains("search_mail"))
         #expect(!OutboundGate.localTools.contains("create_reminder"))
         #expect(OutboundGate.localTools.contains("get_today_events"))
     }
@@ -111,8 +119,9 @@ struct MailAndCalendarRemindersEngineTests {
             bundleId: "com.apple.mail",
             appName: "Mail"
         )
-        #expect(mailPlan.allowedToolNames.contains("read_unread_mail"))
-        #expect(mailPlan.allowedToolNames.contains("search_mail"))
+        #expect(!mailPlan.allowedToolNames.contains("read_unread_mail"))
+        #expect(!mailPlan.allowedToolNames.contains("search_mail"))
+        #expect(mailPlan.allowedToolNames.contains("run_capability"))
         #expect(mailPlan.allowedToolNames.contains("send_mail"))
 
         let remindersPlan = FrontmostAppTaskPlan.make(

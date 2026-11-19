@@ -332,7 +332,7 @@ enum OutboundGate {
         "read_page", "read_file", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
         "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
-        "read_app_dictionary", "read_unread_mail", "search_mail",
+        "read_app_dictionary",
         "get_today_events",
     ]
 
