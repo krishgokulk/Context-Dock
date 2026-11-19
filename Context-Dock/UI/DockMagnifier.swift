@@ -159,6 +159,13 @@ struct DockMagnifiedGlass: ViewModifier {
     let radius: CGFloat
     private let magnifier = DockMagnifier.shared
     @Environment(\.sharesOneCard) private var sharesOneCard
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var isDark: Bool {
+        if settings.appearanceMode == "light" { return false }
+        if settings.appearanceMode == "dark" { return true }
+        return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
 
     func body(content: Content) -> some View {
         let e = active ? magnifier.layout.extra / 2 : 0
@@ -184,6 +191,13 @@ struct DockMagnifiedGlass: ViewModifier {
             .glassEffect(
                 sharesOneCard ? .identity : (active ? .regular.interactive() : .regular),
                 in: .rect(cornerRadius: radius, style: .continuous))
+            .overlay {
+                if !sharesOneCard && settings.glassDarkness > 0 {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Color.black.opacity(settings.glassDarkness * (isDark ? 0.65 : 0.45)))
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.horizontal, -e)
             .animation(DockMagnifier.spring, value: e)
     }
