@@ -1217,6 +1217,7 @@ extension DockCore {
             case .reminders: return await remindersReadAnswer(query: query)
             case .contacts: return await contactsReadAnswer(query: query)
             case .notes: return await notesReadAnswer(query: query)
+            case .screenshots: return await screenshotsReadAnswer(query: query)
             default:
                 // Approved, but no direct local read wired yet — let the existing Apple-data
                 // enrichment / tool-loop fetch it (they read via MCP/automation).
@@ -1693,6 +1694,63 @@ extension DockCore {
         }.joined(separator: "\n")
         return await summarizeGroundedData(
             userQuery: query, dataLabel: "contacts", dataBlock: lines)
+    }
+
+    private func screenshotsReadAnswer(query: String) async -> String {
+        await MainActor.run { aiMode.loadingStatus = "Searching for screenshots…" }
+        let saveDir = await MainActor.run { AppSettings.shared.captureSaveDirectory }
+        let fm = FileManager.default
+        var allPaths = Set<String>()
+        // 1. The app's own screenshot folder (user-configurable in Settings → Hotkeys).
+        //    The user chose this folder for screenshots, so every image in it is one —
+        //    no filename filter. Covers macOS screenshots, Shottr, CleanShot, etc.
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "webp", "heic", "tiff", "bmp"]
+        if let enumerator = fm.enumerator(
+            at: saveDir, includingPropertiesForKeys: [.creationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+        {
+            for case let fileURL as URL in enumerator {
+                if imageExts.contains(fileURL.pathExtension.lowercased()) {
+                    allPaths.insert(fileURL.path)
+                }
+            }
+        }
+        // 2. Spotlight's kMDItemIsScreenCapture for system screenshots outside the app folder.
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        process.arguments = [
+            "kMDItemIsScreenCapture == 1",
+            "-onlyin", NSHomeDirectory(),
+        ]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        if let _ = try? process.run() {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            for line in output.split(separator: "\n") {
+                allPaths.insert(String(line))
+            }
+        }
+        await MainActor.run { aiMode.loadingStatus = nil }
+        guard !allPaths.isEmpty else {
+            return "No screenshots found in \(saveDir.path) or via Spotlight."
+        }
+        let entries: [(path: String, date: Date)] = allPaths.compactMap { path in
+            guard let attrs = try? fm.attributesOfItem(atPath: path),
+                  let date = attrs[.creationDate] as? Date else { return nil }
+            return (path, date)
+        }.sorted { $0.date > $1.date }
+        let lines = entries.prefix(20).map { entry -> String in
+            let df = DateFormatter()
+            df.dateStyle = .medium
+            df.timeStyle = .short
+            let name = (entry.path as NSString).lastPathComponent
+            return "• \(name) — \(df.string(from: entry.date))\n  \(entry.path)"
+        }.joined(separator: "\n")
+        return await summarizeGroundedData(
+            userQuery: query, dataLabel: "screenshots", dataBlock: lines)
     }
 
     /// Ground the selected provider in locally-read data for summarization only. The provider

@@ -251,6 +251,19 @@ final class CapabilityRegistry {
         AppleNotesMCPCapabilities.register(in: self)
     }
 
+    /// Agent tool names implied by registered capabilities for this app scope.
+    /// Replaces the brittle keyword arrays in FrontmostAppTaskPlan (U2f).
+    func impliedToolNames(for bundleID: String?) -> Set<String> {
+        var tools = Set<String>()
+        for cap in capabilities(for: bundleID) {
+            let id = cap.id.lowercased()
+            if id.hasPrefix("finder.") || id.contains("file") {
+                tools.insert("find_files")
+            }
+        }
+        return tools
+    }
+
     func promptBlock(for bundleID: String?) -> String {
         let entries = capabilities(for: bundleID).map { capability in
             let fields = capability.inputSchema.fields.map(\.name).joined(separator: ", ")
