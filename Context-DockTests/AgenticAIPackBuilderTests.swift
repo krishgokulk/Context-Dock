@@ -242,7 +242,7 @@ struct AgenticAIPackBuilderTests {
 
     @Test("stage3 sets primaryChannel to lowest-priority (highest-ranked) discovered channel")
     func stage3PrimaryChannel() {
-        let s1 = makeStage1(pathCLIs: ["mytool"], menuPaths: ["Help ▸ About"])
+        let s1 = makeStage1(menuPaths: ["Help ▸ About"], pathCLIs: ["mytool"])
         let plan = AgenticAIPackBuilder.stage3(stage1: s1, stage2: makeStage2())
         #expect(plan.primaryChannel == .embeddedCLI)
     }
