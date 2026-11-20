@@ -668,6 +668,8 @@ struct AIComposerBar: View {
 
                 Spacer(minLength: 4)
 
+                modePill
+
                 micButton
 
                 expandedSendButton
@@ -872,7 +874,7 @@ struct AIComposerBar: View {
                 if onCommitSelection?() == true { return }
                 onSubmit()
             } label: {
-                Image(systemName: "arrow.right")
+                Image(systemName: "arrow.up")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 28, height: 28)
