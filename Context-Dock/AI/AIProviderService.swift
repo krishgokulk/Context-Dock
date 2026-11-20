@@ -877,21 +877,29 @@ class AIProviderService: ObservableObject {
         imageURLs: [URL],
         isRetry: Bool
     ) async throws -> String {
-        let turnLimit = isRetry ? 2 : 6
-        var fullPrompt = contextPrompt + "\n\n"
-        if !history.isEmpty {
-            fullPrompt += "## Conversation History\n"
-            for msg in history.suffix(turnLimit) {
-                let role = msg.role == .user ? "User" : "Assistant"
-                fullPrompt += "\(role): \(msg.content)\n"
-            }
-            fullPrompt += "\n"
-        }
-
+        // Build the final user message first so image content factors into token budgeting.
         var finalMessage = message
         let imageContent = onDeviceImageContentBlock(from: imageURLs)
         if !imageContent.isEmpty {
             finalMessage = "\(imageContent)\n\nUser request: \(message)"
+        }
+
+        // E5b: proactive budgeting — trim history to fit before dispatch, avoiding overflow.
+        let turnLimit = isRetry ? 2 : 6
+        let fittedHistory = await OnDevicePromptBudget.fittingHistory(
+            systemPrompt: contextPrompt,
+            history: Array(history.suffix(turnLimit)),
+            message: finalMessage
+        )
+
+        var fullPrompt = contextPrompt + "\n\n"
+        if !fittedHistory.isEmpty {
+            fullPrompt += "## Conversation History\n"
+            for msg in fittedHistory {
+                let role = msg.role == .user ? "User" : "Assistant"
+                fullPrompt += "\(role): \(msg.content)\n"
+            }
+            fullPrompt += "\n"
         }
 
         do {
@@ -1092,21 +1100,26 @@ class AIProviderService: ObservableObject {
                     }
                     #endif
 
-                    // ── 3. Build the full prompt including conversation history ──
+                    // ── 3. Build final message, then proactively budget history ──
+                    let imageContent = self.onDeviceImageContentBlock(from: imageURLs)
+                    let finalMessage = imageContent.isEmpty
+                        ? message
+                        : "\(imageContent)\n\nUser request: \(message)"
+
+                    let fittedHistory = await OnDevicePromptBudget.fittingHistory(
+                        systemPrompt: contextPrompt,
+                        history: Array(history.suffix(6)),
+                        message: finalMessage
+                    )
                     var fullPrompt = contextPrompt + "\n\n"
-                    if !history.isEmpty {
+                    if !fittedHistory.isEmpty {
                         fullPrompt += "## Conversation History\n"
-                        for msg in history.suffix(6) { // last 6 turns
+                        for msg in fittedHistory {
                             let role = msg.role == .user ? "User" : "Assistant"
                             fullPrompt += "\(role): \(msg.content)\n"
                         }
                         fullPrompt += "\n"
                     }
-
-                    let imageContent = self.onDeviceImageContentBlock(from: imageURLs)
-                    let finalMessage = imageContent.isEmpty
-                        ? message
-                        : "\(imageContent)\n\nUser request: \(message)"
 
                     // ── 4. Stream with one context-overflow retry ──
                     do {
@@ -1128,10 +1141,15 @@ class AIProviderService: ObservableObject {
                             return
                         }
                         self.resetOnDeviceSession()
+                        let retryHistory = await OnDevicePromptBudget.fittingHistory(
+                            systemPrompt: contextPrompt,
+                            history: Array(history.suffix(2)),
+                            message: finalMessage
+                        )
                         var condensedPrompt = contextPrompt + "\n\n"
-                        if !history.isEmpty {
+                        if !retryHistory.isEmpty {
                             condensedPrompt += "## Conversation History\n"
-                            for msg in history.suffix(2) {
+                            for msg in retryHistory {
                                 let role = msg.role == .user ? "User" : "Assistant"
                                 condensedPrompt += "\(role): \(msg.content)\n"
                             }
