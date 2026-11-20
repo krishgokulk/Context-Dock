@@ -940,7 +940,7 @@ struct MailQuestionShortcutRetirementTests {
 
     /// Imperative record searches in Mail ("find mail from SBI today") are data-lane reads of
     /// Mail's records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
-    /// Mail's read tools (`search_mail`, `read_unread_mail`) are included.
+    /// route through capabilities (`find_capability`, `run_capability`) rather than retired tools.
     @Test func findInMailIsADataLaneRead() {
         let query = "find mail from SBI today"
         let plan = FrontmostAppTaskPlan.make(
@@ -948,8 +948,10 @@ struct MailQuestionShortcutRetirementTests {
         #expect(plan.intent == .read)
         #expect(!plan.permitsUIAutomation)
         #expect(RequestLane.decide(query) == .data)
-        #expect(plan.allowedToolNames.contains("search_mail"))
-        #expect(plan.allowedToolNames.contains("read_unread_mail"))
+        #expect(!plan.allowedToolNames.contains("search_mail"))
+        #expect(!plan.allowedToolNames.contains("read_unread_mail"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
     }
 
     /// Mail's read capabilities (`mail.recent`, `mail.read`, `mail.search`, `mail.unread`,
@@ -1004,7 +1006,7 @@ struct MailboxSearchShortcutRetirementTests {
         }
     }
 
-    /// The plan is a data-lane read with Mail's search tool and no UI automation: Mail's
+    /// The plan is a data-lane read with capability routing and no UI automation: Mail's
     /// window is never raised, clicked or typed into (owner, 2026-10-10).
     @Test func searchCommandsPlanAsDataLaneReads() {
         for sentence in Self.retiredCommands {
@@ -1013,7 +1015,9 @@ struct MailboxSearchShortcutRetirementTests {
             #expect(plan.intent == .read, "\"\(sentence)\"")
             #expect(!plan.permitsUIAutomation, "\"\(sentence)\"")
             #expect(plan.complexity != .direct, "\"\(sentence)\" needs a tool round")
-            #expect(plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
         }
     }
 
@@ -1683,6 +1687,73 @@ struct CreateReminderToolRetirementTests {
     @Test func createReminderIsRetiredEverywhere() {
         #expect(AgentToolRegistry.shared.tool(named: "create_reminder") == nil)
         #expect(!OutboundGate.localTools.contains("create_reminder"))
+    }
+}
+
+// MARK: - H6 (6/n): read_unread_mail & search_mail tool retirement
+
+@MainActor
+struct MailReadToolsRetirementTests {
+
+    /// Mail unread and search queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("mail.unread" / "mail.search")` rather than legacy named tools.
+    @Test func mailReadQueriesRouteAsData() {
+        for sentence in [
+            "read my unread emails",
+            "any unread mail?",
+            "search mail from Sarah",
+            "find emails about invoice",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `read_unread_mail` or `search_mail` for Mail
+    /// turns; `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func mailPlanOmitsRetiredReadTools() {
+        for sentence in ["read my unread emails", "search mail from Sarah"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence,
+                bundleId: "com.apple.mail",
+                appName: "Mail"
+            )
+            #expect(!plan.allowedToolNames.contains("read_unread_mail"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("search_mail"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
+        }
+    }
+
+    /// `mail.unread` and `mail.search` capabilities are registered, low-risk, headless
+    /// (`runsWithoutAdapter`), and expose all expected query parameters.
+    @Test func mailReadCapabilitiesCoverAllParameters() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+
+        let unread = registry.capability(id: "mail.unread")
+        #expect(unread != nil, "mail.unread capability must be registered")
+        #expect(unread?.appBundleID == "com.apple.mail")
+        #expect(unread?.riskLevel == .low)
+        #expect(unread?.runsWithoutAdapter == true)
+        let unreadFields = Set(unread?.inputSchema.fields.map(\.name) ?? [])
+        #expect(unreadFields.isSuperset(of: ["limit", "sender", "subject"]))
+
+        let search = registry.capability(id: "mail.search")
+        #expect(search != nil, "mail.search capability must be registered")
+        #expect(search?.appBundleID == "com.apple.mail")
+        #expect(search?.riskLevel == .low)
+        #expect(search?.runsWithoutAdapter == true)
+        let searchFields = Set(search?.inputSchema.fields.map(\.name) ?? [])
+        #expect(searchFields.isSuperset(of: ["query", "sender", "subject", "unreadOnly", "day", "limit"]))
+    }
+
+    /// `read_unread_mail` and `search_mail` are retired everywhere: removed from
+    /// `AgentToolRegistry` and `OutboundGate.localTools`.
+    @Test func mailReadToolsAreRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "read_unread_mail") == nil)
+        #expect(AgentToolRegistry.shared.tool(named: "search_mail") == nil)
+        #expect(!OutboundGate.localTools.contains("read_unread_mail"))
+        #expect(!OutboundGate.localTools.contains("search_mail"))
     }
 }
 

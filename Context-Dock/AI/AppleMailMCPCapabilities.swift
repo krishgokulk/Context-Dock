@@ -92,7 +92,7 @@ enum AppleMailMCPCapabilities {
                     query: query, sender: request.input["sender"] ?? "",
                     subject: request.input["subject"] ?? "", day: request.input["day"] ?? "")
                 let (sender, subject, day) = (filters.sender, filters.subject, filters.day)
-                let unreadOnly = (request.input["unreadOnly"] ?? "").lowercased() == "true"
+                let unreadOnly = (request.input["unreadOnly"] ?? request.input["unread_only"] ?? "").lowercased() == "true"
                 let limit = max(1, min(Int(request.input["limit"] ?? "20") ?? 20, 50))
 
                 // A search with no filter at all is mail.recent wearing a different name, and
