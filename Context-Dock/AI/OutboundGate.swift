@@ -273,7 +273,7 @@ enum OutboundGate {
         case "run_shortcut":
             return Target(kind: .shortcut, host: nil, label: "run a Shortcut, which can send data out")
 
-        case "compose_message", "send_message", "send_mail":
+        case "compose_message", "send_message":
             return Target(kind: .message, host: nil, label: "send a message or email to someone")
 
         case "run_command", "spawn_worker":
@@ -322,7 +322,7 @@ enum OutboundGate {
 
     /// Tools `target` can classify as outbound (its switch above).
     static let outboundTools: Set<String> = [
-        "read_url", "run_shortcut", "compose_message", "send_message", "send_mail", "run_command", "spawn_worker",
+        "read_url", "run_shortcut", "compose_message", "send_message", "run_command", "spawn_worker",
         "run_menu_command", "run_synthesized_script", "run_adapter_action", "run_route", "run_capability",
     ]
 

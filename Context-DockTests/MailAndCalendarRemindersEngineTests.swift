@@ -84,10 +84,7 @@ struct MailAndCalendarRemindersEngineTests {
 
         #expect(registry.tool(named: "read_unread_mail") == nil)
         #expect(registry.tool(named: "search_mail") == nil)
-
-        let sendMail = registry.tool(named: "send_mail")
-        #expect(sendMail != nil)
-        #expect(sendMail?.required == ["to", "subject", "body"])
+        #expect(registry.tool(named: "send_mail") == nil)
 
         #expect(registry.tool(named: "list_reminders") == nil)
 
@@ -106,7 +103,7 @@ struct MailAndCalendarRemindersEngineTests {
             .filter { !OutboundGate.isClassified(toolName: $0) }
         #expect(unclassified.isEmpty, "All tools must be classified in OutboundGate")
 
-        #expect(OutboundGate.outboundTools.contains("send_mail"))
+        #expect(!OutboundGate.outboundTools.contains("send_mail"))
         #expect(!OutboundGate.localTools.contains("read_unread_mail"))
         #expect(!OutboundGate.localTools.contains("search_mail"))
         #expect(!OutboundGate.localTools.contains("create_reminder"))
@@ -121,8 +118,8 @@ struct MailAndCalendarRemindersEngineTests {
         )
         #expect(!mailPlan.allowedToolNames.contains("read_unread_mail"))
         #expect(!mailPlan.allowedToolNames.contains("search_mail"))
+        #expect(!mailPlan.allowedToolNames.contains("send_mail"))
         #expect(mailPlan.allowedToolNames.contains("run_capability"))
-        #expect(mailPlan.allowedToolNames.contains("send_mail"))
 
         let remindersPlan = FrontmostAppTaskPlan.make(
             query: "list my reminders",
