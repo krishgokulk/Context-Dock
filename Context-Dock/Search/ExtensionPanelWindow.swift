@@ -648,7 +648,7 @@ struct AIComposerBar: View {
         VStack(alignment: .leading, spacing: 6) {
             inputTextField
                 .padding(.horizontal, 14)
-                .padding(.top, 8)
+                .padding(.top, 10)
                 .padding(.bottom, 4)
 
             HStack(spacing: 8) {
@@ -669,18 +669,28 @@ struct AIComposerBar: View {
                 expandedSendButton
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 6)
+            .padding(.bottom, 8)
         }
-        .background {
-            if drawsChrome {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
-                    )
-            }
-        }
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.22),
+                            Color.white.opacity(0.08)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .padding(.horizontal, isChatOpen ? 10 : 0)
+        .padding(.bottom, isChatOpen ? 8 : 0)
     }
 
     @ViewBuilder

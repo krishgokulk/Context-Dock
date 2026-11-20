@@ -77,7 +77,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Active temporary side thread branched off the current conversation (#333).
     @Published var activeSideThread: SideThreadState? = nil
     /// Whether the conversation board in the corner is minimized down to the resting pill.
-    @Published var isConversationMinimized: Bool = false
+    @Published var isConversationMinimized: Bool = true
 
     func minimizeConversation() {
         isConversationMinimized = true
