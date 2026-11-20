@@ -11,6 +11,9 @@
 //
 // Scoring is `DockTextMatch` — the same rule the dock ranks with, so a query means the same
 // thing wherever it is typed.
+//
+// The unified ranking formula (Unified Spotlight-Pet Surface spec §4):
+//   TotalScore = MatchScore + FrecencyBoost + FrontmostBoost + SourceWeight - IncidentalPenalty
 
 import Foundation
 
@@ -57,6 +60,11 @@ enum AppChatRow: Identifiable {
         if case .action = self { return true }
         return false
     }
+
+    var isFile: Bool {
+        if case .file = self { return true }
+        return false
+    }
 }
 
 enum AppChatRowRanker {
@@ -76,9 +84,12 @@ enum AppChatRowRanker {
         actions: [AdapterAction],
         query: String,
         limit: Int,
-        policy: FrontmostMenuMatcher.Policy = .cornerAppChat
+        policy: FrontmostMenuMatcher.Policy = .cornerAppChat,
+        frontmostBundleID: String? = nil,
+        intent: QueryIntentArchetype = .navigational
     ) -> [AppChatRow] {
         let typed = DockTextMatch.normalized(query)
+        let isFrontmost = frontmostBundleID != nil
 
         guard !typed.isEmpty else {
             let leading = actions.prefix(limit).map(AppChatRow.action)
@@ -94,22 +105,20 @@ enum AppChatRowRanker {
         for item in FrontmostMenuMatcher.ranked(
             commands, query: typed, limit: limit * 2, policy: policy)
         {
-            let score = DockTextMatch.rankedScore(
+            var score = DockTextMatch.rankedScore(
                 query: typed,
                 primary: item.title,
                 contexts: [
                     item.path.dropLast().last ?? "",
                     item.path.joined(separator: " "),
                 ]) ?? 0
+            if isFrontmost {
+                score += UnifiedIntentClassifier.frontmostAppBoost
+            }
             scored.append((.command(item), score))
         }
 
         for action in actions {
-            // Triggers are aliases the author gave the action — "reopen" for Open Recent —
-            // and are exactly what the alias band of the score is for.
-            // A zero is a miss, not a weak hit: the multi-token band returns 0 rather
-            // than nil when none of the words land, and adding the tie-break edge to that
-            // zero is what let a sentence produce five "matches".
             guard let score = DockTextMatch.rankedScore(
                 query: typed,
                 primary: action.name,
@@ -117,7 +126,11 @@ enum AppChatRowRanker {
                 contexts: [action.category ?? "", action.description]),
                 score > 0
             else { continue }
-            scored.append((.action(action), score + curatedActionEdge))
+            var adjusted = score + curatedActionEdge
+            if isFrontmost {
+                adjusted += UnifiedIntentClassifier.frontmostAppBoost
+            }
+            scored.append((.action(action), adjusted))
         }
 
         return Array(
@@ -130,5 +143,83 @@ enum AppChatRowRanker {
                 }
                 .prefix(limit)
                 .map(\.row))
+    }
+
+    // MARK: - Unified Ranking
+
+    /// Applies the unified ranking adjustments to an already-ordered list of rows:
+    /// conversational file penalty, explicit file boost, and frecency reordering.
+    static func applyUnifiedAdjustments(
+        to rows: [AppChatRow],
+        query: String,
+        intent: QueryIntentArchetype,
+        frontmostBundleID: String? = nil
+    ) -> [AppChatRow] {
+        guard !rows.isEmpty else { return rows }
+
+        var scored: [(row: AppChatRow, score: Double)] = []
+        let baseScore: Double = 10_000
+
+        for (index, row) in rows.enumerated() {
+            var score = baseScore - Double(index) * 100
+
+            // Conversational penalty on incidental file matches
+            if intent == .conversational, row.isFile {
+                score += UnifiedIntentClassifier.conversationalFilePenalty
+            }
+
+            // Explicit file boost
+            if intent == .explicitFile, row.isFile {
+                score += UnifiedIntentClassifier.explicitFileBoost
+            }
+
+            // Frecency boost from UsageTracker
+            let frecency = UsageTracker.shared.getScore(for: row.id)
+            if frecency > 0 {
+                score += min(frecency, 200)
+            }
+
+            // Frontmost boost for commands/actions of the frontmost app
+            if let bid = frontmostBundleID {
+                if case .global(let doc) = row, doc.bundleId == bid {
+                    score += UnifiedIntentClassifier.frontmostAppBoost
+                }
+            }
+
+            scored.append((row, score))
+        }
+
+        return scored
+            .sorted { $0.score > $1.score }
+            .map(\.row)
+    }
+
+    // MARK: - Ghost Text Derivation
+
+    /// Returns the ghost completion suffix for the top-ranked row, or nil if no prefix match.
+    /// The query "exp" with top result "Export as PDF…" yields "ort as PDF…".
+    static func ghostText(for query: String, topRow: AppChatRow?) -> String? {
+        guard let topRow, !query.isEmpty else { return nil }
+        let title = topRow.title
+        let normalizedQuery = query.lowercased()
+        let normalizedTitle = title.lowercased()
+        guard normalizedTitle.hasPrefix(normalizedQuery) else { return nil }
+        let suffixStart = title.index(title.startIndex, offsetBy: query.count)
+        let suffix = String(title[suffixStart...])
+        guard !suffix.isEmpty else { return nil }
+        return suffix
+    }
+
+    /// For conversational queries with no high-confidence local match, returns the
+    /// "Ask Dora" ghost suffix to display after the query text.
+    static func conversationalGhostText(
+        for query: String,
+        intent: QueryIntentArchetype,
+        hasHighConfidenceMatch: Bool
+    ) -> String? {
+        guard intent == .conversational || intent == .webResearch,
+              !hasHighConfidenceMatch, !query.isEmpty
+        else { return nil }
+        return " — Ask Dora (↵)"
     }
 }
