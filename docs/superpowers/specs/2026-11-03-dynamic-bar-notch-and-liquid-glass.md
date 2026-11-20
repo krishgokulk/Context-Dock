@@ -181,3 +181,7 @@ Matches the latest UI specification (`media_1793731123519_71336fc3.png`):
     - Updated `MediaPlayerObserver.togglePlayPause()` to explicitly send `play` or `pause` commands to Spotify and Apple Music via AppleScript and MediaRemoteBridge for 100% deterministic toggling.
   - Built with `./scripts/build-debug.sh` (build OK, all checks passed).
   - Launched and verified via `./scripts/dev-run.sh`.
+- **Phase 8: Per-App `.doraxpack` v2 Notch Extensions (`views.notch`), `NotchPinStore`, `WindowManagementService` Unification & Apple `container` Sandbox (PRs #480 & #481, Tasks U7a–U7d):** [COMPLETED; `OwnerReviewCard` UI wiring queued in U8a]
+  - Replaced duplicate `FrontmostAppActions` in `DynamicNotchLiveActivityView.swift` with `WindowManagementService.shared.execute(.left/.fill/.right)`.
+  - Added `.notch` (`PluginNotchView`: `wing` 44×32 pt badge + `page` 314×96 pt Page 2 strip) to `PluginPresentation`, `PluginManifest`, `HostTraits`, `PluginHostView`, and `PluginPreviewHarness`.
+  - Added `NotchPinStore` (`Services/NotchPinStore.swift`) and `NotchQuickActionsView` (`UI/NotchQuickActionsView.swift`) with `[ + Notch ]` per-app capability picker, live action pill strip, AI notch authoring trigger (`AgenticAIPackBuilder.build`), and optional Apple `container` CLI micro-VM sandboxing (`sandbox` in `PluginAction` / `PluginScriptRunner`).

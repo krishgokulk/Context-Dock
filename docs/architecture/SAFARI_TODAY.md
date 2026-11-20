@@ -140,19 +140,32 @@ Through `dorax_ask` (which runs unattended — every approval refused, nothing w
 
 ---
 
-## What "perfect" means for Safari
+## What "perfect" means for Safari (Dual-Engine Architecture — Task U5, PR #478 & Task U8b)
 
-In the order a question should be answered, and with the boundary each route keeps:
+Implemented in `SafariEscalationPolicy.swift`, `SafariExtensionHookRegistry.swift`,
+`SafariExtensionCommandBridge.swift`, `SafariBrowserBridge.swift`, and
+`Packs/Safari.doraxpack` (PR #478; live chat/`CapabilityRegistry` routing completed in Task U8b):
 
 ```
-   Is this about what I have open, or the page in front of me?
-        → the EXTENSION (free, live, sees the user's real windows)
-   Is it about this page's content, and the extension has nothing fresh?
-        → AppleScript page read, compacted, cached by content hash
-   Is it acting on a page — click, type, evaluate, navigate, console, network?
-        → SAFARI MCP, gated per host, script shown every time
-   Is it about history or bookmarks?
-        → the capability, never the automation session
+   1. Is this about what I have open, the page in front of me, or a pack DOM extractor?
+        → ENGINE 1: Context-DockExtension Two-Way Bridge + declarative pack
+          `extension_hooks` (`Packs/Safari.doraxpack/page_scripts/extract-article-and-links.js`
+          via `SafariExtensionCommandBridge.executeExtensionHook` & `ExtensionHookRegistry`).
+          Enforces `withheldPageBlock` sensitive-URL hard-blocking (`BridgeError.sensitiveURL`)
+          and fences all output in `UntrustedContent.fenced(...)`.
+   2. Is it about this page's content, and the extension bridge is disabled/unconnected?
+        → AppleScript / `AppleSafariMCPCapabilities` page read, compacted, cached by
+          content hash in `BrowserPageCache.shared`.
+   3. Is it about open tab list, tab switching, history or bookmarks?
+        → Native headless capabilities (`safari.listTabs`, `safari.switchTab`,
+          `browser.history`, `browser.bookmarks`) — never the automation session.
+          `SafariBrowserBridge.warmUpTabCacheIfNeeded()` and `tabsForAI()` warm cold caches
+          with an automatic AppleScript fallback.
+   4. Does it need deep browser power beyond a content script — console errors/logs,
+      network request inspection, viewport/media emulation, screenshots, dialog handling,
+      or multi-step automated DOM interaction (`click`, `type`, `navigate`, `evaluate_javascript`)?
+        → ENGINE 2: `SafariEscalationPolicy` escalates to `safaridriver --mcp` (`safari-mcp`),
+          gated per host with explicit user approval and script/target preview every time.
    Everything else
         → refuse specifically, and say which of the above would have answered it
 ```

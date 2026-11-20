@@ -119,11 +119,10 @@ The AI provider combines **3 discovery channels**:
 
 ---
 
-## 5. Implementation Roadmap (Task #373)
+## 5. Implementation Roadmap (Task #373 & Tasks U1–U8)
 
 | Step | Scope | Description |
 | :--- | :--- | :--- |
-| **Step 1** | Settings Sidebar | Consolidate `AppPacksSettingsPage`, `PluginsSettingsPage`, and `PluginCreatorDoor` under a unified `Extensions` structure with `Apps` and `Store / Packs`. |
-| **Step 2** | App Detail View | Simplify `AppIntegrationDetailView` into 3 clean tabs: `Capabilities & Skills`, `Agent`, and `Access`. Eliminate the 8-bucket technical count. |
-| **Step 3** | Automatic App Binding | Ensure packs installed from the Store bind directly to `bundleId` in `AppAdapterManager` and `ScopeInventory`. |
-| **Step 4** | AI Pack Creator Flow | Connect `PluginCreatorPane` to the AI provider with automatic `sdef` dumping and OpenAPI schema parsing. |
+| **Step 1–4 (#373)** | Settings Sidebar, 3-Tab App Detail, Initial `StorePackInstaller` & `AIPackIntrospector` | ✅ Shipped (PR #374) |
+| **Tasks U1–U7** | `AppScopedChatService` Corner routing (#474), General Chat scope isolation & screenshot routing (#475), `.doraxpack` v2 & 5 first-party `Packs/` (#476), 4-stage `AgenticAIPackBuilder` (#477), Safari Dual-Engine & `ExtensionHookRegistry` (#478), spec archival (#479), Dynamic Notch `views.notch`, `NotchPinStore` & Apple `container` sandbox (#480, #481) | ✅ Shipped (PRs #474–#481) |
+| **Task U8 (`U8a–U8d`)** | Last-mile wiring: connect `PluginCreatorPane` & Notch to `AgenticAIPackBuilder` + `OwnerReviewCard` (`U8a`), register `ExtensionHookRegistry` hooks in `CapabilityRegistry` & route Safari turns via `SafariEscalationPolicy` (`U8b`), complete `StorePackInstaller.installV2` binding for `CapabilityRegistry`/`cli_tools`/`mcp_servers`/`modes.json` (`U8c`), and strip 40-menu prompt group + persist thread cards (`U8d`) | Queued in `00-NOW.md` |

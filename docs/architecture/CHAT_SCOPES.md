@@ -55,10 +55,11 @@ When an App Pet or Combined Chat request needs an app outside the current partic
 Connecting a Pet grants visibility to its allowed profile/capabilities for this thread. It does
 not approve a write, outbound action, Computer Use or provider change.
 
-In General Chat, an app the user explicitly names is a turn-scoped route request, not a participant
-connection. When Dora infers a private app that the user did not name, it previews the proposed app
-scope before reading it. Consequential actions always use their normal exact approval regardless of
-conversation kind.
+In General Chat (`ConversationKind.general`, Task U2, PR #475):
+- **No frontmost-app bleed (`U2a`):** General Chat never falls back to `previousFrontmostApp` or `NSWorkspace.shared.frontmostApplication` for `effectiveBundleId`.
+- **OS Core System Primitives (`U2c`):** Built-in macOS system capabilities (`calendar.*`, `notes.*`, `reminders.*`, `contacts.*`, `finder.*`, `window.*`, `system.*`) bypass the `"Enable <App>?"` gate in General Chat; writes/deletes go straight to their approval card.
+- **Turn-scoped app routes:** An app the user explicitly names is a turn-scoped route request, not a participant connection. When Dora infers a private app that the user did not name, it previews the proposed app scope before reading it. Consequential actions always use their normal exact approval regardless of conversation kind.
+- **Single execution pipeline (Task U1, PR #474 & Task U8d):** Corner App Pet (`DockCore+AIChat.swift`) delegates cloud turns to `AppScopedChatService.send` (`TurnEngine.run`), with Task U8d finishing the on-device branch and cross-thread card persistence.
 
 ## Grounding
 

@@ -96,9 +96,14 @@ sentence, not to reconstructing what the app is from a menu tree.**
 
 ---
 
-## 3. The 2-Stage Autonomous Discovery Engine (CLI, Deep Links, Web Docs & GitHub)
+## 3. The Unified 4-Stage Discovery & AI Pack Synthesis Engine (Task U4, PR #477 & Task U8a)
 
-When a user installs a new third-party app (e.g. `Antigravity`, `Ghostty`, `HandBrake`), DoraX must not require manual entry of CLI tools, deep links, or documentation. It runs a 2-stage discovery pipeline that permanently enriches the app's `AGENT.md` and `SKILL.md`.
+When a user installs a new third-party app (e.g. `IINA`, `Antigravity`, `Ghostty`, `HandBrake`) or clicks **`✨ Build Pack with AI`**, DoraX runs the 4-stage discovery and synthesis pipeline in `AgenticAIPackBuilder.swift` (combining `AutonomousAppDiscoveryEngine` and `AIPackIntrospector`):
+
+- **Stage 1 (Offline Local Introspection, < 500 ms):** Scans `.app/Contents/MacOS/` and `Resources/` for embedded bundle CLIs (e.g. `/Applications/IINA.app/Contents/MacOS/iina-cli`, VS Code `bin/code`, `tshark`), `PATH` / Homebrew binaries, `Info.plist` URL schemes (`iina://`) and document types, `sdef` AppleScript/JXA dictionary, local UNIX IPC sockets (e.g. IINA's `mpv` JSON IPC socket `/tmp/iina-ipc.sock`), `shortcuts list`, cached `AppMenuCapabilityCache` (including Help menu headings), `NativeMCPCatalog`, and `AppToolCatalog`.
+- **Stage 2 (Authorized Online Knowledge Lookup, Cached per App Version):** Fetches official vendor documentation via `AppWebsiteKnowledge` cached per `(bundleID, appVersion)`.
+- **Stage 3 (Deterministic 8-Channel Selection):** Ranks discovered capabilities in priority order: `ExtensionHook (1)` → `CLI (2)` → `LocalIPCScript (3)` → `UTCP (4)` → `MCP (5)` → `ScriptingDictionary (6)` → `URLScheme (7)` → `MenuCommand (8)`.
+- **Stage 4 (Synthesis, `0644` Staging, Read-Only `--help` Dry-Run & `OwnerReviewCard`):** Stages the `.doraxpack` v2 folder (`pack.json`, `AGENT.md`, `modes.json`, `skills/*/SKILL.md`, `scripts/`, `page_scripts/`) with scripts at `0644` (non-executable), runs read-only `--help` probes, returns an `OwnerReviewCard`, and atomically binds via `StorePackInstaller.installV2` upon `approveAndInstall()`.
 
 ```
                          NEW APP DETECTED (e.g. Antigravity)

@@ -83,26 +83,33 @@ request → keep conversation identity → choose minimum turn scope → ground 
 ```
 
 All of this exists today in `AppScopedChatService`, `ScopedTurnRunner`, `ApprovalCenter` and
-the verifiers. `[code — docs 03, 08]`
+the verifiers `[code — docs 03, 08]`. **Task U1 (PR #474, 2026-11-19)** routed Corner App Chat's
+cloud turn in `DockCore+AIChat.swift` through `AppScopedChatService.send` (`TurnEngine.run`), with
+**Task U8d** finishing the on-device branch and cross-thread card persistence. `[code/target]`
 
 One provider is selected by the user for the conversation. The host—not the provider—owns scope,
 token/round/time budgets, capability discovery, approvals, execution, verification, receipts and
 memory. A provider without tool schemas reaches the same typed capability layer through its
-directive bridge; it receives no extra authority. `[owner/target]`
+directive bridge (`ScopedTurnRunner` `capability_call` recovery, PR #475); it receives no extra
+authority. `[code/owner]`
 
-### 2.4 App Pets are profiles over one harness
+### 2.4 App Pets are profiles over one harness (packaged as `.doraxpack` v2)
 
 Each Pet contributes identity, app knowledge, skills, connectors, capabilities, modes,
 conversation and per-app memory. It does **not** own a separate permanent model loop. Existing
 adapters, `AGENT.md` profiles, skills, MCP/CLI/Shortcut/menu routes and app chat stores are normalized
-into an **App Pet Profile** rather than copied into a new registry. Native selection, clipboard,
-windows, files, sharing and notifications remain shared host services available through the same
-scope/approval/execution/verification layer. `[owner/target]`
+into an **App Pet Profile** rather than copied into a new registry, and packaged on disk in **one
+canonical `.doraxpack` v2 folder format** (`pack.json`, `AGENT.md`, `modes.json`, `skills/*/SKILL.md`,
+`scripts/`, `page_scripts/`, shipped in `DoraxPackV2.swift` & `Packs/*.doraxpack`, PR #476). Native
+selection, clipboard, windows, files, sharing and notifications remain shared host services available
+through the same scope/approval/execution/verification layer. `[code/owner]`
 
-General Chat may borrow those typed abilities for one request without becoming the Pet or loading
-its long memory. The plan and receipt show the app route; the conversation remains Dora's Mac-wide
-chat. Explicit **Open in <App> Pet** is the boundary that activates persistent app grounding and
-memory. `[owner/target]`
+General Chat never falls back to `previousFrontmostApp`, treats macOS Core System Primitives
+(`calendar.*`, `notes.*`, `reminders.*`, `contacts.*`, `finder.*`, `window.*`, `system.*`) as ungated
+built-ins, and auto-borrows read-only abilities for one request when the user explicitly names an app
+(PR #475). It pauses only before reading an unmentioned private app or executing any write/outbound
+step. Explicit **Open in <App> Pet** is the boundary that activates persistent app grounding and
+memory. `[code/owner]`
 
 ### 2.5 Cross-app promotion
 
@@ -318,6 +325,14 @@ preserving distinct conversation identities and scope lifetimes.
 Commands, menus, apps, and files execute immediately on `Return`, while conversational questions
 escalate directly to the active App Pet with ambient window context. Spec:
 [`docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`](../superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md).
+
+**Owner direction (2026-11-18 – 2026-11-20, Tasks U1–U8):**
+1. **U1 (PR #474) & U8d:** Route Corner App Chat (`DockCore+AIChat.swift`) through `AppScopedChatService.send` (`TurnEngine.run`), strip the 40-item `Menu commands` group from `ScopedAppPromptBuilder`, and persist rich cards/receipts across thread switches.
+2. **U2 (PR #475):** Stop `effectiveBundleId` from falling back to `previousFrontmostApp` in General Chat, treat OS Core System Primitives (`calendar.*`, `notes.*`, `reminders.*`, `contacts.*`, `finder.*`, `window.*`, `system.*`) as ungated built-ins, route `"show me my screenshots"` to `captureSaveDirectory` + Spotlight `kMDItemIsScreenCapture == 1`, and recover `capability_call` directives in `ScopedTurnRunner`.
+3. **U3 (PR #476) & U8c:** Standardize on `.doraxpack` v2 (`DoraxPackV2.swift`) with 5 first-party dogfooded bundles in `Packs/` (`Finder`, `Safari`, `Mail`, `IINA`, `Antigravity`) and full atomic binding in `StorePackInstaller` (`CapabilityRegistry`, `cli_tools`, `mcp_servers`, `modes.json`, `extension_hooks`).
+4. **U4 (PR #477) & U8a:** 4-Stage `AgenticAIPackBuilder` (Stage 1 local bundle/embedded `Contents/MacOS/` CLI/sdef/menu/IPC scan → Stage 2 cached online docs → Stage 3 8-channel priority selector → Stage 4 `0644` staging, `--help` dry-run, and `OwnerReviewCard` wired into `PluginCreatorPane` and Notch).
+5. **U5 (PR #478) & U8b:** Dual-engine Safari power combining `Context-DockExtension` (`SafariExtensionCommandBridge.executeExtensionHook` + `ExtensionHookRegistry` `page_scripts/*.js`) with `SafariEscalationPolicy` escalating to `safaridriver --mcp` for console/network/screenshots/automation.
+6. **U6 (PR #479) & U7 (PRs #480, #481):** Archive superseded pre-November specs into `docs/history/specs/` (`docs/README.md`), unify Notch window tiling with `WindowManagementService.shared`, add `.notch` (`PluginNotchView`) + `NotchPinStore` (`[ + Notch ]`), and support optional Apple `container` CLI micro-VM sandboxing in `PluginScriptRunner`.
 
 ---
 

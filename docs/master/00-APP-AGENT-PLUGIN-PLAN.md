@@ -334,7 +334,7 @@ Every way DoraX can act on an app is a plugin with one manifest. The kinds alrea
 | Menu command | Message › Archive | `AppKnowledgeSkill` | opens app |
 | Screen control | AX press, then click | last resort | takes screen |
 
-### 4.2 Manifest (one shape for all kinds)
+### 4.2 Manifest and `.doraxpack` v2 folder schema (one shape for all kinds)
 
 `id, app bundle ids, origin (built-in / vetted / user-added / DoraX-made), version,
 capabilities[] { id, title, inputs, read|write, outbound?, surface }, how to run (adapter call /
@@ -343,10 +343,12 @@ argv template / MCP tool / script), health { last run, success rate }`.
 Rules: a CLI runs as **argv, never a shell string**. Writes and outbound always go through the
 gate. A plugin cannot raise its own trust level.
 
-This capability manifest is a component of an App Pet Profile, not the whole profile. The profile
-also references learned app knowledge, skills, connectors, supported `/mods`, conversation/memory
-policy and presentation state. These references normalize existing stores; they do not create a
-seventh capability registry.
+**Canonical `.doraxpack` v2 format (PR #476, `Services/Plugins/DoraxPackV2.swift`, Task U3 & U8c):**
+Every app pack and global plugin ships as a `.doraxpack` v2 folder (`pack.json`, `AGENT.md`,
+`modes.json`, `skills/*/SKILL.md`, `scripts/`, `page_scripts/`), with 5 first-party dogfooded bundles
+in `Packs/` (`Finder.doraxpack`, `Safari.doraxpack`, `Mail.doraxpack`, `IINA.doraxpack`,
+`Antigravity.doraxpack`) loaded on startup via `FirstPartyPacks.swift` and `StorePackInstaller.installV2`.
+4-stage AI pack generation is orchestrated by `AgenticAIPackBuilder.swift` (PR #477, Task U4 & U8a).
 
 ### 4.3 Lifecycle
 

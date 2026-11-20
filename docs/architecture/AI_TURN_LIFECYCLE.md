@@ -76,20 +76,30 @@ participant set says what this turn may use. General Chat can borrow one or seve
 for a request without changing identity or loading Pet memory; an App Pet stays anchored; Combined
 Chat has explicitly connected persistent participants. The active Pet mode is a bounded profile
 overlay, not authority. The Dock, detached Pet, full chat window and external MCP caller all build
-one scope and call the same `AppScopedChatService.send`. **There is one pipeline.** Presentation
-never creates a second executor, provider session or permission path.
+one scope and call the same `AppScopedChatService.send` (`TurnEngine.run`, unified for Corner cloud
+turns in PR #474, Task U1; on-device branch and thread card persistence finishing in Task U8d).
+**There is one pipeline.** Presentation never creates a second executor, provider session or
+permission path.
 
 ### 1. Cheap local answers
 
 `LocalInstallationCheck` — "is Claude Code installed?" is answered by looking, not by asking a
 model. Ends the turn.
 
-### 2. The scope gate
+### 2. The scope gate (App Pet vs General Chat read-borrowing)
 
-`appNeedingAccess` — the question needs an App Pet this conversation does not include. DoraX does
-not reach silently: it previews the minimum required Pet and why, then asks once to connect it.
-Acceptance promotes the same conversation to Combined Chat. **This is a scope boundary, not action
-approval**: a Safari Pet may not read Messages, and connecting Messages does not approve sending.
+`appNeedingAccess` — in an **anchored App Pet** conversation, if the question needs another App Pet
+this conversation does not include, DoraX does not reach silently: it previews the minimum required
+Pet and why, then asks once to connect it. Acceptance promotes the same conversation to Combined
+Chat. **This is a scope boundary, not action approval**: a Safari Pet may not read Messages, and
+connecting Messages does not approve sending.
+
+In **General Chat (`ConversationKind.general`, Task U2, PR #475)**:
+- **Never fall back to `previousFrontmostApp` (U2a):** When `scope == .general` (or `.thread`) and no `routingBundleId` was explicitly resolved from the query, `effectiveBundleId` is `""` (Mac-wide)—never `previousFrontmostApp` or `NSWorkspace.shared.frontmostApplication`.
+- **OS Core System Primitives are ungated built-ins (U2c):** Built-in macOS capabilities in `CapabilityRegistry` (`calendar.*`, `notes.*`, `reminders.*`, `contacts.*`, `finder.*`, `window.*`, `system.*`) bypass the `appNeedingAccess` `"Enable <App>?"` gate in General Chat; writes/deletes (`calendar.create`, `notes.delete`) go straight to their approval card.
+- **Screenshots route to configured capture folder + Spotlight, not Photos (U2d):** `"show me my screenshots"` searches `AppSettings.shared.captureSaveDirectory` first, then Spotlight `kMDItemIsScreenCapture == 1`, never `com.apple.Photos`.
+- **Unified Host Directive Fallback (U2e):** `ScopedTurnRunner` recovers `{"capability_call": …}` and dotted-id directives from non-tool providers (`chatGPTSubscription`, `claudeCode`, `onDevice`) so they execute `CapabilityRegistry` actions through host approval gates.
+- **Capability-Driven Tool Exposure (U2f):** `FrontmostAppTaskPlan` uses `CapabilityRegistry.impliedToolNames` rather than brittle `fileTerms` substring lists.
 
 ### 3. Scope suggestion
 
