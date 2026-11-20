@@ -493,10 +493,10 @@ struct AppChatListCard: View {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(path, forType: .string)
                             }
-                        } else if let link = doc.url, !link.isEmpty {
+                        } else if case .browserURL(let url, _, _, _, _) = doc.action {
                             Button("Copy Link") {
                                 NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(link, forType: .string)
+                                NSPasteboard.general.setString(url.absoluteString, forType: .string)
                             }
                         }
                     case .command(let item):
