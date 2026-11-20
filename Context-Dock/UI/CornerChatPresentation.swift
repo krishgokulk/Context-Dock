@@ -422,6 +422,7 @@ final class CornerChatPresentation: ObservableObject {
         mode = .general
         isVisible = true
         generalPhase = .expanded
+        generalChat.isConversationMinimized = true
         generalChat.openSession(.general, title: "General Chat")
         armGeneralStandDown(after: AppChatPromptModel.idleDwell)
         // The switch is drawn from what is already in memory; the disk catches up once it

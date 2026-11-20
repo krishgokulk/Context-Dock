@@ -167,7 +167,7 @@ enum CornerGeneralChatMetrics {
         let slashMatches = modMatches.isEmpty ? ChatSlashAppPicker.matches(for: model.input) : []
         let matchCount = !modMatches.isEmpty ? modMatches.count : slashMatches.count
         let hasActiveChat = (!model.messages.isEmpty || model.isSending) && !model.isConversationMinimized
-        let isExpanded = hasActiveChat || !model.attachments.isEmpty || model.cornerComposerLines > 1
+        let isExpanded = true
 
         let full = DockShellWidth.results
         let compactChatWidth = max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
@@ -233,7 +233,7 @@ struct CornerGeneralChatView: View {
     /// containers there are, which is what made the switch flicker.
     private var boardHeight: CGFloat { CornerGeneralChatMetrics.boardHeight(for: model) }
     private var isComposerExpanded: Bool {
-        showsTranscript || !model.attachments.isEmpty || model.cornerComposerLines > 1
+        true
     }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
@@ -951,7 +951,7 @@ struct CornerGeneralChatView: View {
                     ? nil
                     : { CornerDockController.shared.chatPresentation.toggleGeneralPin() },
                 rendersSlashMatches: false,
-                drawsChrome: false,
+                drawsChrome: true,
                 cornerStyle: true,
                 onTextHeightChange: { height in
                     let lines = DockFieldLines.lines(measuredTextHeight: height)
