@@ -855,24 +855,75 @@ class AIProviderService: ObservableObject {
     ) async throws -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
-            do {
-                // OCR-extract image content and prepend so the model can reason about it
-                var finalMessage = message
-                let imageContent = onDeviceImageContentBlock(from: imageURLs)
-                if !imageContent.isEmpty {
-                    finalMessage = "\(imageContent)\n\nUser request: \(message)"
-                }
-                let session = try await onDeviceSession(for: contextPrompt)
-                let response = try await session.respond(to: finalMessage)
-                return response.content
-            } catch {
-                return "Apple Intelligence error: \(error.localizedDescription)\n\nMake sure Apple Intelligence is enabled in System Settings > Apple Intelligence."
-            }
+            return try await sendToOnDeviceAvailable(
+                message: message,
+                contextPrompt: contextPrompt,
+                history: history,
+                imageURLs: imageURLs,
+                isRetry: false
+            )
         }
-        return "On-device AI requires macOS 26.0 (Tahoe) or later with Apple Silicon."
+        throw OnDeviceError.notAvailable("requires Apple Silicon and macOS 26.0 (Tahoe) or later.")
         #else
-        return "On-device AI requires macOS 26.0 or later with Apple Silicon."
+        throw OnDeviceError.notAvailable("requires Apple Silicon and macOS 26.0 (Tahoe) or later.")
         #endif
+    }
+
+    @available(macOS 26.0, *)
+    private func sendToOnDeviceAvailable(
+        message: String,
+        contextPrompt: String,
+        history: [ChatMessage],
+        imageURLs: [URL],
+        isRetry: Bool
+    ) async throws -> String {
+        let turnLimit = isRetry ? 2 : 6
+        var fullPrompt = contextPrompt + "\n\n"
+        if !history.isEmpty {
+            fullPrompt += "## Conversation History\n"
+            for msg in history.suffix(turnLimit) {
+                let role = msg.role == .user ? "User" : "Assistant"
+                fullPrompt += "\(role): \(msg.content)\n"
+            }
+            fullPrompt += "\n"
+        }
+
+        var finalMessage = message
+        let imageContent = onDeviceImageContentBlock(from: imageURLs)
+        if !imageContent.isEmpty {
+            finalMessage = "\(imageContent)\n\nUser request: \(message)"
+        }
+
+        do {
+            let session = try await onDeviceSession(for: fullPrompt)
+            let response = try await session.respond(to: finalMessage)
+            return response.content
+        } catch {
+            if isContextWindowError(error) {
+                if isRetry { throw OnDeviceError.contextWindowOverflow }
+                resetOnDeviceSession()
+                return try await sendToOnDeviceAvailable(
+                    message: message,
+                    contextPrompt: contextPrompt,
+                    history: history,
+                    imageURLs: imageURLs,
+                    isRetry: true
+                )
+            }
+            throw OnDeviceError.generationFailed(error.localizedDescription)
+        }
+    }
+
+    private func isContextWindowError(_ error: Error) -> Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            if let genError = error as? LanguageModelSession.GenerationError,
+               case .exceededContextWindowSize = genError { return true }
+        }
+        #endif
+        let d = error.localizedDescription.lowercased()
+        return (d.contains("exceeded") || d.contains("overflow") || d.contains("too long"))
+            && (d.contains("context") || d.contains("window") || d.contains("token"))
     }
 
     private func shouldUseOnDeviceToolSession(for context: UserContext, message: String = "") -> Bool {
@@ -1052,27 +1103,62 @@ class AIProviderService: ObservableObject {
                         fullPrompt += "\n"
                     }
 
-                    let session = try await onDeviceSession(for: fullPrompt)
-
-                    var lastLength = 0
-                    var finalContent = ""
-
                     let imageContent = self.onDeviceImageContentBlock(from: imageURLs)
                     let finalMessage = imageContent.isEmpty
                         ? message
                         : "\(imageContent)\n\nUser request: \(message)"
-                    let stream = session.streamResponse(to: finalMessage, generating: String.self)
-                    for try await snapshot in stream {
-                        let full = snapshot.content
-                        let delta = String(full.dropFirst(lastLength))
-                        lastLength = full.count
-                        finalContent = full
-                        if !delta.isEmpty { onPartial(delta) }
+
+                    // ── 4. Stream with one context-overflow retry ──
+                    do {
+                        let session = try await self.onDeviceSession(for: fullPrompt)
+                        var lastLength = 0
+                        var finalContent = ""
+                        for try await snapshot in session.streamResponse(to: finalMessage, generating: String.self) {
+                            let full = snapshot.content
+                            let delta = String(full.dropFirst(lastLength))
+                            lastLength = full.count
+                            finalContent = full
+                            if !delta.isEmpty { onPartial(delta) }
+                        }
+                        if finalContent.isEmpty { finalContent = "Done." }
+                        onComplete(finalContent)
+                    } catch {
+                        guard self.isContextWindowError(error) else {
+                            onError(OnDeviceError.generationFailed(error.localizedDescription).localizedDescription)
+                            return
+                        }
+                        self.resetOnDeviceSession()
+                        var condensedPrompt = contextPrompt + "\n\n"
+                        if !history.isEmpty {
+                            condensedPrompt += "## Conversation History\n"
+                            for msg in history.suffix(2) {
+                                let role = msg.role == .user ? "User" : "Assistant"
+                                condensedPrompt += "\(role): \(msg.content)\n"
+                            }
+                            condensedPrompt += "\n"
+                        }
+                        do {
+                            let retrySession = try await self.onDeviceSession(for: condensedPrompt)
+                            var lastLength = 0
+                            var finalContent = ""
+                            for try await snapshot in retrySession.streamResponse(to: finalMessage, generating: String.self) {
+                                let full = snapshot.content
+                                let delta = String(full.dropFirst(lastLength))
+                                lastLength = full.count
+                                finalContent = full
+                                if !delta.isEmpty { onPartial(delta) }
+                            }
+                            if finalContent.isEmpty { finalContent = "Done." }
+                            onComplete(finalContent)
+                        } catch {
+                            let typedErr: OnDeviceError = self.isContextWindowError(error)
+                                ? .contextWindowOverflow
+                                : .generationFailed(error.localizedDescription)
+                            onError(typedErr.localizedDescription)
+                        }
                     }
-                    if finalContent.isEmpty { finalContent = "Done." }
-                    onComplete(finalContent)
                 } catch {
-                    onError("Apple Intelligence error: \(error.localizedDescription)")
+                    onError("On-device setup error: \(error.localizedDescription)")
                 }
             }
             return
