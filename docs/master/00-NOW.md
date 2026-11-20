@@ -23,6 +23,22 @@
   - **U8b (Wire `SafariEscalationPolicy` & `ExtensionHookRegistry` into Live Chat / `CapabilityRegistry`):** Register `ExtensionHookRegistry` hooks (e.g. `safari.extractStructured`) as callable `AICapability` tools in `CapabilityRegistry`, and route Safari turns through `SafariEscalationPolicy.decide(for:)` in `AppScopedChatService` / `SafariCapabilityRouter` (`Context-DockExtension` live tab first → `safaridriver --mcp` escalation for console/network/screenshots/automation).
   - **U8c (Complete `StorePackInstaller.installV2` Atomic Binding):** In `DoraxPackV2.swift` and `StorePackInstaller.swift`, register `PluginCapability.make` into `CapabilityRegistry`, link `cli_tools` into `TerminalPackageManager`, register `mcp_servers` into `MCPServerManager`, and load `modes.json` into `AppPetManifestRegistry`.
   - **U8d (Strip Residual 40-Menu Group & Persist Thread Result Cards):** Remove the 40-item `Menu commands` group from `ScopedAppPromptBuilder.swift:618–647` prompt serialization, route the remaining on-device branch of `DockCore+AIChat.swift` through `AppScopedChatService`, and persist rich cards/chips/receipts across thread switches.
+- **Unified Spotlight-Pet Surface (Single Zero-Modal Launcher):**
+  - Spec: `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md` (owner-approved 2026-11-09).
+  - Dissolves modal `⌘` / `Backspace` switching between Global Context and App Pet into one context-biased Liquid Glass intent bar.
+  - Frontmost menu candidates boosted (+500); inline ghost autocomplete on top match (`Return` runs immediately).
+  - **Siri-Style Zero-Match & Conversational Fallback:** When query is conversational or no local match exists:
+    1. Input pill draws inline ghost text: `[query] | — Ask Dora (↵)` with direct `Return` execution into General AI Chat transcript (PR #421 morph).
+    2. Floating capsule below pill: `[ 🌐 📁 Show Results (↓) ]`.
+    3. Pressing `↓` or clicking capsule expands alternative search destinations (Finder, Web, Cloud Drives, Active Pet, ChatGPT).
+  - Conversational intent penalty (-100 on incidental disk files) suppresses keyword collision noise.
+  - Code sites: `Search/AppChatRowRanker.swift`, `Services/GlobalSearchService.swift`, `UI/AppChatPromptModel.swift`, `UI/AppChatPromptPill.swift`, `UI/GlobalFallbacks.swift`, `UI/CornerDockWindow.swift`.
+- **General AI Chat Scope Integrity & Native OS Fast-Paths:**
+  - Spec: `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` & `docs/master/DORAX-BLUEPRINT.md`.
+  - Fix `effectiveBundleId` in `AppScopedChatService.swift:1885` so `.general` scope never falls back to `previousFrontmostApp` or injects unrelated frontmost app menus (eliminates "Claude's live menus don't include Calendar").
+  - Treat core macOS services (Calendar, Notes, Reminders, Files, Window Management) as ungated System Primitives in General Chat.
+  - Native fast-path (0-LLM token/latency) for window arrangement (`window.arrange` via Accessibility / `CGWindowList`).
+  - Staged update & post-update running process verification (check `NSRunningApplication`, prompt to restart running app cleanly).
 - **#412** H5 solved skills on-device (shared tool definitions, budget, outbound gate) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged).
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
@@ -915,6 +931,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-11-18 | **U5 — Dual-engine Safari power (two-way Web Extension bridge + `safaridriver --mcp` escalation):** combine Engine 1 (`Context-DockExtension` executing declarative pack `extension_hooks` / `page_scripts/*.js` on real tabs with `withheldPageBlock` sensitive-URL blocking) and Engine 2 (`SafariEscalationPolicy` escalating to `safaridriver --mcp` for console logs, network inspection, screenshots, and multi-step automation) (shipped in PR #478; live chat/`CapabilityRegistry` wiring in U8b). |
 | 2026-11-18 | **U6 & U7 — Spec archival, Dynamic Notch `.doraxpack` v2 (`views.notch`), and Apple `container` sandbox:** (U6, PR #479) archive pre-November superseded specs into `docs/history/specs/` with `docs/README.md`; (U7, PRs #480 & #481) unify Notch window tiling with `WindowManagementService.shared`, add `.notch` (`wing` + `page`) to `PluginManifest`, add `NotchPinStore` + `[ + Notch ]` per-app action strip, and support optional Apple `container` CLI micro-VM sandboxing in `PluginScriptRunner`. |
 | 2026-11-20 | **U8 — Last-mile blueprint wiring (`U8a–U8d`):** wire `AgenticAIPackBuilder` + `OwnerReviewCard` into `PluginCreatorPane` and `DynamicNotchLiveActivityView` (`U8a`), wire `SafariEscalationPolicy` + `ExtensionHookRegistry` into `CapabilityRegistry` and `AppScopedChatService` (`U8b`), complete `StorePackInstaller.installV2` binding for `CapabilityRegistry`/`cli_tools`/`mcp_servers`/`modes.json` (`U8c`), and finish `ScopedAppPromptBuilder` 40-menu removal + thread card persistence (`U8d`). |
+| 2026-11-20 | **Unified Spotlight-Pet Surface & General Chat Scope Integrity queued (owner direction):** (1) Queued the **Unified Spotlight-Pet Surface** (spec `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`) directly into `## Queued (next)` to dissolve modal ⌘/Backspace switching into a single, context-biased intent bar. (2) Queued **General Chat Scope Integrity fix**: eliminate `effectiveBundleId` fallback to frontmost app in `.general` scope (`AppScopedChatService.swift:1885`), stopping frontmost menu bar bleed into global chat; wire native OS fast-paths (0-LLM window arrangement) and post-update running app restart verification card. |
 
 ## Open decisions (owner)
 

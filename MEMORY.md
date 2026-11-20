@@ -139,3 +139,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-11-12 (claude/app-pet-provider-in-composer): App Pet composer gets a Claude-style lower row [App ⌄][Provider chip][+]; header provider chip hidden in App Pet chat. Rule AppChatComposerToolbar + tests. Written on Linux cloud VM — not built; owner hand-check + check.sh on Mac required.
 
 - 2026-11-14 (claude/consolidate-read-attachment-e0fb01): #413 H6 (3/n) — read_attachment retired; read_file reads attachments by path, filename or no path (one attachment), OCR for images. check.sh --full green (3460 tests). Attachment hand check owed by owner; not pushed.
+- 2026-11-20 (antigravity/general-chat-agent): Queued Unified Spotlight-Pet Surface (zero-modal single surface, spec 2026-11-10) and General Chat Scope Integrity fix (strip frontmost menu bleed in AppScopedChatService:1885 + native OS fast paths) into 00-NOW.md Queued section and Owner Decisions table per owner request.

@@ -52,6 +52,29 @@ The surface sits along the bottom or center edge in Liquid Glass material:
 
 ---
 
+## 2b. Siri-Style Zero-Match & Conversational Fallback (Type-to-Siri Direct AI)
+
+When a query is conversational (e.g. *"what im doing in..."*) or returns zero high-confidence local commands/apps, the surface adopts the **Apple Intelligence Type-to-Siri pattern**:
+
+### 1. Zero-Friction Ghost Action:
+* The input pill displays an inline gray ghost suffix: `[query] | — Ask Dora (↵)`
+* **Pressing `Return`:** Executes direct dispatch to **General AI Chat**. The Liquid Glass container smoothly morphs vertically into the continuous Siri-style transcript (PR #421) without opening a separate window or losing focus.
+* **Incidental File Collision Shield:** Raw disk files matching incidental keywords (like "in", "what") are suppressed, preventing visual clutter.
+
+### 2. The "Show Results" Capsule Disclosure:
+* A compact floating capsule sits centered below the input bar:
+  `[ 🌐 📁 Show Results (↓) ]`
+* **Pressing `↓` (Down Arrow) or Clicking the Capsule:** Expands the Siri-style alternative search menu:
+  - ☁️ **Search iCloud Drive**
+  - 📁 **Search Google Drive**
+  - 🔍 **Search in Finder** (`mdfind`)
+  - 🌐 **Search The Web** (Google / default browser)
+  - ✨ **Ask Dora** (General AI)
+  - 🤖 **Ask Active Pet** (Frontmost App Context, e.g. Safari Pet)
+  - 💬 **Ask ChatGPT / Claude**
+
+---
+
 ## 3. Deterministic Intent Classification (<1ms)
 
 Before ranking candidate rows, `UnifiedIntentClassifier` categorizes the query string synchronously:
