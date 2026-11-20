@@ -52,14 +52,9 @@ enum CornerGeneralChatMetrics {
     static let maximumCountedLiveSteps = 4
 
     /// The composer card: the row, attachments, and the `/` picker when one is open.
-    ///
-    /// The picker belongs here rather than in the board above. The board holds the
-    /// conversation once there is one, so a picker placed there had nowhere to go the
-    /// moment a chat started — and pushing the transcript aside to make room would
-    /// disturb what the user is reading. A sheet over the field disturbs nothing.
     static func composerHeight(
         hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false,
-        lines: Int = 1
+        lines: Int = 1, isExpanded: Bool = false
     ) -> CGFloat {
         // A long prompt grows the row upward, to three lines (#189).
         var result = rowHeight(lines: lines)
@@ -70,6 +65,7 @@ enum CornerGeneralChatMetrics {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
         if hasAttachments { result += attachmentRowHeight }
+        if isExpanded { result += 36 }
         return result
     }
 
@@ -191,8 +187,8 @@ enum CornerGeneralChatMetrics {
             hasAttachments: !model.attachments.isEmpty,
             slashMatchCount: matchCount,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-            lines: model.cornerComposerLines)
-            + (isExpanded ? 36 : 0)
+            lines: model.cornerComposerLines,
+            isExpanded: isExpanded)
 
         let targetHeight = boardH > 0 ? boardH + CornerDockLayout.gap + composerH : composerH
 
@@ -235,13 +231,19 @@ struct CornerGeneralChatView: View {
     private var isComposerExpanded: Bool {
         showsTranscript || !model.attachments.isEmpty || model.cornerComposerLines > 1
     }
+    private var hasSheetAbove: Bool {
+        !slashModMatches.isEmpty || !slashMatches.isEmpty || (clarification != nil && model.input.isEmpty) || approvals.pending(for: .corner) != nil
+    }
+    private var composerBarHeight: CGFloat {
+        CornerGeneralChatMetrics.rowHeight(lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0)
+    }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
             hasAttachments: !model.attachments.isEmpty,
             slashMatchCount: slashMatches.count,
             hasApproval: approvals.pending(for: .corner) != nil,
-            lines: model.cornerComposerLines)
-            + (isComposerExpanded ? 36 : 0)
+            lines: model.cornerComposerLines,
+            isExpanded: isComposerExpanded)
     }
 
     var body: some View {
@@ -951,7 +953,7 @@ struct CornerGeneralChatView: View {
                     ? nil
                     : { CornerDockController.shared.chatPresentation.toggleGeneralPin() },
                 rendersSlashMatches: false,
-                drawsChrome: false,
+                drawsChrome: true,
                 cornerStyle: true,
                 onTextHeightChange: { height in
                     let lines = DockFieldLines.lines(measuredTextHeight: height)
@@ -961,9 +963,9 @@ struct CornerGeneralChatView: View {
                 activeModeName: model.activePetMode?.name,
                 onSelectMode: { _ in },
                 onToggleChat: hasChatToShow ? { model.toggleConversationMinimized() } : nil,
-                isChatOpen: showsTranscript)
-                .frame(height: CornerGeneralChatMetrics.rowHeight(
-                    lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0))
+                isChatOpen: showsTranscript,
+                hasSheetAbove: hasSheetAbove)
+                .frame(height: composerBarHeight)
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()
