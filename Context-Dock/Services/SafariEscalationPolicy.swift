@@ -48,14 +48,31 @@ enum SafariEscalationPolicy {
         "console_message",
         "console_error",
         "console_log",
+        "console error",
+        "console log",
+        "console message",
         "network_request",
         "network_traffic",
+        "network request",
+        "network traffic",
         "screenshot",
         "dialog",
         "automation",
+        "automate form",
+        "fill form",
+        "webdriver",
+        "safaridriver",
     ]
 
     // MARK: - Classification
+
+    /// Decides which Safari engine handles a capability ID or natural-language Safari turn.
+    /// Engine 1 (`Context-DockExtension`) is default for live-tab reads; Engine 2
+    /// (`safaridriver --mcp`) is chosen for console logs, network inspection, screenshots,
+    /// dialogs, and complex browser automation.
+    static func decide(for queryOrCapability: String) -> SafariEngine {
+        engine(for: queryOrCapability)
+    }
 
     /// Returns the engine that should handle `capabilityID`.
     static func engine(for capabilityID: String) -> SafariEngine {

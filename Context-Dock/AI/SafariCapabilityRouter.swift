@@ -63,6 +63,15 @@ final class SafariCapabilityRouter: AppCapabilityRouting {
                 || phrase.contains("youtube") || phrase.contains("music")) {
             return downloadMediaResolution(phrase: phrase)
         }
+        // Dual-Engine Safari Escalation Policy (Task U8b):
+        // Checked after explicit Engine 1 live-tab handlers so "summarize this page about
+        // network traffic" stays on Engine 1, while console/network/screenshot/automation
+        // requests escalate to Engine 2 (`safaridriver --mcp`).
+        let engine = SafariEscalationPolicy.decide(for: original)
+        if engine == .safariDriverMCP {
+            return safariDriverMCPEscalationResolution(
+                actionPhrase: actionPhrase, original: original, engine: engine)
+        }
         // Everything else ("new private window", "new tab", …) uses the generic
         // adapter → shortcut → verified-menu ranking in the resolver.
         return nil
@@ -72,6 +81,33 @@ final class SafariCapabilityRouter: AppCapabilityRouting {
         (phrase.contains("pdf") && (phrase.contains("save") || phrase.contains("export")))
             || phrase.contains("export page as pdf")
             || phrase.contains("save page as pdf")
+    }
+
+    // MARK: Engine 2 escalation — safaridriver --mcp (console, network, screenshots, automation)
+
+    private func safariDriverMCPEscalationResolution(
+        actionPhrase: String,
+        original: String,
+        engine: SafariEngine
+    ) -> GeneralAIActionResolution {
+        var candidate = DoraXActionCandidate(
+            id: "safari.mcp.safaridriver.\(original.lowercased().hashValue.magnitude)",
+            title: "Safari (safaridriver --mcp): \(String(actionPhrase.prefix(56)))",
+            appName: "Safari",
+            bundleID: bundleID,
+            source: .mcp,
+            route: .mcp,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .medium,
+            confidence: 0.9,
+            permissionKey: "generalAI.execute.com.apple.Safari.safariDriverMCP",
+            debugReason: "\(engine.routeLabel) — escalated by SafariEscalationPolicy")
+        candidate.inputValues = [
+            "engine": engine.rawValue,
+            "query": original,
+        ]
+        return .candidates([candidate])
     }
 
     // MARK: "summarize this page" — extension/bridge context + provider, never a menu

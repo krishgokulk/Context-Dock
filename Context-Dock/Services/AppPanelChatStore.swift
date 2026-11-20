@@ -15,6 +15,25 @@ struct StoredChatMessage: Codable {
     let timestamp: Date
     let isError: Bool
 
+    // Rich cards, chips, and receipts persisted across thread switches (Task U8d).
+    // All optional so previously stored JSON files decode cleanly.
+    let structuredData: String?
+    let hasInstallButton: Bool?
+    let attachments: [String]?
+    let appLaunches: [AppLaunchAction]?
+    let recentFiles: [RecentFileAction]?
+    let noteResults: [NoteSearchAction]?
+    let noteTasks: [NoteTaskAction]?
+    let reminderResults: [ReminderResultAction]?
+    let messageResults: [MessageSentAction]?
+    let browserTabs: [BrowserTabAction]?
+    let pageLinks: [PageLinkAction]?
+    let mcpToolsRan: [String]?
+    let evidenceReceipts: [DoraXActionReceipt]?
+    let activeMode: String?
+    let modeProvenance: String?
+    let runOutput: String?
+
     init(from msg: AIChatMessage) {
         switch msg.role {
         case .user:       role = "user"
@@ -22,9 +41,25 @@ struct StoredChatMessage: Codable {
         case .approval:   role = "approval"   // persisted but rendered as assistant
         case .assistant:  role = "assistant"
         }
-        content   = msg.content
-        timestamp = msg.timestamp
-        isError   = msg.isError
+        content          = msg.content
+        timestamp        = msg.timestamp
+        isError          = msg.isError
+        structuredData   = msg.structuredData
+        hasInstallButton = msg.hasInstallButton ? true : nil
+        attachments      = msg.attachments.isEmpty ? nil : msg.attachments.map(\.path)
+        appLaunches      = msg.appLaunches.isEmpty ? nil : msg.appLaunches
+        recentFiles      = msg.recentFiles.isEmpty ? nil : msg.recentFiles
+        noteResults      = msg.noteResults.isEmpty ? nil : msg.noteResults
+        noteTasks        = msg.noteTasks.isEmpty ? nil : msg.noteTasks
+        reminderResults  = msg.reminderResults.isEmpty ? nil : msg.reminderResults
+        messageResults   = msg.messageResults.isEmpty ? nil : msg.messageResults
+        browserTabs      = msg.browserTabs.isEmpty ? nil : msg.browserTabs
+        pageLinks        = msg.pageLinks.isEmpty ? nil : msg.pageLinks
+        mcpToolsRan      = msg.mcpToolsRan.isEmpty ? nil : msg.mcpToolsRan
+        evidenceReceipts = msg.evidenceReceipts.isEmpty ? nil : msg.evidenceReceipts
+        activeMode       = msg.activeMode
+        modeProvenance   = msg.modeProvenance
+        runOutput        = msg.runOutput
     }
 
     func toAIChatMessage() -> AIChatMessage {
@@ -35,7 +70,28 @@ struct StoredChatMessage: Codable {
             default:        return .assistant
             }
         }()
-        return AIChatMessage(role: chatRole, content: content, isError: isError)
+        return AIChatMessage(
+            role: chatRole,
+            content: content,
+            isError: isError,
+            structuredData: structuredData,
+            hasInstallButton: hasInstallButton ?? false,
+            attachments: (attachments ?? []).map(URL.init(fileURLWithPath:)),
+            appLaunches: appLaunches ?? [],
+            recentFiles: recentFiles ?? [],
+            noteResults: noteResults ?? [],
+            noteTasks: noteTasks ?? [],
+            reminderResults: reminderResults ?? [],
+            messageResults: messageResults ?? [],
+            browserTabs: browserTabs ?? [],
+            pageLinks: pageLinks ?? [],
+            mcpToolsRan: mcpToolsRan ?? [],
+            evidenceReceipts: evidenceReceipts ?? [],
+            activeMode: activeMode,
+            modeProvenance: modeProvenance,
+            runOutput: runOutput,
+            timestamp: timestamp
+        )
     }
 }
 

@@ -39,7 +39,7 @@ enum PluginCapability {
         return AICapability(
             id: id(pluginID: manifest.id, action: name),
             title: "\(manifest.name): \(action.title ?? name)",
-            appBundleID: nil,
+            appBundleID: manifest.targetApp?.bundleId,
             inputSchema: AICapabilityInputSchema(fields: [
                 AICapabilityInputField(
                     name: "value",

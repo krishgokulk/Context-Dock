@@ -324,6 +324,49 @@ final class AppPetManifestRegistry: @unchecked Sendable {
         }
     }
 
+    /// Merges modes loaded from a `.doraxpack` v2 `modes.json` into the App Pet manifest
+    /// for `bundleID` (creating a manifest if one does not exist yet). Idempotent by mode `id`.
+    func registerPackModes(
+        _ packModes: [AppPetModeManifest],
+        forBundleID bundleID: String,
+        appName: String,
+        packID: String,
+        defaultModeID: String? = nil
+    ) {
+        guard !packModes.isEmpty else { return }
+        let petID = AppPetID.app(bundleID: bundleID)
+        let key = petID.canonicalKey
+
+        lock.lock()
+        let base = manifests[key] ?? Self.makeGenericManifest(for: petID)
+        var mergedModes = base.modes
+        for mode in packModes {
+            if let idx = mergedModes.firstIndex(where: { $0.id == mode.id }) {
+                mergedModes[idx] = mode
+            } else {
+                mergedModes.append(mode)
+            }
+        }
+        let resolvedDefault = defaultModeID
+            ?? base.defaultMode
+            ?? packModes.first?.id
+        let updated = AppPetManifest(
+            id: base.id.isEmpty ? packID : base.id,
+            appName: base.appName.isEmpty ? appName : base.appName,
+            bundleID: base.bundleID ?? bundleID,
+            cliCommand: base.cliCommand,
+            summary: base.summary,
+            defaultMode: resolvedDefault,
+            customPrompt: base.customPrompt,
+            customTools: base.customTools,
+            capabilityFilter: base.capabilityFilter,
+            modes: mergedModes,
+            utcpManuals: base.utcpManuals
+        )
+        manifests[key] = updated
+        lock.unlock()
+    }
+
     /// Decodes a manifest from JSON data and registers it.
     @discardableResult
     func load(from data: Data) throws -> AppPetManifest {

@@ -118,6 +118,23 @@ struct PluginCreatorPane: View {
                 Spacer(minLength: 0)
 
                 Button {
+                    Task { await model.buildPack() }
+                } label: {
+                    Label(
+                        model.isBuildingPack ? "Building…" : "Build Pack",
+                        systemImage: "wand.and.stars")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(
+                    model.isBuildingPack
+                    || (model.selectedTargetBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && model.request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                )
+                .help("Run 4-stage Agentic AI Pack Builder (introspect → research → rank → dry-run) and review before installing")
+
+                Button {
                     showOpenAPIInput.toggle()
                 } label: {
                     Label(
@@ -213,6 +230,16 @@ struct PluginCreatorPane: View {
                     .font(.system(size: 11)).foregroundStyle(.orange)
                     .lineLimit(2)
             }
+            if let packError = model.packBuildError {
+                Label(packError, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+            if let packStatus = model.packInstallStatus {
+                Label(packStatus, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 11)).foregroundStyle(.green)
+                    .lineLimit(2)
+            }
         }
     }
 
@@ -271,6 +298,24 @@ struct PluginCreatorPane: View {
                     .font(.system(size: 11))
                     .foregroundStyle(status.failed ? Color.orange : Color.secondary)
                     .lineLimit(2)
+            }
+            if let pending = model.pendingPackResult {
+                OwnerReviewCardView(
+                    card: pending.reviewCard,
+                    errorMessage: model.packBuildError,
+                    onApprove: {
+                        do {
+                            if try model.approvePendingPack() != nil {
+                                saved = model.packInstallStatus
+                            }
+                        } catch {
+                            saved = nil
+                        }
+                    },
+                    onDismiss: {
+                        model.dismissPendingPack()
+                    }
+                )
             }
             if let manifest = model.previewManifest {
                 ScrollView {

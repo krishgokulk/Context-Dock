@@ -48,6 +48,26 @@ final class DynamicNotchState: ObservableObject {
     @Published var selectedPage: Int = 0
     @Published var dragOffset: CGFloat = 0
     @Published var activeTimer: NotchTimerEntry? = nil
+    /// Staged pack awaiting owner review from Notch AI pack authoring (Task U8a).
+    @Published var pendingPackReview: PackSynthesisResult? = nil
+    @Published var isBuildingPack: Bool = false
+    @Published var packReviewError: String? = nil
+
+    func approvePendingPackReview() {
+        guard let pending = pendingPackReview else { return }
+        packReviewError = nil
+        do {
+            _ = try AgenticAIPackBuilder.approveAndInstall(pending)
+            pendingPackReview = nil
+        } catch {
+            packReviewError = error.localizedDescription
+        }
+    }
+
+    func dismissPendingPackReview() {
+        pendingPackReview = nil
+        packReviewError = nil
+    }
 
     private var accumulatedScroll: CGFloat = 0
     private var isTrackingScroll = false
@@ -934,12 +954,17 @@ struct DynamicNotchLiveActivityView: View {
                                     || lower.hasPrefix("make ") || lower.hasPrefix("pin "))
                             if isNotchIntent {
                                 prompt.query = ""
+                                guard !notchState.isBuildingPack else { return }
                                 if let app = NSWorkspace.shared.frontmostApplication,
                                    let bundleID = app.bundleIdentifier {
+                                    notchState.isBuildingPack = true
+                                    notchState.packReviewError = nil
                                     Task { @MainActor in
-                                        _ = await AgenticAIPackBuilder.build(
+                                        let synthesis = await AgenticAIPackBuilder.build(
                                             bundleID: bundleID,
                                             appName: app.localizedName ?? "")
+                                        notchState.isBuildingPack = false
+                                        notchState.pendingPackReview = synthesis
                                     }
                                 }
                             } else if !prompt.query.isEmpty {
@@ -947,7 +972,10 @@ struct DynamicNotchLiveActivityView: View {
                             }
                         }
 
-                    if !prompt.query.isEmpty {
+                    if notchState.isBuildingPack {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if !prompt.query.isEmpty {
                         Button {
                             prompt.query = ""
                         } label: {
@@ -961,6 +989,22 @@ struct DynamicNotchLiveActivityView: View {
                 .padding(.horizontal, 8)
                 .frame(height: 28)
                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .popover(isPresented: Binding(
+                    get: { notchState.pendingPackReview != nil },
+                    set: { if !$0 { notchState.dismissPendingPackReview() } }
+                )) {
+                    if let pending = notchState.pendingPackReview {
+                        OwnerReviewCardView(
+                            card: pending.reviewCard,
+                            compact: true,
+                            errorMessage: notchState.packReviewError,
+                            onApprove: { notchState.approvePendingPackReview() },
+                            onDismiss: { notchState.dismissPendingPackReview() }
+                        )
+                        .frame(width: 340)
+                        .padding(8)
+                    }
+                }
 
                 NotchActionPillRow(
                     bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,

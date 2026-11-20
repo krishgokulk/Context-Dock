@@ -224,6 +224,10 @@ final class CapabilityRegistry {
         capabilitiesByID[capability.id] = capability
     }
 
+    func removeCapability(id: String) {
+        capabilitiesByID.removeValue(forKey: id)
+    }
+
     /// Marks a family of already-registered capabilities as self-executing. Called once by
     /// the family's own file, so the fact lives with the code that knows it rather than in
     /// a list somewhere else that the next capability will not be added to.

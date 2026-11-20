@@ -100,6 +100,46 @@ enum AppScopedChatService {
         }
     }
 
+    /// Dual-Engine Safari routing guidance (Task U8b):
+    /// Consults `SafariEscalationPolicy.decide(for:)` so live-tab reads prefer Engine 1
+    /// (`Context-DockExtension` + registered `ExtensionHookRegistry` capabilities such as
+    /// `safari.extractStructured`), while console/network/screenshot/automation requests
+    /// escalate to Engine 2 (`safaridriver --mcp`).
+    static func safariEscalationGuidance(
+        for query: String
+    ) -> (engine: SafariEngine, promptNote: String) {
+        let engine = SafariEscalationPolicy.decide(for: query)
+        switch engine {
+        case .extensionLightweight:
+            let hookIDs = ExtensionHookRegistry.shared.capabilities
+                .filter { $0.bundleID == nil || $0.bundleID == "com.apple.Safari" }
+                .map(\.id)
+            let hooksList = hookIDs.isEmpty
+                ? "Safari Extension live-tab tools"
+                : hookIDs.joined(separator: ", ")
+            return (
+                engine,
+                """
+                ## Safari Dual-Engine Route
+                \(engine.routeLabel)
+                Prefer live-tab extension capabilities (\(hooksList)) for reading page content, \
+                links, and tab state without stealing focus or opening an automation session.
+                """
+            )
+        case .safariDriverMCP:
+            return (
+                engine,
+                """
+                ## Safari Dual-Engine Route
+                \(engine.routeLabel)
+                This request requires deep browser inspection or automation (console logs, network \
+                requests, screenshots, dialogs, or form automation). Escalate to `safaridriver --mcp` \
+                tools via `run_mcp_tool` rather than lightweight extension hooks or menu clicks.
+                """
+            )
+        }
+    }
+
     /// Paths an answer mentions, kept only when they are real.
     ///
     /// A file chat's answer is usually about files, and it names them: "there is one PDF:
@@ -2040,6 +2080,11 @@ enum AppScopedChatService {
                 bundleID: bundleId, appName: appName, query: query)
             {
                 prompt.append(.liveAppData, menuFacts)
+            }
+            if bundleId == "com.apple.Safari" {
+                let safariRouting = safariEscalationGuidance(for: query)
+                sourceTrace.append(safariRouting.engine.routeLabel)
+                prompt.append(.identity, safariRouting.promptNote)
             }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.
