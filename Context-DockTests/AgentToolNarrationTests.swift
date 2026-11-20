@@ -13,8 +13,8 @@ struct AgentToolNarrationTests {
 
     @Test func aSearchSaysWhatItIsSearchingFor() {
         let line = AgentToolNarration.start(
-            tool: "search_messages", arguments: ["query": "invoice"])
-        #expect(line == "Searching Messages “invoice”…")
+            tool: "find_files", arguments: ["query": "invoice"])
+        #expect(line == "Searching for files “invoice”…")
     }
 
     @Test func aReadSaysWhatItIsReading() {

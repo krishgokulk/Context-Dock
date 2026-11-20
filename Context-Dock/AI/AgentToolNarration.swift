@@ -90,7 +90,6 @@ enum AgentToolNarration {
         switch tool {
         case "find_capability", "find_route": return "Looking for a route"
         case "find_menu_command": return "Looking for a menu command"
-        case "search_messages", "get_messages_conversations": return "Searching Messages"
         case "read_page": return "Reading the open page"
         case "read_url": return "Fetching"
         case "read_file": return "Reading"

@@ -57,10 +57,11 @@ enum AppleMessagesMCPCapabilities {
                     .init(name: "contact", description: "Optional contact name or handle filter", required: false),
                     .init(name: "limit", description: "Maximum conversations, 1–30", required: false),
                 ]),
-                riskLevel: .low
+                riskLevel: .low,
+                runsWithoutAdapter: true
             ) { request in
                 try ensureEnabled()
-                let contact = request.input["contact"] ?? ""
+                let contact = request.input["contact"] ?? request.input["contact_filter"] ?? ""
                 let limit = max(1, min(Int(request.input["limit"] ?? "15") ?? 15, 30))
                 let output = await Task.detached(priority: .userInitiated) {
                     () -> String in
@@ -99,7 +100,8 @@ enum AppleMessagesMCPCapabilities {
                 inputSchema: .init(fields: [
                     .init(name: "query", description: "Contact, keyword, or phrase", required: true)
                 ]),
-                riskLevel: .low
+                riskLevel: .low,
+                runsWithoutAdapter: true
             ) { request in
                 try ensureEnabled()
                 guard let query = request.input["query"], !query.isEmpty else {
