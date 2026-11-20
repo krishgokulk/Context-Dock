@@ -514,14 +514,42 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
-        // On the empty field the chat's own arrows: ↓ puts it away, ↑ brings it back.
-        if model.query.isEmpty,
-            up ? model.openChat() : model.hideConversation()
-        {
-            return .handled
+        // When conversation is actively visible on screen, ↓ on an empty field hides it.
+        if !up, model.phase == .chat, model.query.isEmpty {
+            if model.hideConversation() { return .handled }
         }
-        // A command's list on screen takes the arrows: the field keeps the keyboard for
-        // typing, so the list cannot hear them itself (owner 2026-10-08).
+
+        // When the menu list / results are open on screen, arrow keys navigate the items.
+        // It must NEVER interrupt menu browsing to open the AI conversation.
+        if model.phase == .suggesting || model.focusedMenuIndex != nil || model.isShowingScopeCard {
+            if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+                return .handled
+            }
+            if AppChatPromptModel.layerKeyComesFirst(
+                query: model.query, hasFocusedRow: model.focusedRow != nil,
+                steppedInFromGlobal: model.returnsToGlobalScope),
+                layerKey(up: up) == .handled
+            {
+                return .handled
+            }
+            if model.moveMenuFocus(by: up ? -1 : 1) {
+                return .handled
+            }
+        }
+
+        // On an empty resting prompt pill:
+        // ↓ opens what the app can do (menus) from the top.
+        // ↑ restores a previously hidden conversation if one exists, otherwise opens menus from the bottom.
+        if model.phase == .prompt, model.query.isEmpty {
+            if !up {
+                if model.moveMenuFocus(by: 1) { return .handled }
+            } else {
+                if model.isConversationHidden, model.openChat() { return .handled }
+                if model.moveMenuFocus(by: -1) { return .handled }
+            }
+        }
+
+        // Fall through for scoped commands or general row browsing
         if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
             return .handled
         }
