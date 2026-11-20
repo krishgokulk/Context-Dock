@@ -1164,7 +1164,8 @@ struct MessagesShortcutRetirementTests {
 
     /// Imperative record searches in Messages ("find messages from Salman") are data-lane reads of
     /// Messages' records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
-    /// Messages' read tools (`search_messages`, `get_messages_conversations`) are included.
+    /// Messages' reads route through `find_capability` + `run_capability` (retired `search_messages`
+    /// and `get_messages_conversations` are omitted).
     @Test func findInMessagesIsADataLaneRead() {
         let query = "find messages from Salman"
         let plan = FrontmostAppTaskPlan.make(
@@ -1172,8 +1173,10 @@ struct MessagesShortcutRetirementTests {
         #expect(plan.intent == .read)
         #expect(!plan.permitsUIAutomation)
         #expect(RequestLane.decide(query) == .data)
-        #expect(plan.allowedToolNames.contains("search_messages"))
-        #expect(plan.allowedToolNames.contains("get_messages_conversations"))
+        #expect(!plan.allowedToolNames.contains("search_messages"))
+        #expect(!plan.allowedToolNames.contains("get_messages_conversations"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
         for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
             #expect(!plan.allowedToolNames.contains(tool), "Messages find offered \(tool)")
         }
@@ -1807,6 +1810,74 @@ struct MailSendToolRetirementTests {
     @Test func sendMailIsRetiredEverywhere() {
         #expect(AgentToolRegistry.shared.tool(named: "send_mail") == nil)
         #expect(!OutboundGate.outboundTools.contains("send_mail"))
+    }
+}
+
+// MARK: - H6 (8/n): get_messages_conversations & search_messages tool retirement
+
+@MainActor
+struct MessagesReadToolsRetirementTests {
+
+    /// Messages recent and search queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("messages.recent" / "messages.search")` rather than legacy named tools.
+    @Test func messagesReadQueriesRouteAsData() {
+        for sentence in [
+            "show my recent messages",
+            "latest messages conversations",
+            "search messages from Salman",
+            "find messages about invoice",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `get_messages_conversations` or `search_messages`
+    /// for Messages turns; `find_capability` and `run_capability` are always present in the base
+    /// tool set.
+    @Test func messagesPlanOmitsRetiredReadTools() {
+        for sentence in ["show my recent messages", "search messages from Salman"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence,
+                bundleId: "com.apple.MobileSMS",
+                appName: "Messages"
+            )
+            #expect(!plan.allowedToolNames.contains("get_messages_conversations"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("search_messages"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
+        }
+    }
+
+    /// `messages.recent` and `messages.search` capabilities are registered, low-risk, headless
+    /// (`runsWithoutAdapter`), and expose all expected query parameters.
+    @Test func messagesReadCapabilitiesCoverAllParameters() {
+        let registry = CapabilityRegistry.shared
+        AppleMessagesMCPCapabilities.register(in: registry)
+
+        let recent = registry.capability(id: "messages.recent")
+        #expect(recent != nil, "messages.recent capability must be registered")
+        #expect(recent?.appBundleID == "com.apple.MobileSMS")
+        #expect(recent?.riskLevel == .low)
+        #expect(recent?.runsWithoutAdapter == true)
+        let recentFields = Set(recent?.inputSchema.fields.map(\.name) ?? [])
+        #expect(recentFields.isSuperset(of: ["contact", "limit"]))
+
+        let search = registry.capability(id: "messages.search")
+        #expect(search != nil, "messages.search capability must be registered")
+        #expect(search?.appBundleID == "com.apple.MobileSMS")
+        #expect(search?.riskLevel == .low)
+        #expect(search?.runsWithoutAdapter == true)
+        let searchFields = Set(search?.inputSchema.fields.map(\.name) ?? [])
+        #expect(searchFields.isSuperset(of: ["query"]))
+    }
+
+    /// `get_messages_conversations` and `search_messages` are retired everywhere: removed from
+    /// `AgentToolRegistry` and `OutboundGate.localTools`.
+    @Test func messagesReadToolsAreRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "get_messages_conversations") == nil)
+        #expect(AgentToolRegistry.shared.tool(named: "search_messages") == nil)
+        #expect(!OutboundGate.localTools.contains("get_messages_conversations"))
+        #expect(!OutboundGate.localTools.contains("search_messages"))
     }
 }
 

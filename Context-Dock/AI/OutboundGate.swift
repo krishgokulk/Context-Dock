@@ -331,7 +331,7 @@ enum OutboundGate {
     static let localTools: Set<String> = [
         "read_page", "read_file", "read_selection", "read_tool_result",
         "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
-        "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
+        "verify_outcome", "write_output_file",
         "read_app_dictionary",
         "get_today_events",
     ]
@@ -501,7 +501,7 @@ enum OutboundGate {
     static func readsPrivateData(toolName: String, arguments: [String: Any]) -> Bool {
         switch toolName {
         case "read_file", "read_selection", "find_files",
-            "get_messages_conversations", "search_messages", "run_mcp_tool", "run_route":
+            "run_mcp_tool", "run_route":
             return true
         case "run_command", "spawn_worker":
             let c = (arguments["command"] as? String ?? "").lowercased()
@@ -520,8 +520,6 @@ enum OutboundGate {
     /// the gate alone counts it as untrusted, next to private.
     static func readsThirdPartyContent(toolName: String, arguments: [String: Any]) -> Bool {
         switch toolName {
-        case "get_messages_conversations", "search_messages":
-            return true
         case "run_capability":
             let id = (arguments["capability_id"] as? String ?? "").lowercased()
             return thirdPartyCapabilityPrefixes.contains { id.hasPrefix($0) }

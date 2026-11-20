@@ -2462,68 +2462,11 @@ final class AgentToolRegistry {
             }
         })
 
-        register(AgentTool(
-            name: "get_messages_conversations",
-            description: "Read recent Messages conversations. Use for questions about unread or "
-                + "recent messages, latest chats, or conversation summaries.",
-            properties: [
-                "contact_filter": [
-                    "type": "string",
-                    "description": "Optional contact name, phone, email, or empty string.",
-                ],
-                "limit": ["type": "integer", "description": "Maximum conversations to return, 1-30."],
-            ],
-            required: []
-        ) { arguments, _ in
-            let contactFilter = arguments["contact_filter"] as? String ?? ""
-            let limit = arguments["limit"] as? Int ?? 15
-            guard let rows = MessagesChatDBReader.recent(
-                limit: limit, contact: contactFilter)
-            else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
-                    displayCommand: "get_messages_conversations")
-            }
-            let output = rows.isEmpty
-                ? "No recent Messages conversations matched the request."
-                : MessagesChatDBReader.formatted(rows)
-            return AgentToolResult(
-                success: true, output: output, displayCommand: "get_messages_conversations")
-        })
-
-        register(AgentTool(
-            name: "search_messages",
-            description: "Search local Messages read-only for a contact, keyword, or phrase. "
-                + "Does not open or control the Messages app.",
-            properties: [
-                "query": [
-                    "type": "string",
-                    "description": "Contact name, phone, email, keyword, or phrase to search.",
-                ],
-            ],
-            required: ["query"]
-        ) { arguments, _ in
-            guard let query = arguments["query"] as? String else {
-                return AgentToolResult(
-                    success: false,
-                    output: "search_messages requires 'query'.",
-                    displayCommand: "search_messages(invalid)")
-            }
-            guard let rows = MessagesChatDBReader.search(query) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
-                    displayCommand: "search_messages(\(query))")
-            }
-            let output = rows.isEmpty
-                ? "No Messages matched \(query)."
-                : MessagesChatDBReader.formatted(rows)
-            return AgentToolResult(
-                success: true,
-                output: output,
-                displayCommand: "search_messages(\(query))")
-        })
+        // get_messages_conversations and search_messages retired (H6 8/n): the model uses
+        // find_capability + run_capability("messages.recent" / "messages.search") instead. Both
+        // capabilities are registered in AppleMessagesMCPCapabilities and discoverable on every
+        // turn — find_capability and run_capability are always in the base tool set.
+        // compose_message and send_message remain until their own H6 retirement PRs.
 
         register(AgentTool(
             name: "compose_message",
