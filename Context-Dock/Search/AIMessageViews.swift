@@ -331,7 +331,7 @@ struct SearchContextApp {
 
 /// A tappable "Open in <App>" chip shown under an assistant message that used an Apple
 /// app's data (Calendar, Reminders, Contacts, …), so the user can jump straight there.
-struct AppLaunchAction: Equatable {
+struct AppLaunchAction: Codable, Equatable {
     let label: String
     let systemIcon: String
     let bundleId: String
@@ -340,7 +340,7 @@ struct AppLaunchAction: Equatable {
 /// A concrete file returned by DoraX's local Recent Items index. Keeping the URL on
 /// the message lets the chat render desktop-native actions without asking the model
 /// to reproduce a path or issuing another AI request.
-struct RecentFileAction: Equatable {
+struct RecentFileAction: Codable, Equatable {
     let url: URL
 
     var name: String { url.lastPathComponent }
@@ -349,7 +349,7 @@ struct RecentFileAction: Equatable {
 
 /// One grounded Apple Notes search hit. Structured rows keep metadata readable and
 /// actionable instead of flattening the entire result set into one chat paragraph.
-struct NoteSearchAction: Equatable {
+struct NoteSearchAction: Codable, Equatable {
     let id: String
     let title: String
     let folder: String
@@ -359,7 +359,7 @@ struct NoteSearchAction: Equatable {
 
 /// A task extracted from a grounded Apple Note. Keeping tasks structured lets the
 /// result surface offer direct copy actions without asking an AI provider again.
-struct NoteTaskAction: Equatable, Identifiable {
+struct NoteTaskAction: Codable, Equatable, Identifiable {
     let id: UUID
     let text: String
 
@@ -371,8 +371,8 @@ struct NoteTaskAction: Equatable, Identifiable {
 
 /// A grounded Reminders result. Action receipts and list rows stay structured so the
 /// conversation reads like a task manager instead of an MCP debug console.
-struct MessageSentAction: Equatable, Identifiable {
-    enum State: Equatable { case sent, unconfirmed, failed }
+struct MessageSentAction: Codable, Equatable, Identifiable {
+    enum State: String, Codable, Equatable { case sent, unconfirmed, failed }
 
     let id: UUID
     let recipientName: String
@@ -394,8 +394,8 @@ struct MessageSentAction: Equatable, Identifiable {
     }
 }
 
-struct ReminderResultAction: Equatable, Identifiable {
-    enum State: Equatable {
+struct ReminderResultAction: Codable, Equatable, Identifiable {
+    enum State: String, Codable, Equatable {
         case active
         case overdue
         case created
@@ -418,7 +418,7 @@ struct ReminderResultAction: Equatable, Identifiable {
 
 /// One live Safari tab with enough identity to activate the existing tab rather than
 /// opening a duplicate URL.
-struct BrowserTabAction: Equatable, Identifiable {
+struct BrowserTabAction: Codable, Equatable, Identifiable {
     let title: String
     let url: String
     let windowIndex: Int
@@ -431,7 +431,7 @@ struct BrowserTabAction: Equatable, Identifiable {
     }
 }
 
-struct PageLinkAction: Equatable, Identifiable {
+struct PageLinkAction: Codable, Equatable, Identifiable {
     let title: String
     let url: String
     let pageTitle: String

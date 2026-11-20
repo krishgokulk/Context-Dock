@@ -37,7 +37,17 @@ enum GeneralAIChatConversationStore {
         let appLaunches: [StoredAppLaunch]
         // Optional preserves conversations saved before file rows existed.
         let recentFiles: [StoredRecentFile]?
+        let noteResults: [NoteSearchAction]?
+        let noteTasks: [NoteTaskAction]?
+        let reminderResults: [ReminderResultAction]?
+        let messageResults: [MessageSentAction]?
+        let browserTabs: [BrowserTabAction]?
+        let pageLinks: [PageLinkAction]?
         let mcpToolsRan: [String]
+        let evidenceReceipts: [DoraXActionReceipt]?
+        let activeMode: String?
+        let modeProvenance: String?
+        let runOutput: String?
         /// When the message was actually sent.
         ///
         /// This was not stored at all. `AIChatMessage.timestamp` therefore defaulted to
@@ -91,7 +101,17 @@ enum GeneralAIChatConversationStore {
                 recentFiles: (item.recentFiles ?? []).map {
                     RecentFileAction(url: URL(fileURLWithPath: $0.path))
                 },
+                noteResults: item.noteResults ?? [],
+                noteTasks: item.noteTasks ?? [],
+                reminderResults: item.reminderResults ?? [],
+                messageResults: item.messageResults ?? [],
+                browserTabs: item.browserTabs ?? [],
+                pageLinks: item.pageLinks ?? [],
                 mcpToolsRan: item.mcpToolsRan,
+                evidenceReceipts: item.evidenceReceipts ?? [],
+                activeMode: item.activeMode,
+                modeProvenance: item.modeProvenance,
+                runOutput: item.runOutput,
                 timestamp: item.timestamp ?? undatedFallback ?? Date()
             )
         }
@@ -118,7 +138,17 @@ enum GeneralAIChatConversationStore {
                     )
                 },
                 recentFiles: message.recentFiles.map { StoredRecentFile(path: $0.url.path) },
+                noteResults: message.noteResults.isEmpty ? nil : message.noteResults,
+                noteTasks: message.noteTasks.isEmpty ? nil : message.noteTasks,
+                reminderResults: message.reminderResults.isEmpty ? nil : message.reminderResults,
+                messageResults: message.messageResults.isEmpty ? nil : message.messageResults,
+                browserTabs: message.browserTabs.isEmpty ? nil : message.browserTabs,
+                pageLinks: message.pageLinks.isEmpty ? nil : message.pageLinks,
                 mcpToolsRan: message.mcpToolsRan,
+                evidenceReceipts: message.evidenceReceipts.isEmpty ? nil : message.evidenceReceipts,
+                activeMode: message.activeMode,
+                modeProvenance: message.modeProvenance,
+                runOutput: message.runOutput,
                 timestamp: message.timestamp
             )
         }
@@ -3796,12 +3826,13 @@ extension DockCore {
                     return
                 }
 
-                if provider != .onDevice && provider != .shortcuts {
-                    // Route through the shared AppScopedChatService pipeline. Prompt
-                    // assembly, skill-replay, TurnRecorder, SolvedSkillCapture and
-                    // ScopedTurnRunner all run inside the service. The dock provides
-                    // only the stream/status hooks and applies its Corner-specific
-                    // post-turn card insertion and Safari command dispatch.
+                if provider != .shortcuts {
+                    // Route all non-Shortcut providers (cloud AND on-device — Task U8d)
+                    // through the shared AppScopedChatService pipeline. Prompt assembly,
+                    // on-device shell/timer guards, skill-replay, TurnRecorder,
+                    // SolvedSkillCapture and ScopedTurnRunner all run inside the service.
+                    // The dock provides only the stream/status hooks and applies its
+                    // Corner-specific post-turn card insertion and Safari command dispatch.
                     let streamMessageID = UUID()
                     let turnScope = GeneralChatScope(dockBundleId: scopedBundleId)
                     let answer = try await AppScopedChatService.send(
@@ -3864,230 +3895,6 @@ extension DockCore {
                                     AIChatMessage(role: .assistant, content: "🌐 \(result)"))
                             }
                         }
-                    }
-                } else if provider == .onDevice {
-                    // (#188) On-device Foundation Models have no shell capability; they
-                    // mis-select app_chat_history for "run curl …" and similar. Answer
-                    // immediately without entering the model loop.
-                    if DockCore.looksLikeOnDeviceShellQuery(query) {
-                        await MainActor.run {
-                            self.l2.chatMessages.append(
-                                AIChatMessage(role: .assistant,
-                                              content: "I can't run commands here."))
-                            self.l2.isLoading = false
-                            self.finishL2AIRequest(l2RequestID)
-                        }
-                        return
-                    }
-                    // (#188) Timer/countdown requests: start the Dynamic Notch timer directly so
-                    // the model never hallucinates "Timer started" without actually doing anything.
-                    if let timerSecs = DockCore.parseOnDeviceTimerSeconds(query) {
-                        await MainActor.run {
-                            DynamicNotchState.shared.startTimer(seconds: timerSecs, label: "Timer")
-                            self.l2.chatMessages.append(
-                                AIChatMessage(role: .assistant, content: "⏱ Timer started."))
-                            self.l2.isLoading = false
-                            self.finishL2AIRequest(l2RequestID)
-                        }
-                        return
-                    }
-                    let cliCommand: String? = scopedBundleId.hasPrefix("cli://")
-                        ? String(scopedBundleId.dropFirst("cli://".count))
-                        : nil
-                    await self.setL2LoadingStatus(
-                        cliCommand.map { "Checking \($0) --help and available subcommands…" }
-                            ?? "Reading app context and live capabilities…",
-                        requestID: l2RequestID)
-                    // On-device Apple Intelligence: trim history + use minimal context for scoped apps
-                    // to avoid "Exceeded model context window size" from Foundation Models.
-                    let onDeviceHistory = Array(chatHistory.suffix(4))
-                    let placeholder = AIChatMessage(
-                        role: .assistant, content: "", mcpToolsRan: memoryToolChips,
-                        isStreamingPlaceholder: true)
-                    await MainActor.run { l2.chatMessages.append(placeholder) }
-                    let msgId = placeholder.id
-                    // Pass the raw query — buildContextPrompt inside streamOnDeviceResponse handles
-                    // all file/app/text context via the `context` parameter. Passing a pre-built
-                    // context string as message would double the context and overflow Foundation Models.
-                    let onDeviceContext: UserContext = {
-                        if let page = webResearch.pages.last,
-                            isContextDockBrowserBundle(scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId)
-                        {
-                            return .url(page.url)
-                        }
-                        if isExplicitScopedApp && !scopedBundleId.isEmpty {
-                            return .appFocused(name: scopedAppName, bundleID: scopedBundleId)
-                        }
-                        return scopedConversationContext
-                    }()
-                    // Prepend date/time as a lightweight header so the model knows current time
-                    // A CLI scope already has a strict, help-grounded system prompt. Adding
-                    // date/time there encouraged the on-device model to call `date` for a
-                    // confirmation such as "yes", instead of continuing the scoped tool flow.
-                    let dateHeader = cliCommand == nil
-                        ? await MainActor.run { self.currentDateTimeContextBlock() }
-                        : ""
-                    let onDeviceMessage =
-                        dateHeader.isEmpty ? query : "\(dateHeader)\n\nUser request: \(query)"
-
-                    await withCheckedContinuation { cont in
-                        // On-device Foundation Models can stall silently (no token, no
-                        // onComplete/onError) — the old "stuck empty bubble". Guard the
-                        // continuation so a timeout can finish it with a useful message.
-                        let resumeGuard = ResumeOnceGuard()
-                        let timeoutTask = Task {
-                            try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30s
-                            guard resumeGuard.claim() else { return }
-                            await MainActor.run {
-                                guard let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId })
-                                else { return }
-                                if self.l2.chatMessages[idx].content.isEmpty {
-                                    self.l2.chatMessages[idx] = AIChatMessage(
-                                        id: msgId, role: .assistant,
-                                        content:
-                                            "On-device AI didn't respond in time for this one. "
-                                            + "Try again, switch to a cloud provider (pick a model at "
-                                            + "the top-left of the chat), or route it through a Shortcut "
-                                            + "in Settings → AI Providers.",
-                                        isError: true)
-                                }
-                            }
-                            cont.resume()
-                        }
-                        AIProviderService.shared.streamOnDeviceResponse(
-                            message: onDeviceMessage,
-                            imageURLs: scopedImageAttachments,
-                            context: onDeviceContext,
-                            history: onDeviceHistory,
-                            additionalContextPrompt: activeContextPrompt,
-                            onPartial: { token in
-                                DispatchQueue.main.async {
-                                    if let idx = self.l2.chatMessages.firstIndex(where: {
-                                        $0.id == msgId
-                                    }) {
-                                        self.l2.chatMessages[idx] = AIChatMessage(
-                                            id: msgId, role: .assistant,
-                                            content: self.l2.chatMessages[idx].content + token,
-                                            mcpToolsRan: memoryToolChips
-                                        )
-                                    }
-                                }
-                            },
-                            onComplete: { response in
-                                DispatchQueue.main.async {
-                                    if let idx = self.l2.chatMessages.firstIndex(where: {
-                                        $0.id == msgId
-                                    }) {
-                                        let currentContent = self.l2.chatMessages[idx].content
-                                        if currentContent.isEmpty {
-                                            let fallback = QueryFailureGuide.shared.instant(
-                                                for: .emptyResponse(query: query),
-                                                originalQuery: query
-                                            )
-                                            self.l2.chatMessages[idx] = AIChatMessage(
-                                                id: msgId, role: .assistant,
-                                                content: response.isEmpty ? fallback : response
-                                            )
-                                        }
-                                        // Post-process: extract proposal block, tag message
-                                        let rawContent = self.l2.chatMessages[idx].content
-                                        let tagged = self.tagMessageWithProposal(
-                                            AIChatMessage(
-                                                id: msgId, role: .assistant, content: rawContent,
-                                                mcpToolsRan: memoryToolChips)
-                                        )
-                                        self.l2.chatMessages[idx] = tagged
-                                        let finalContent = tagged.content
-                                        if !activeContextPrompt.isEmpty {
-                                            self.extractAndInsertDockApprovalCards(
-                                                from: finalContent, intoMessageAt: msgId)
-                                        }
-                                    }
-                                }
-                                timeoutTask.cancel()
-                                if resumeGuard.claim() { cont.resume() }
-                            },
-                            onError: { errText in
-                                DispatchQueue.main.async {
-                                    if let idx = self.l2.chatMessages.firstIndex(where: {
-                                        $0.id == msgId
-                                    }) {
-                                        let kind: QueryFailureKind = {
-                                            let e = errText.lowercased()
-                                            if e.contains("context") || e.contains("token")
-                                                || e.contains("length")
-                                            {
-                                                return .onDeviceContextOverflow
-                                            }
-                                            if e.contains("requires macos")
-                                                || e.contains("apple silicon")
-                                            {
-                                                return .onDeviceNotAvailable
-                                            }
-                                            return .onDeviceGeneralError(errText)
-                                        }()
-                                        let guide = QueryFailureGuide.shared.instant(
-                                            for: kind, originalQuery: query
-                                        )
-                                        self.l2.chatMessages[idx] = AIChatMessage(
-                                            id: msgId, role: .assistant, content: guide,
-                                            isError: true)
-                                    }
-                                }
-                                timeoutTask.cancel()
-                                if resumeGuard.claim() { cont.resume() }
-                            }
-                        )
-                    }
-                    if Task.isCancelled {
-                        await MainActor.run {
-                            // Nothing was said, so the empty bubble the turn reserved goes
-                            // with it rather than lingering as a blank row.
-                            l2.chatMessages.removeAll { $0.id == msgId && $0.content.isEmpty }
-                            finishL2AIRequest(l2RequestID)
-                        }
-                        return
-                    }
-                    // On-device MCP: if the streamed reply was a tool-call directive, run the
-                    // tool and replace the message with a grounded answer.
-                    let onDeviceReply = await MainActor.run {
-                        self.l2.chatMessages.first(where: { $0.id == msgId })?.content ?? ""
-                    }
-                    let onDeviceScopeName = scopedAppName.isEmpty
-                        ? (frontmostName ?? frontmost.name) : scopedAppName
-                    if let resolved = await self.resolveMCPToolCall(
-                        in: onDeviceReply, bundleId: scopedBundleId, userQuery: query,
-                        provider: provider, apiKey: apiKey, history: onDeviceHistory,
-                        systemPrompt: activeContextPrompt,
-                        appName: onDeviceScopeName)
-                    {
-                        await MainActor.run {
-                            if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
-                                self.l2.chatMessages[idx] = AIChatMessage(
-                                    id: msgId, role: .assistant, content: resolved.answer,
-                                    mcpToolsRan: memoryToolChips + resolved.toolsRan)
-                            }
-                        }
-                    } else if let applied = await self.resolveTypedAppInvocation(
-                        in: onDeviceReply,
-                        scopedBundleId: scopedBundleId,
-                        scopeName: onDeviceScopeName,
-                        userQuery: query,
-                        requestID: l2RequestID,
-                        context: scopedConversationContext)
-                    {
-                        // The on-device model routes actions as plain-text directives; without
-                        // this the raw {"adapter_call":…} line was printed to the user.
-                        await MainActor.run {
-                            if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
-                                self.l2.chatMessages[idx] = AIChatMessage(
-                                    id: msgId, role: .assistant, content: applied.answer,
-                                    mcpToolsRan: memoryToolChips + applied.toolsRan)
-                            }
-                        }
-                    }
-                    await MainActor.run {
-                        finishL2AIRequest(l2RequestID)
                     }
                 } else if provider == .shortcuts {
                     await self.setL2LoadingStatus(

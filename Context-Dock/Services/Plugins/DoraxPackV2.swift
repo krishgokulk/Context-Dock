@@ -290,14 +290,6 @@ extension DoraxPackV2 {
     func toPluginManifest() -> PluginManifest {
         let m = metadata
 
-        var agent: PluginAgent?
-        if let instructions = agentInstructions, !instructions.isEmpty {
-            agent = PluginAgent(
-                instructions: instructions,
-                skills: skills.map(\.id),
-                tools: (m.cliTools ?? []).map(\.name))
-        }
-
         let targetApp: PluginTargetApp? = {
             guard let bid = m.bundleId,
                   !bid.isEmpty, bid.lowercased() != "global" else { return nil }
@@ -315,13 +307,100 @@ extension DoraxPackV2 {
                 summary: "", instructions: entry.content)
         }
 
+        // Convert executable capabilities and pack scripts into `PluginAction` entries so
+        // `PluginCapability.make(named:manifest:)` can register them into `CapabilityRegistry` (Task U8c).
+        var actions: [String: PluginAction] = [:]
+        for cap in m.capabilities {
+            if let action = Self.pluginAction(from: cap) {
+                actions[cap.id] = action
+            }
+        }
+        for scriptEntry in scripts {
+            let key = URL(fileURLWithPath: scriptEntry.filename).deletingPathExtension().lastPathComponent
+            let alreadyReferenced = actions.values.contains { $0.script == scriptEntry.content }
+            if actions[key] == nil && !alreadyReferenced {
+                actions[key] = PluginAction(
+                    type: Self.scriptType(forFilename: scriptEntry.filename),
+                    script: scriptEntry.content,
+                    title: key,
+                    risk: .medium)
+            }
+        }
+
+        // `agent.tools` must reference declared action keys or capability IDs (`PluginSchema.validate`);
+        // passing raw `cliTools.name` strings fails validation (`PluginInstallError.doesNotValidate`).
+        var agent: PluginAgent?
+        if let instructions = agentInstructions, !instructions.isEmpty {
+            let validTools = Array(actions.keys.sorted())
+            agent = PluginAgent(
+                instructions: instructions,
+                skills: skills.map(\.id),
+                tools: validTools)
+        }
+
         return PluginManifest(
             id: m.id, name: m.name, version: m.version,
             icon: m.icon, description: m.description,
-            keywords: m.keywords, agent: agent,
+            keywords: m.keywords,
+            actions: actions,
+            agent: agent,
             targetApp: targetApp,
             capabilities: m.capabilities.isEmpty ? nil : m.capabilities,
             skills: packSkills.isEmpty ? nil : packSkills)
+    }
+
+    /// Converts `modes.json` entries into `AppPetModeManifest` values for `AppPetManifestRegistry` (Task U8c).
+    func toAppPetModes() -> [AppPetModeManifest] {
+        modes.map { mode in
+            AppPetModeManifest(
+                id: mode.id,
+                name: mode.name,
+                summary: mode.description,
+                systemPromptOverlay: mode.systemPromptAppend ?? "",
+                preferredCapabilities: mode.toolFilter ?? [])
+        }
+    }
+
+    private static func pluginAction(from cap: PluginPackCapability) -> PluginAction? {
+        let risk: PluginRisk = {
+            switch cap.safety.lowercased() {
+            case "read": return .read
+            case "write": return .medium
+            case "destructive", "high": return .high
+            default: return .low
+            }
+        }()
+
+        switch cap.type.lowercased() {
+        case "shell", "bash", "shellcommand", "clitool":
+            guard let script = cap.script, !script.isEmpty else { return nil }
+            return PluginAction(type: "bash", script: script, title: cap.name, risk: risk)
+        case "applescript":
+            guard let script = cap.script, !script.isEmpty else { return nil }
+            return PluginAction(type: "applescript", script: script, title: cap.name, risk: risk)
+        case "jxa":
+            guard let script = cap.script, !script.isEmpty else { return nil }
+            return PluginAction(type: "jxa", script: script, title: cap.name, risk: risk)
+        case "shortcut":
+            return PluginAction(
+                type: "shortcut", script: cap.script ?? cap.name, title: cap.name, risk: risk)
+        case "http", "httpendpoint":
+            guard let script = cap.script, !script.isEmpty else { return nil }
+            return PluginAction(type: "http", script: script, title: cap.name, risk: risk)
+        case "urlscheme", "url", "deeplink", "open":
+            guard let target = cap.urlScheme ?? cap.script, !target.isEmpty else { return nil }
+            return PluginAction(type: "open", value: target, title: cap.name, risk: risk)
+        default:
+            return nil
+        }
+    }
+
+    private static func scriptType(forFilename filename: String) -> String {
+        switch URL(fileURLWithPath: filename).pathExtension.lowercased() {
+        case "applescript", "scpt": return "applescript"
+        case "js", "jxa": return "jxa"
+        default: return "bash"
+        }
     }
 }
 

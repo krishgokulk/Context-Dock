@@ -9,11 +9,20 @@
 
 import Foundation
 
-enum PluginInstallError: Error, Equatable {
+enum PluginInstallError: Error, LocalizedError, Equatable {
     /// Named plugins do not validate. Installing them would produce a plugin that cannot
     /// work, discovered later as a registry flag rather than here where someone is looking.
     case doesNotValidate([String])
     case write(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .doesNotValidate(let ids):
+            return "Pack failed manifest validation: \(ids.joined(separator: ", "))"
+        case .write(let message):
+            return "Could not write pack to disk: \(message)"
+        }
+    }
 }
 
 enum PluginInstaller {

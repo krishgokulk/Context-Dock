@@ -317,6 +317,63 @@ class TerminalPackageManager: ObservableObject {
         packages.removeAll { $0.id == package.id }
         savePackages()
     }
+
+    /// Links a `.doraxpack` v2 `cli_tools` entry into `TerminalPackageManager` and associates it
+    /// with `bundleID` so scoped prompts and CLI discovery surface it immediately (Task U8c).
+    @MainActor
+    func linkPackCLITool(
+        _ tool: DoraxCLITool,
+        bundleID: String?,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) {
+        let rawBinary = tool.binary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let commandName = rawBinary.contains("/")
+            ? URL(fileURLWithPath: rawBinary).lastPathComponent
+            : (rawBinary.isEmpty ? tool.name : rawBinary)
+        guard !commandName.isEmpty else { return }
+
+        let installedPath: String? = {
+            if rawBinary.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: rawBinary) {
+                return rawBinary
+            }
+            return nil
+        }()
+
+        let normalizedBundle: String? = {
+            guard let b = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !b.isEmpty, b.lowercased() != "global" else { return nil }
+            return b
+        }()
+
+        if let index = packages.firstIndex(where: {
+            $0.command.caseInsensitiveCompare(commandName) == .orderedSame
+        }) {
+            if let installedPath, packages[index].installedPath == nil {
+                packages[index].installedPath = installedPath
+            }
+            packages[index].isEnabled = true
+            if let normalizedBundle, !packages[index].contextAppBundleIds.contains(normalizedBundle) {
+                packages[index].contextAppBundleIds = Array(
+                    Set(packages[index].contextAppBundleIds + [normalizedBundle])
+                ).sorted()
+            }
+        } else {
+            let scopes = normalizedBundle.map { [$0] } ?? []
+            packages.append(
+                TerminalPackage(
+                    name: tool.name.isEmpty ? commandName : tool.name,
+                    command: commandName,
+                    description: tool.description.isEmpty ? "Linked from .doraxpack" : tool.description,
+                    installedPath: installedPath,
+                    keywords: Array(Set([tool.name.lowercased(), commandName.lowercased()])).sorted(),
+                    usageExamples: [],
+                    contextAppBundleIds: scopes
+                ))
+        }
+        if persistToDisk {
+            savePackages()
+        }
+    }
     
     func updatePackage(_ package: TerminalPackage) {
         if let index = packages.firstIndex(where: { $0.id == package.id }) {

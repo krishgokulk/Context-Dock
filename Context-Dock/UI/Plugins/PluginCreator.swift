@@ -35,10 +35,20 @@ final class PluginCreatorModel: ObservableObject {
     @Published private(set) var note: String?
     @Published private(set) var draftError: String?
 
+    /// 4-Stage Agentic AI Pack Builder (Task U8a): staged result awaiting owner review
+    /// before `AgenticAIPackBuilder.approveAndInstall(_:)` atomically binds it.
+    @Published private(set) var isBuildingPack = false
+    @Published private(set) var pendingPackResult: PackSynthesisResult?
+    @Published private(set) var packBuildError: String?
+    @Published private(set) var packInstallStatus: String?
+
     /// Injected so a test can drive the round without a provider; the pane passes the live one.
     var makeEngine: (() -> PluginAuthoringEngine)?
     /// Optional sdef XML override for offline unit testing of AI Pack Synthesis introspection.
     var sdefXMLOverrideForTesting: String?
+    /// Injectable seams for offline testing of the 4-Stage Agentic AI Pack Builder UI flow.
+    var buildPackOverride: ((_ bundleID: String, _ appName: String) async -> PackSynthesisResult)?
+    var approveAndInstallOverride: ((_ result: PackSynthesisResult) throws -> StorePackBindResult)?
 
     /// Run test: the plugin's DATA script, run for real, and what it returned drawn in the
     /// preview in place of `sample`. Data only — actions stay refused here, because routing
@@ -244,5 +254,87 @@ final class PluginCreatorModel: ObservableObject {
             _ = try? StorePackInstaller.install(manifest, into: nil)
         }
         return true
+    }
+
+    // MARK: - 4-Stage Agentic AI Pack Builder (Task U8a)
+
+    /// Runs `AgenticAIPackBuilder.build(bundleID:appName:)` for the selected target app (or
+    /// an app named in `request`) and stages the resulting `OwnerReviewCard` for approval.
+    func buildPack() async {
+        guard !isBuildingPack else { return }
+        packBuildError = nil
+        packInstallStatus = nil
+
+        let explicit = selectedTargetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved: (bundleID: String, appName: String)? = {
+            if let match = AIPackIntrospector.resolveTargetApp(
+                from: request,
+                explicitBundleID: explicit.isEmpty ? nil : explicit
+            ) {
+                return match
+            }
+            if !explicit.isEmpty {
+                let name = AppAdapterManager.shared.adapters
+                    .first { $0.bundleId == explicit }?.appName
+                    ?? explicit.components(separatedBy: ".").last
+                    ?? explicit
+                return (explicit, name)
+            }
+            return nil
+        }()
+
+        guard let target = resolved else {
+            packBuildError = "Select a target app or mention an app name to build a pack."
+            return
+        }
+
+        isBuildingPack = true
+        defer { isBuildingPack = false }
+
+        let result: PackSynthesisResult
+        if let override = buildPackOverride {
+            result = await override(target.bundleID, target.appName)
+        } else {
+            result = await AgenticAIPackBuilder.build(
+                bundleID: target.bundleID,
+                appName: target.appName)
+        }
+
+        pendingPackResult = result
+        let manifest = result.pack.toPluginManifest()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(manifest),
+           let encoded = String(data: data, encoding: .utf8) {
+            text = encoded
+        }
+        note = "Staged \(result.pack.name) with \(result.reviewCard.capabilities.count) capabilities. Review & approve to install."
+    }
+
+    /// Approves the staged pack and atomically binds it via `AgenticAIPackBuilder.approveAndInstall(_:)`.
+    @discardableResult
+    func approvePendingPack() throws -> StorePackBindResult? {
+        guard let pending = pendingPackResult else { return nil }
+        packBuildError = nil
+        do {
+            let bindResult: StorePackBindResult
+            if let override = approveAndInstallOverride {
+                bindResult = try override(pending)
+            } else {
+                bindResult = try AgenticAIPackBuilder.approveAndInstall(pending)
+            }
+            pendingPackResult = nil
+            PluginRegistry.shared.reload()
+            packInstallStatus = "Installed \(pending.pack.name) (\(bindResult.registeredCapabilityIDs.count) capabilities bound)."
+            return bindResult
+        } catch {
+            packBuildError = error.localizedDescription
+            throw error
+        }
+    }
+
+    func dismissPendingPack() {
+        pendingPackResult = nil
+        packBuildError = nil
     }
 }

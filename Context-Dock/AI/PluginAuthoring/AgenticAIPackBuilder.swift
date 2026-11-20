@@ -399,6 +399,10 @@ enum AgenticAIPackBuilder {
             ) else { continue }
 
             for item in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                // Directories have the POSIX +x traverse bit so `isExecutableFile` returns true
+                // for folders like `Safari.app/Contents/Resources/Background Images`.
+                let isRegularFile = (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+                guard isRegularFile else { continue }
                 guard FileManager.default.isExecutableFile(atPath: item.path) else { continue }
                 let ext = item.pathExtension
                 // Skip non-CLI file types

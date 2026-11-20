@@ -333,15 +333,94 @@ enum StorePackInstaller {
         persistToDisk: Bool = !AppDelegate.isHostingTests
     ) throws -> StorePackBindResult {
         let manifest = pack.toPluginManifest()
-        let result = try install(manifest, persistToDisk: persistToDisk)
+        let baseResult = try install(manifest, persistToDisk: persistToDisk)
+        var boundCapIDs = baseResult.registeredCapabilityIDs
+        var seenCapIDs = Set(boundCapIDs)
 
-        // Register extension hooks into ExtensionHookRegistry so they are discoverable
-        // by the capability layer and callable via SafariExtensionCommandBridge.
-        if let hooks = pack.metadata.extensionHooks, !hooks.isEmpty {
-            ExtensionHookRegistry.shared.register(hooks: hooks, packID: pack.metadata.id)
+        // 1. Register executable plugin actions as callable AICapabilities in CapabilityRegistry (Task U8c).
+        for actionName in manifest.actions.keys.sorted() {
+            if let capability = PluginCapability.make(named: actionName, manifest: manifest) {
+                CapabilityRegistry.shared.register(capability)
+                if seenCapIDs.insert(capability.id).inserted {
+                    boundCapIDs.append(capability.id)
+                }
+            }
         }
 
-        return result
+        // 2. Register extension hooks into ExtensionHookRegistry AND CapabilityRegistry (Tasks U8b/U8c).
+        if let hooks = pack.metadata.extensionHooks, !hooks.isEmpty {
+            ExtensionHookRegistry.shared.register(
+                hooks: hooks,
+                packID: pack.metadata.id,
+                bundleID: pack.metadata.bundleId,
+                pageScripts: pack.pageScripts)
+            for hook in hooks where seenCapIDs.insert(hook.id).inserted {
+                boundCapIDs.append(hook.id)
+            }
+        }
+
+        // 3. Link declared cli_tools into TerminalPackageManager (Task U8c).
+        if let cliTools = pack.metadata.cliTools, !cliTools.isEmpty {
+            for tool in cliTools {
+                TerminalPackageManager.shared.linkPackCLITool(
+                    tool,
+                    bundleID: pack.metadata.bundleId,
+                    persistToDisk: persistToDisk)
+            }
+        }
+
+        // 4. Register declared mcp_servers into MCPServerManager (Task U8c).
+        if let mcpServers = pack.metadata.mcpServers, !mcpServers.isEmpty {
+            let linkBundleID = pack.metadata.bundleId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedBundleID = (linkBundleID?.isEmpty == false) ? linkBundleID! : "global"
+            for server in mcpServers {
+                let rawCommand = (server.command ?? server.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !rawCommand.isEmpty else { continue }
+                let executable: String
+                let args: [String]
+                if FileManager.default.fileExists(atPath: rawCommand) {
+                    executable = rawCommand
+                    args = []
+                } else {
+                    let parts = rawCommand.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+                    executable = parts.first ?? rawCommand
+                    args = parts.count > 1 ? Array(parts.dropFirst()) : []
+                }
+                let config = MCPServerConfig(
+                    name: server.name,
+                    command: executable,
+                    args: args,
+                    transport: server.transport)
+                MCPServerManager.shared.add(
+                    config,
+                    linkedTo: resolvedBundleID,
+                    persistToDisk: persistToDisk)
+            }
+        }
+
+        // 5. Load modes.json into AppPetManifestRegistry (Task U8c).
+        if !pack.modes.isEmpty,
+           let bundleID = pack.metadata.bundleId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bundleID.isEmpty,
+           bundleID.lowercased() != "global" {
+            let defaultModeID = pack.modes.first(where: \.isDefault)?.id
+            AppPetManifestRegistry.shared.registerPackModes(
+                pack.toAppPetModes(),
+                forBundleID: bundleID,
+                appName: pack.metadata.name,
+                packID: pack.metadata.id,
+                defaultModeID: defaultModeID)
+        }
+
+        return StorePackBindResult(
+            packID: baseResult.packID,
+            boundBundleID: baseResult.boundBundleID,
+            appName: baseResult.appName,
+            isGlobal: baseResult.isGlobal,
+            registeredCapabilityIDs: boundCapIDs,
+            registeredUTCPConnectionIDs: baseResult.registeredUTCPConnectionIDs,
+            registeredSkillIDs: baseResult.registeredSkillIDs,
+            registeredGlobalCommandIDs: baseResult.registeredGlobalCommandIDs)
     }
 
     static func installAllV2(

@@ -55,7 +55,11 @@ final class MCPServerManager: ObservableObject {
 
     /// Add a server linked to an app adapter. Merges into an existing same-name server for
     /// the app instead of duplicating.
-    func add(_ server: MCPServerConfig, linkedTo bundleId: String) {
+    func add(
+        _ server: MCPServerConfig,
+        linkedTo bundleId: String,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) {
         var s = server
         if !s.bundleIds.contains(bundleId) { s.bundleIds.append(bundleId) }
         if let idx = servers.firstIndex(where: {
@@ -69,15 +73,23 @@ final class MCPServerManager: ObservableObject {
         } else {
             servers.append(s)
         }
-        save()
+        if persistToDisk {
+            save()
+        }
     }
 
     /// Unlink a server from one app adapter; drops the server entirely if unused afterwards.
-    func unlink(id: UUID, from bundleId: String) {
+    func unlink(
+        id: UUID,
+        from bundleId: String,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) {
         guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
         servers[idx].bundleIds.removeAll { $0 == bundleId }
         if servers[idx].bundleIds.isEmpty { servers.remove(at: idx) }
-        save()
+        if persistToDisk {
+            save()
+        }
     }
 
     /// Parse a standard `{ "mcpServers": { "<name>": { "command", "args", "transport" } } }`
