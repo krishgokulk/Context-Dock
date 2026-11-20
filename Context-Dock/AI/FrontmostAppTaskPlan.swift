@@ -186,9 +186,6 @@ struct FrontmostAppTaskPlan: Equatable {
 
         var tools: Set<String> = ["find_capability", "run_capability", "run_adapter_action", "run_mcp_tool", "verify_outcome"]
         let id = bundleId.lowercased()
-        if id.contains("imessage") || id.contains("messages") || id.contains("mobilesms") {
-            tools.formUnion(["compose_message", "send_message"])
-        }
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }

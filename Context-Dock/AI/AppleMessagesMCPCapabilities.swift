@@ -137,6 +137,7 @@ enum AppleMessagesMCPCapabilities {
                     .init(name: "body", description: "Optional draft text for the user to review", required: false),
                 ]),
                 riskLevel: .medium,
+                runsWithoutAdapter: true,
                 surface: .opensApp  // opens the Messages window with the draft (#307)
             ) { request in
                 try ensureEnabled()
@@ -161,7 +162,8 @@ enum AppleMessagesMCPCapabilities {
                     .init(name: "body", description: "Message text to send. Optional when filePath is provided.", required: false),
                     .init(name: "filePath", description: "Absolute path to a file to send as an attachment", required: false),
                 ]),
-                riskLevel: .high
+                riskLevel: .high,
+                runsWithoutAdapter: true
             ) { request in
                 try ensureEnabled()
                 guard let recipient = request.input["recipient"], !recipient.isEmpty else {
