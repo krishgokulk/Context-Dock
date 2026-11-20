@@ -1123,7 +1123,8 @@ struct MessagesShortcutRetirementTests {
 
     /// Outbound compose and send requests that the retired pre-model Messages shortcut
     /// previously intercepted without approval now route to `.action` in `AgentSourceAuthority`,
-    /// plan as `.act` in `FrontmostAppTaskPlan` with `compose_message` / `send_message`, skip
+    /// plan as `.act` in `FrontmostAppTaskPlan` with `find_capability` / `run_capability` (the
+    /// retired `compose_message` and `send_message` tools are omitted), skip
     /// `CrossAppNLHandler` in Messages scope, and resolve `messages.compose` (`requiresApproval == true`)
     /// in `AppAdapterCapabilityCatalog`.
     @Test func messagesComposeAndSendRequestsAreGatedActions() {
@@ -1141,8 +1142,10 @@ struct MessagesShortcutRetirementTests {
             let plan = FrontmostAppTaskPlan.make(
                 query: sentence, bundleId: "com.apple.MobileSMS", appName: "Messages")
             #expect(plan.intent == .act, "\"\(sentence)\"")
-            #expect(plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
-            #expect(plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
 
             #expect(
                 DockCore.shouldSkipCrossAppMessagesRouting(
@@ -1878,6 +1881,75 @@ struct MessagesReadToolsRetirementTests {
         #expect(AgentToolRegistry.shared.tool(named: "search_messages") == nil)
         #expect(!OutboundGate.localTools.contains("get_messages_conversations"))
         #expect(!OutboundGate.localTools.contains("search_messages"))
+    }
+}
+
+// MARK: - H6 (9/n): compose_message & send_message tool retirement
+
+@MainActor
+struct MessagesWriteToolsRetirementTests {
+
+    /// Compose and send message phrases route as `.data` — the model uses `find_capability` +
+    /// `run_capability("messages.compose" / "messages.send")` rather than legacy named tools.
+    @Test func messagesWriteQueriesRouteAsData() {
+        for sentence in [
+            "text Mom that I'll be home at 6",
+            "send a message to Salman saying hi",
+            "draft a message to Sarah",
+            "message Alex that the meeting moved",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `compose_message` or `send_message` for
+    /// Messages turns; `find_capability` and `run_capability` are always in the base tool set.
+    @Test func messagesPlanOmitsRetiredWriteTools() {
+        for sentence in ["draft a message to Sarah", "send \"hi\" to Salman"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence,
+                bundleId: "com.apple.MobileSMS",
+                appName: "Messages"
+            )
+            #expect(!plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
+        }
+    }
+
+    /// `messages.compose` (`.medium`, requires approval) and `messages.send` (`.high`, requires
+    /// approval) are registered in `CapabilityRegistry.shared` with `runsWithoutAdapter: true`.
+    @Test func messagesWriteCapabilitiesAreRegisteredAndApprovalGated() {
+        let registry = CapabilityRegistry.shared
+        AppleMessagesMCPCapabilities.register(in: registry)
+
+        let compose = registry.capability(id: "messages.compose")
+        #expect(compose != nil, "messages.compose capability must be registered")
+        #expect(compose?.appBundleID == "com.apple.MobileSMS")
+        #expect(compose?.riskLevel == .medium)
+        #expect(compose?.riskLevel.requiresApproval == true)
+        #expect(compose?.runsWithoutAdapter == true)
+        let composeFields = Set(compose?.inputSchema.fields.map(\.name) ?? [])
+        #expect(composeFields.isSuperset(of: ["recipient", "body"]))
+
+        let send = registry.capability(id: "messages.send")
+        #expect(send != nil, "messages.send capability must be registered")
+        #expect(send?.appBundleID == "com.apple.MobileSMS")
+        #expect(send?.riskLevel == .high)
+        #expect(send?.riskLevel.requiresApproval == true)
+        #expect(send?.runsWithoutAdapter == true)
+        let sendFields = Set(send?.inputSchema.fields.map(\.name) ?? [])
+        #expect(sendFields.isSuperset(of: ["recipient", "body", "filePath"]))
+    }
+
+    /// `compose_message` and `send_message` are retired from `AgentToolRegistry` and absent
+    /// from `OutboundGate.outboundTools`.
+    @Test func messagesWriteToolsAreRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "compose_message") == nil)
+        #expect(AgentToolRegistry.shared.tool(named: "send_message") == nil)
+        #expect(!OutboundGate.outboundTools.contains("compose_message"))
+        #expect(!OutboundGate.outboundTools.contains("send_message"))
     }
 }
 

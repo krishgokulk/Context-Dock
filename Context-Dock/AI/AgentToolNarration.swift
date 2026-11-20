@@ -57,8 +57,6 @@ enum AgentToolNarration {
             return text("name").map { "Route: Shortcuts · \($0)" }
         case "run_command":
             return "Route: command line"
-        case "send_message":
-            return text("recipient").map { "Route: Messages · \($0)" }
         default:
             return nil
         }
@@ -107,8 +105,6 @@ enum AgentToolNarration {
         case "run_capability", "run_mcp_tool", "run_route": return "Running"
         case "send_keys": return "Typing"
         case "window_control": return "Moving the window"
-        case "compose_message": return "Drafting a message"
-        case "send_message": return "Sending message"
         case "get_today_events": return "Checking Calendar"
         case "verify_outcome": return "Checking the result"
         case "spawn_worker": return "Handing this to a worker"

