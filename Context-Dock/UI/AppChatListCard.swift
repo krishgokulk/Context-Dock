@@ -354,22 +354,30 @@ struct AppChatListCard: View {
         return HStack(spacing: 8) {
             if model.finderPathTrail.isEmpty {
                 contextPill(foot)
-                Spacer(minLength: 0)
-                ProviderContextChip(
-                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
-                    compact: true)
             } else {
                 finderPathPills
-                Spacer(minLength: 0)
-                ProviderContextChip(
-                    scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
-                    compact: true)
             }
+
+            Spacer(minLength: 8)
+
             BoardFooter.pill {
-                BoardFooter.action(foot.verb, keys: ["↩"])
+                Button {
+                    if !model.runReturnRow(runsTopRow: true) {
+                        model.submit()
+                    }
+                } label: {
+                    BoardFooter.action(foot.verb, keys: ["↩"])
+                }
+                .buttonStyle(.plain)
+
                 if tabStepsIn {
                     BoardFooter.divider
-                    BoardFooter.action("Step in", keys: ["⇥"])
+                    Button {
+                        _ = model.stepIntoFocusedRow()
+                    } label: {
+                        BoardFooter.action("Step in", keys: ["⇥"])
+                    }
+                    .buttonStyle(.plain)
                 }
                 // A running app's row: quit it (owner 2026-10-11).
                 if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
@@ -382,6 +390,9 @@ struct AppChatListCard: View {
                 }
             }
             .animation(.smooth(duration: 0.15), value: foot)
+
+            actionsMenu(foot: foot)
+
             BoardFooter.pill {
                 Button {
                     withAnimation(FluidMotion.selectionGlide) {
@@ -394,42 +405,155 @@ struct AppChatListCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(model.isSidePanelExpanded ? "Collapse preview panel" : "Expand preview panel")
-                Button {
-                    if !model.pinChosenRow() { model.togglePin() }
-                } label: {
-                    Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(model.isPinned ? Color.accentColor : Color.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(model.focusedRow != nil
-                    ? "Pin the chosen row (⌘P)"
-                    : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"))
-                Button {
-                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
-                } label: {
-                    let keysShown = CornerDockController.shared.chatPresentation.isShowingKeysOverlay
-                    Image(systemName: "keyboard")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(keysShown ? Color.accentColor : Color.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Keyboard shortcuts (⌘/)")
-                Button { AppDelegate.shared?.showSettings() } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Settings (⌘,)")
+                .help(model.isSidePanelExpanded ? "Collapse preview panel (⌘B)" : "Expand preview panel (⌘B)")
             }
+
+            pinPill
         }
         .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// Standalone pin pill at the far right end, highlighted in accent when active.
+    private var pinPill: some View {
+        Button {
+            if !model.pinChosenRow() { model.togglePin() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(model.isPinned ? Color.accentColor : Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                model.isPinned ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    model.isPinned ? Color.accentColor.opacity(0.4) : Color.white.opacity(0.12),
+                    lineWidth: 1
+                )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(model.focusedRow != nil
+            ? "Pin chosen row (⌘P)"
+            : (model.isPinned ? "Unpin (⌘P)" : "Keep launcher open (⌘P)"))
+    }
+
+    /// Raycast-style Actions menu (⌘K) exposing contextual item actions, view controls, and settings.
+    private func actionsMenu(foot: BoardFoot) -> some View {
+        Menu {
+            Section("Item") {
+                Button(foot.verb.isEmpty ? "Open" : foot.verb) {
+                    if !model.runReturnRow(runsTopRow: true) {
+                        model.submit()
+                    }
+                }
+
+                if tabStepsIn {
+                    Button("Step into") {
+                        _ = model.stepIntoFocusedRow()
+                    }
+                }
+
+                if let row = model.focusedRow ?? model.rows.first {
+                    switch row {
+                    case .file(let url):
+                        Button("Quick Look") {
+                            _ = model.previewFocusedRow()
+                        }
+                        Button("Show in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                        Button("Copy Path") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(url.path, forType: .string)
+                        }
+                        Button("Copy File Name") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(url.lastPathComponent, forType: .string)
+                        }
+                    case .global(let doc):
+                        if let path = doc.filePath, !path.isEmpty {
+                            let url = URL(fileURLWithPath: path)
+                            Button("Quick Look") {
+                                _ = model.previewFocusedRow()
+                            }
+                            Button("Show in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            }
+                            Button("Copy Path") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(path, forType: .string)
+                            }
+                        } else if case .browserURL(let url, _, _, _, _) = doc.action {
+                            Button("Copy Link") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                            }
+                        }
+                    case .command(let item):
+                        Button("Copy Menu Command") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(item.title, forType: .string)
+                        }
+                    default:
+                        EmptyView()
+                    }
+                }
+
+                if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
+                    Button("Quit \(app.name)") {
+                        _ = model.quitFocusedApp()
+                    }
+                }
+
+                Button("Pin to Quick Bar") {
+                    _ = model.pinChosenRow()
+                }
+            }
+
+            Section("View") {
+                Button(model.isSidePanelExpanded ? "Collapse Preview Panel" : "Expand Preview Panel") {
+                    withAnimation(FluidMotion.selectionGlide) {
+                        model.isSidePanelExpanded.toggle()
+                    }
+                }
+            }
+
+            Section("Launcher") {
+                Button("Keyboard Shortcuts...") {
+                    CornerDockController.shared.chatPresentation.toggleKeysOverlay()
+                }
+
+                Button("Settings...") {
+                    AppDelegate.shared?.showSettings()
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text("Actions")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                BoardFooter.keycaps(["⌘", "K"])
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .keyboardShortcut("k", modifiers: .command)
+        .help("Actions (⌘K)")
     }
 
     /// What Return is about to act on: its icon and its kind, dimmed, as Raycast's foot names

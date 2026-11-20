@@ -1451,10 +1451,20 @@ struct AppChatPromptPill: View {
                         AppDelegate.shared?.showSettings()
                         return .handled
                     }
+                    .onKeyPress(keys: ["b"]) { press in
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        withAnimation(FluidMotion.selectionGlide) {
+                            model.isSidePanelExpanded.toggle()
+                        }
+                        return .handled
+                    }
                     .onKeyPress(keys: ["k"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
-                        model.newConversation()
-                        return .handled
+                        if model.phase == .chat {
+                            model.newConversation()
+                            return .handled
+                        }
+                        return .ignored
                     }
                     .onKeyPress(keys: ["/", "?"]) { press in
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
