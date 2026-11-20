@@ -1459,9 +1459,7 @@ final class OnDeviceToolSession {
     ) async throws -> String {
         let model = SystemLanguageModel.default
         guard case .available = model.availability else {
-            throw NSError(domain: "OnDeviceToolBridge", code: 1,
-                userInfo: [NSLocalizedDescriptionKey:
-                    "Apple Intelligence is not available. Enable it in System Settings > Apple Intelligence."])
+            throw OnDeviceError.notAvailable("requires Apple Silicon and macOS 26.0 or later.")
         }
 
         // For cli:// scopes, replace system prompt with a focused CLI prompt
@@ -1515,7 +1513,7 @@ final class OnDeviceToolSession {
             do {
                 let model = SystemLanguageModel.default
                 guard case .available = model.availability else {
-                    onError("Apple Intelligence not available.")
+                    onError(OnDeviceError.notAvailable("requires Apple Silicon and macOS 26.0 or later.").localizedDescription)
                     return
                 }
 
@@ -1583,7 +1581,8 @@ final class OnDeviceToolSession {
                     onComplete(finalContent)
                 }
             } catch {
-                onError("Apple Intelligence error: \(error.localizedDescription)")
+                let typedErr: OnDeviceError = OnDeviceError.generationFailed(error.localizedDescription)
+                onError(typedErr.localizedDescription)
             }
         }
     }
