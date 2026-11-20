@@ -1757,6 +1757,59 @@ struct MailReadToolsRetirementTests {
     }
 }
 
+// MARK: - H6 (7/n): send_mail tool retirement
+
+@MainActor
+struct MailSendToolRetirementTests {
+
+    /// Send-email requests route as `.data` — the model uses `find_capability` +
+    /// `run_capability("mail.send")` behind its `.high` risk approval card.
+    @Test func sendMailQueriesRouteAsData() {
+        for sentence in [
+            "send an email to Sarah about the invoice",
+            "email John the quarterly summary",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `send_mail` for Mail turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func mailPlanOmitsRetiredSendTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "send an email to Sarah about the invoice",
+            bundleId: "com.apple.mail",
+            appName: "Mail"
+        )
+        #expect(!plan.allowedToolNames.contains("send_mail"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// `mail.send` is registered, `.high` risk (approval-gated), headless (`runsWithoutAdapter`),
+    /// and requires `to`, `subject`, and `body`.
+    @Test func mailSendCapabilityExistsAndRequiresApproval() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+
+        let send = registry.capability(id: "mail.send")
+        #expect(send != nil, "mail.send capability must be registered")
+        #expect(send?.appBundleID == "com.apple.mail")
+        #expect(send?.riskLevel == .high)
+        #expect(send?.riskLevel.requiresApproval == true)
+        #expect(send?.runsWithoutAdapter == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "to" && $0.required }) == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "subject" && $0.required }) == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "body" && $0.required }) == true)
+    }
+
+    /// `send_mail` is retired everywhere: removed from `AgentToolRegistry` and `OutboundGate.outboundTools`.
+    @Test func sendMailIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "send_mail") == nil)
+        #expect(!OutboundGate.outboundTools.contains("send_mail"))
+    }
+}
+
 // MARK: - Issue #235: Safari browser history classifier false-positive on tool questions
 
 @MainActor
