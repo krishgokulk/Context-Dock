@@ -10,29 +10,19 @@
 
 ## In progress
 
-**#153: E5b On-device: budget the prompt with tokenCount before sending (branch `claude/issue-153-on-device-budget`):**
-- Measure assembled on-device prompt using framework token counter before dispatching to `LanguageModelSession`.
-- Reserve token headroom for model reply (~1,000 tokens out of 4,096 context window).
-- Proactive trimming: when over budget, trim in section drop order, then oldest conversation turns, avoiding `exceededContextWindowSize` before sending.
-- Unit tests with a mock token counter validating ordered section drop and reply reserve protection.
+**Unified Spotlight-Pet Surface (Single Zero-Modal Launcher):**
+- Spec: `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md` (owner-approved 2026-11-09).
+- Dissolves modal `⌘` / `Backspace` switching between Global Context and App Pet into one context-biased Liquid Glass intent bar.
+- Frontmost menu candidates boosted (+500); inline ghost autocomplete on top match (`Return` runs immediately).
+- **Siri-Style Zero-Match & Conversational Fallback:** When query is conversational or no local match exists:
+  1. Input pill draws inline ghost text: `[query] | — Ask Dora (↵)` with direct `Return` execution into General AI Chat transcript (PR #421 morph).
+  2. Floating capsule below pill: `[ 🌐 📁 Show Results (↓) ]`.
+  3. Pressing `↓` or clicking capsule expands alternative search destinations (Finder, Web, Cloud Drives, Active Pet, ChatGPT).
+- Conversational intent penalty (-100 on incidental disk files) suppresses keyword collision noise.
+- Code sites: `Search/AppChatRowRanker.swift`, `Services/GlobalSearchService.swift`, `UI/AppChatPromptModel.swift`, `UI/AppChatPromptPill.swift`, `UI/GlobalFallbacks.swift`, `UI/CornerDockWindow.swift`.
 
 ## Queued (next)
 
-- **Task U8 — Last-Mile Blueprint Wiring (`U8a–U8d`, completing the `U1–U7` architecture track):**
-  - **U8a (Wire `AgenticAIPackBuilder` into Pack Creator UI & Notch Approval):** Connect `PluginCreatorPane.swift` (`Settings ▸ Extensions ▸ Store / Packs ▸ [+ Create Pack]`) to `AgenticAIPackBuilder.build(...)` + `OwnerReviewCard` + `approveAndInstall()`, and present the returned `OwnerReviewCard` in `DynamicNotchLiveActivityView.swift:940` instead of discarding it with `_ =`.
-  - **U8b (Wire `SafariEscalationPolicy` & `ExtensionHookRegistry` into Live Chat / `CapabilityRegistry`):** Register `ExtensionHookRegistry` hooks (e.g. `safari.extractStructured`) as callable `AICapability` tools in `CapabilityRegistry`, and route Safari turns through `SafariEscalationPolicy.decide(for:)` in `AppScopedChatService` / `SafariCapabilityRouter` (`Context-DockExtension` live tab first → `safaridriver --mcp` escalation for console/network/screenshots/automation).
-  - **U8c (Complete `StorePackInstaller.installV2` Atomic Binding):** In `DoraxPackV2.swift` and `StorePackInstaller.swift`, register `PluginCapability.make` into `CapabilityRegistry`, link `cli_tools` into `TerminalPackageManager`, register `mcp_servers` into `MCPServerManager`, and load `modes.json` into `AppPetManifestRegistry`.
-  - **U8d (Strip Residual 40-Menu Group & Persist Thread Result Cards):** Remove the 40-item `Menu commands` group from `ScopedAppPromptBuilder.swift:618–647` prompt serialization, route the remaining on-device branch of `DockCore+AIChat.swift` through `AppScopedChatService`, and persist rich cards/chips/receipts across thread switches.
-- **Unified Spotlight-Pet Surface (Single Zero-Modal Launcher):**
-  - Spec: `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md` (owner-approved 2026-11-09).
-  - Dissolves modal `⌘` / `Backspace` switching between Global Context and App Pet into one context-biased Liquid Glass intent bar.
-  - Frontmost menu candidates boosted (+500); inline ghost autocomplete on top match (`Return` runs immediately).
-  - **Siri-Style Zero-Match & Conversational Fallback:** When query is conversational or no local match exists:
-    1. Input pill draws inline ghost text: `[query] | — Ask Dora (↵)` with direct `Return` execution into General AI Chat transcript (PR #421 morph).
-    2. Floating capsule below pill: `[ 🌐 📁 Show Results (↓) ]`.
-    3. Pressing `↓` or clicking capsule expands alternative search destinations (Finder, Web, Cloud Drives, Active Pet, ChatGPT).
-  - Conversational intent penalty (-100 on incidental disk files) suppresses keyword collision noise.
-  - Code sites: `Search/AppChatRowRanker.swift`, `Services/GlobalSearchService.swift`, `UI/AppChatPromptModel.swift`, `UI/AppChatPromptPill.swift`, `UI/GlobalFallbacks.swift`, `UI/CornerDockWindow.swift`.
 - **General AI Chat Scope Integrity & Native OS Fast-Paths:**
   - Spec: `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` & `docs/master/DORAX-BLUEPRINT.md`.
   - Fix `effectiveBundleId` in `AppScopedChatService.swift:1885` so `.general` scope never falls back to `previousFrontmostApp` or injects unrelated frontmost app menus (eliminates "Claude's live menus don't include Calendar").
@@ -44,6 +34,17 @@
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**Task U8 (U8a–U8d): Last-Mile Blueprint Wiring (PR #491, merged 2026-11-20 as `a89495ff`):**
+- **U8a (Pack Builder UI & Notch Approval):** Added reusable `OwnerReviewCardView`, wired `PluginCreatorPane.swift` `[+ Create Pack]` to `AgenticAIPackBuilder.build(...)` + `OwnerReviewCard` + `approveAndInstall()`, and presented the card in `DynamicNotchLiveActivityView.swift` on build.
+- **U8b (ExtensionHookRegistry & SafariEscalationPolicy Wiring):** Registered `ExtensionHookRegistry` hooks as callable `AICapability` tools in `CapabilityRegistry` (`safari.extractStructured`), wired Safari turns through `SafariEscalationPolicy.decide(for:)` in `AppScopedChatService` and `SafariCapabilityRouter`.
+- **U8c (StorePackInstaller.installV2 Atomic Binding):** Atomically registered pack capabilities in `CapabilityRegistry`, linked CLI tools to `TerminalPackageManager`, registered MCP servers in `MCPServerManager`, and loaded modes into `AppPetManifestRegistry`.
+- **U8d (Menu Group Cleanup, On-Device Unification & Card Persistence):** Removed 40-item menu commands group from prompt serialization, unified `.onDevice` branch in `DockCore+AIChat.swift` to `AppScopedChatService.send`, and added `Codable` persistence for rich cards/chips/receipts across thread switches.
+
+**#153: E5b On-device prompt budgeting with proactive token trimming (PR #489, merged 2026-11-20 as `dfd0acdd`):**
+- Added `OnDevicePromptBudget` with injectable `OnDeviceTokenCounter` protocol and `CharacterTokenCounter` default (~4 chars/token).
+- Proactive history trimming: `fittingHistory()` drops oldest history turns until prompt fits within 3,096 tokens (4,096 − 1,000 reply reserve).
+- Both non-streaming and streaming on-device paths proactively trim history before building prompt text. Added 12 unit tests in `OnDevicePromptBudgetTests.swift`.
 
 **#152: E5a On-device: keep history, survive overflow, return typed errors (PR #488, merged 2026-11-20 as `5de45a35`):**
 - Multi-turn history: `sendToOnDevice` now injects the last 6 turns as a `## Conversation History` block in the system prompt via `sendToOnDeviceAvailable`, matching streaming mode.
