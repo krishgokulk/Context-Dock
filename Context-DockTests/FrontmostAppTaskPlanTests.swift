@@ -13,7 +13,9 @@ struct FrontmostAppTaskPlanTests {
         #expect(plan.intent == .read)
         #expect(plan.allows(.scopedApp))
         #expect(!plan.allows(.browserPage))
-        #expect(plan.allowedToolNames.contains("search_messages"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+        #expect(!plan.allowedToolNames.contains("search_messages"))
         #expect(!plan.allowedToolNames.contains("read_page"))
         #expect(!plan.allowedToolNames.contains("run_command"))
         #expect(!plan.permitsUIAutomation)
@@ -88,7 +90,9 @@ struct FrontmostAppTaskPlanTests {
             query: plan.goal, provider: .openAI, allowedToolNames: plan.allowedToolNames)
         let names = AgentToolRegistry.shared.toolNamesAvailable(for: plan.goal)
 
-        #expect(names.contains("search_messages"))
+        #expect(names.contains("find_capability"))
+        #expect(names.contains("run_capability"))
+        #expect(!names.contains("search_messages"))
         #expect(!names.contains("read_page"))
         #expect(!names.contains("run_command"))
 

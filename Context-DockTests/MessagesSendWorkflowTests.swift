@@ -22,17 +22,22 @@ final class MessagesSendWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testSendMessageToolIsRegistered() {
-        let tool = AgentToolRegistry.shared.tool(named: "send_message")
-        XCTAssertNotNil(tool, "send_message tool should be registered in AgentToolRegistry")
-        XCTAssertEqual(tool?.required, ["recipient", "body"])
+    func testSendAndComposeMessageToolsAreRetired() {
+        XCTAssertNil(
+            AgentToolRegistry.shared.tool(named: "send_message"),
+            "send_message tool was retired into messages.send capability")
+        XCTAssertNil(
+            AgentToolRegistry.shared.tool(named: "compose_message"),
+            "compose_message tool was retired into messages.compose capability")
     }
 
     @MainActor
     func testMessagesSendCapabilityIsRegistered() {
+        AppleMessagesMCPCapabilities.register(in: CapabilityRegistry.shared)
         let cap = CapabilityRegistry.shared.capability(id: "messages.send")
         XCTAssertNotNil(cap, "messages.send capability should be registered in CapabilityRegistry")
         XCTAssertEqual(cap?.appBundleID, "com.apple.MobileSMS")
         XCTAssertEqual(cap?.riskLevel, .high)
+        XCTAssertEqual(cap?.runsWithoutAdapter, true)
     }
 }

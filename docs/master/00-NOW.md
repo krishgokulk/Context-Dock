@@ -10,20 +10,26 @@
 
 ## In progress
 
-**#68: Mail adapter — registry has only `mail.recent`; writes go through the menu route (Enforce `.menuOnly` outbound gating, branch `claude/issue-68-menu-only-outbound-d9c16c`):**
-- Added `AppAccessPolicy.allows(_:at:menuPath:)` overload: for `.menuOnly` + `.verifiedMenu`, blocks any path `AppMenuConsentStore.isDestructive` flags (Send, Reply, Forward, Share, etc.).
-- Updated `AppAccessPolicy.explanation(for:level:wantedRead:menuPath:)` to surface a user-facing message for the new block.
-- `ScopedCommandExecutor.runMenu` passes the resolved path to the new overload and returns the explanation on refusal.
-- 5 new tests in `ContextDockChatAuthorityTests.swift` covering safe paths, outbound paths, adapter bypass, empty-path fallback, explanation text.
-- `./scripts/check.sh --full` pending.
+Nothing in progress. Remaining queued 1.0 items (`#152` E5a → `#153` E5b → `#412` H5 / `#397`) await the owner's E5 escalation decision below.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → **#412** H5 solved skills on-device (after E5) → **#413** H6 tool core trim (4/n `list_reminders` merged, PR #452; 5/n `create_reminder` merged, PR #455; 6/n `read_unread_mail` & `search_mail` retired into `mail.unread` / `mail.search`).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete → **#412** H5 solved skills on-device (after E5).
 - **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#413 H6 (7/n–9/n): Complete H6 tool core trim — retire Mail & Messages hardcoded AgentTools (PR #484, PR #485, 9/n, 2026-11-20):**
+- 7/n (PR #484): Retired `send_mail` into `mail.send` (`.high` approval card).
+- 8/n (PR #485): Retired `get_messages_conversations` and `search_messages` into `messages.recent` / `messages.search` (`runsWithoutAdapter: true`).
+- 9/n: Retired `compose_message` and `send_message` into `messages.compose` / `messages.send` (`runsWithoutAdapter: true`, `.medium` / `.high` approval cards). All hardcoded app tools are now retired from `AgentToolRegistry` and `FrontmostAppTaskPlan`.
+
+**#413 H6 (6/n): Retire `read_unread_mail` & `search_mail` into `mail.unread` / `mail.search` (PR #483, merged 2026-11-20):**
+- Removed `read_unread_mail` and `search_mail` from `AgentToolRegistry`, `FrontmostAppTaskPlan`, `OutboundGate.localTools`, `AgentToolNarration`, and `ScopedToolStep`; added `MailReadToolsRetirementTests`.
+
+**#68: Enforce `.menuOnly` outbound gating for Mail and other apps (PR #472, merged 2026-11-18):**
+- Added `AppAccessPolicy.allows(_:at:menuPath:)` and updated `ScopedCommandExecutor.runMenu` to block outbound menu paths (`Send`, `Reply`, `Forward`, `Share`) at `.menuOnly`.
 
 **#470: Provider capability profiles — per-provider action tier and mutation handoff notice (PR #471, merged 2026-11-18):**
 - Added `ProviderCapabilityProfile` struct (`.full` / `.readOnly` / `.answerOnly` presets + `Tier` enum for settings display).

@@ -1012,7 +1012,7 @@ final class AgentToolRegistry {
         }
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
-            "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
+            "run_adapter_action", "run_menu_command", "operate_app",
             "ax_act",
         ]
         return policyFiltered.filter { !actionOnly.contains($0.name) }
@@ -2462,178 +2462,16 @@ final class AgentToolRegistry {
             }
         })
 
-        register(AgentTool(
-            name: "get_messages_conversations",
-            description: "Read recent Messages conversations. Use for questions about unread or "
-                + "recent messages, latest chats, or conversation summaries.",
-            properties: [
-                "contact_filter": [
-                    "type": "string",
-                    "description": "Optional contact name, phone, email, or empty string.",
-                ],
-                "limit": ["type": "integer", "description": "Maximum conversations to return, 1-30."],
-            ],
-            required: []
-        ) { arguments, _ in
-            let contactFilter = arguments["contact_filter"] as? String ?? ""
-            let limit = arguments["limit"] as? Int ?? 15
-            guard let rows = MessagesChatDBReader.recent(
-                limit: limit, contact: contactFilter)
-            else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
-                    displayCommand: "get_messages_conversations")
-            }
-            let output = rows.isEmpty
-                ? "No recent Messages conversations matched the request."
-                : MessagesChatDBReader.formatted(rows)
-            return AgentToolResult(
-                success: true, output: output, displayCommand: "get_messages_conversations")
-        })
+        // get_messages_conversations and search_messages retired (H6 8/n): the model uses
+        // find_capability + run_capability("messages.recent" / "messages.search") instead. Both
+        // capabilities are registered in AppleMessagesMCPCapabilities and discoverable on every
+        // turn — find_capability and run_capability are always in the base tool set.
+        // compose_message and send_message remain until their own H6 retirement PRs.
 
-        register(AgentTool(
-            name: "search_messages",
-            description: "Search local Messages read-only for a contact, keyword, or phrase. "
-                + "Does not open or control the Messages app.",
-            properties: [
-                "query": [
-                    "type": "string",
-                    "description": "Contact name, phone, email, keyword, or phrase to search.",
-                ],
-            ],
-            required: ["query"]
-        ) { arguments, _ in
-            guard let query = arguments["query"] as? String else {
-                return AgentToolResult(
-                    success: false,
-                    output: "search_messages requires 'query'.",
-                    displayCommand: "search_messages(invalid)")
-            }
-            guard let rows = MessagesChatDBReader.search(query) else {
-                return AgentToolResult(
-                    success: false,
-                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
-                    displayCommand: "search_messages(\(query))")
-            }
-            let output = rows.isEmpty
-                ? "No Messages matched \(query)."
-                : MessagesChatDBReader.formatted(rows)
-            return AgentToolResult(
-                success: true,
-                output: output,
-                displayCommand: "search_messages(\(query))")
-        })
-
-        register(AgentTool(
-            name: "compose_message",
-            description: "Open a Messages compose window for a recipient with an optional draft "
-                + "body. Does not send automatically; the user reviews and sends.",
-            properties: [
-                "recipient": ["type": "string", "description": "Recipient phone, email, or contact name."],
-                "body": ["type": "string", "description": "Optional draft message body."],
-            ],
-            required: ["recipient"]
-        ) { arguments, _ in
-            guard let recipient = arguments["recipient"] as? String else {
-                return AgentToolResult(
-                    success: false,
-                    output: "compose_message requires 'recipient'.",
-                    displayCommand: "compose_message(invalid)")
-            }
-            let body = arguments["body"] as? String ?? ""
-            let output = await MessagesAutomation.composeMessage(to: recipient, body: body)
-            return AgentToolResult(
-                success: !output.hasPrefix("❌"),
-                output: output,
-                displayCommand: "compose_message(\(recipient))")
-        })
-
-        register(AgentTool(
-            name: "send_message",
-            description: "Send a message to a recipient (contact name, phone number, or email) via Messages. "
-                + "Resolves contact names, prompts the user for approval with the draft, and verifies delivery via chat.db.",
-            properties: [
-                "recipient": ["type": "string", "description": "Recipient contact name, phone number, or email."],
-                "body": ["type": "string", "description": "The message text to send."],
-            ],
-            required: ["recipient", "body"]
-        ) { arguments, context in
-            guard let recipient = arguments["recipient"] as? String, !recipient.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "send_message requires 'recipient'.",
-                    displayCommand: "send_message(invalid)")
-            }
-            guard let body = arguments["body"] as? String, !body.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "send_message requires 'body'.",
-                    displayCommand: "send_message(invalid)")
-            }
-
-            // 1. Resolve contact
-            let targetHandle: String
-            let displayName: String
-            switch MessagesAutomation.resolveRecipient(recipient) {
-            case .resolved(let contact):
-                targetHandle = contact.handle
-                displayName = contact.name
-            case .ambiguous(let contacts):
-                let options = contacts.prefix(4).map { "\($0.name) (\($0.handle))" }.joined(separator: ", ")
-                return AgentToolResult(
-                    success: false,
-                    output: "Multiple contacts match '\(recipient)': \(options). Ask the user which one they want to message.",
-                    displayCommand: "send_message(\(recipient)) · ambiguous"
-                ).withUserSummary("Found multiple contacts for '\(recipient)': \(options). Which one did you mean?")
-            case .notFound:
-                targetHandle = recipient
-                displayName = recipient
-            }
-
-            // 2. Request user approval with exact content
-            let plan = AIActionPlan(
-                capability: "messages.send",
-                input: ["to": displayName, "handle": targetHandle, "message": body],
-                explanation: "DoraX will send the following message to \(displayName):\n\n\"\(body)\""
-            )
-            let capability = CapabilityRegistry.shared.capability(id: "messages.send") ?? AICapability(
-                id: "messages.send",
-                title: "Send Message to \(displayName)",
-                appBundleID: "com.apple.MobileSMS",
-                inputSchema: .init(fields: []),
-                riskLevel: .high,
-                selectionSafety: .unsafe,
-                executor: { _ in .init(success: true, output: "") }
-            )
-            let approved = await AICapabilityApprovalCenter.shared.requestApproval(
-                plan: plan,
-                capability: capability,
-                context: .appFocused(name: "Messages", bundleID: "com.apple.MobileSMS"),
-                chatScope: context.chatScope
-            )
-
-            guard approved else {
-                return AgentToolResult(
-                    success: false,
-                    output: "The user declined to send the message to \(displayName).",
-                    displayCommand: "send_message(\(displayName)) · declined"
-                ).withUserSummary("Message not sent. You declined to send to \(displayName).")
-            }
-
-            // 3. Dispatch send
-            let result = await MessagesAutomation.sendMessage(to: targetHandle, body: body)
-            var toolResult = AgentToolResult(
-                success: result.success,
-                output: result.message,
-                displayCommand: "send_message(\(displayName))"
-            ).withUserSummary(result.message)
-
-            if result.delivery == .confirmed {
-                toolResult.verifiedByReadBack = "Sent message confirmed in Messages history."
-            }
-            return toolResult
-        })
+        // compose_message and send_message retired (H6 9/n): the model uses find_capability +
+        // run_capability("messages.compose" / "messages.send") instead. Both capabilities are
+        // registered in AppleMessagesMCPCapabilities (runsWithoutAdapter: true) and run behind
+        // their .medium / .high approval cards.
 
         // MARK: - Apple Mail Tools
 
@@ -2642,88 +2480,8 @@ final class AgentToolRegistry {
         // in AppleMailMCPCapabilities and discoverable on every turn — find_capability and
         // run_capability are always in the base tool set.
 
-        register(AgentTool(
-            name: "send_mail",
-            description: "Send an email via Apple Mail with contact resolution, user approval card (AICapabilityApprovalCenter), and verified read-back against Sent history.",
-            properties: [
-                "to": ["type": "string", "description": "Recipient email or contact name."],
-                "subject": ["type": "string", "description": "Email subject."],
-                "body": ["type": "string", "description": "Email body."],
-            ],
-            required: ["to", "subject", "body"]
-        ) { arguments, context in
-            guard let to = arguments["to"] as? String, !to.isEmpty else {
-                return AgentToolResult(success: false, output: "send_mail requires 'to'.", displayCommand: "send_mail(invalid)")
-            }
-            guard let subject = arguments["subject"] as? String, !subject.isEmpty else {
-                return AgentToolResult(success: false, output: "send_mail requires 'subject'.", displayCommand: "send_mail(invalid)")
-            }
-            guard let body = arguments["body"] as? String, !body.isEmpty else {
-                return AgentToolResult(success: false, output: "send_mail requires 'body'.", displayCommand: "send_mail(invalid)")
-            }
-
-            // 1. Resolve contact
-            let targetEmail: String
-            let displayName: String
-            switch MailAutomation.resolveRecipient(to) {
-            case .resolved(let contact):
-                targetEmail = contact.handle
-                displayName = contact.name
-            case .ambiguous(let contacts):
-                let options = contacts.prefix(4).map { "\($0.name) <\($0.handle)>" }.joined(separator: ", ")
-                return AgentToolResult(
-                    success: false,
-                    output: "Multiple contacts match '\(to)': \(options). Ask the user which email address to use.",
-                    displayCommand: "send_mail(\(to)) · ambiguous"
-                ).withUserSummary("Found multiple contacts for '\(to)': \(options). Which email address did you mean?")
-            case .notFound:
-                targetEmail = to
-                displayName = to
-            }
-
-            // 2. Request user approval with exact content
-            let plan = AIActionPlan(
-                capability: "mail.send",
-                input: ["to": targetEmail, "subject": subject, "body": body],
-                explanation: "DoraX will send an email to \(displayName) (\(targetEmail)):\n\nSubject: \(subject)\n\n\(body)"
-            )
-            let capability = CapabilityRegistry.shared.capability(id: "mail.send") ?? AICapability(
-                id: "mail.send",
-                title: "Send Email to \(displayName)",
-                appBundleID: "com.apple.mail",
-                inputSchema: .init(fields: []),
-                riskLevel: .high,
-                selectionSafety: .unsafe,
-                executor: { _ in .init(success: true, output: "") }
-            )
-            let approved = await AICapabilityApprovalCenter.shared.requestApproval(
-                plan: plan,
-                capability: capability,
-                context: .appFocused(name: "Mail", bundleID: "com.apple.mail"),
-                chatScope: context.chatScope
-            )
-
-            guard approved else {
-                return AgentToolResult(
-                    success: false,
-                    output: "The user declined to send the email to \(displayName).",
-                    displayCommand: "send_mail(\(displayName)) · declined"
-                ).withUserSummary("Email not sent. You declined to send to \(displayName).")
-            }
-
-            // 3. Dispatch send
-            let result = await MailAutomation.sendMail(to: targetEmail, subject: subject, body: body)
-            var toolResult = AgentToolResult(
-                success: result.success,
-                output: result.message,
-                displayCommand: "send_mail(\(displayName))"
-            ).withUserSummary(result.message)
-
-            if result.verified {
-                toolResult.verifiedByReadBack = "Sent email confirmed in Sent mailbox."
-            }
-            return toolResult
-        })
+        // send_mail retired (H6 7/n): the model uses find_capability + run_capability("mail.send")
+        // instead, behind that capability's .high risk approval card.
 
         // MARK: - Apple Reminders & Calendar Tools
 

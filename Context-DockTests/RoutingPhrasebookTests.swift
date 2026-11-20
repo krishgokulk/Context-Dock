@@ -1123,7 +1123,8 @@ struct MessagesShortcutRetirementTests {
 
     /// Outbound compose and send requests that the retired pre-model Messages shortcut
     /// previously intercepted without approval now route to `.action` in `AgentSourceAuthority`,
-    /// plan as `.act` in `FrontmostAppTaskPlan` with `compose_message` / `send_message`, skip
+    /// plan as `.act` in `FrontmostAppTaskPlan` with `find_capability` / `run_capability` (the
+    /// retired `compose_message` and `send_message` tools are omitted), skip
     /// `CrossAppNLHandler` in Messages scope, and resolve `messages.compose` (`requiresApproval == true`)
     /// in `AppAdapterCapabilityCatalog`.
     @Test func messagesComposeAndSendRequestsAreGatedActions() {
@@ -1141,8 +1142,10 @@ struct MessagesShortcutRetirementTests {
             let plan = FrontmostAppTaskPlan.make(
                 query: sentence, bundleId: "com.apple.MobileSMS", appName: "Messages")
             #expect(plan.intent == .act, "\"\(sentence)\"")
-            #expect(plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
-            #expect(plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
 
             #expect(
                 DockCore.shouldSkipCrossAppMessagesRouting(
@@ -1164,7 +1167,8 @@ struct MessagesShortcutRetirementTests {
 
     /// Imperative record searches in Messages ("find messages from Salman") are data-lane reads of
     /// Messages' records: `intent == .read`, `!permitsUIAutomation`, `RequestLane == .data`, and
-    /// Messages' read tools (`search_messages`, `get_messages_conversations`) are included.
+    /// Messages' reads route through `find_capability` + `run_capability` (retired `search_messages`
+    /// and `get_messages_conversations` are omitted).
     @Test func findInMessagesIsADataLaneRead() {
         let query = "find messages from Salman"
         let plan = FrontmostAppTaskPlan.make(
@@ -1172,8 +1176,10 @@ struct MessagesShortcutRetirementTests {
         #expect(plan.intent == .read)
         #expect(!plan.permitsUIAutomation)
         #expect(RequestLane.decide(query) == .data)
-        #expect(plan.allowedToolNames.contains("search_messages"))
-        #expect(plan.allowedToolNames.contains("get_messages_conversations"))
+        #expect(!plan.allowedToolNames.contains("search_messages"))
+        #expect(!plan.allowedToolNames.contains("get_messages_conversations"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
         for tool in ["operate_app", "run_menu_command", "find_menu_command", "send_keys"] {
             #expect(!plan.allowedToolNames.contains(tool), "Messages find offered \(tool)")
         }
@@ -1754,6 +1760,196 @@ struct MailReadToolsRetirementTests {
         #expect(AgentToolRegistry.shared.tool(named: "search_mail") == nil)
         #expect(!OutboundGate.localTools.contains("read_unread_mail"))
         #expect(!OutboundGate.localTools.contains("search_mail"))
+    }
+}
+
+// MARK: - H6 (7/n): send_mail tool retirement
+
+@MainActor
+struct MailSendToolRetirementTests {
+
+    /// Send-email requests route as `.data` — the model uses `find_capability` +
+    /// `run_capability("mail.send")` behind its `.high` risk approval card.
+    @Test func sendMailQueriesRouteAsData() {
+        for sentence in [
+            "send an email to Sarah about the invoice",
+            "email John the quarterly summary",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `send_mail` for Mail turns;
+    /// `find_capability` and `run_capability` are always present in the base tool set.
+    @Test func mailPlanOmitsRetiredSendTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "send an email to Sarah about the invoice",
+            bundleId: "com.apple.mail",
+            appName: "Mail"
+        )
+        #expect(!plan.allowedToolNames.contains("send_mail"))
+        #expect(plan.allowedToolNames.contains("find_capability"))
+        #expect(plan.allowedToolNames.contains("run_capability"))
+    }
+
+    /// `mail.send` is registered, `.high` risk (approval-gated), headless (`runsWithoutAdapter`),
+    /// and requires `to`, `subject`, and `body`.
+    @Test func mailSendCapabilityExistsAndRequiresApproval() {
+        let registry = CapabilityRegistry.shared
+        AppleMailMCPCapabilities.register(in: registry)
+
+        let send = registry.capability(id: "mail.send")
+        #expect(send != nil, "mail.send capability must be registered")
+        #expect(send?.appBundleID == "com.apple.mail")
+        #expect(send?.riskLevel == .high)
+        #expect(send?.riskLevel.requiresApproval == true)
+        #expect(send?.runsWithoutAdapter == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "to" && $0.required }) == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "subject" && $0.required }) == true)
+        #expect(send?.inputSchema.fields.contains(where: { $0.name == "body" && $0.required }) == true)
+    }
+
+    /// `send_mail` is retired everywhere: removed from `AgentToolRegistry` and `OutboundGate.outboundTools`.
+    @Test func sendMailIsRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "send_mail") == nil)
+        #expect(!OutboundGate.outboundTools.contains("send_mail"))
+    }
+}
+
+// MARK: - H6 (8/n): get_messages_conversations & search_messages tool retirement
+
+@MainActor
+struct MessagesReadToolsRetirementTests {
+
+    /// Messages recent and search queries route as `.data` — the model uses `find_capability` +
+    /// `run_capability("messages.recent" / "messages.search")` rather than legacy named tools.
+    @Test func messagesReadQueriesRouteAsData() {
+        for sentence in [
+            "show my recent messages",
+            "latest messages conversations",
+            "search messages from Salman",
+            "find messages about invoice",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `get_messages_conversations` or `search_messages`
+    /// for Messages turns; `find_capability` and `run_capability` are always present in the base
+    /// tool set.
+    @Test func messagesPlanOmitsRetiredReadTools() {
+        for sentence in ["show my recent messages", "search messages from Salman"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence,
+                bundleId: "com.apple.MobileSMS",
+                appName: "Messages"
+            )
+            #expect(!plan.allowedToolNames.contains("get_messages_conversations"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("search_messages"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
+        }
+    }
+
+    /// `messages.recent` and `messages.search` capabilities are registered, low-risk, headless
+    /// (`runsWithoutAdapter`), and expose all expected query parameters.
+    @Test func messagesReadCapabilitiesCoverAllParameters() {
+        let registry = CapabilityRegistry.shared
+        AppleMessagesMCPCapabilities.register(in: registry)
+
+        let recent = registry.capability(id: "messages.recent")
+        #expect(recent != nil, "messages.recent capability must be registered")
+        #expect(recent?.appBundleID == "com.apple.MobileSMS")
+        #expect(recent?.riskLevel == .low)
+        #expect(recent?.runsWithoutAdapter == true)
+        let recentFields = Set(recent?.inputSchema.fields.map(\.name) ?? [])
+        #expect(recentFields.isSuperset(of: ["contact", "limit"]))
+
+        let search = registry.capability(id: "messages.search")
+        #expect(search != nil, "messages.search capability must be registered")
+        #expect(search?.appBundleID == "com.apple.MobileSMS")
+        #expect(search?.riskLevel == .low)
+        #expect(search?.runsWithoutAdapter == true)
+        let searchFields = Set(search?.inputSchema.fields.map(\.name) ?? [])
+        #expect(searchFields.isSuperset(of: ["query"]))
+    }
+
+    /// `get_messages_conversations` and `search_messages` are retired everywhere: removed from
+    /// `AgentToolRegistry` and `OutboundGate.localTools`.
+    @Test func messagesReadToolsAreRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "get_messages_conversations") == nil)
+        #expect(AgentToolRegistry.shared.tool(named: "search_messages") == nil)
+        #expect(!OutboundGate.localTools.contains("get_messages_conversations"))
+        #expect(!OutboundGate.localTools.contains("search_messages"))
+    }
+}
+
+// MARK: - H6 (9/n): compose_message & send_message tool retirement
+
+@MainActor
+struct MessagesWriteToolsRetirementTests {
+
+    /// Compose and send message phrases route as `.data` — the model uses `find_capability` +
+    /// `run_capability("messages.compose" / "messages.send")` rather than legacy named tools.
+    @Test func messagesWriteQueriesRouteAsData() {
+        for sentence in [
+            "text Mom that I'll be home at 6",
+            "send a message to Salman saying hi",
+            "draft a message to Sarah",
+            "message Alex that the meeting moved",
+        ] {
+            #expect(RequestLane.decide(sentence) == .data, "\"\(sentence)\"")
+        }
+    }
+
+    /// `FrontmostAppTaskPlan` no longer injects `compose_message` or `send_message` for
+    /// Messages turns; `find_capability` and `run_capability` are always in the base tool set.
+    @Test func messagesPlanOmitsRetiredWriteTools() {
+        for sentence in ["draft a message to Sarah", "send \"hi\" to Salman"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence,
+                bundleId: "com.apple.MobileSMS",
+                appName: "Messages"
+            )
+            #expect(!plan.allowedToolNames.contains("compose_message"), "\"\(sentence)\"")
+            #expect(!plan.allowedToolNames.contains("send_message"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("find_capability"), "\"\(sentence)\"")
+            #expect(plan.allowedToolNames.contains("run_capability"), "\"\(sentence)\"")
+        }
+    }
+
+    /// `messages.compose` (`.medium`, requires approval) and `messages.send` (`.high`, requires
+    /// approval) are registered in `CapabilityRegistry.shared` with `runsWithoutAdapter: true`.
+    @Test func messagesWriteCapabilitiesAreRegisteredAndApprovalGated() {
+        let registry = CapabilityRegistry.shared
+        AppleMessagesMCPCapabilities.register(in: registry)
+
+        let compose = registry.capability(id: "messages.compose")
+        #expect(compose != nil, "messages.compose capability must be registered")
+        #expect(compose?.appBundleID == "com.apple.MobileSMS")
+        #expect(compose?.riskLevel == .medium)
+        #expect(compose?.riskLevel.requiresApproval == true)
+        #expect(compose?.runsWithoutAdapter == true)
+        let composeFields = Set(compose?.inputSchema.fields.map(\.name) ?? [])
+        #expect(composeFields.isSuperset(of: ["recipient", "body"]))
+
+        let send = registry.capability(id: "messages.send")
+        #expect(send != nil, "messages.send capability must be registered")
+        #expect(send?.appBundleID == "com.apple.MobileSMS")
+        #expect(send?.riskLevel == .high)
+        #expect(send?.riskLevel.requiresApproval == true)
+        #expect(send?.runsWithoutAdapter == true)
+        let sendFields = Set(send?.inputSchema.fields.map(\.name) ?? [])
+        #expect(sendFields.isSuperset(of: ["recipient", "body", "filePath"]))
+    }
+
+    /// `compose_message` and `send_message` are retired from `AgentToolRegistry` and absent
+    /// from `OutboundGate.outboundTools`.
+    @Test func messagesWriteToolsAreRetiredEverywhere() {
+        #expect(AgentToolRegistry.shared.tool(named: "compose_message") == nil)
+        #expect(AgentToolRegistry.shared.tool(named: "send_message") == nil)
+        #expect(!OutboundGate.outboundTools.contains("compose_message"))
+        #expect(!OutboundGate.outboundTools.contains("send_message"))
     }
 }
 

@@ -35,10 +35,6 @@ enum ScopedToolStep {
         case "send_keys": return "Typing into the app…"
         case "spawn_worker": return "Starting a background task…"
         case "verify_outcome": return "Checking it worked…"
-        case "get_messages_conversations", "search_messages": return "Searching Messages…"
-        case "compose_message": return "Composing a message…"
-        case "send_message": return "Sending a message…"
-        case "send_mail": return "Sending an email…"
         case "get_today_events": return "Checking Calendar…"
         default:
             // An extension's own tool, whose name the user chose. Shown as written rather
