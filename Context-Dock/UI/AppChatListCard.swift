@@ -357,9 +357,6 @@ struct AppChatListCard: View {
             } else {
                 finderPathPills
             }
-            ProviderContextChip(
-                scope: model.isGlobalScope ? .general : .app(bundleId: model.appBundleID),
-                compact: true)
 
             Spacer(minLength: 8)
 
