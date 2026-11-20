@@ -662,8 +662,6 @@ struct AIComposerBar: View {
 
                 Spacer(minLength: 4)
 
-                modePill
-
                 micButton
 
                 expandedSendButton
@@ -901,6 +899,8 @@ struct AIComposerBar: View {
             }
 
             attachButton
+
+            micButton
 
             if let onTogglePin {
                 Button(action: onTogglePin) {

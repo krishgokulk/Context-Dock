@@ -26,15 +26,15 @@ enum CornerGeneralChatMetrics {
     /// between them look like the window changed rather than the scope. That field moved to
     /// Global's bar height on 2026-09-25 and this row kept the old one (owner 2026-09-26:
     /// "general chat looks different").
-    static let compactComposerHeight: CGFloat = 76
-    static var composerRowHeight: CGFloat { compactComposerHeight }
+    static var composerRowHeight: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
     static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentTileRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
-    static var compactHeight: CGFloat { compactComposerHeight }
-    /// The composer row with its text wrapped over `lines` lines.
+    static var compactHeight: CGFloat { composerRowHeight }
+    /// The composer row with its text wrapped over `lines` lines — Global's and an app's
+    /// field follow the same rule from the same height (`DockFieldLines`).
     static func rowHeight(lines: Int) -> CGFloat {
-        compactComposerHeight + CGFloat(max(0, lines - 1)) * 18
+        DockFieldLines.fieldHeight(base: composerRowHeight, lines: lines)
     }
     static let maximumHeight: CGFloat = 620
     /// What one exchange is worth. Named because App mode reads it too: the two modes are
@@ -52,14 +52,9 @@ enum CornerGeneralChatMetrics {
     static let maximumCountedLiveSteps = 4
 
     /// The composer card: the row, attachments, and the `/` picker when one is open.
-    ///
-    /// The picker belongs here rather than in the board above. The board holds the
-    /// conversation once there is one, so a picker placed there had nowhere to go the
-    /// moment a chat started — and pushing the transcript aside to make room would
-    /// disturb what the user is reading. A sheet over the field disturbs nothing.
     static func composerHeight(
         hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false,
-        lines: Int = 1
+        lines: Int = 1, isExpanded: Bool = false
     ) -> CGFloat {
         // A long prompt grows the row upward, to three lines (#189).
         var result = rowHeight(lines: lines)
@@ -70,6 +65,7 @@ enum CornerGeneralChatMetrics {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
         if hasAttachments { result += attachmentRowHeight }
+        if isExpanded { result += 36 }
         return result
     }
 
@@ -167,7 +163,7 @@ enum CornerGeneralChatMetrics {
         let slashMatches = modMatches.isEmpty ? ChatSlashAppPicker.matches(for: model.input) : []
         let matchCount = !modMatches.isEmpty ? modMatches.count : slashMatches.count
         let hasActiveChat = (!model.messages.isEmpty || model.isSending) && !model.isConversationMinimized
-        let isExpanded = true
+        let isExpanded = hasActiveChat || !model.attachments.isEmpty || model.cornerComposerLines > 1
 
         let full = DockShellWidth.results
         let compactChatWidth = max(AppChatPromptMetrics.width, full - CornerLivePanelLayout.panelWidth(card: full))
@@ -191,7 +187,8 @@ enum CornerGeneralChatMetrics {
             hasAttachments: !model.attachments.isEmpty,
             slashMatchCount: matchCount,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-            lines: model.cornerComposerLines)
+            lines: model.cornerComposerLines,
+            isExpanded: isExpanded)
 
         let targetHeight = boardH > 0 ? boardH + CornerDockLayout.gap + composerH : composerH
 
@@ -232,14 +229,15 @@ struct CornerGeneralChatView: View {
     /// containers there are, which is what made the switch flicker.
     private var boardHeight: CGFloat { CornerGeneralChatMetrics.boardHeight(for: model) }
     private var isComposerExpanded: Bool {
-        true
+        showsTranscript || !model.attachments.isEmpty || model.cornerComposerLines > 1
     }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
             hasAttachments: !model.attachments.isEmpty,
             slashMatchCount: slashMatches.count,
             hasApproval: approvals.pending(for: .corner) != nil,
-            lines: model.cornerComposerLines)
+            lines: model.cornerComposerLines,
+            isExpanded: isComposerExpanded)
     }
 
     var body: some View {
