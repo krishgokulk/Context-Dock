@@ -1,6 +1,8 @@
 // UnifiedRowRankingTests.swift
 // Context-DockTests
 
+import ApplicationServices
+import Foundation
 import Testing
 
 @testable import Context_Dock

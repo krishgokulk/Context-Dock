@@ -161,7 +161,7 @@ enum AppChatRowRanker {
         let baseScore: Double = 10_000
 
         for (index, row) in rows.enumerated() {
-            var score = baseScore - Double(index) * 100
+            var score = baseScore - Double(index) * 10
 
             // Conversational penalty on incidental file matches
             if intent == .conversational, row.isFile {

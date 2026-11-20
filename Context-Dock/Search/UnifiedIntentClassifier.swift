@@ -28,8 +28,8 @@ enum UnifiedIntentClassifier {
         let lower = trimmed.lowercased()
 
         if isExplicitFile(lower) { return .explicitFile }
-        if isConversational(lower) { return .conversational }
         if isWebResearch(lower) { return .webResearch }
+        if isConversational(lower) { return .conversational }
         return .navigational
     }
 
@@ -104,8 +104,11 @@ enum UnifiedIntentClassifier {
     ]
 
     private static func isWebResearch(_ lower: String) -> Bool {
-        for signal in webSignals where lower.contains(signal) { return true }
-        // Leading "search " or "google " is an explicit web request
+        for signal in webSignals {
+            if lower.contains(signal) { return true }
+            let trimmed = signal.trimmingCharacters(in: .whitespaces)
+            if lower.hasPrefix(trimmed + " ") || lower.hasSuffix(" " + trimmed) { return true }
+        }
         if lower.hasPrefix("search ") || lower.hasPrefix("google ") { return true }
         return false
     }
