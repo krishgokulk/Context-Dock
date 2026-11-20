@@ -10,15 +10,25 @@
 
 ## In progress
 
-Nothing in progress. Remaining queued 1.0 items (`#152` E5a → `#153` E5b → `#412` H5 / `#397`) await the owner's E5 escalation decision below.
+**#152: E5a On-device: keep history, survive overflow, return typed errors (branch `claude/issue-152-on-device-history`):**
+- Fix on-device chat (Apple Intelligence / `FoundationModels`) multi-turn history retention across system context changes.
+- Handle `exceededContextWindowSize` on 4,096-token model with transcript compaction and single retry.
+- Return typed errors upstream instead of displaying raw failure strings in the chat bubble.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`, reasoning contract `docs/architecture/AGENT_REASONING_CONTRACT.md`, evals `docs/engineering/MAC_AGENT_BENCHMARKS.md`; owner-confirmed 2026-11-09): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete → **#412** H5 solved skills on-device (after E5).
-- **#152 E5a → #153 E5b** On-device history & token budget (after owner answers E5 escalation question) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal — after #152/#153)
+- **#153 E5b** On-device: budget the prompt, trim history to context window → **#412** H5 solved skills on-device → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged).
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**feat(ui): standalone pin pill and Raycast-style actions dropdown menu in launcher footer (PR #486, merged 2026-11-20 as `84e1ef76`):**
+- Redesigns launcher and result board footer in `AppChatListCard.swift` and `AppChatPromptPill.swift`:
+  - Dedicated standalone `pin` / `pin.fill` capsule pill at the bottom-right corner.
+  - Raycast-style `Actions ⌘K ▾` dropdown menu (Open, Step in, Quick Look, Show in Finder, Copy Link/Path, Pin to Quick Bar, etc.).
+  - 1-click preview sidepanel toggle button (`sidebar.trailing` / `⌘B`).
+  - Keypress routing: `⌘K` yields to Actions menu when not in `.chat` mode, `⌘B` toggles preview sidepanel.
 
 **#413 H6 (7/n–9/n): Complete H6 tool core trim — retire Mail & Messages hardcoded AgentTools (PR #484, PR #485, 9/n, 2026-11-20):**
 - 7/n (PR #484): Retired `send_mail` into `mail.send` (`.high` approval card).
