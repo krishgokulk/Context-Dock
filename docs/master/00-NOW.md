@@ -10,18 +10,24 @@
 
 ## In progress
 
-**#152: E5a On-device: keep history, survive overflow, return typed errors (branch `claude/issue-152-on-device-history`):**
-- Fix on-device chat (Apple Intelligence / `FoundationModels`) multi-turn history retention across system context changes.
-- Handle `exceededContextWindowSize` on 4,096-token model with transcript compaction and single retry.
-- Return typed errors upstream instead of displaying raw failure strings in the chat bubble.
+**#153: E5b On-device: budget the prompt with tokenCount before sending (branch `claude/issue-153-on-device-budget`):**
+- Measure assembled on-device prompt using framework token counter before dispatching to `LanguageModelSession`.
+- Reserve token headroom for model reply (~1,000 tokens out of 4,096 context window).
+- Proactive trimming: when over budget, trim in section drop order, then oldest conversation turns, avoiding `exceededContextWindowSize` before sending.
+- Unit tests with a mock token counter validating ordered section drop and reply reserve protection.
 
 ## Queued (next)
 
-- **#153 E5b** On-device: budget the prompt, trim history to context window → **#412** H5 solved skills on-device → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
+- **#412** H5 solved skills on-device (shared tool definitions, budget, outbound gate) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged).
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#152: E5a On-device: keep history, survive overflow, return typed errors (PR #488, merged 2026-11-20 as `5de45a35`):**
+- Multi-turn history: `sendToOnDevice` now injects the last 6 turns as a `## Conversation History` block in the system prompt via `sendToOnDeviceAvailable`, matching streaming mode.
+- Context window overflow: On `LanguageModelSession.GenerationError.exceededContextWindowSize`, calls `resetOnDeviceSession()` and retries once with history condensed to 2 turns. A second overflow throws `OnDeviceError.contextWindowOverflow` instead of returning raw error strings.
+- Typed errors: Introduced `OnDeviceError` enum (`.notAvailable`, `.contextWindowOverflow`, `.generationFailed`) keyed to `QueryFailureKind`. Both streaming and non-streaming now throw typed errors. Added 8 unit tests in `OnDeviceHistoryTests.swift`.
 
 **feat(ui): standalone pin pill and Raycast-style actions dropdown menu in launcher footer (PR #486, merged 2026-11-20 as `84e1ef76`):**
 - Redesigns launcher and result board footer in `AppChatListCard.swift` and `AppChatPromptPill.swift`:
