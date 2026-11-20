@@ -590,6 +590,12 @@ struct AIComposerBar: View {
     var onToggleChat: (() -> Void)? = nil
     /// Whether the conversation board is currently expanded.
     var isChatOpen: Bool = false
+    /// Whether there is content or a result sheet above the composer (e.g. slash matches, clarification, approval).
+    var hasSheetAbove: Bool = false
+
+    private var shouldEncloseInCard: Bool {
+        hasSheetAbove || isChatOpen || (rendersSlashMatches && (!slashMods.isEmpty || !slashApps.isEmpty))
+    }
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -670,13 +676,13 @@ struct AIComposerBar: View {
             .padding(.bottom, 8)
         }
         .background {
-            if isChatOpen {
+            if shouldEncloseInCard {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.primary.opacity(0.06))
             }
         }
         .overlay {
-            if isChatOpen {
+            if shouldEncloseInCard {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
@@ -691,8 +697,8 @@ struct AIComposerBar: View {
                     )
             }
         }
-        .padding(.horizontal, isChatOpen ? 10 : 0)
-        .padding(.bottom, isChatOpen ? 8 : 0)
+        .padding(.horizontal, shouldEncloseInCard ? 10 : 0)
+        .padding(.bottom, shouldEncloseInCard ? 8 : 0)
     }
 
     @ViewBuilder
@@ -902,14 +908,6 @@ struct AIComposerBar: View {
 
             micButton
 
-            if let onTogglePin {
-                Button(action: onTogglePin) {
-                    cornerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
-                }
-                .buttonStyle(.plain)
-                .help(isPinned ? "Unpin" : "Keep this open")
-            }
-
             if isSending, let onStop {
                 Button(action: onStop) {
                     cornerGlyph("stop.fill", tinted: true)
@@ -940,11 +938,45 @@ struct AIComposerBar: View {
             } else {
                 appPickerButton
             }
+
+            if let onTogglePin {
+                Button(action: onTogglePin) {
+                    cornerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Keep this open")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+        .background {
+            if shouldEncloseInCard {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            }
+        }
+        .overlay {
+            if shouldEncloseInCard {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.22),
+                                Color.white.opacity(0.08)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .padding(.horizontal, shouldEncloseInCard ? 10 : 0)
+        .padding(.bottom, shouldEncloseInCard ? 8 : 0)
+        .padding(.top, shouldEncloseInCard ? 4 : 0)
         .animation(.smooth(duration: 0.16), value: text.isEmpty)
         .animation(.smooth(duration: 0.16), value: isSending)
+        .animation(.smooth(duration: 0.16), value: shouldEncloseInCard)
     }
 
     @ViewBuilder

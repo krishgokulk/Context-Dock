@@ -231,6 +231,9 @@ struct CornerGeneralChatView: View {
     private var isComposerExpanded: Bool {
         showsTranscript || !model.attachments.isEmpty || model.cornerComposerLines > 1
     }
+    private var hasSheetAbove: Bool {
+        !slashModMatches.isEmpty || !slashMatches.isEmpty || (clarification != nil && model.input.isEmpty) || approvals.pending(for: .corner) != nil
+    }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
             hasAttachments: !model.attachments.isEmpty,
@@ -957,7 +960,8 @@ struct CornerGeneralChatView: View {
                 activeModeName: model.activePetMode?.name,
                 onSelectMode: { _ in },
                 onToggleChat: hasChatToShow ? { model.toggleConversationMinimized() } : nil,
-                isChatOpen: showsTranscript)
+                isChatOpen: showsTranscript,
+                hasSheetAbove: hasSheetAbove)
                 .frame(height: composerHeight)
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
