@@ -26,15 +26,15 @@ enum CornerGeneralChatMetrics {
     /// between them look like the window changed rather than the scope. That field moved to
     /// Global's bar height on 2026-09-25 and this row kept the old one (owner 2026-09-26:
     /// "general chat looks different").
-    static var composerRowHeight: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
+    static let compactComposerHeight: CGFloat = 76
+    static var composerRowHeight: CGFloat { compactComposerHeight }
     static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentTileRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
-    static var compactHeight: CGFloat { composerRowHeight }
-    /// The composer row with its text wrapped over `lines` lines — Global's and an app's
-    /// field follow the same rule from the same height (`DockFieldLines`).
+    static var compactHeight: CGFloat { compactComposerHeight }
+    /// The composer row with its text wrapped over `lines` lines.
     static func rowHeight(lines: Int) -> CGFloat {
-        DockFieldLines.fieldHeight(base: composerRowHeight, lines: lines)
+        compactComposerHeight + CGFloat(max(0, lines - 1)) * 18
     }
     static let maximumHeight: CGFloat = 620
     /// What one exchange is worth. Named because App mode reads it too: the two modes are
@@ -192,7 +192,6 @@ enum CornerGeneralChatMetrics {
             slashMatchCount: matchCount,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
             lines: model.cornerComposerLines)
-            + (isExpanded ? 36 : 0)
 
         let targetHeight = boardH > 0 ? boardH + CornerDockLayout.gap + composerH : composerH
 
@@ -241,7 +240,6 @@ struct CornerGeneralChatView: View {
             slashMatchCount: slashMatches.count,
             hasApproval: approvals.pending(for: .corner) != nil,
             lines: model.cornerComposerLines)
-            + (isComposerExpanded ? 36 : 0)
     }
 
     var body: some View {
@@ -962,8 +960,7 @@ struct CornerGeneralChatView: View {
                 onSelectMode: { _ in },
                 onToggleChat: hasChatToShow ? { model.toggleConversationMinimized() } : nil,
                 isChatOpen: showsTranscript)
-                .frame(height: CornerGeneralChatMetrics.rowHeight(
-                    lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0))
+                .frame(height: composerHeight)
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()
