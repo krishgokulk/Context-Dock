@@ -278,6 +278,27 @@ struct TaskU8cInstallV2BindingTests {
         let petManifest = AppPetManifestRegistry.shared.manifest(forBundleID: bundleID)
         #expect(petManifest?.modes.contains(where: { $0.id == modeID }) == true)
         #expect(petManifest?.defaultMode == modeID)
+
+        // 5. Converted manifest validates cleanly with zero schema errors (cli_tools names must not
+        //    leak into agent.tools and trigger PluginInstallError.doesNotValidate).
+        let manifest = pack.toPluginManifest()
+        let errors = PluginSchema.validate(manifest).filter { $0.severity == .error }
+        #expect(errors.isEmpty)
+    }
+
+    @Test func scanEmbeddedCLIsSkipsSubdirectoriesInsideResources() async throws {
+        let tmpApp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("U8ScanTest-\(UUID().uuidString).app", isDirectory: true)
+        let resources = tmpApp.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let fakeDir = resources.appendingPathComponent("Background Images", isDirectory: true)
+        try FileManager.default.createDirectory(at: fakeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpApp) }
+
+        let found = await AgenticAIPackBuilder.scanEmbeddedCLIs(
+            appURL: tmpApp,
+            helpTextProvider: { _ in nil }
+        )
+        #expect(!found.contains(where: { $0.name == "Background Images" }))
     }
 }
 

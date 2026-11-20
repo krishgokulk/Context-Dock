@@ -290,14 +290,6 @@ extension DoraxPackV2 {
     func toPluginManifest() -> PluginManifest {
         let m = metadata
 
-        var agent: PluginAgent?
-        if let instructions = agentInstructions, !instructions.isEmpty {
-            agent = PluginAgent(
-                instructions: instructions,
-                skills: skills.map(\.id),
-                tools: (m.cliTools ?? []).map(\.name))
-        }
-
         let targetApp: PluginTargetApp? = {
             guard let bid = m.bundleId,
                   !bid.isEmpty, bid.lowercased() != "global" else { return nil }
@@ -333,6 +325,17 @@ extension DoraxPackV2 {
                     title: key,
                     risk: .medium)
             }
+        }
+
+        // `agent.tools` must reference declared action keys or capability IDs (`PluginSchema.validate`);
+        // passing raw `cliTools.name` strings fails validation (`PluginInstallError.doesNotValidate`).
+        var agent: PluginAgent?
+        if let instructions = agentInstructions, !instructions.isEmpty {
+            let validTools = Array(actions.keys.sorted())
+            agent = PluginAgent(
+                instructions: instructions,
+                skills: skills.map(\.id),
+                tools: validTools)
         }
 
         return PluginManifest(
