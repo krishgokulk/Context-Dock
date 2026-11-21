@@ -196,6 +196,11 @@ enum AICapabilityError: LocalizedError {
 final class CapabilityRegistry {
     static let shared = CapabilityRegistry()
 
+    /// Core macOS service prefixes that are always registered for General Chat,
+    /// regardless of individual MCP enable flags. Finder and Window capabilities
+    /// are already unconditionally registered via registerBuiltIns.
+    static let systemPrimitivePrefixes: Set<String> = ["calendar.", "notes.", "reminders."]
+
     private var capabilitiesByID: [String: AICapability] = [:]
 
     private init() {
@@ -217,7 +222,11 @@ final class CapabilityRegistry {
     }
 
     func capabilities(for bundleID: String?) -> [AICapability] {
-        all.filter { $0.appBundleID == nil || $0.appBundleID == bundleID }
+        all.filter { cap in
+            cap.appBundleID == nil
+                || cap.appBundleID == bundleID
+                || (bundleID == nil && Self.systemPrimitivePrefixes.contains { cap.id.hasPrefix($0) })
+        }
     }
 
     func register(_ capability: AICapability) {
@@ -360,9 +369,10 @@ final class CapabilityRegistry {
         ]
         for family in families {
             let present = capabilitiesByID.keys.contains { $0.hasPrefix(family.prefix) }
-            if family.enabled, !present {
+            let isSystemPrimitive = Self.systemPrimitivePrefixes.contains(family.prefix)
+            if family.enabled || isSystemPrimitive, !present {
                 family.register()
-            } else if !family.enabled, present {
+            } else if !family.enabled, !isSystemPrimitive, present {
                 for id in capabilitiesByID.keys where id.hasPrefix(family.prefix) {
                     capabilitiesByID.removeValue(forKey: id)
                 }
@@ -398,19 +408,13 @@ final class CapabilityRegistry {
         markRunsWithoutAdapter(idsWithPrefix: "finder.")
         AppWorkflowToolCatalog.shared.register(in: self)
         GlobalCommandCapabilities.register(in: self)
-        // Apple Notes MCP — only registered when explicitly enabled
-        if AppSettings.shared.noteMCPEnabled {
-            AppleNotesMCPCapabilities.register(in: self)
-        }
-        // Apple system app MCP capabilities — each guarded by its own flag
-        if AppSettings.shared.calendarMCPEnabled {
-            AppleCalendarMCPCapabilities.register(in: self)
-        }
+        // Core macOS system primitives — always registered so General Chat can
+        // reach Calendar, Notes and Reminders without the user toggling each MCP on.
+        AppleNotesMCPCapabilities.register(in: self)
+        AppleCalendarMCPCapabilities.register(in: self)
+        AppleRemindersMCPCapabilities.register(in: self)
         if AppSettings.shared.contactsMCPEnabled {
             AppleContactsMCPCapabilities.register(in: self)
-        }
-        if AppSettings.shared.remindersMCPEnabled {
-            AppleRemindersMCPCapabilities.register(in: self)
         }
         if AppSettings.shared.photosMCPEnabled {
             ApplePhotosMCPCapabilities.register(in: self)
