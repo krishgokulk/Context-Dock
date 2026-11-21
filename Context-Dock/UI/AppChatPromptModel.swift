@@ -783,6 +783,9 @@ final class AppChatPromptModel: ObservableObject {
         // Attaching a file is composing a question about it. A list open over that is
         // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
+        // Once the sheet is open (the user arrowed into it), typing keeps it open while
+        // matching rows exist; clearing the field closes it (owner 2026-10-12).
+        if phase == .suggesting, typed, !rows.isEmpty { return .suggesting }
         // A list the user arrowed open stays open while they are still standing in it —
         // this is also asked when a live menu read lands, and that must not close what was
         // just opened. The focused row is what "still in it" means, and it is why the rule
