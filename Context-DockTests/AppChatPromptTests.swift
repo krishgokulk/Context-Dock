@@ -58,8 +58,7 @@ struct AppChatPromptTests {
         model.query = "why is this slow"
         model.queryChanged()
 
-        // Siri-parity: typing always keeps the sheet open (web/Finder fallback visible).
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.isStandDownArmed)
     }
 
@@ -126,18 +125,17 @@ struct AppChatPromptTests {
         #expect(model.phase == .prompt)
     }
 
-    /// Typing opens the sheet (Siri-parity): fallback actions (web search, Finder) are always available.
-    @Test func typingOpensTheSheet() {
+    /// Typing alone still never pops the sheet open: ↓ is the door in.
+    @Test func typingDoesNotOpenAClosedSheet() {
         let model = AppChatPromptModel()
         model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
         model.query = "ne"
         model.queryChanged()
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
     }
 
     /// A half-written question keeps the field open: idling never shrinks it to the icon
     /// or folds it into the dock out from under the words (owner 2026-09-27).
-    /// Sheet stays open (Siri-parity) showing fallback actions.
     @Test func aFieldWithTextStaysOpenWhenIdle() {
         let model = AppChatPromptModel()
         model.summon(app: "Claude", bundleID: "com.anthropic.claudefordesktop")
@@ -147,12 +145,12 @@ struct AppChatPromptTests {
         model.standDown()
         model.standDown()
 
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.query == "half a question")
     }
 
-    /// Safari's scope rests as a dock of its tabs — sheet stays open (Siri-parity) with text.
-    @Test func aDockScopedFieldWithTextKeepsTheSheet() {
+    /// Safari's scope rests as a dock of its tabs — and still not with words in the field.
+    @Test func aDockScopedFieldWithTextDoesNotFold() {
         let model = AppChatPromptModel()
         model.summon(app: "Safari")
         model.query = "half a question"
@@ -160,7 +158,7 @@ struct AppChatPromptTests {
 
         model.standDown()
 
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
     }
 
     /// A list the user arrowed open is the first thing to go when they look away — the
@@ -326,7 +324,7 @@ struct AppChatPromptTests {
         #expect(model.phase == .hidden)
     }
 
-    /// Typing is a question: the suggestion list steps aside but the sheet stays open (Siri-parity).
+    /// Typing is a question, not a browse: the suggestion list gets out of the way.
     @Test func typingCollapsesTheSuggestionsIntoAPlainInput() {
         let model = AppChatPromptModel()
         model.summon(
@@ -337,7 +335,27 @@ struct AppChatPromptTests {
         model.query = "why"
         model.queryChanged()
 
+        #expect(model.phase == .prompt)
+    }
+
+    /// Before user presses down arrow, typing stays in .prompt; down arrow opens .suggesting.
+    @Test func typingStaysInPromptUntilDownArrow() {
+        let model = AppChatPromptModel()
+        model.summonGlobalContext()
+        model.query = "how to export a finder windows"
+        model.queryChanged()
+        #expect(model.phase == .prompt)
+
+        // Down arrow opens the result sheet and focuses the first row
+        _ = model.moveMenuFocus(by: 1)
         #expect(model.phase == .suggesting)
+        #expect(model.focusedMenuIndex == 0)
+
+        // Esc collapses back to .prompt while keeping the query
+        _ = model.applyResultFocusKey(.escape)
+        #expect(model.phase == .prompt)
+        #expect(model.focusedMenuIndex == nil)
+        #expect(model.query == "how to export a finder windows")
     }
 
     @Test func clearingTheFieldLeavesItAField() {
