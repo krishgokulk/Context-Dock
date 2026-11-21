@@ -165,19 +165,17 @@ struct CornerDockKeyRulesTests {
         #expect(model.query == "quit")
     }
 
-    @Test("Esc on a focused row lets go of it and keeps the query; typed text with rows keeps the sheet (C5)")
+    @Test("Esc on a focused row lets go of it and keeps the query (C5)")
     func escapeKeepsTheQuery() {
         let model = typedWithFocusedRow()
         #expect(model.applyResultFocusKey(.escape))
         #expect(model.focusedRow == nil)
         #expect(model.query == "quit")
-        // Typed text with matching rows auto-expands the result sheet (486fd230, 2026-11-04),
-        // so Esc steps back to the field's resting shape and the sheet follows the rows.
-        #expect(model.phase == .suggesting)
-        // Siri-parity: typed text keeps the sheet open even when no rows match (fallbacks visible).
+        // Esc steps back to the field's resting shape (.prompt)
+        #expect(model.phase == .prompt)
         model.rows = []
         model.syncListPhase()
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.query == "quit")
     }
 
