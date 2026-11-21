@@ -1620,17 +1620,18 @@ struct AppChatPromptPill: View {
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 8.5, style: .continuous))
                     } else {
                         // A row with no image of its own (a fallback, "Show N more") keeps
                         // the icon's place with its symbol, as the foot does — the icon came
                         // and went as the arrows moved (owner 2026-10-17).
                         Image(systemName: model.boardFoot.symbol)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 22, height: 22)
+                .frame(width: 38, height: 38)
+                .padding(.trailing, 14)
                 .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
             }
