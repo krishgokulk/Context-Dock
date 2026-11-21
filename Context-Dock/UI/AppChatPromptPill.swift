@@ -1341,7 +1341,9 @@ struct AppChatPromptPill: View {
                     .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .focused($fieldFocused)
                     .overlay(alignment: .leading) {
-                        if let ghost = model.ghostText, !model.query.isEmpty {
+                        if let ghost = model.ghostText, !model.query.isEmpty,
+                           model.globalGhostCompletion.isEmpty
+                        {
                             GhostTextOverlay(
                                 typed: model.query,
                                 ghost: ghost,
