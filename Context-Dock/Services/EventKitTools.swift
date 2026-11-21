@@ -87,6 +87,7 @@ struct GetCalendarEventsTool: Tool {
 
 @available(macOS 26.0, *)
 struct AddCalendarEventTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "add_calendar_event"
     let description = "Create a new calendar event. Provide title, start time in ISO8601 (e.g. 2026-06-09T16:00:00), optional duration in minutes (default 60), optional location, and optional notes."
 
@@ -119,6 +120,11 @@ struct AddCalendarEventTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return "❌ Event title is required." }
+        if let held = await gate?.check(
+            toolName: "add_calendar_event", arguments: ["title": title])
+        {
+            return "❌ Did not create: \(held)"
+        }
 
         guard let startDate = Self.parseDate(arguments.startISO8601) else {
             return "❌ Could not parse start time '\(arguments.startISO8601)'. Use ISO8601 format, e.g. 2026-06-09T16:00:00."
@@ -232,6 +238,7 @@ struct GetRemindersTool: Tool {
 
 @available(macOS 26.0, *)
 struct AddReminderTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "add_reminder"
     let description = "Create a new reminder with a title. Opens Reminders — user sees it immediately."
 
@@ -246,6 +253,11 @@ struct AddReminderTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return "❌ Reminder title required." }
+        if let held = await gate?.check(
+            toolName: "add_reminder", arguments: ["title": title])
+        {
+            return "❌ Did not create: \(held)"
+        }
         let success = AppleAppsAPI.shared.createReminder(title: title)
         return success
             ? "✅ Reminder created: '\(title)'"
@@ -366,6 +378,7 @@ struct SearchNotesTool: Tool {
 
 @available(macOS 26.0, *)
 struct CreateNoteTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "create_note"
     let description = "Create a new note in Apple Notes with a title and body. Use when the user asks to save, write down, or note something."
 
@@ -384,6 +397,11 @@ struct CreateNoteTool: Tool {
         let title = arguments.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = arguments.body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty || !body.isEmpty else { return "❌ Provide a title or body for the note." }
+        if let held = await gate?.check(
+            toolName: "create_note", arguments: ["title": title])
+        {
+            return "❌ Did not create: \(held)"
+        }
         let success = AppleAppsAPI.shared.createNote(
             title: title.isEmpty ? "New Note" : title,
             body: body
