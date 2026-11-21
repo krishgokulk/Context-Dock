@@ -1550,6 +1550,11 @@ enum AppScopedChatService {
             }
         }
 
+        // Window arrangement fast-path: direct execution, 0 LLM tokens.
+        if let (command, app) = WindowArrangementFastPath.resolve(query: query, scope: scope) {
+            return WindowArrangementFastPath.execute(command: command, app: app)
+        }
+
         // Rows belong to the turn that read them. Clearing here means last turn's notes can
         // never appear under this turn's answer, which is worse than showing none — a stale
         // card looks current.
@@ -2196,17 +2201,10 @@ enum AppScopedChatService {
                 below to answer from real data rather than from memory. Never print a tool \
                 call as text — call it, then answer in plain language.
                 """)
-            if !effectiveBundleId.isEmpty {
-                let frontmostIdentity = ScopedAppPromptBuilder.appIdentityBlock(
-                    bundleId: effectiveBundleId, appName: effectiveAppName, query: query, compact: provider == .onDevice)
-                if !frontmostIdentity.isEmpty {
-                    prompt.append(.identity, frontmostIdentity)
-                }
-                let frontmostSkills = SkillStore.shared.perAppSkillsPromptBlock(for: effectiveBundleId)
-                if !frontmostSkills.isEmpty {
-                    prompt.set(.skills, frontmostSkills)
-                }
-            }
+            // Scope integrity: General Chat never injects a frontmost app's identity
+            // or skills. effectiveBundleId is "" here (U2a), so this block is intentionally
+            // absent — the model receives only the General Assistant identity above and the
+            // registered System Capabilities from the hub.
             // General Chat is frontmost while the user asks, so its UserContext cannot name
             // the browser that was underneath it. A live page question still has a direct
             // reader: try supported running browsers and provide the first current page that
