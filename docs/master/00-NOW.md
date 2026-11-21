@@ -10,20 +10,28 @@
 
 ## In progress
 
-**General AI Chat Scope Integrity & Native OS Fast-Paths (branch `claude/general-chat-scope-integrity`):**
-- Spec: `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` & `docs/master/DORAX-BLUEPRINT.md`.
-- **Scope Isolation & Menu Hygiene:** Ensure `.general` scope in `AppScopedChatService.swift` never bleeds or injects unrelated frontmost app menus/profiles (eliminates "Claude's live menus don't include Calendar").
-- **Core OS System Primitives:** Treat core macOS services (Calendar, Notes, Reminders, Files, Window Management) as directly accessible System Primitives in General Chat without unnecessary gating.
-- **Native Window Arrangement Fast-Path:** Implement 0-LLM token/latency fast-path for `window.arrange` queries using Accessibility / `CGWindowList` via `WindowManagementService.shared`.
-- **Post-Update Process Verification:** Staged update and running process verification (query `NSRunningApplication`, prompt to restart running applications cleanly).
+**#412: H5 Solved skills on-device — offline replay without code authoring (branch `claude/task-412-h5-on-device-solved-skills`):**
+- Spec: `docs/superpowers/specs/2026-11-09-agent-harness-model.md` §9, §12 (H5) & GitHub Issue #412.
+- On-device session matches a solved skill and fills its slots (#205 rule 8: on-device never authors code; script/computer use recipes remain cloud-only).
+- Consolidate on-device tools to reuse shared `AgentToolRegistry` definitions instead of `OnDeviceToolBridge`'s duplicate copies (`ShellCommandTool`, `ExecuteAppMenuPathTool`, etc. per `AGENTS.md`).
+- Context budget compliance (`AIContextBudget` / `OnDevicePromptBudget`): inject only the few skills relevant to the current turn.
+- Close outbound-gate gap for on-device tools (`SAFETY.md`) before enabling replay.
+- Comprehensive unit tests covering budget fitting, outbound gating, and slot filling; offline replay validation.
 
 ## Queued (next)
 
-- **#412** H5 solved skills on-device (shared tool definitions, budget, outbound gate) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged).
+- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → #412 in progress.
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**General AI Chat Scope Integrity & Native OS Fast-Paths (PR #494, merged 2026-11-21 as `1f605179`):**
+- Scope isolation: Removed dead frontmost-app identity/skills injection block in General Chat; `effectiveBundleId` evaluates to `""` for `.general` and `.thread` scopes.
+- System primitives: Calendar, Notes, and Reminders capabilities registered unconditionally as system primitives in `AICapabilityRegistry`, ungated from MCP toggles in General Chat.
+- 0-LLM Window fast-path: Instant window arrangement (`split left`, `maximize`, `tile windows`, `center it`) via `WindowArrangementFastPath` wired in `sendUntraced()` with question rejection ("how do I...").
+- Post-update process verification: `ProcessUpdateVerifier` detects when a target app is running via `NSRunningApplication` and returns a clean restart notice.
+- Added 28 unit tests across 4 test suites in `GeneralChatScopeIntegrityTests.swift`.
 
 **Unified Spotlight-Pet Surface: intent classifier, ghost text, conversational fallback (PR #493, merged 2026-11-21 as `454f3c7d`):**
 - Deterministic <1ms `UnifiedIntentClassifier` (`.navigational`, `.explicitFile`, `.conversational`, `.webResearch`).
