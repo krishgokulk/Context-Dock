@@ -10,30 +10,32 @@
 
 ## In progress
 
-**Unified Spotlight-Pet Surface (Single Zero-Modal Launcher):**
-- Spec: `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md` (owner-approved 2026-11-09).
-- Dissolves modal `⌘` / `Backspace` switching between Global Context and App Pet into one context-biased Liquid Glass intent bar.
-- Frontmost menu candidates boosted (+500); inline ghost autocomplete on top match (`Return` runs immediately).
-- **Siri-Style Zero-Match & Conversational Fallback:** When query is conversational or no local match exists:
-  1. Input pill draws inline ghost text: `[query] | — Ask Dora (↵)` with direct `Return` execution into General AI Chat transcript (PR #421 morph).
-  2. Floating capsule below pill: `[ 🌐 📁 Show Results (↓) ]`.
-  3. Pressing `↓` or clicking capsule expands alternative search destinations (Finder, Web, Cloud Drives, Active Pet, ChatGPT).
-- Conversational intent penalty (-100 on incidental disk files) suppresses keyword collision noise.
-- Code sites: `Search/AppChatRowRanker.swift`, `Services/GlobalSearchService.swift`, `UI/AppChatPromptModel.swift`, `UI/AppChatPromptPill.swift`, `UI/GlobalFallbacks.swift`, `UI/CornerDockWindow.swift`.
+**General AI Chat Scope Integrity & Native OS Fast-Paths (branch `claude/general-chat-scope-integrity`):**
+- Spec: `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` & `docs/master/DORAX-BLUEPRINT.md`.
+- **Scope Isolation & Menu Hygiene:** Ensure `.general` scope in `AppScopedChatService.swift` never bleeds or injects unrelated frontmost app menus/profiles (eliminates "Claude's live menus don't include Calendar").
+- **Core OS System Primitives:** Treat core macOS services (Calendar, Notes, Reminders, Files, Window Management) as directly accessible System Primitives in General Chat without unnecessary gating.
+- **Native Window Arrangement Fast-Path:** Implement 0-LLM token/latency fast-path for `window.arrange` queries using Accessibility / `CGWindowList` via `WindowManagementService.shared`.
+- **Post-Update Process Verification:** Staged update and running process verification (query `NSRunningApplication`, prompt to restart running applications cleanly).
 
 ## Queued (next)
 
-- **General AI Chat Scope Integrity & Native OS Fast-Paths:**
-  - Spec: `docs/master/00-APP-AGENT-PLUGIN-PLAN.md` & `docs/master/DORAX-BLUEPRINT.md`.
-  - Fix `effectiveBundleId` in `AppScopedChatService.swift:1885` so `.general` scope never falls back to `previousFrontmostApp` or injects unrelated frontmost app menus (eliminates "Claude's live menus don't include Calendar").
-  - Treat core macOS services (Calendar, Notes, Reminders, Files, Window Management) as ungated System Primitives in General Chat.
-  - Native fast-path (0-LLM token/latency) for window arrangement (`window.arrange` via Accessibility / `CGWindowList`).
-  - Staged update & post-update running process verification (check `NSRunningApplication`, prompt to restart running app cleanly).
 - **#412** H5 solved skills on-device (shared tool definitions, budget, outbound gate) → **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged).
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**Unified Spotlight-Pet Surface: intent classifier, ghost text, conversational fallback (PR #493, merged 2026-11-21 as `454f3c7d`):**
+- Deterministic <1ms `UnifiedIntentClassifier` (`.navigational`, `.explicitFile`, `.conversational`, `.webResearch`).
+- Unified row ranking in `AppChatRowRanker.applyUnifiedAdjustments`: frontmost-app boost (+500), explicit file boost (+50), conversational file penalty (-100).
+- Inline gray ghost text autocomplete on TextField (`GhostTextOverlay`), accepted via Tab or →.
+- Siri-style zero-match & conversational fallback: `"— Ask Dora (↵)"` ghost text + `"Show Results (↓)"` floating capsule. Return executes direct dispatch to AI chat.
+- Added 20+ unit tests in `UnifiedIntentClassifierTests.swift` and 15 tests in `UnifiedRowRankingTests.swift`.
+
+**feat(ui): General AI compact single-line bar, menu navigation fix, and resultsheet layout (PR #492, merged 2026-11-20 as `fa860004`):**
+- Single-line compact General AI bar with attach on right; removed Turbo mode pill.
+- Prioritized menu navigation on arrow keys so up arrow does not interrupt with AI chat.
+- Styled input container when resultsheet is visible with pin at right end; eliminated empty gap in slash resultsheet.
 
 **Task U8 (U8a–U8d): Last-Mile Blueprint Wiring (PR #491, merged 2026-11-20 as `a89495ff`):**
 - **U8a (Pack Builder UI & Notch Approval):** Added reusable `OwnerReviewCardView`, wired `PluginCreatorPane.swift` `[+ Create Pack]` to `AgenticAIPackBuilder.build(...)` + `OwnerReviewCard` + `approveAndInstall()`, and presented the card in `DynamicNotchLiveActivityView.swift` on build.
