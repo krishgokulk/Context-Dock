@@ -323,6 +323,12 @@ struct SendKeysTool: Tool {
     let name = "send_keys"
     let description = "Send raw keystrokes to the active live terminal session after spawn_worker launches a TUI app."
 
+    private let gate: OnDeviceTurnGate?
+
+    init(gate: OnDeviceTurnGate? = nil) {
+        self.gate = gate
+    }
+
     @Generable
     struct Arguments {
         @Guide(description: "Keys to send. Supports plain text, \\r for Enter, \\u{1B} for Esc, \\u{03} for Ctrl-C, and ANSI arrow sequences.")
@@ -336,6 +342,9 @@ struct SendKeysTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let keys = arguments.keys
         guard !keys.isEmpty else { return "❌ No keys provided." }
+        if let held = await gate?.check(toolName: "send_keys", arguments: ["keys": keys]) {
+            return "❌ Did not send: \(held)"
+        }
         return await TerminalCommandExecutor.shared.sendKeys(keys)
     }
 }
@@ -714,11 +723,13 @@ struct ExecuteAppMenuIntentTool: Tool {
     private let bundleId: String
     private let appName: String
     private let processIdentifier: pid_t
+    private let gate: OnDeviceTurnGate?
 
-    init(bundleId: String, appName: String, processIdentifier: pid_t) {
+    init(bundleId: String, appName: String, processIdentifier: pid_t, gate: OnDeviceTurnGate? = nil) {
         self.bundleId = bundleId
         self.appName = appName
         self.processIdentifier = processIdentifier
+        self.gate = gate
     }
 
     @Generable
@@ -769,6 +780,13 @@ struct ExecuteAppMenuIntentTool: Tool {
             return "⚠️ \(appName) menu is currently disabled: \(match.path.joined(separator: " > "))."
         }
 
+        if let held = await gate?.check(
+            toolName: "run_menu_command",
+            arguments: ["path": match.path.joined(separator: " > ")])
+        {
+            return "❌ Did not run: \(held)"
+        }
+
         let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
             bundleIdentifier: bundleId,
             path: match.path,
@@ -783,6 +801,7 @@ struct ExecuteAppMenuIntentTool: Tool {
 
 @available(macOS 26.0, *)
 struct SearchMailTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "search_mail"
     let description = "Open Mail's native Mailbox Search UI and search for a query. Supports token kinds: generic, sender, subject, attachment, date."
 
@@ -801,6 +820,7 @@ struct SearchMailTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: true)
         let tokenKind = MailAutomationSearchTokenKind(rawValue: arguments.tokenKind.lowercased()) ?? .generic
         return await MailAutomation.openMailboxSearch(query: arguments.query, tokenKind: tokenKind)
     }
@@ -1372,7 +1392,8 @@ final class OnDeviceToolSession {
             ExecuteAppMenuIntentTool(
                 bundleId: bundleId,
                 appName: resolvedAppName,
-                processIdentifier: resolvedPID
+                processIdentifier: resolvedPID,
+                gate: gate
             ),
             ExecuteAppMenuPathTool(
                 bundleId: bundleId,
@@ -1383,23 +1404,23 @@ final class OnDeviceToolSession {
             ShellCommandTool(axContext: axContext, recorder: recorder, gate: gate),
             SpawnWorkerTool(gate: gate),
             StartNotchTimerTool(),
-            SendKeysTool(),
+            SendKeysTool(gate: gate),
             // Vision tools
             OCRTool(gate: gate),
             ScreenCaptureTool(gate: gate),
             // EventKit — available in all app contexts and global chat
             GetCalendarEventsTool(gate: gate),
-            AddCalendarEventTool(),
+            AddCalendarEventTool(gate: gate),
             GetRemindersTool(gate: gate),
-            AddReminderTool(),
+            AddReminderTool(gate: gate),
             SearchContactsTool(gate: gate),
             SearchPhotosTool(gate: gate),
             SearchNotesTool(gate: gate),
-            CreateNoteTool(),
+            CreateNoteTool(gate: gate),
         ]
 
         if bundleId == "com.apple.mail" {
-            baseTools.append(SearchMailTool())
+            baseTools.append(SearchMailTool(gate: gate))
             baseTools.append(GetMailMailboxSnapshotTool(gate: gate))
         }
 
