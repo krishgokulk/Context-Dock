@@ -177,6 +177,14 @@ final class AppChatPromptModel: ObservableObject {
     var adapterActions: [AdapterAction] = []
     /// The one list the card draws: actions and commands ranked together.
     @Published var rows: [AppChatRow] = []
+    /// The classified intent of the current query, updated on every keystroke.
+    @Published var queryIntent: QueryIntentArchetype = .navigational
+    /// Inline ghost completion suffix (gray text after what the user typed).
+    /// Nil when no prefix match exists or the query is conversational with no local hit.
+    @Published var ghostText: String?
+    /// Whether the "Show Results" capsule is visible below the input bar.
+    /// True when the query is conversational and has no high-confidence local match.
+    @Published var showResultsCapsule = false
     /// What the app has selected right now — carried by the question, so it is shown.
     @Published private(set) var selection: AppChatSelectionScope?
     /// The content behind `selection` — `AppChatSelectionScope` itself is only ever a

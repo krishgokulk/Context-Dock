@@ -763,6 +763,13 @@ struct AppChatPromptPill: View {
         .animation(shellMorph, value: model.phase)
         .animation(shellMorph, value: drawnWidth)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+        .overlay(alignment: .bottom) {
+            if model.showResultsCapsule, model.phase.showsInput {
+                ShowResultsCapsule(model: model)
+                    .offset(y: 36)
+                    .animation(.easeInOut(duration: 0.2), value: model.showResultsCapsule)
+            }
+        }
     }
 
     private var feedbackTint: Color? {
@@ -1333,6 +1340,17 @@ struct AppChatPromptPill: View {
                     }
                     .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .focused($fieldFocused)
+                    .overlay(alignment: .leading) {
+                        if let ghost = model.ghostText, !model.query.isEmpty,
+                           model.globalGhostCompletion.isEmpty
+                        {
+                            GhostTextOverlay(
+                                typed: model.query,
+                                ghost: ghost,
+                                fontSize: DockFieldLines.fontSize
+                            )
+                        }
+                    }
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
                         // The panel's key monitor already acted on this Return.
@@ -1364,6 +1382,14 @@ struct AppChatPromptPill: View {
                             model.runCLICommand()
                             return
                         }
+                        // Conversational ghost ("Ask Dora"): Return dispatches to AI,
+                        // bypassing the top-row execution.
+                        if model.showResultsCapsule,
+                           model.queryIntent == .conversational || model.queryIntent == .webResearch
+                        {
+                            model.submit()
+                            return
+                        }
                         if model.isSearchField {
                             // The top row, the one the leading icon previews (C3).
                             model.runReturnRow(runsTopRow: true)
@@ -1392,6 +1418,8 @@ struct AppChatPromptPill: View {
                         // The row the arrows landed on first; the top match only when the
                         // user has not chosen one.
                         if model.enterFocusedRow() { return .handled }
+                        // Unified ghost text: Tab accepts a prefix-match ghost completion.
+                        if model.acceptGhostCompletion() { return .handled }
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
                     .onKeyPress(.downArrow) {
@@ -2244,5 +2272,58 @@ private struct ScopeBackChip: View {
         .buttonStyle(.plain)
         .help(help)
         .layoutPriority(1)
+    }
+}
+
+// MARK: - Ghost Text Overlay
+
+/// Inline ghost completion: renders the typed prefix invisibly (for alignment) followed by
+/// the ghost suffix in semi-transparent gray. Sits as an overlay on the TextField.
+struct GhostTextOverlay: View {
+    let typed: String
+    let ghost: String
+    let fontSize: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(typed).foregroundStyle(.clear)
+            Text(ghost)
+                .foregroundStyle(.secondary.opacity(0.45))
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: fontSize, weight: .medium))
+        .lineLimit(1)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Show Results Capsule
+
+/// Floating capsule below the input bar: "Show Results (↓)" with search-destination icons.
+/// Visible when a conversational query has no high-confidence local match.
+struct ShowResultsCapsule: View {
+    @ObservedObject var model: AppChatPromptModel
+
+    var body: some View {
+        Button {
+            model.focusFirstRow()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "globe")
+                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Show Results")
+                    .font(.system(size: 12, weight: .medium))
+                Text("(\u{2193})")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }

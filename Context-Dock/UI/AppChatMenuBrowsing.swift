@@ -111,6 +111,7 @@ extension AppChatPromptModel {
     func updateMenuMatches() {
         updateTabStrip()
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        queryIntent = typed.isEmpty ? .navigational : UnifiedIntentClassifier.classify(typed)
         // "/" lists apps to jump to — running first, then installed — and Return takes the
         // first (owner 2026-10-10).
         if let filter = slashAppFilter {
@@ -207,6 +208,7 @@ extension AppChatPromptModel {
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
+            updateGhostText(for: typed)
             syncListPhase()
             return
         }
@@ -314,6 +316,17 @@ extension AppChatPromptModel {
                 rows.insert(learned, at: 0)
             }
         }
+        // Conversational queries: penalise incidental file matches so AI/web rows lead.
+        if queryIntent == .conversational {
+            rows = AppChatRowRanker.applyUnifiedAdjustments(
+                to: rows, query: typed, intent: queryIntent, frontmostBundleID: appBundleID)
+        }
+        // Fallback rows: Ask AI and Search Web, as Global does (GlobalFallbacks).
+        if !typed.isEmpty, !isCLIScope {
+            rows += GlobalFallbacks.rows(for: typed) { [weak self] question in
+                self?.askFromGlobal(question)
+            }.map(AppChatRow.dock)
+        }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -321,7 +334,44 @@ extension AppChatPromptModel {
         }
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
+        updateGhostText(for: typed)
         syncListPhase()
+    }
+
+    /// Derives ghost completion text and the "Show Results" capsule state from the current
+    /// rows and query intent. Called at every exit of `updateMenuMatches`.
+    func focusFirstRow() {
+        _ = moveMenuFocus(by: 1)
+    }
+
+    private func updateGhostText(for typed: String) {
+        guard !typed.isEmpty else {
+            ghostText = nil
+            showResultsCapsule = false
+            return
+        }
+
+        let hasHighConfidence: Bool = {
+            guard let first = rows.first else { return false }
+            // A dock fallback row (Ask AI, Search Web) is not a high-confidence local match.
+            if case .dock(let pill) = first,
+               pill.rankingKind == GlobalFallbacks.askKind
+                || pill.rankingKind == GlobalFallbacks.webKind { return false }
+            return true
+        }()
+
+        // Conversational with no strong local hit → "Ask Dora" ghost and capsule.
+        if let conversationalGhost = AppChatRowRanker.conversationalGhostText(
+            for: typed, intent: queryIntent, hasHighConfidenceMatch: hasHighConfidence)
+        {
+            ghostText = conversationalGhost
+            showResultsCapsule = true
+            return
+        }
+
+        // Standard ghost: prefix match on the top row's title.
+        ghostText = AppChatRowRanker.ghostText(for: typed, topRow: rows.first)
+        showResultsCapsule = false
     }
 
     /// Safari's open tabs that answer the words, from the last read. While Safari runs a
@@ -1607,10 +1657,20 @@ extension AppChatPromptModel {
     @discardableResult
     func acceptGhostCompletion() -> Bool {
         let ghost = globalGhostCompletion
-        guard !ghost.isEmpty else { return false }
-        query += ghost
-        queryChanged()
-        return true
+        if !ghost.isEmpty {
+            query += ghost
+            queryChanged()
+            return true
+        }
+        // Unified ghost text (app scope): accept prefix-match ghosts, not conversational ones.
+        if let unified = ghostText, !unified.isEmpty,
+           queryIntent != .conversational, queryIntent != .webResearch
+        {
+            query += unified
+            queryChanged()
+            return true
+        }
+        return false
     }
 
     /// What the rest of the row the field points at would be, if the user accepted it: the
