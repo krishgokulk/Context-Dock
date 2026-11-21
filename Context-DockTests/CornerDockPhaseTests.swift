@@ -87,7 +87,7 @@ struct CornerDockPhaseTests {
         let (model, _) = globalModel()
         model.standDown()
         #expect(model.expandFromDock(seeding: "s"))
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.query == "s")
     }
 
