@@ -990,6 +990,18 @@ class AIProviderService: ObservableObject {
         history: [ChatMessage] = [],
         additionalContextPrompt: String = ""
     ) async throws -> String {
+        // H5 §9: solved skill replay — offline, no model, no code authoring.
+        if case .appFocused(_, let bundleId) = context, !bundleId.isEmpty {
+            let skills = await SolvedSkillStore.shared.all(forBundle: bundleId)
+            if let (skill, filled) = SolvedSkillMatch.match(
+                query: message, bundleId: bundleId, skills: skills),
+               let answer = await SolvedSkillMatch.run(
+                skill, filled: filled, scope: .app(bundleId: bundleId))
+            {
+                return answer.text
+            }
+        }
+
         let useTools = shouldUseOnDeviceToolSession(for: context, message: message)
         let matchedPackage = TerminalPackageManager.shared.findPackageForQuery(message)
         let contextPrompt = await buildContextPrompt(
@@ -1032,6 +1044,19 @@ class AIProviderService: ObservableObject {
         if #available(macOS 26.0, *) {
             Task {
                 do {
+                    // H5 §9: solved skill replay — offline, no model.
+                    if case .appFocused(_, let bundleId) = context, !bundleId.isEmpty {
+                        let skills = await SolvedSkillStore.shared.all(forBundle: bundleId)
+                        if let (skill, filled) = SolvedSkillMatch.match(
+                            query: message, bundleId: bundleId, skills: skills),
+                           let answer = await SolvedSkillMatch.run(
+                            skill, filled: filled, scope: .app(bundleId: bundleId))
+                        {
+                            onComplete(answer.text)
+                            return
+                        }
+                    }
+
                     // ── 1. For browser contexts: force-refresh page content first ──
                     let browserBundles = ["com.apple.Safari","com.google.Chrome","com.brave.Browser",
                                           "org.chromium.Chromium","com.microsoft.edgemac"]
