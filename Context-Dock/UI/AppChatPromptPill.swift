@@ -764,7 +764,7 @@ struct AppChatPromptPill: View {
         .animation(shellMorph, value: drawnWidth)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         .overlay(alignment: .bottom) {
-            if model.showResultsCapsule, model.phase.showsInput {
+            if model.showResultsCapsule, model.phase == .prompt {
                 ShowResultsCapsule(model: model)
                     .offset(y: 36)
                     .animation(.easeInOut(duration: 0.2), value: model.showResultsCapsule)
@@ -1311,12 +1311,17 @@ struct AppChatPromptPill: View {
                 // What Tab would complete to, greyed behind the caret. Drawn in the field's
                 // own metrics with the typed part transparent, so the ghost lines up with
                 // the text instead of floating near it.
-                if !model.isClipboardScope, !model.globalGhostCompletion.isEmpty,
+                let activeGhost: String = {
+                    if !model.globalGhostCompletion.isEmpty { return model.globalGhostCompletion }
+                    if let ghost = model.ghostText, !ghost.isEmpty { return ghost }
+                    return ""
+                }()
+                if !model.isClipboardScope, !activeGhost.isEmpty, !model.query.isEmpty,
                     model.fieldLines == 1
                 {
                     HStack(spacing: 0) {
                         Text(model.query).foregroundStyle(.clear)
-                        Text(model.globalGhostCompletion)
+                        Text(activeGhost)
                             .foregroundStyle(.secondary.opacity(0.45))
                         Spacer(minLength: 0)
                     }
@@ -1340,17 +1345,6 @@ struct AppChatPromptPill: View {
                     }
                     .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                     .focused($fieldFocused)
-                    .overlay(alignment: .leading) {
-                        if let ghost = model.ghostText, !model.query.isEmpty,
-                           model.globalGhostCompletion.isEmpty
-                        {
-                            GhostTextOverlay(
-                                typed: model.query,
-                                ghost: ghost,
-                                fontSize: DockFieldLines.fontSize
-                            )
-                        }
-                    }
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
                         // The panel's key monitor already acted on this Return.
@@ -1626,17 +1620,18 @@ struct AppChatPromptPill: View {
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 8.5, style: .continuous))
                     } else {
                         // A row with no image of its own (a fallback, "Show N more") keeps
                         // the icon's place with its symbol, as the foot does — the icon came
                         // and went as the arrows moved (owner 2026-10-17).
                         Image(systemName: model.boardFoot.symbol)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 22, height: 22)
+                .frame(width: 38, height: 38)
+                .padding(.trailing, 14)
                 .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
             }

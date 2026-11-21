@@ -765,8 +765,6 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: auto-expand the result sheet when there are matching rows or query to fall back (Raycast/Spotlight/Siri parity).
-        if typed { return .suggesting }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
@@ -785,6 +783,9 @@ final class AppChatPromptModel: ObservableObject {
         // Attaching a file is composing a question about it. A list open over that is
         // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
+        // Once the sheet is open (the user arrowed into it), typing keeps it open while
+        // matching rows exist; clearing the field closes it (owner 2026-10-12).
+        if phase == .suggesting, typed, !rows.isEmpty { return .suggesting }
         // A list the user arrowed open stays open while they are still standing in it —
         // this is also asked when a live menu read lands, and that must not close what was
         // just opened. The focused row is what "still in it" means, and it is why the rule
