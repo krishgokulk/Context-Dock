@@ -922,6 +922,17 @@ struct ConversationToShowTests {
         #expect(model.openChat())
         #expect(model.phase == .chat)
     }
+
+    @Test func globalScopeUpArrowKeepsPromptPill() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "Existing response")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: AppChatPromptModel.globalScopeName, bundleID: "")
+        model.set(.prompt)
+
+        #expect(model.isGlobalScope)
+        #expect(model.phase == .prompt)
+    }
 }
 
 /// The app's DoraX card: the chip's in the sheet, and any app row's (owner 2026-10-16).
