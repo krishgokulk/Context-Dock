@@ -1468,12 +1468,28 @@ final class OnDeviceToolSession {
         return prompt
     }
 
+    /// Extract text from images using Vision OCR (fallback for pre-27.0 runtimes).
+    func ocrExtractedText(from imageURLs: [URL]) -> String {
+        let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
+            NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }.flatMap { cgImage -> [String] in
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            try? handler.perform([req])
+            return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        }
+        return ocrLines.isEmpty ? "" : "Image content:\n\(ocrLines.joined(separator: "\n"))"
+    }
+
     /// Run a query through on-device AI.
     /// Structured extraction queries (links, action items, data) bypass the tool loop
     /// and use @Generable typed output for reliable structured results.
     /// All other queries use the tool-based session with adapter actions + shell access.
     func respond(
         to message: String,
+        imageURLs: [URL] = [],
         systemPrompt: String,
         bundleId: String,
         axContext: AXContext
@@ -1503,7 +1519,23 @@ final class OnDeviceToolSession {
             tools: tools(for: bundleId, axContext: axContext, recorder: recorder, gate: gate),
             instructions: fullPrompt
         )
-        let response = try await session.respond(to: message)
+
+        let response: LanguageModelSession.Response<String>
+        if !imageURLs.isEmpty {
+            if #available(macOS 27.0, *) {
+                let attachments = imageURLs.map { Attachment(imageURL: $0) }
+                response = try await session.respond {
+                    attachments
+                    message
+                }
+            } else {
+                let ocrText = ocrExtractedText(from: imageURLs)
+                let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
+                response = try await session.respond(to: finalMessage)
+            }
+        } else {
+            response = try await session.respond(to: message)
+        }
         let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // If the model ran tools silently without producing text, ask it to summarize the result.
@@ -1565,27 +1597,27 @@ final class OnDeviceToolSession {
                     instructions: fullPrompt
                 )
 
-                // Images: OCR-extract text and prepend to message for context
-                var finalMessage = message
+                // Images: native multimodal on macOS 27.0+, OCR fallback otherwise
+                let responseStream: LanguageModelSession.ResponseStream<String>
                 if !imageURLs.isEmpty {
-                    let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
-                        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-                    }.flatMap { cgImage -> [String] in
-                        let req = VNRecognizeTextRequest()
-                        req.recognitionLevel = .accurate
-                        req.usesLanguageCorrection = true
-                        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                        try? handler.perform([req])
-                        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                    if #available(macOS 27.0, *) {
+                        let attachments = imageURLs.map { Attachment(imageURL: $0) }
+                        responseStream = session.streamResponse(generating: String.self) {
+                            attachments
+                            message
+                        }
+                    } else {
+                        let ocrText = self.ocrExtractedText(from: imageURLs)
+                        let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
+                        responseStream = session.streamResponse(to: finalMessage, generating: String.self)
                     }
-                    if !ocrLines.isEmpty {
-                        finalMessage = "Image content:\n\(ocrLines.joined(separator: "\n"))\n\n\(message)"
-                    }
+                } else {
+                    responseStream = session.streamResponse(to: message, generating: String.self)
                 }
 
                 var lastLength = 0
                 var finalContent = ""
-                for try await snapshot in session.streamResponse(to: finalMessage, generating: String.self) {
+                for try await snapshot in responseStream {
                     let full = snapshot.content
                     let delta = String(full.dropFirst(lastLength))
                     lastLength = full.count
