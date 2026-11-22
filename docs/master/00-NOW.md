@@ -24,6 +24,13 @@
 
 ## Done (most recent first)
 
+**fix(ui): compact launcher typing, result sheet arrow navigation, and search pill icon (PR #495, merged 2026-11-22 as `72dff9ee`):**
+- Compact resting prompt: Launcher stays compact in `.prompt` while typing until `↓` is pressed; sheet opens on `↓` and closes back to `.prompt` on Esc.
+- Show Results Capsule: Gated to `.prompt` phase so it displays cleanly beneath the compact pill and disappears when results are open.
+- App Icon Sizing: Enlarged search pill result app icon to 38x38 with balanced margins.
+- Arrow navigation contract on empty prompt pill: In frontmost App Pet, `↑` opens that app's conversation history; in Global Context, `↑` keeps the prompt pill resting as-is (no-op). `↓` opens the result sheet in both scopes.
+- Tests: Added test coverage in `AppChatPromptTests.swift`, `DockKeyRulesTests.swift`, and `CornerDockPhaseTests.swift`.
+
 **#412: H5 Solved skills on-device — offline replay, gate coverage (PR #496, merged 2026-11-22):**
 - Wired `SolvedSkillMatch` into both `sendOnDevice` and `streamOnDeviceResponse` as pre-model rungs, enabling matched skills to replay offline without touching language models.
 - Closed OutboundGate coverage gaps: `SendKeysTool`, `ExecuteAppMenuIntentTool`, `AddCalendarEventTool`, `AddReminderTool`, `CreateNoteTool` now check the gate; `SearchMailTool` marks reads as untrusted.
