@@ -539,12 +539,17 @@ struct AppChatPromptPill: View {
 
         // On an empty resting prompt pill:
         // ↓ opens what the app can do (menus) from the top.
-        // ↑ restores a previously hidden conversation if one exists, otherwise opens menus from the bottom.
+        // ↑ opens chat history (active or saved conversation, or conversations board in Global),
+        //   otherwise opens menus from the bottom.
         if model.phase == .prompt, model.query.isEmpty {
             if !up {
                 if model.moveMenuFocus(by: 1) { return .handled }
             } else {
-                if model.isConversationHidden, model.openChat() { return .handled }
+                if model.openChat() { return .handled }
+                if model.isGlobalScope {
+                    model.openConversationsBoard()
+                    return .handled
+                }
                 if model.moveMenuFocus(by: -1) { return .handled }
             }
         }

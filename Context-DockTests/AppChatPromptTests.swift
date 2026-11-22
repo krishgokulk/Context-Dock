@@ -910,6 +910,18 @@ struct ConversationToShowTests {
         #expect(!model.hasConversationToShow)
         #expect(!model.showConversation())
     }
+
+    @Test func openChatRestoresHistoryDirectly() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "Existing response")]
+        conversation.scopeBundleId = "com.apple.calculator"
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.set(.prompt)
+
+        #expect(model.openChat())
+        #expect(model.phase == .chat)
+    }
 }
 
 /// The app's DoraX card: the chip's in the sheet, and any app row's (owner 2026-10-16).
