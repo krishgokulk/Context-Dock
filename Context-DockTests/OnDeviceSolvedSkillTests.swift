@@ -150,18 +150,18 @@ struct OnDeviceSkillBudgetTests {
         // A hit short-circuits the entire on-device model path, so zero tokens are consumed.
         // Verify the budget is unchanged by asserting match is a synchronous, non-token operation.
         let skill = SolvedSkill(
-            queryTemplate: "open {app}",
-            nonSlotWords: ["open"],
-            slots: [SolvedSkillSlot(name: "app", tokenFamily: "app")],
+            queryTemplate: "unread mail from {sender}",
+            nonSlotWords: ["unread", "mail", "from"],
+            slots: [SolvedSkillSlot(name: "sender", tokenFamily: "sender")],
             toolCalls: [
                 SolvedSkillToolCall(
-                    capability: "launch_app", argTemplate: ["name": "{app}"],
+                    capability: "mail.search", argTemplate: ["sender": "{sender}"],
                     isReadOnly: true)
             ],
-            bundleId: "com.apple.finder")
+            bundleId: "com.apple.mail")
 
         let hit = SolvedSkillMatch.match(
-            query: "open Safari", bundleId: "com.apple.finder", skills: [skill])
+            query: "unread mail from Alex", bundleId: "com.apple.mail", skills: [skill])
         #expect(hit != nil)
 
         // The on-device character budget (1,500) is for model prompt injection.

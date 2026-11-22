@@ -1052,6 +1052,7 @@ class AIProviderService: ObservableObject {
                            let answer = await SolvedSkillMatch.run(
                             skill, filled: filled, scope: .app(bundleId: bundleId))
                         {
+                            onPartial(answer.text)
                             onComplete(answer.text)
                             return
                         }
