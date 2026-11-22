@@ -10,21 +10,25 @@
 
 ## In progress
 
-**#412: H5 Solved skills on-device — offline replay without code authoring (branch `claude/task-412-h5-on-device-solved-skills`):**
-- Spec: `docs/superpowers/specs/2026-11-09-agent-harness-model.md` §9, §12 (H5) & GitHub Issue #412.
-- On-device session matches a solved skill and fills its slots (#205 rule 8: on-device never authors code; script/computer use recipes remain cloud-only).
-- Consolidate on-device tools to reuse shared `AgentToolRegistry` definitions instead of `OnDeviceToolBridge`'s duplicate copies (`ShellCommandTool`, `ExecuteAppMenuPathTool`, etc. per `AGENTS.md`).
-- Context budget compliance (`AIContextBudget` / `OnDevicePromptBudget`): inject only the few skills relevant to the current turn.
-- Close outbound-gate gap for on-device tools (`SAFETY.md`) before enabling replay.
-- Comprehensive unit tests covering budget fitting, outbound gating, and slot filling; offline replay validation.
+**#397: Foundation Models native image input: pass screenshots directly instead of OCR fallback (branch `claude/task-397-foundation-models-native-image`):**
+- Spec: GitHub Issue #397 & `docs/master/00-NOW.md`.
+- Replace Vision OCR text-extraction fallback in `OnDeviceToolBridge.swift` (`stream()` and `respond()`) with native Foundation Models multimodal image input (`@available(macOS 26.4, *)`).
+- Maintain existing Vision OCR text-extraction path as graceful fallback on macOS 26.0–26.3.
+- Update `AIContextBudget` token accounting if native image input introduces dedicated image token allocations.
+- Tests: Add unit tests verifying direct multimodal attachment passing on macOS 26.4+ and fallback to OCR on earlier runtimes.
 
 ## Queued (next)
 
-- **#397** Foundation Models native image input (replace OCR fallback in `OnDeviceToolBridge` with direct multimodal).
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → #412 in progress.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → ~~#412~~ H5 merged → #397 in progress.
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**#412: H5 Solved skills on-device — offline replay, gate coverage (PR #496, merged 2026-11-22):**
+- Wired `SolvedSkillMatch` into both `sendOnDevice` and `streamOnDeviceResponse` as pre-model rungs, enabling matched skills to replay offline without touching language models.
+- Closed OutboundGate coverage gaps: `SendKeysTool`, `ExecuteAppMenuIntentTool`, `AddCalendarEventTool`, `AddReminderTool`, `CreateNoteTool` now check the gate; `SearchMailTool` marks reads as untrusted.
+- Fixed streaming callback to deliver `onPartial(answer.text)` before `onComplete(answer.text)`.
+- Added `OnDeviceSolvedSkillTests` covering skill matching, gate classification, tainted-turn blocking, and budget compliance.
 
 **General AI Chat Scope Integrity & Native OS Fast-Paths (PR #494, merged 2026-11-21 as `1f605179`):**
 - Scope isolation: Removed dead frontmost-app identity/skills injection block in General Chat; `effectiveBundleId` evaluates to `""` for `.general` and `.thread` scopes.
