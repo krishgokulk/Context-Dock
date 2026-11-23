@@ -155,7 +155,7 @@ final class AppChatPromptModel: ObservableObject {
     @Published var query = ""
     /// The app the question is about, captured when the prompt opened — not read live,
     /// because opening the prompt is itself an app switch.
-    @Published private(set) var appName = Self.globalScopeName
+    @Published private(set) var appName = ""
     @Published private(set) var appBundleID = ""
     /// What this app can do, shown before anything is typed.
     @Published private(set) var suggestions: [AppChatSuggestion] = []
@@ -335,7 +335,7 @@ final class AppChatPromptModel: ObservableObject {
     var isAnswering: Bool { conversation.isLoading }
     var liveSteps: [String] { conversation.liveSteps }
     /// Files the question should carry.
-    @Published private(set) var attachments: [URL] = []
+    @Published var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
     /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
     /// not a preference — it was a button that occasionally worked, so pressing it wrote the
@@ -379,7 +379,7 @@ final class AppChatPromptModel: ObservableObject {
 
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
-    private var hasPresentedConversation = false
+    var hasPresentedConversation = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
     /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
@@ -607,9 +607,11 @@ final class AppChatPromptModel: ObservableObject {
         name: String, bundleID: String, suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
+        let outgoing = scopeKey
+        let incoming = Self.scopeKey(name: name, bundleID: bundleID)
         let isEnteringGlobal = incoming == Self.scopeKey(name: Self.globalScopeName, bundleID: "")
-        let leavingChat = (outgoing != incoming || isEnteringGlobal) && phase == .chat
-        if outgoing != incoming || isEnteringGlobal {
+        let leavingChat = outgoing != incoming && phase == .chat
+        if outgoing != incoming {
             if !appBundleID.isEmpty, conversation.scopeBundleId.isEmpty, !conversation.messages.isEmpty {
                 conversation.scopeBundleId = appBundleID
                 conversation.scopeAppName = appName
@@ -620,7 +622,7 @@ final class AppChatPromptModel: ObservableObject {
             stopAwaitingAnswer()
             // So did a conversation on screen or put away by its ⌄.
             hasPresentedConversation = false
-            isConversationHidden = true
+            isConversationHidden = isEnteringGlobal
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
             savedChatCache = nil
@@ -848,7 +850,7 @@ final class AppChatPromptModel: ObservableObject {
     /// The chat sheet put away — by its ⌄ (owner 2026-10-08), or ⌫ / ↓ on the empty field
     /// (2026-10-16): the conversation is kept, a turn keeps running, and the field's ⌃ or ↑
     /// brings it back (`showConversation`).
-    @Published private(set) var isConversationHidden = false
+    @Published var isConversationHidden = false
 
     @discardableResult
     func hideConversation() -> Bool {
@@ -1105,7 +1107,7 @@ final class AppChatPromptModel: ObservableObject {
         // A scope the user chose is not the frontmost app's to take. Global Context, a tool,
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
-        guard !isGlobalScope, !returnsToGlobalScope, CornerChatPresentation.shared.mode != .globalContext else { return }
+        guard !isGlobalScope, !returnsToGlobalScope else { return }
         // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
         // on the app it was pinned in, whatever comes forward after.
         guard !isPinned else { return }

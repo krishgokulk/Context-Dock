@@ -186,10 +186,12 @@ extension AppChatPromptModel {
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
             rows += globalSourceRows(for: typed)
-            // Frontmost app contextual actions (or active Finder folder when Finder is in front).
-            rows += frontmostContextualActionRows(for: typed)
-            // Bounded Files & Folders from user-configured (or safe default) directories.
-            rows += globalFileAndFolderRows(for: lookup)
+            if globalResultSource === GlobalContextResultSource.shared {
+                // Frontmost app contextual actions (or active Finder folder when Finder is in front).
+                rows += frontmostContextualActionRows(for: typed)
+                // Bounded Files & Folders from user-configured (or safe default) directories.
+                rows += globalFileAndFolderRows(for: lookup)
+            }
             // When native Window layouts answer the query (e.g. "centre", "left", "maximize"),
             // drop duplicate Menu commands with the same title (e.g. "Window ▸ Centre" in 11 apps)
             // so the frontmost app's Window layout leads as Top Hit.
@@ -1846,7 +1848,7 @@ extension AppChatPromptModel {
                 if headers[index] != nil { slots.append(true) }
                 slots.append(false)
             }
-            let slotLimit = (isGlobalScope || scopedCommand?.isWindowsBoard == true)
+            let slotLimit = ((isGlobalScope && headers.count >= 3) || scopedCommand?.isWindowsBoard == true)
                 ? Self.globalVisibleSlotLimit
                 : Self.menuRowLimit
             var count = min(slots.count, slotLimit)

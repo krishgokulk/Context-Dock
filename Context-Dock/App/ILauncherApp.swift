@@ -164,7 +164,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
     }
 
-    private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
+    func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated, !Self.isSystemAgentUI(app) else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
         if let bundleID = app.bundleIdentifier, !bundleID.isEmpty, bundleID != ownBundleID {
