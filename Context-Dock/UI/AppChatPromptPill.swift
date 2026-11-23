@@ -1301,31 +1301,8 @@ struct AppChatPromptPill: View {
                     .layoutPriority(1)
             }
 
-            if model.isGlobalScope, !model.isClipboardScope, model.query.count < 16 {
-                let microPills = model.frontmostPinnedMicroPills(limit: 3)
-                if !microPills.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(microPills, id: \.pin.id) { item in
-                            Button {
-                                model.openAppPin(item.pin)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: item.symbol)
-                                        .font(.system(size: 10, weight: .medium))
-                                    Text(item.pin.title)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 4)
-                                .background(Color.primary.opacity(0.08), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Run pinned \(item.pin.title)")
-                        }
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                }
+            if model.isGlobalScope, !model.isClipboardScope {
+                UnifiedFrontmostBar(model: model)
             }
 
             ZStack(alignment: .leading) {

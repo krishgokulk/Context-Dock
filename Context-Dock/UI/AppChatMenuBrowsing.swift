@@ -149,6 +149,15 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
+            if typed.isEmpty {
+                rows = []
+                focusedMenuIndex = nil
+                menuMatches = []
+                updateGlobalTyping(for: typed)
+                updateGhostText(for: typed)
+                syncListPhase()
+                return
+            }
             // Looked up without its time words: "pdf today" finds PDFs, and the time then
             // keeps today's (S3). The rest reads the words as typed.
             let lookup = GlobalQuery.searchText(typed)
@@ -173,6 +182,8 @@ extension AppChatPromptModel {
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
             rows += globalSourceRows(for: typed)
+            // Frontmost app contextual actions (or active Finder folder when Finder is in front).
+            rows += frontmostContextualActionRows(for: typed)
             // A time named — "today", "last week" — keeps only what happened then, with the
             // history of that time looked up for it (S3). Apps and commands stay.
             if let range = GlobalQuery.timeRange(in: typed) {
@@ -1833,7 +1844,14 @@ extension AppChatPromptModel {
         // The list closed back to just the field after a few seconds of nobody looking at
         // it, the same way the dock's own results sheet is never open until the arrow
         // keys ask for it. Reaching for it now is exactly that ask.
-        if phase == .prompt { set(.suggesting) }
+        if phase == .prompt {
+            set(.suggesting)
+            if isGlobalScope, query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                rows.isEmpty
+            {
+                populateEmptyGlobalContextBoard()
+            }
+        }
         if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             focusedMenuIndex = DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: 3)
             touch()

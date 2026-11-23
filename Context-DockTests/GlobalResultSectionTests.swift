@@ -181,15 +181,16 @@ struct UnifiedGlobalLauncherSectionTests {
 
     @Test func pinnedSectionRanksFirstInCanonicalOrder() {
         let appRow = pill("Safari", section: GlobalResultSection.applications)
+        let contextRow = pill("New Tab", section: GlobalResultSection.contextualActionsTitle(forApp: "Safari"))
         let windowRow = pill("Left", section: GlobalResultSection.windowLayouts)
         let pinnedRow = pill("Export PDF", section: GlobalResultSection.pinnedSectionTitle(forApp: "Safari"))
 
         let grouped = GlobalResultSection.grouped(
-            [appRow, windowRow, pinnedRow],
+            [appRow, windowRow, contextRow, pinnedRow],
             query: "e",
             useCanonicalSectionOrder: true
         )
-        #expect(grouped.first?.title == "Export PDF")
+        #expect(grouped.map(\.title) == ["Export PDF", "New Tab", "Safari", "Left"])
     }
 
     @Test func windowManagementKeywordsMatchAllCanonicalCommands() {

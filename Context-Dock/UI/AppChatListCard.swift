@@ -1072,7 +1072,7 @@ struct AppChatListCard: View {
                 Text(pill.sourceAppName).font(.system(size: 10)).foregroundStyle(.secondary)
                 Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
             } else if model.isGlobalScope {
-                RowStatus(foot: model.foot(for: .dock(pill)))
+                RowStatus(foot: model.foot(for: .dock(pill)), shortcut: pill.keyboardShortcutLabel)
             } else if let shortcut = pill.keyboardShortcutLabel {
                 Text(shortcut).font(.system(size: 10)).foregroundStyle(.secondary)
             }
