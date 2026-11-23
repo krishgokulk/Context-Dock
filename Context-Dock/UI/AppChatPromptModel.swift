@@ -607,10 +607,9 @@ final class AppChatPromptModel: ObservableObject {
         name: String, bundleID: String, suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
-        let outgoing = scopeKey
-        let incoming = Self.scopeKey(name: name, bundleID: bundleID)
-        let leavingChat = outgoing != incoming && phase == .chat
-        if outgoing != incoming {
+        let isEnteringGlobal = incoming == Self.scopeKey(name: Self.globalScopeName, bundleID: "")
+        let leavingChat = (outgoing != incoming || isEnteringGlobal) && phase == .chat
+        if outgoing != incoming || isEnteringGlobal {
             if !appBundleID.isEmpty, conversation.scopeBundleId.isEmpty, !conversation.messages.isEmpty {
                 conversation.scopeBundleId = appBundleID
                 conversation.scopeAppName = appName
@@ -621,7 +620,7 @@ final class AppChatPromptModel: ObservableObject {
             stopAwaitingAnswer()
             // So did a conversation on screen or put away by its ⌄.
             hasPresentedConversation = false
-            isConversationHidden = false
+            isConversationHidden = true
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
             savedChatCache = nil
@@ -630,7 +629,7 @@ final class AppChatPromptModel: ObservableObject {
         appBundleID = bundleID
         showSuggestions(suggestions)
         capabilitySummary = summary
-        if leavingChat {
+        if leavingChat || isEnteringGlobal {
             set(restingInputPhase)
         }
     }
@@ -1005,6 +1004,7 @@ final class AppChatPromptModel: ObservableObject {
     /// being a list of subcommands, and when the answer landed nothing put it back, so the
     /// tool looked like it had ignored the question entirely.
     private func followConversation(messages incoming: [AIChatMessage]) {
+        guard !isGlobalScope else { return }
         if incoming.isEmpty {
             // Our own question emptied it. Hold the card until the turn either shows up or
             // gives up, rather than treating the clear as "there is nothing here".
@@ -1464,11 +1464,13 @@ final class AppChatPromptModel: ObservableObject {
         focusedMenuIndex = nil
         query = ""
         attachments = []
-        hasPresentedConversation = true
-        awaitingAnswer = true
-        isConversationHidden = false
-        armAnswerWatchdog()
-        set(.chat)
+        if !isGlobalScope {
+            hasPresentedConversation = true
+            awaitingAnswer = true
+            isConversationHidden = false
+            armAnswerWatchdog()
+            set(.chat)
+        }
         touch()
         return true
     }

@@ -657,6 +657,8 @@ extension AppChatPromptModel {
             }
             MenuWarmCacheService.shared.warmRunningAppsForDock(runningApps, maxApps: 12)
         }
+        hasPresentedConversation = false
+        isConversationHidden = true
         refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)

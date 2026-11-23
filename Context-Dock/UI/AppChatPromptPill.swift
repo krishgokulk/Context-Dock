@@ -956,7 +956,7 @@ struct AppChatPromptPill: View {
     /// simply the empty transcript: they occupy the same space answers will use later.
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.phase == .chat {
+            if model.phase == .chat, !model.isGlobalScope {
                 header
                 Divider().opacity(0.18)
                 // The card splits like Claude's chat (#191): the conversation on the left,
