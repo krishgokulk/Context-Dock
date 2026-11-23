@@ -28,37 +28,40 @@ There is **only ONE launcher surface**:
 When the user types a query or presses `↓` (Down Arrow) on the resting pill, results expand upward in a Siri/Raycast-grade layout:
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  UNIFIED DOCK RESULTS BOARD (Expands on ↓)                             │
-│                                                                        │
-│  ★ TOP HIT (Learned Frecency Favorite / Exact Match)                   │
-│    [ 🚀 ] Safari.app                     Applications       ↵ Open     │
-│                                                                        │
-│  ── CONTEXTUAL ACTIONS (Frontmost: Safari) ──────────────────────────  │
-│    [ 📄 ] Export as PDF…                 Safari Menu        ⌘2        │
-│    [ 🔗 ] Copy Clean URL                 Safari Action      ⌘3        │
-│                                                                        │
-│  ── APPLICATIONS ────────────────────────────────────────────────────  │
-│    [ 🚀 ] Slack.app                      Applications       ⌘4        │
-│    [ 🚀 ] Terminal.app                   Applications       ⌘5        │
-│                                                                        │
-│  ── COMMANDS & SHORTCUTS ────────────────────────────────────────────  │
-│    [ ⚙️ ] Lock Screen                    System Action      ⌘6        │
-│    [ 🌙 ] Dark Mode                      System Action      ⌘7        │
-│                                                                        │
-│  ── OPEN TABS ───────────────────────────────────────────────────────  │
-│    [ 🌐 ] GitHub Pull Requests           Safari Tab         ⌘8        │
-│                                                                        │
-│  ── FILES & FOLDERS (Strictly user-configured folders) ──────────────  │
-│    [ 📁 ] ~/Documents/Roadmap.pdf        Documents Folder   ⌘9        │
-│                                                                        │
-│  ── INTELLIGENT AI & WEB FALLBACKS ─────────────────────────────────── │
-│    [ ✨ ] Ask Dora: "<query>"            General AI Chat    ↵ / Tab    │
-│    [ 🤖 ] Ask Safari Pet: "<query>"      Frontmost Context  ⌥↵         │
-│    [ 🌐 ] Search Google for "<query>"    Default Browser    ⌘↵         │
-├────────────────────────────────────────────────────────────────────────┤
-│  🔍 [ ✳️ Safari ⌄ ]  Search or ask anything…     [ + ] [ 📌 ] [ ⌃ ]   │
-└────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  UNIFIED DOCK RESULTS BOARD (Expands on ↓)                                             │
+│                                                                                        │
+│  ★ PINNED FOR SAFARI (User Pinned Actions & Menus via ⌘P)                              │
+│    [ 📌 📄 ] Export as PDF…                      Safari Menu          ↵ / ⌘1           │
+│    [ 📌 🔗 ] Copy Clean URL                      Safari Action        ⌘2               │
+│    [ 📌 🌐 ] PR Dashboard (github.com)           Pinned Tab           ⌘3               │
+│                                                                                        │
+│  ── CONTEXTUAL ACTIONS (Frontmost: Safari) ──────────────────────────────────────────  │
+│    [ 📄 ] Export as PDF…                         Safari Menu          ⌘4               │
+│    [ 🔗 ] Copy Clean URL                         Safari Action        ⌘5               │
+│                                                                                        │
+│  ── APPLICATIONS ────────────────────────────────────────────────────────────────────  │
+│    [ 🟢 🚀 ] Safari.app                          Running              ⌘6               │
+│    [ 🟢 🚀 ] Slack.app                           Running              ⌘7               │
+│    [    🚀 ] Terminal.app                        Installed            ⌘8               │
+│                                                                                        │
+│  ── COMMANDS & SHORTCUTS ────────────────────────────────────────────────────────────  │
+│    [ ⚙️ ] Lock Screen                            System Action        ⌘9               │
+│    [ 🌙 ] Dark Mode                              System Action                         │
+│                                                                                        │
+│  ── OPEN TABS ───────────────────────────────────────────────────────────────────────  │
+│    [ 🌐 ] GitHub Pull Requests                   Safari Tab                            │
+│                                                                                        │
+│  ── FILES & FOLDERS (Strictly user-configured folders) ──────────────────────────────  │
+│    [ 📁 ] ~/Documents/Roadmap.pdf                Documents Folder                      │
+│                                                                                        │
+│  ── INTELLIGENT AI & WEB FALLBACKS ─────────────────────────────────────────────────── │
+│    [ ✨ ] Ask Dora: "<query>"                    General AI Chat      ↵ / Tab          │
+│    [ 🤖 ] Ask Safari Pet: "<query>"              Frontmost Context    ⌥↵               │
+│    [ 🌐 ] Search Google for "<query>"            Default Browser      ⌘↵               │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  🔍 [ ✳️ Safari ⌄ ] [ 📄 PDF ] [ 🔗 URL ]  Search or ask anything…   [ + ] [ 📌 ] [ ⌃ ]│
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -124,6 +127,21 @@ When the user summons the launcher (e.g. `⌥⌥` at center of display with 3 ap
 - Direct shortcut `⌘,` (Command-Comma) for launching Frontmost App Chat remains **completely intact and preserved**.
 - Pressing `⌘,` bypasses universal search and opens directly into the Frontmost App Pet conversation.
 
+### 3.8 Pinned Actions Satellite Micro-Pills & Contextual Elevation
+Adopting Context Dock pin menus directly into the unified surface replaces the separate dock with high-efficiency access points:
+1. **Frontmost App Satellite Micro-Pills (Prompt Bar):**
+   - Beside the frontmost app chip (`[ ✳️ FrontmostApp ⌄ ]`), surface the user's top 2–3 pinned actions as compact clickable micro-pills (`[ 📄 PDF ] [ 🔗 URL ]`).
+   - Clicking executes the command or adapter action with $0\text{ms}$ delay.
+   - Smoothly collapses into the app chevron dropdown when long queries are typed.
+2. **Results Board Elevation (`★ Pinned for <App>`):**
+   - When the frontmost app has pinned items (`DockPinStore.shared.pins(forApp: bundleID)`), they appear at the top of the board with a distinct `📌` badge.
+   - Pinned items receive a `+300` score boost on matching query strings, placing them at Row 0 for instant execution.
+   - Numbered shortcuts (`⌘1`, `⌘2`, `⌘3`) are assigned for muscle-memory execution.
+3. **Running App Row Hover & Quick Menus:**
+   - In the running apps row, hovering or secondary-clicking any running app pill exposes that app's pinned actions in a lightweight popover, allowing instant cross-app execution without window switching.
+4. **Zero-Friction Pinning (`⌘P`):**
+   - Highlighting any menu item, action, tab, or file in search results and pressing `⌘P` toggles pin status for the active app via `toggleAppPin(row)`.
+
 ---
 
 ## 4. Implementation Roadmap
@@ -133,16 +151,19 @@ When the user summons the launcher (e.g. `⌥⌥` at center of display with 3 ap
 - Preserve `⌘,` for direct Frontmost App Chat.
 - Ensure smooth toggle behavior (hotkey opens, hotkey closes).
 
-### Phase 2: Running App Green Dot & Window Management in Global Context
+### Phase 2: Running App Green Dot, Window Management & Pinned Action Pills
 - Add green status indicator to running application rows in `AppChatListCard.swift`.
 - Surface `WindowManagementService` commands under `Window layouts` section in Global Context.
+- Display pinned actions satellite micro-pills beside frontmost app chip in resting prompt.
 
 ### Phase 3: Strict Bounded File Search Enforcement
 - Wire `AppSettings.shared.useCustomSearchDirectories` and `AppSettings.shared.searchDirectories` into all Spotlight and file search passes.
 - Restrict disk searches to user-approved folders.
 
-### Phase 4: Dual AI Fallbacks & Frontmost Actions Grouping
+### Phase 4: Dual AI Fallbacks, Pinned Elevation & Frontmost Actions Grouping
 - Implement `Ask Dora` (`↵`) and `Ask <App> Pet` (`⌥↵`) fallback pills in `GlobalFallbacks.swift`.
-- Group frontmost app actions immediately below Top Hit when an app is active.
+- Group frontmost app actions immediately below Top Hit/Pinned Actions when an app is active.
+- Elevate pinned actions for the frontmost app to the top of contextual results.
 - Verify unit tests across `GlobalQueryTests`, `GlobalResultSectionTests`, and `CornerGlobalContextParityTests`.
+
 
