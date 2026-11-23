@@ -150,6 +150,7 @@ extension AppChatPromptModel {
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
             if typed.isEmpty {
+                globalFileSearchGeneration &+= 1
                 rows = []
                 focusedMenuIndex = nil
                 menuMatches = []
@@ -238,6 +239,7 @@ extension AppChatPromptModel {
             updateGlobalTyping(for: typed)
             updateGhostText(for: typed)
             syncListPhase()
+            appendGlobalDiskMatches(for: lookup)
             return
         }
         if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,

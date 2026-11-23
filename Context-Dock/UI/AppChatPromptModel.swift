@@ -285,6 +285,7 @@ final class AppChatPromptModel: ObservableObject {
     var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    var globalFileSearchGeneration = 0
     /// The folder Finder's front window shows — the Desktop when no window is open — read
     /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
     var finderFrontFolder: URL?

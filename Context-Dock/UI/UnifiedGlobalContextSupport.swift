@@ -212,14 +212,36 @@ extension AppChatPromptModel {
         var seenPaths = Set<String>()
         var results: [AppChatRow] = []
 
-        // 1. Bounded root folders themselves (e.g. ~/Downloads, ~/Documents, ~/Desktop)
-        for root in roots where results.count < limit {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+
+        // 1. Bounded root folders themselves + fast depth-1 scan of user folders (works with Spotlight off).
+        var fastScanDirs = roots
+        if roots.contains(home) {
+            fastScanDirs = FileSearchService.defaultRoots(homeDirectory: home) + roots
+        }
+        for root in fastScanDirs where results.count < limit {
             let url = URL(fileURLWithPath: root, isDirectory: true)
             let name = url.lastPathComponent.lowercased()
-            if name.contains(lower), FileManager.default.fileExists(atPath: root) {
+            if name.contains(lower), fm.fileExists(atPath: root) {
                 let std = url.standardizedFileURL.path
                 if seenPaths.insert(std).inserted {
                     results.append(.file(url))
+                }
+            }
+            guard results.count < limit,
+                let children = try? fm.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+            else { continue }
+            for child in children.prefix(250) where results.count < limit {
+                if child.lastPathComponent.lowercased().contains(lower) {
+                    let std = child.standardizedFileURL.path
+                    if seenPaths.insert(std).inserted {
+                        results.append(.file(URL(fileURLWithPath: std)))
+                    }
                 }
             }
         }
@@ -238,5 +260,59 @@ extension AppChatPromptModel {
         }
 
         return results
+    }
+
+    /// Async deeper bounded disk/Spotlight search for Global Context (handles Macs with Spotlight off).
+    func appendGlobalDiskMatches(for typed: String) {
+        globalFileSearchGeneration &+= 1
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return }
+        let generation = globalFileSearchGeneration
+        let settings = AppSettings.shared
+        let roots = FileSearchService.boundedRoots(
+            useCustom: settings.useCustomSearchDirectories,
+            customDirectories: settings.searchDirectories.map(\.path)
+        )
+        guard !roots.isEmpty else { return }
+
+        Task.detached(priority: .userInitiated) {
+            var options = FileSearchService.Options(roots: roots)
+            options.maxResults = 8
+            options.maxDepth = 4
+            options.maxVisited = 8_000
+            options.scanTimeBudget = 0.4
+            let outcome = FileSearchService.search(query: trimmed, options: options)
+            guard !outcome.paths.isEmpty else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                    self.globalFileSearchGeneration == generation,
+                    self.isGlobalScope
+                else { return }
+                let existingPaths = Set(self.rows.compactMap { row -> String? in
+                    if case .file(let url) = row { return url.standardizedFileURL.path }
+                    return nil
+                })
+                let newRows = outcome.paths
+                    .map { URL(fileURLWithPath: $0).standardizedFileURL }
+                    .filter { !existingPaths.contains($0.path) }
+                    .prefix(6)
+                    .map { AppChatRow.file($0) }
+                guard !newRows.isEmpty else { return }
+
+                let focusedID = self.focusedRow?.id
+                if let fallbackIdx = self.rows.firstIndex(where: {
+                    GlobalResultSection.title(for: $0) == GlobalFallbacks.section
+                }) {
+                    self.rows.insert(contentsOf: newRows, at: fallbackIdx)
+                } else {
+                    self.rows.append(contentsOf: newRows)
+                }
+                self.focusedMenuIndex = focusedID.flatMap { id in
+                    self.rows.firstIndex { $0.id == id }
+                }
+                self.syncListPhase()
+            }
+        }
     }
 }
