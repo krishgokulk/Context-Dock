@@ -112,7 +112,8 @@ extension AppChatPromptModel {
         return dockPins.pins(forApp: bundleID)
             .filter { pin in
                 let title = pin.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty, pin.kind != .app, title.lowercased() != appName else { return false }
+                guard !title.isEmpty, title.lowercased() != appName else { return false }
+                if case .app = pin.kind { return false }
                 return true
             }
             .prefix(limit)
