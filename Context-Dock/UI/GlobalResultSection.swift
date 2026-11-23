@@ -74,12 +74,34 @@ enum GlobalResultSection {
         }
     }
 
-    /// The rows gathered by section: each section where its first (best) row stood, its rows
-    /// in their own order.
-    /// Within a section, the rows of the app the words name come first: "tailscale" put
-    /// Obsidian's and Preview's "Tailscale" windows above Tailscale's own "About Tailscale"
-    /// (owner 2026-10-17). Otherwise each row keeps its place.
-    static func grouped(_ rows: [AppChatRow], query: String = "") -> [AppChatRow] {
+    /// Canonical order of sections for Global Context search results (Raycast / Spotlight hierarchy).
+    static let canonicalOrder: [String] = [
+        applications,
+        commands,
+        openTabs,
+        menuCommands,
+        actions,
+        windowLayouts,
+        files,
+        web,
+        "Contacts",
+        "Calendar & Notes"
+    ]
+
+    /// The rows gathered by section. When `useCanonicalSectionOrder` is true, sections are ordered
+    /// according to `canonicalOrder` (Raycast / Spotlight hierarchy: Applications first, then Commands,
+    /// Open tabs, Menu commands, Actions, Window layouts, Files & Folders, Web, etc.).
+    /// Within a section, rows are prioritized by:
+    /// 1. Named app relevance (if query names the app)
+    /// 2. Exact match on title
+    /// 3. Prefix match on title
+    /// 4. Frecency boost from UsageTracker
+    /// 5. Preserved original score/order
+    static func grouped(
+        _ rows: [AppChatRow],
+        query: String = "",
+        useCanonicalSectionOrder: Bool = false
+    ) -> [AppChatRow] {
         var order: [String] = []
         var bySection: [String: [AppChatRow]] = [:]
         for row in rows {
@@ -87,14 +109,55 @@ enum GlobalResultSection {
             if bySection[title] == nil { order.append(title) }
             bySection[title, default: []].append(row)
         }
+
+        if useCanonicalSectionOrder {
+            order.sort { s1, s2 in
+                let idx1 = canonicalOrder.firstIndex(of: s1) ?? Int.max
+                let idx2 = canonicalOrder.firstIndex(of: s2) ?? Int.max
+                if idx1 != idx2 { return idx1 < idx2 }
+                return s1 < s2
+            }
+        }
+
         let typed = query.lowercased()
         func isNamed(_ row: AppChatRow) -> Bool {
             let app = appName(of: row).lowercased()
             return !app.isEmpty && typed.contains(app)
         }
+
         return order.flatMap { section -> [AppChatRow] in
-            let rows = bySection[section] ?? []
-            return rows.filter(isNamed) + rows.filter { !isNamed($0) }
+            let sectionRows = bySection[section] ?? []
+            if typed.isEmpty {
+                return sectionRows
+            }
+            if !useCanonicalSectionOrder {
+                return sectionRows.filter(isNamed) + sectionRows.filter { !isNamed($0) }
+            }
+
+            return sectionRows.sorted { a, b in
+                let aNamed = isNamed(a)
+                let bNamed = isNamed(b)
+                if aNamed != bNamed { return aNamed && !bNamed }
+
+                let aTitle = a.title.lowercased()
+                let bTitle = b.title.lowercased()
+
+                let aExact = aTitle == typed
+                let bExact = bTitle == typed
+                if aExact != bExact { return aExact }
+
+                let aPrefix = aTitle.hasPrefix(typed)
+                let bPrefix = bTitle.hasPrefix(typed)
+                if aPrefix != bPrefix { return aPrefix }
+
+                let aFrecency = UsageTracker.shared.getScore(for: a.id)
+                let bFrecency = UsageTracker.shared.getScore(for: b.id)
+                if abs(aFrecency - bFrecency) > 10 {
+                    return aFrecency > bFrecency
+                }
+
+                return false
+            }
         }
     }
 

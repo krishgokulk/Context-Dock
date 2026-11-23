@@ -53,6 +53,29 @@ struct GlobalResultSectionTests {
         #expect(GlobalResultSection.headers(for: rows) == [0: "Applications", 2: "Menu commands"])
         #expect(GlobalResultSection.headers(for: [.cliSuggestion("status")]).isEmpty)
     }
+
+    @Test func canonicalSectionOrderRanksApplicationsAboveMenusAndFiles() {
+        let rows = [
+            pill("Quit Safari", kind: "menu"),
+            pill("readme.md", kind: "file"),
+            pill("Safari", section: "Applications"),
+            pill("Lock Screen", kind: "systemCommand")
+        ]
+        let canonical = GlobalResultSection.grouped(rows, query: "s", useCanonicalSectionOrder: true)
+        let headers = GlobalResultSection.headers(for: canonical)
+        #expect(canonical.first?.title == "Safari")
+        #expect(headers[0] == "Applications")
+    }
+
+    @Test func intraSectionPriorityPutsExactAndPrefixMatchesFirst() {
+        let rows = [
+            pill("Mastermind", section: "Applications"),
+            pill("Terminal", section: "Applications"),
+            pill("iTerm", section: "Applications")
+        ]
+        let ranked = GlobalResultSection.grouped(rows, query: "term", useCanonicalSectionOrder: true)
+        #expect(ranked.map(\.title) == ["Terminal", "Mastermind", "iTerm"])
+    }
 }
 
 /// Long sections show their best rows and "Show N more" (#258 G4).

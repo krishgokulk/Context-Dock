@@ -131,7 +131,21 @@ enum GlobalQuery {
             return commandHit
         }
 
-        // 2. Named app's own command whose app the words name and whose title holds every asked word
+        // 2. Direct Application exact or prefix match (e.g. "safari" -> Safari, "term" -> Terminal, "calc" -> Calculator)
+        if let exactApp = rows.first(where: { row in
+            guard GlobalResultSection.title(for: row) == GlobalResultSection.applications else { return false }
+            return row.title.lowercased() == trimmed
+        }) {
+            return exactApp
+        }
+        if let prefixApp = rows.first(where: { row in
+            guard GlobalResultSection.title(for: row) == GlobalResultSection.applications else { return false }
+            return row.title.lowercased().hasPrefix(trimmed)
+        }) {
+            return prefixApp
+        }
+
+        // 3. Named app's own command whose app the words name and whose title holds every asked word
         let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty })
         let asked = askedWords(in: query, appNames: appNames)
         guard !asked.isEmpty else { return nil }
