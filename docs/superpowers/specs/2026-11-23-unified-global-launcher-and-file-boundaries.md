@@ -107,22 +107,42 @@ When a query is conversational or the user reaches the fallbacks:
    - Action: Opens default browser search.
    - Shortcut: `⌘↵` (Cmd-Return).
 
+### 3.5 Raycast-Grade Window Management in Global Context
+When the user summons the launcher (e.g. `⌥⌥` at center of display with 3 apps open) and types window commands:
+- **Keywords:** `left`, `right`, `center`, `centre`, `max`, `maximize`, `fill`, `tile`, `arrange`, `thirds`.
+- **Targeting Invariant:**
+  - Window commands execute through `WindowManagementService.shared.execute(command, sourceApp: frontmostApp)` targeting the **active window of the underlying frontmost application** that had focus before the launcher opened.
+  - If user types `left` and hits `↵`, the active app (e.g. Safari) snaps to the left half instantly ($0\text{ms}$).
+  - If user types `tile` or `arrange`, `WindowManagementService` arranges all open windows across the current desktop.
+- **Section Placement:** Appears under the **`Window Layouts`** section with layout glyphs (◧, ◨, ⊡, ⬚, ▦).
+
+### 3.6 Running Applications Visual Indicator (Green Status Dot)
+- In Global Context search results, rows in the `Applications` section display a subtle **green status dot** beside the icon or title for applications that are currently active/running (`isRunningApp == true`).
+- Dormant/installed applications show no dot, giving the user immediate visual clarity whether Return will switch to an existing window or launch a new process.
+
+### 3.7 Frontmost App Chat Hotkey Invariant (`⌘,`)
+- Direct shortcut `⌘,` (Command-Comma) for launching Frontmost App Chat remains **completely intact and preserved**.
+- Pressing `⌘,` bypasses universal search and opens directly into the Frontmost App Pet conversation.
+
 ---
 
 ## 4. Implementation Roadmap
 
 ### Phase 1: Dual Hotkey Alignment (`ILauncherApp.swift`)
 - Map `⌘⌘` and `⌥⌥` to open the same unified Global Context launcher.
+- Preserve `⌘,` for direct Frontmost App Chat.
 - Ensure smooth toggle behavior (hotkey opens, hotkey closes).
 
-### Phase 2: Dual AI Fallbacks (`GlobalFallbacks.swift` & `AppChatMenuBrowsing.swift`)
-- Implement `Ask Dora` and `Ask <App> Pet` fallback pills.
-- Add keyboard shortcuts (`↵`, `⌥↵`, `⌘↵`) for instant execution.
+### Phase 2: Running App Green Dot & Window Management in Global Context
+- Add green status indicator to running application rows in `AppChatListCard.swift`.
+- Surface `WindowManagementService` commands under `Window layouts` section in Global Context.
 
-### Phase 3: Bounded File Search Enforcement
+### Phase 3: Strict Bounded File Search Enforcement
 - Wire `AppSettings.shared.useCustomSearchDirectories` and `AppSettings.shared.searchDirectories` into all Spotlight and file search passes.
 - Restrict disk searches to user-approved folders.
 
-### Phase 4: Contextual Frontmost Actions Grouping (`GlobalResultSection.swift`)
+### Phase 4: Dual AI Fallbacks & Frontmost Actions Grouping
+- Implement `Ask Dora` (`↵`) and `Ask <App> Pet` (`⌥↵`) fallback pills in `GlobalFallbacks.swift`.
 - Group frontmost app actions immediately below Top Hit when an app is active.
 - Verify unit tests across `GlobalQueryTests`, `GlobalResultSectionTests`, and `CornerGlobalContextParityTests`.
+

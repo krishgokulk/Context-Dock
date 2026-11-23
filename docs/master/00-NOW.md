@@ -10,16 +10,24 @@
 
 ## In progress
 
-**#397: Foundation Models native image input: pass screenshots directly instead of OCR fallback (branch `claude/task-397-foundation-models-native-image`):**
-- Spec: GitHub Issue #397 & `docs/master/00-NOW.md`.
-- Replace Vision OCR text-extraction fallback in `OnDeviceToolBridge.swift` (`stream()` and `respond()`) with native Foundation Models multimodal image input (`@available(macOS 26.4, *)`).
-- Maintain existing Vision OCR text-extraction path as graceful fallback on macOS 26.0–26.3.
-- Update `AIContextBudget` token accounting if native image input introduces dedicated image token allocations.
-- Tests: Add unit tests verifying direct multimodal attachment passing on macOS 26.4+ and fallback to OCR on earlier runtimes.
+**Unified Global Launcher, Bounded Search, Green Dots & Raycast Window Management:**
+- Spec: `docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`
+- Owner Decision: 2026-11-23 (Single unified Liquid Glass launcher surface for both `⌘⌘` and `⌥⌥`; frontmost app chat invariant at `⌘,`).
+- Scope:
+  1. **Dual Hotkey Alignment (`ILauncherApp.swift`):** Both `⌘⌘` (double-Command) and `⌥⌥` (double-Option) summon the Unified Global Launcher at center/bottom. `⌘,` remains reserved for direct Frontmost App Chat.
+  2. **Raycast-Grade Window Management in Global Context:** Text queries like `left`, `right`, `center`, `maximize`, `tile`, `arrange` in Global Context execute `WindowManagementService` on the underlying active frontmost app window (0ms native snap) and display under `Window layouts`.
+  3. **Running Application Visual Indicator:** Applications section in Global Context displays a subtle green status dot for currently running applications (`isRunningApp == true`).
+  4. **Strict Bounded File Search:** Restrict disk searches to user-selected folders in App Settings (`settings.useCustomSearchDirectories` / `settings.searchDirectories`).
+  5. **Dual AI Fallback:** `Ask Dora` (`↵` for General AI Chat), `Ask <App> Pet` (`⌥↵` for Frontmost App Pet), `Search Google` (`⌘↵`).
+- Tests: Add & update tests in `GlobalQueryTests.swift`, `GlobalResultSectionTests.swift`, `CornerGlobalContextParityTests.swift`, `DockKeyRulesTests.swift`.
 
 ## Queued (next)
 
-- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → ~~#412~~ H5 merged → #397 in progress.
+- **#397: Foundation Models native image input: pass screenshots directly instead of OCR fallback (branch `claude/task-397-foundation-models-native-image`):**
+  - Spec: GitHub Issue #397 & `docs/master/00-NOW.md`.
+  - Replace Vision OCR text-extraction fallback in `OnDeviceToolBridge.swift` (`stream()` and `respond()`) with native Foundation Models multimodal image input (`@available(macOS 26.4, *)`).
+  - Maintain existing Vision OCR text-extraction path as graceful fallback on macOS 26.0–26.3.
+- **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → ~~#412~~ H5 merged.
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
@@ -960,7 +968,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-11-18 | **U6 & U7 — Spec archival, Dynamic Notch `.doraxpack` v2 (`views.notch`), and Apple `container` sandbox:** (U6, PR #479) archive pre-November superseded specs into `docs/history/specs/` with `docs/README.md`; (U7, PRs #480 & #481) unify Notch window tiling with `WindowManagementService.shared`, add `.notch` (`wing` + `page`) to `PluginManifest`, add `NotchPinStore` + `[ + Notch ]` per-app action strip, and support optional Apple `container` CLI micro-VM sandboxing in `PluginScriptRunner`. |
 | 2026-11-20 | **U8 — Last-mile blueprint wiring (`U8a–U8d`):** wire `AgenticAIPackBuilder` + `OwnerReviewCard` into `PluginCreatorPane` and `DynamicNotchLiveActivityView` (`U8a`), wire `SafariEscalationPolicy` + `ExtensionHookRegistry` into `CapabilityRegistry` and `AppScopedChatService` (`U8b`), complete `StorePackInstaller.installV2` binding for `CapabilityRegistry`/`cli_tools`/`mcp_servers`/`modes.json` (`U8c`), and finish `ScopedAppPromptBuilder` 40-menu removal + thread card persistence (`U8d`). |
 | 2026-11-20 | **Unified Spotlight-Pet Surface & General Chat Scope Integrity queued (owner direction):** (1) Queued the **Unified Spotlight-Pet Surface** (spec `docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`) directly into `## Queued (next)` to dissolve modal ⌘/Backspace switching into a single, context-biased intent bar. (2) Queued **General Chat Scope Integrity fix**: eliminate `effectiveBundleId` fallback to frontmost app in `.general` scope (`AppScopedChatService.swift:1885`), stopping frontmost menu bar bleed into global chat; wire native OS fast-paths (0-LLM window arrangement) and post-update running app restart verification card. |
-| 2026-11-23 | **Unified Global Launcher & Bounded File Search (owner direction):** (1) Complete surface unification: no separate Context Dock — both ⌘⌘ and ⌥⌥ open the same Unified Global Launcher in the user's chosen placement (Center or Bottom). (2) Bounded file search: disk/file queries strictly search user-selected folders configured in App Settings (`settings.useCustomSearchDirectories` / `settings.searchDirectories`), protecting privacy and performance. (3) Raycast/Spotlight canonical results grouping: Top Hit -> Frontmost App Actions -> Applications -> Commands -> Open Tabs -> Files & Folders -> Dual AI Fallbacks (`Ask Dora` ↵ for General Chat, `Ask <App> Pet` ⌥↵ for Frontmost App Pet, `Search Google` ⌘↵). (4) Self-learning top hints via `GlobalPickMemory` and `UsageTracker`. Spec: `docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`. |
+| 2026-11-23 | **Unified Global Launcher, Bounded Search, Green Dots & Raycast Window Management (owner direction):** (1) Complete surface unification: no separate Context Dock — both `⌘⌘` and `⌥⌥` open the same Unified Global Launcher in the user's chosen placement (Center or Bottom); `⌘,` remains reserved for direct Frontmost App Chat. (2) Raycast-grade Window Management in Global Context: typing `left`, `right`, `center`, `maximize`, `tile`, `arrange` executes `WindowManagementService` on the underlying active frontmost app window (0ms native snap) and displays under `Window layouts`. (3) Visual indicator: running applications display a green status dot (`isRunningApp == true`). (4) Bounded file search: disk/file queries strictly search user-selected folders configured in App Settings (`settings.useCustomSearchDirectories` / `settings.searchDirectories`), protecting privacy and performance. (5) Raycast/Spotlight canonical results grouping: Top Hit -> Frontmost App Actions -> Applications -> Commands -> Open Tabs -> Window Layouts -> Files & Folders -> Dual AI Fallbacks (`Ask Dora` ↵ for General Chat, `Ask <App> Pet` ⌥↵ for Frontmost App Pet, `Search Google` ⌘↵). (6) Self-learning top hints via `GlobalPickMemory` and `UsageTracker`. Spec: `docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`. |
 
 ## Open decisions (owner)
 
