@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -237,5 +238,29 @@ struct AppScopeDestructiveTests {
             "Ask Dora: summarize",
             "Search Google for “summarize”",
         ])
+    }
+
+    @Test func runningAppFallbacksIncludeFrontmostPetAndRunningAppChatsWithIcons() {
+        let safariIcon = NSImage(size: NSSize(width: 16, height: 16))
+        let notesIcon = NSImage(size: NSSize(width: 16, height: 16))
+        let rows = GlobalFallbacks.rows(
+            for: "draft",
+            appTargets: [
+                GlobalFallbackAppTarget(bundleID: "com.apple.Safari", name: "Safari", icon: safariIcon, isFrontmost: true),
+                GlobalFallbackAppTarget(bundleID: "com.apple.Notes", name: "Notes", icon: notesIcon, isFrontmost: false),
+            ],
+            ask: { _ in },
+            askApp: { _, _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: draft",
+            "Ask Safari Pet: draft",
+            "Ask Notes Chat: draft",
+            "Search Google for “draft”",
+        ])
+        #expect(rows[1].menuItemImage === safariIcon)
+        #expect(rows[2].menuItemImage === notesIcon)
+        #expect(rows[1].keyboardShortcutLabel == "⌥↵")
+        #expect(rows[2].keyboardShortcutLabel == nil)
     }
 }

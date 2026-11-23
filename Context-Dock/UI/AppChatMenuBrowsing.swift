@@ -218,12 +218,16 @@ extension AppChatPromptModel {
             }
                 + GlobalFallbacks.rows(
                     for: typed,
-                    frontmostAppName: AppDelegate.shared?.previousFrontmostApp?.localizedName,
+                    appTargets: globalFallbackAppTargets(),
                     ask: { [weak self] question in
                         self?.askFromGlobal(question)
                     },
-                    askPet: { [weak self] question in
-                        self?.askFrontmostPetFromGlobal(question)
+                    askApp: { [weak self] target, question in
+                        self?.askAppChatFromGlobal(
+                            bundleID: target.bundleID,
+                            name: target.name,
+                            question: question
+                        )
                     }
                 ).map(AppChatRow.dock)
                 + GlobalResultSection.grouped(risky, query: typed, useCanonicalSectionOrder: true)

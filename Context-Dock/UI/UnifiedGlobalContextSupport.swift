@@ -129,4 +129,67 @@ extension AppChatPromptModel {
         }
         focusedMenuIndex = rows.isEmpty ? nil : 0
     }
+
+    /// Running app targets for Siri-style AI fallbacks: frontmost app first, then up to 3
+    /// other currently running regular apps, each carrying its app icon.
+    func globalFallbackAppTargets(runningLimit: Int = 3) -> [GlobalFallbackAppTarget] {
+        let own = Bundle.main.bundleIdentifier
+        var targets: [GlobalFallbackAppTarget] = []
+        var seen = Set<String>()
+
+        if let front = AppDelegate.shared?.previousFrontmostApp,
+            !front.isTerminated,
+            let bundleID = front.bundleIdentifier,
+            !bundleID.isEmpty,
+            bundleID != own
+        {
+            seen.insert(bundleID)
+            targets.append(
+                GlobalFallbackAppTarget(
+                    bundleID: bundleID,
+                    name: front.localizedName ?? "App",
+                    icon: front.icon,
+                    isFrontmost: true
+                )
+            )
+        }
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard targets.count < 1 + runningLimit else { break }
+            guard app.activationPolicy == .regular,
+                !app.isTerminated,
+                let bundleID = app.bundleIdentifier,
+                !bundleID.isEmpty,
+                bundleID != own,
+                seen.insert(bundleID).inserted
+            else { continue }
+            targets.append(
+                GlobalFallbackAppTarget(
+                    bundleID: bundleID,
+                    name: app.localizedName ?? bundleID,
+                    icon: app.icon,
+                    isFrontmost: false
+                )
+            )
+        }
+        return targets
+    }
+
+    /// Opens a running app's App Pet chat from Global Context and submits the question.
+    func askAppChatFromGlobal(bundleID: String, name: String, question: String) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let running = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }
+        let target = CornerChatTarget(
+            name: name,
+            bundleID: bundleID,
+            suggestions: AppChatSuggestionProvider.suggestions(for: running),
+            summary: AppChatSuggestionProvider.summary(for: running)
+        )
+        CornerDockController.shared.chatPresentation.showFrontmostApp(target: target)
+        query = trimmed
+        _ = submit()
+    }
 }

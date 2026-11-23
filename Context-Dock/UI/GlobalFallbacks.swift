@@ -8,6 +8,13 @@
 
 import AppKit
 
+struct GlobalFallbackAppTarget {
+    let bundleID: String
+    let name: String
+    let icon: NSImage?
+    let isFrontmost: Bool
+}
+
 enum GlobalFallbacks {
     static let section = "Fallbacks"
     static let askKind = "fallbackAsk"
@@ -16,19 +23,40 @@ enum GlobalFallbacks {
     static let terminalKind = "fallbackTerminal"
 
     /// The fallback rows for what is typed, in order: Ask Dora (General AI Chat),
-    /// Ask <App> Pet (Frontmost App Pet), Search Google, and optionally Run in Terminal.
+    /// Ask <FrontmostApp> Pet (`⌥↵`), Ask <RunningApp> Chat (with each app's icon),
+    /// Search Google (`⌘↵`, with default browser icon), and optionally Run in Terminal.
     static func rows(
         for typed: String,
         frontmostAppName: String? = nil,
+        appTargets: [GlobalFallbackAppTarget] = [],
         ask: @escaping (String) -> Void,
-        askPet: ((String) -> Void)? = nil
+        askPet: ((String) -> Void)? = nil,
+        askApp: ((GlobalFallbackAppTarget, String) -> Void)? = nil
     ) -> [DockPill] {
         let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
         var rows = [
-            pill("ask", "Ask Dora: \(text)", "sparkles", askKind, shortcut: "↵") { ask(text) },
+            pill(
+                "ask", "Ask Dora: \(text)", "sparkles", askKind,
+                shortcut: "↵", image: NSApp?.applicationIconImage
+            ) { ask(text) },
         ]
-        if let appName = frontmostAppName?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if !appTargets.isEmpty, let askApp {
+            for target in appTargets {
+                let label = target.isFrontmost
+                    ? "Ask \(target.name) Pet: \(text)"
+                    : "Ask \(target.name) Chat: \(text)"
+                let shortcut = target.isFrontmost ? "⌥↵" : nil
+                rows.append(
+                    pill(
+                        "ask-app-\(target.bundleID)", label, "cpu", askPetKind,
+                        shortcut: shortcut, image: target.icon
+                    ) {
+                        askApp(target, text)
+                    }
+                )
+            }
+        } else if let appName = frontmostAppName?.trimmingCharacters(in: .whitespacesAndNewlines),
             !appName.isEmpty, let askPet
         {
             rows.append(
@@ -37,9 +65,18 @@ enum GlobalFallbacks {
                 }
             )
         }
+        let browserIcon: NSImage? = {
+            guard let url = URL(string: "https://www.google.com"),
+                let appURL = NSWorkspace.shared.urlForApplication(toOpen: url)
+            else { return nil }
+            return NSWorkspace.shared.icon(forFile: appURL.path)
+        }()
         // `openWebSearch` asks Google, in the default browser: the row names the engine.
         rows.append(
-            pill("web", "Search Google for “\(text)”", "globe", webKind, shortcut: "⌘↵") {
+            pill(
+                "web", "Search Google for “\(text)”", "globe", webKind,
+                shortcut: "⌘↵", image: browserIcon
+            ) {
                 L2AppActionRouter.openWebSearch(text)
             }
         )
@@ -54,12 +91,14 @@ enum GlobalFallbacks {
     private static func pill(
         _ id: String, _ name: String, _ symbol: String, _ kind: String,
         shortcut: String? = nil,
+        image: NSImage? = nil,
         execute: @escaping () -> Void
     ) -> DockPill {
         var pill = DockPill(id: "fallback-\(id)", name: name, icon: symbol, badge: nil, execute: execute)
         pill.rankingKind = kind
         pill.resultSection = section
         pill.keyboardShortcutLabel = shortcut
+        pill.menuItemImage = image
         return pill
     }
 
