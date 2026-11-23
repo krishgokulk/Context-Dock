@@ -24,6 +24,12 @@
 
 ## Done (most recent first)
 
+**feat(search): Perfectly Order Results in Global Context — The Blueprint (PR #498, merged 2026-11-22 as `12db1943`):**
+- Top Hit elevation for Applications: Direct application exact and prefix matches (`safari` -> Safari, `calc` -> Calculator, `term` -> Terminal) elevate immediately to `Top Hit` (row 0).
+- Canonical Raycast / Spotlight section hierarchy: Global Context groups sections in deterministic order (Applications -> Commands -> Open tabs -> Menu commands -> Actions -> Window layouts -> Files & Folders -> Web/Contacts/Notes).
+- Intra-section ranking: Rows within each section prioritize named app relevance, exact title match, prefix match, and `UsageTracker` frecency.
+- Tests: Added test coverage in `GlobalQueryTests.swift` (`anApplicationMatchingQueryIsTheTopHit`) and `GlobalResultSectionTests.swift` (`canonicalSectionOrderRanksApplicationsAboveMenusAndFiles`, `intraSectionPriorityPutsExactAndPrefixMatchesFirst`).
+
 **fix(ui): compact launcher typing, result sheet arrow navigation, and search pill icon (PR #495, merged 2026-11-22 as `72dff9ee`):**
 - Compact resting prompt: Launcher stays compact in `.prompt` while typing until `↓` is pressed; sheet opens on `↓` and closes back to `.prompt` on Esc.
 - Show Results Capsule: Gated to `.prompt` phase so it displays cleanly beneath the compact pill and disappears when results are open.
