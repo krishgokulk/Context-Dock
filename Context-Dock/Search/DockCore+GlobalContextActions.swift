@@ -173,7 +173,9 @@ extension DockCore {
         }
         return pills.filter { pill in
             guard !pill.isSeparator else { return false }
-            if scope.scopedBundleId.hasPrefix("syscmd://") { return pill.rankingKind == "systemCommand" }
+            if scope.scopedBundleId.hasPrefix("syscmd://") {
+                return pill.rankingKind == "systemCommand" || pill.rankingKind == "nativeWindow"
+            }
             if scope.scopedBundleId.hasPrefix("cli://") { return pill.rankingKind == "cliTool" }
             return ["menu", "submenuChild", "finderMenu", "adapter", "recentURL", "browserCommand"]
                 .contains(pill.rankingKind)

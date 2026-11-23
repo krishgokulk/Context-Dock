@@ -1010,8 +1010,12 @@ extension AppChatPromptModel {
     }
 
     /// The board is showing an extension's, a command's or a plugin's own interface.
+    /// `Windows` uses `AppChatListCard` directly so all window layouts, preview thumbnails,
+    /// desktop apps, and `⌘P` pinning render in the unified list.
     var showsExtensionPanel: Bool {
-        scopedExtension != nil || scopedCommand != nil || scopedPlugin != nil
+        scopedExtension != nil
+            || (scopedCommand != nil && scopedCommand?.isWindowsBoard != true)
+            || scopedPlugin != nil
     }
 
     /// Step into a plugin with a panel: the panel, in the corner's board, as a strip pin's
@@ -1806,7 +1810,7 @@ extension AppChatPromptModel {
     /// on an empty card.
     /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
     var globalSectionHeaders: [Int: String] {
-        if isGlobalScope {
+        if isGlobalScope || scopedCommand?.isWindowsBoard == true {
             guard let top = globalTopHitID, rows.first?.id == top else {
                 return GlobalResultSection.headers(for: rows)
             }
@@ -1836,7 +1840,7 @@ extension AppChatPromptModel {
                 if headers[index] != nil { slots.append(true) }
                 slots.append(false)
             }
-            let slotLimit = (isGlobalScope && headers.count >= 3)
+            let slotLimit = ((isGlobalScope && headers.count >= 3) || scopedCommand?.isWindowsBoard == true)
                 ? Self.globalVisibleSlotLimit
                 : Self.menuRowLimit
             var count = min(slots.count, slotLimit)

@@ -9,6 +9,13 @@ import AppKit
 import Foundation
 import Quartz
 
+extension SystemCommand {
+    /// The Global Command for native Window Management (`provider:windows`).
+    var isWindowsBoard: Bool {
+        provider == "windows" || keywords.contains { $0.lowercased() == "provider:windows" }
+    }
+}
+
 extension AppChatPromptModel {
     /// Contextual actions for the underlying frontmost app in Global Context:
     /// - When Finder is frontmost: lists the active Finder folder (or Desktop / current
