@@ -632,14 +632,26 @@ final class CornerDockController: NSObject {
         panel?.alphaValue = 1
         panel?.ignoresMouseEvents = false
         position()
-        // The app in front's Context Dock, as the old launcher opened (owner 2026-10-12);
-        // Global when there is no app to scope to. A ⌘ tap or ⌫ walks to Global from there.
-        if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
-            chatPresentation.showFrontmostApp(target: target)
-        } else {
-            chatPresentation.showGlobalContext()
-        }
+        // Unified Global Launcher: both ⌘⌘ and ⌥⌥ open Global Context while keeping
+        // the underlying frontmost app captured in `previousFrontmostApp` as context anchor.
+        chatPresentation.showGlobalContext()
         panel?.orderFrontRegardless()
+        armKeyboard()
+        refresh()
+    }
+
+    /// Unified Global Launcher in bottom-dock placement: opens Global Context at the bottom
+    /// of the display with the input field expanded and focused.
+    func showBottomGlobalContext() {
+        ensurePanel()
+        cancelPendingAutoHide()
+        chatPresentation.isCentred = false
+        prompt.staysOpenWhenIdle = true
+        setAutoHidden(false)
+        position()
+        chatPresentation.showGlobalContext()
+        panel?.orderFrontRegardless()
+        prompt.expandFromDock(seeding: nil)
         armKeyboard()
         refresh()
     }
@@ -1979,10 +1991,37 @@ final class CornerDockController: NSObject {
 
         // The app row's card keys (owner 2026-10-11): ⌘⌫ quits a running app, ⇧↩ hands a
         // closed one the Finder selection. Plain ⌫ stays the field's (rule C6).
+        // ⌘1, ⌘2, ⌘3 run the corresponding numbered pinned row in Global Context.
         if let panel, event.window === panel, chatPresentation.isVisible,
             prompt.phase.showsInput
         {
             let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if mods == .command, let index = [18: 1, 19: 2, 20: 3][Int(event.keyCode)],
+                prompt.isGlobalScope,
+                let row = prompt.rows.first(where: {
+                    if case .dock(let pill) = $0 { return pill.keyboardShortcutLabel == "⌘\(index)" }
+                    return false
+                })
+            {
+                prompt.run(row)
+                return nil
+            }
+            if mods == .option, (event.keyCode == 36 || event.keyCode == 76),
+                prompt.isGlobalScope,
+                !prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                prompt.askFrontmostPetFromGlobal(prompt.query)
+                return nil
+            }
+            if mods == .command, (event.keyCode == 36 || event.keyCode == 76),
+                prompt.isGlobalScope
+            {
+                let trimmed = prompt.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    L2AppActionRouter.openWebSearch(trimmed)
+                    return nil
+                }
+            }
             if event.keyCode == 51, mods == .command, prompt.quitFocusedApp() { return nil }
             if event.keyCode == 36 || event.keyCode == 76, mods == .shift,
                 prompt.openFinderFileWithFocusedApp()

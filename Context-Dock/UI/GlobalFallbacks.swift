@@ -11,20 +11,38 @@ import AppKit
 enum GlobalFallbacks {
     static let section = "Fallbacks"
     static let askKind = "fallbackAsk"
+    static let askPetKind = "fallbackAskPet"
     static let webKind = "fallbackWeb"
     static let terminalKind = "fallbackTerminal"
 
-    /// The fallback rows for what is typed, in order: Ask AI, search the web, run in Terminal.
-    static func rows(for typed: String, ask: @escaping (String) -> Void) -> [DockPill] {
+    /// The fallback rows for what is typed, in order: Ask Dora (General AI Chat),
+    /// Ask <App> Pet (Frontmost App Pet), Search Google, and optionally Run in Terminal.
+    static func rows(
+        for typed: String,
+        frontmostAppName: String? = nil,
+        ask: @escaping (String) -> Void,
+        askPet: ((String) -> Void)? = nil
+    ) -> [DockPill] {
         let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
         var rows = [
-            pill("ask", "Ask AI: \(text)", "sparkles", askKind) { ask(text) },
-            // `openWebSearch` asks Google, in the default browser: the row names the engine.
-            pill("web", "Search Google for “\(text)”", "globe", webKind) {
-                L2AppActionRouter.openWebSearch(text)
-            },
+            pill("ask", "Ask Dora: \(text)", "sparkles", askKind, shortcut: "↵") { ask(text) },
         ]
+        if let appName = frontmostAppName?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !appName.isEmpty, let askPet
+        {
+            rows.append(
+                pill("ask-pet", "Ask \(appName) Pet: \(text)", "cpu", askPetKind, shortcut: "⌥↵") {
+                    askPet(text)
+                }
+            )
+        }
+        // `openWebSearch` asks Google, in the default browser: the row names the engine.
+        rows.append(
+            pill("web", "Search Google for “\(text)”", "globe", webKind, shortcut: "⌘↵") {
+                L2AppActionRouter.openWebSearch(text)
+            }
+        )
         if looksLikeShellCommand(text) {
             rows.append(pill("terminal", "Run in Terminal: \(text)", "terminal", terminalKind) {
                 runInTerminal(text)
@@ -35,11 +53,13 @@ enum GlobalFallbacks {
 
     private static func pill(
         _ id: String, _ name: String, _ symbol: String, _ kind: String,
+        shortcut: String? = nil,
         execute: @escaping () -> Void
     ) -> DockPill {
         var pill = DockPill(id: "fallback-\(id)", name: name, icon: symbol, badge: nil, execute: execute)
         pill.rankingKind = kind
         pill.resultSection = section
+        pill.keyboardShortcutLabel = shortcut
         return pill
     }
 

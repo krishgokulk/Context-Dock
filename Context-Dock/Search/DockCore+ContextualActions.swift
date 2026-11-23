@@ -1222,7 +1222,8 @@ extension DockCore {
                 appIcon: appIcon,
                 secondaryIcon: secondaryDesktopAppIcon(excluding: bundleId),
                 command: command)
-            pill.rankingKind = "systemCommand"
+            pill.rankingKind = "nativeWindow"
+            pill.resultSection = GlobalResultSection.windowLayouts
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = appName
             pill.trackingIdentifier = "syscmd-windows:\(command.id)"

@@ -60,6 +60,21 @@ nonisolated enum FileSearchService {
             .filter { FileManager.default.fileExists(atPath: $0) }
     }
 
+    /// Strict directory boundary: when custom search directories are enabled, search ONLY
+    /// those directories; otherwise search the safe standard user roots.
+    static func boundedRoots(
+        useCustom: Bool,
+        customDirectories: [String],
+        homeDirectory: String = NSHomeDirectory()
+    ) -> [String] {
+        if useCustom {
+            return customDirectories
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        return defaultRoots(homeDirectory: homeDirectory)
+    }
+
     // MARK: - Query
 
     private static let stopWords: Set<String> = [

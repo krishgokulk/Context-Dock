@@ -210,4 +210,32 @@ struct AppScopeDestructiveTests {
         #expect(rows.map(\.title) == ["Wikipedia", "Other"])
         #expect(rows.first?.id == open.first?.id)
     }
+
+    @Test func dualAIFallbacksIncludeAskDoraAskAppPetAndSearchGoogle() {
+        let rows = GlobalFallbacks.rows(
+            for: "summarize",
+            frontmostAppName: "Safari",
+            ask: { _ in },
+            askPet: { _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: summarize",
+            "Ask Safari Pet: summarize",
+            "Search Google for “summarize”",
+        ])
+        #expect(rows.map(\.keyboardShortcutLabel) == ["↵", "⌥↵", "⌘↵"])
+    }
+
+    @Test func dualAIFallbacksOmitAppPetWhenNoFrontmostApp() {
+        let rows = GlobalFallbacks.rows(
+            for: "summarize",
+            frontmostAppName: nil,
+            ask: { _ in },
+            askPet: { _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: summarize",
+            "Search Google for “summarize”",
+        ])
+    }
 }

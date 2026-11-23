@@ -181,6 +181,10 @@ extension AppChatPromptModel {
             }
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed, useCanonicalSectionOrder: true)
+            let elevatedPins = elevatedFrontmostPinRows(for: typed)
+            if !elevatedPins.isEmpty {
+                ordered.insert(contentsOf: elevatedPins, at: 0)
+            }
             // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
             // row these words were answered with before first (S5).
             let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
@@ -201,9 +205,16 @@ extension AppChatPromptModel {
                 pill.resultSection = section
                 return pill
             }
-                + GlobalFallbacks.rows(for: typed) { [weak self] question in
-                    self?.askFromGlobal(question)
-                }.map(AppChatRow.dock)
+                + GlobalFallbacks.rows(
+                    for: typed,
+                    frontmostAppName: AppDelegate.shared?.previousFrontmostApp?.localizedName,
+                    ask: { [weak self] question in
+                        self?.askFromGlobal(question)
+                    },
+                    askPet: { [weak self] question in
+                        self?.askFrontmostPetFromGlobal(question)
+                    }
+                ).map(AppChatRow.dock)
                 + GlobalResultSection.grouped(risky, query: typed, useCanonicalSectionOrder: true)
             menuMatches = []
             focusedMenuIndex = nil
@@ -1120,10 +1131,58 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// Elevates pinned actions for the underlying frontmost app into a `★ Pinned for <App>`
+    /// section with a +300 score boost and numbered shortcuts (`⌘1`, `⌘2`, `⌘3`).
+    func elevatedFrontmostPinRows(for typed: String) -> [AppChatRow] {
+        guard let frontApp = AppDelegate.shared?.previousFrontmostApp,
+            !frontApp.isTerminated,
+            let bundleID = frontApp.bundleIdentifier,
+            !bundleID.isEmpty
+        else { return [] }
+        let pins = dockPins.pins(forApp: bundleID)
+        guard !pins.isEmpty else { return [] }
+        let appTitle = frontApp.localizedName ?? "App"
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matching = trimmed.isEmpty
+            ? Array(pins.prefix(3))
+            : pins.filter { $0.title.lowercased().contains(trimmed) }
+        guard !matching.isEmpty else { return [] }
+        let sectionTitle = GlobalResultSection.pinnedSectionTitle(forApp: appTitle)
+        return matching.enumerated().map { index, pin in
+            var pill = DockPill(
+                id: "pinned-global-\(pin.id.uuidString)",
+                name: pin.title,
+                icon: appPinSymbol(pin) ?? pin.kind.fallbackSymbol,
+                badge: "\(appTitle) Pin",
+                execute: { [weak self] in self?.openAppPin(pin) }
+            )
+            pill.sourceBundleId = bundleID
+            pill.sourceAppName = appTitle
+            pill.resultSection = sectionTitle
+            pill.rankingScore = Double(300 + max(0, 10 - index))
+            if index < 3 {
+                pill.keyboardShortcutLabel = "⌘\(index + 1)"
+            }
+            return AppChatRow.dock(pill)
+        }
+    }
+
     /// The fallback "Ask AI: …" row: the words go to the AI as a question, as Return does
     /// in a scope that asks (#258 G3). Running the row emptied the field first.
     func askFromGlobal(_ question: String) {
         query = question
+        _ = submit()
+    }
+
+    /// Dual AI fallback (`⌥↵`): switches from Global Context into the underlying frontmost
+    /// app's App Pet and submits the question with full app context & `.doraxpack` skills.
+    func askFrontmostPetFromGlobal(_ question: String) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+            CornerDockController.shared.chatPresentation.showFrontmostApp(target: target)
+        }
+        query = trimmed
         _ = submit()
     }
 
@@ -1233,11 +1292,15 @@ extension AppChatPromptModel {
         finderSearchGeneration &+= 1
         guard !typed.isEmpty else { return }
         let generation = finderSearchGeneration
-        let home = NSHomeDirectory()
+        let searchDirs = FileSearchService.boundedRoots(
+            useCustom: AppSettings.shared.useCustomSearchDirectories,
+            customDirectories: AppSettings.shared.searchDirectories.map(\.path)
+        )
+        guard !searchDirs.isEmpty else { return }
         Task { @MainActor [weak self] in
             let paths = await DockCore.spotlightSearchPaths(
                 predicate: NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
-                inDirectories: [home],
+                inDirectories: searchDirs,
                 sortByLastUsed: true,
                 limit: Self.menuRowLimit)
             guard let self, self.finderSearchGeneration == generation, self.isFinderScope,

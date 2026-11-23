@@ -169,3 +169,49 @@ struct ScopedAppQuitTests {
         #expect(model.appBundleID == "com.apple.calculator")
     }
 }
+
+@MainActor
+@Suite("Unified Global Launcher: sections, window management, bounded search")
+struct UnifiedGlobalLauncherSectionTests {
+    private func pill(_ name: String, section: String) -> AppChatRow {
+        var p = DockPill(id: name, name: name, icon: "app", badge: nil, execute: {})
+        p.resultSection = section
+        return .dock(p)
+    }
+
+    @Test func pinnedSectionRanksFirstInCanonicalOrder() {
+        let appRow = pill("Safari", section: GlobalResultSection.applications)
+        let windowRow = pill("Left", section: GlobalResultSection.windowLayouts)
+        let pinnedRow = pill("Export PDF", section: GlobalResultSection.pinnedSectionTitle(forApp: "Safari"))
+
+        let grouped = GlobalResultSection.grouped(
+            [appRow, windowRow, pinnedRow],
+            query: "e",
+            useCanonicalSectionOrder: true
+        )
+        #expect(grouped.first?.title == "Export PDF")
+    }
+
+    @Test func windowManagementKeywordsMatchAllCanonicalCommands() {
+        for keyword in ["left", "right", "center", "maximize", "tile", "arrange"] {
+            let matches = WindowManagementService.shared.matchingCommands(query: keyword)
+            #expect(!matches.isEmpty, "Expected window command match for '\(keyword)'")
+        }
+    }
+
+    @Test func boundedRootsEnforceCustomDirectoryBoundary() {
+        let custom = FileSearchService.boundedRoots(
+            useCustom: true,
+            customDirectories: ["/tmp/docs", "  "],
+            homeDirectory: "/Users/test"
+        )
+        #expect(custom == ["/tmp/docs"])
+
+        let emptyCustom = FileSearchService.boundedRoots(
+            useCustom: true,
+            customDirectories: [],
+            homeDirectory: "/Users/test"
+        )
+        #expect(emptyCustom.isEmpty)
+    }
+}

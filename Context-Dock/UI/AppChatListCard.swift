@@ -965,13 +965,22 @@ struct AppChatListCard: View {
     private func globalRow(_ doc: GlobalSearchService.SearchDocument, isFocused: Bool)
         -> some View
     {
-        HStack(spacing: 12) {
+        let foot = model.foot(for: .global(doc))
+        return HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(0.08))
                     .frame(width: AppChatListMetrics.iconSize - 2, height: AppChatListMetrics.iconSize - 2)
                 CornerResultIcon(url: pageURL(doc), fallback: doc.icon,
                     symbol: GlobalContextRow.symbol(for: doc))
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if foot.isRunningApp {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.85), lineWidth: 1))
+                }
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
             .fluidIconZoom(isFocused: isFocused)
@@ -982,7 +991,6 @@ struct AppChatListCard: View {
                     .lineLimit(1)
                 // Said once, on the right (#258 G2): "Application" under the name repeated it.
                 let subtitle = GlobalContextRow.subtitle(for: doc)
-                let foot = model.foot(for: .global(doc))
                 // Highlighted, the right says ↩, so the line under the name stays.
                 if isFocused || (subtitle != foot.kind && !(foot.isRunningApp && subtitle == "Running")) {
                     Text(subtitle)
@@ -1025,6 +1033,7 @@ struct AppChatListCard: View {
         // (owner 2026-10-17).
         let isShowMore = pill.rankingKind == GlobalResultSection.showMoreKind
         let subtitle = pill.menuContext ?? pill.badge ?? pill.sourceAppName
+        let foot = model.foot(for: .dock(pill))
         return HStack(spacing: 12) {
             Group {
                 if isShowMore {
@@ -1033,6 +1042,14 @@ struct AppChatListCard: View {
                         .foregroundStyle(.secondary)
                 } else {
                     CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
+                        .overlay(alignment: .bottomTrailing) {
+                            if foot.isRunningApp {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 7, height: 7)
+                                    .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.85), lineWidth: 1))
+                            }
+                        }
                 }
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)

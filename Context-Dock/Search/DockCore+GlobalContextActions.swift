@@ -1338,7 +1338,17 @@ extension DockCore {
                 maxGroups: menuGroupLimit,
                 maxPills: menuBudget
             )
-        let menuPills = resolvedMenuGroups.flatMap { $0.pills }
+        let windowPills: [DockPill] = {
+            guard !q.isEmpty,
+                let frontApp = AppDelegate.shared?.previousFrontmostApp,
+                !frontApp.isTerminated,
+                let bundleID = frontApp.bundleIdentifier,
+                !bundleID.isEmpty,
+                !WindowManagementService.shared.matchingCommands(query: q).isEmpty
+            else { return [] }
+            return windowManagementScopePills(scopedBundleId: bundleID, query: q)
+        }()
+        let menuPills = windowPills + resolvedMenuGroups.flatMap { $0.pills }
         return finish(
             GlobalGroupedListNavigationState(
                 appResults: appResults,

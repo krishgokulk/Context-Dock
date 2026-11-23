@@ -87,7 +87,9 @@ struct BoardFoot: Hashable {
             case GlobalSources.notificationKind:
                 return BoardFoot(title: "Notification", verb: "Open", symbol: "bell")
             case GlobalFallbacks.askKind:
-                return BoardFoot(title: "Ask AI", verb: "Ask", symbol: "sparkles")
+                return BoardFoot(title: "Ask Dora", verb: "Ask", symbol: "sparkles")
+            case GlobalFallbacks.askPetKind:
+                return BoardFoot(title: "Ask App Pet", verb: "Ask", symbol: "cpu")
             case GlobalFallbacks.webKind:
                 return BoardFoot(title: "Web search", verb: "Search", symbol: "globe")
             case GlobalFallbacks.terminalKind:

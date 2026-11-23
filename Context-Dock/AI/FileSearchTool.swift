@@ -54,8 +54,19 @@ extension AgentToolRegistry {
     /// and `FileSearchService.scan` sees its cancellation.
     @concurrent
     static func runFileSearch(query: String, folder: URL? = nil) async -> (Bool, String) {
-        let options = folder.map { FileSearchService.Options(roots: [$0.path]) }
-            ?? FileSearchService.Options()
+        let options: FileSearchService.Options
+        if let folder {
+            options = FileSearchService.Options(roots: [folder.path])
+        } else {
+            let roots = await MainActor.run {
+                let settings = AppSettings.shared
+                return FileSearchService.boundedRoots(
+                    useCustom: settings.useCustomSearchDirectories,
+                    customDirectories: settings.searchDirectories.map(\.path)
+                )
+            }
+            options = FileSearchService.Options(roots: roots)
+        }
         let outcome = FileSearchService.search(query: query, options: options)
         return (
             !outcome.paths.isEmpty,

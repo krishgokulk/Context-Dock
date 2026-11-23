@@ -17,6 +17,11 @@ enum GlobalResultSection {
     static let openTabs = "Open tabs"
     static let windowLayouts = "Window layouts"
     static let actions = "Actions"
+    static let pinnedPrefix = "★ Pinned for "
+
+    static func pinnedSectionTitle(forApp appName: String) -> String {
+        "\(pinnedPrefix)\(appName)"
+    }
 
     /// A Global search result's section, by what it is — the old launcher's own buckets
     /// (`SearchResults.add`), with CLI tools among the commands.
@@ -55,7 +60,8 @@ enum GlobalResultSection {
         case .command: return menuCommands
         case .file: return files
         case .web: return web
-        case .cliTool, .cliSubcommand, .systemCommand, .windowLayout, .rowSummary, nil:
+        case .windowLayout: return windowLayouts
+        case .cliTool, .cliSubcommand, .systemCommand, .rowSummary, nil:
             return commands
         }
     }
@@ -112,6 +118,9 @@ enum GlobalResultSection {
 
         if useCanonicalSectionOrder {
             order.sort { s1, s2 in
+                let p1 = s1.hasPrefix(pinnedPrefix)
+                let p2 = s2.hasPrefix(pinnedPrefix)
+                if p1 != p2 { return p1 }
                 let idx1 = canonicalOrder.firstIndex(of: s1) ?? Int.max
                 let idx2 = canonicalOrder.firstIndex(of: s2) ?? Int.max
                 if idx1 != idx2 { return idx1 < idx2 }
