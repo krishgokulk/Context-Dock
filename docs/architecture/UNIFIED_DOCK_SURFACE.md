@@ -37,22 +37,22 @@ Focus content owns only the information and controls for its job.
 
 ## Focus transitions & Unified Intent Routing
 
-> **Update (2026-11-10):** Under the Unified Spotlight-Pet Surface (`docs/superpowers/specs/2026-11-10-unified-spotlight-pet-surface.md`), Global Context and Frontmost App Pet are **unified into a single input bar**. Users no longer need to tap `Command` to switch layers. Queries simultaneously search frontmost menus, global apps, files, and clipboard clips, with natural-language questions automatically escalating to the App Pet.
+> **Update (2026-11-23):** Under the Unified Global Launcher & Bounded Search Spec (`docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`), Global Context and App Pet are **completely unified into one single surface**. Both `⌘⌘` (double-Command) and `⌥⌥` (double-Option) open the same Unified Global Launcher. File searches strictly respect user-selected search directories in App Settings. Fallbacks provide instant dual AI routing: `Ask Dora` (`↵`) for General AI Chat and `Ask <App> Pet` (`⌥↵`) for Frontmost App Pet.
 
 | Start | Action | Destination |
 |---|---|---|
-| Closed (anywhere) | normal launch (⌘⌘ or hotkey) | Unified Dock Launcher (Context-biased to frontmost app) |
+| Closed (anywhere) | normal launch (⌘⌘ or ⌥⌥) | Unified Global Launcher (Context-biased to frontmost app) |
 | Unified Launcher | type command / app / file name | Highlighted command/file executes on ↵ |
-| Unified Launcher | type question / AI instruction | Escalates to Frontmost App Pet on ↵ |
+| Unified Launcher | press ↵ on Ask Dora | Escalates to General AI Chat across the Mac |
+| Unified Launcher | press ⌥↵ on Ask Pet | Escalates to Frontmost App Pet with app skills |
+| Unified Launcher | press ⌘↵ on Search Web | Opens Google search in default browser |
 | Unified Launcher | tap Tab | Pins composer into App Pet Chat Mode |
 | Unified Launcher | click running/pinned app | Switches active Pet context |
 | Unified Launcher | drag app icon out | detached persistent Pet |
-| Unified Launcher | New chat / Ask Dora | General Chat |
-| General Chat | use an app ability for one turn | General Chat, with a temporary app step chip |
 | General Chat | choose Open in App Pet | same conversation anchored to that App Pet |
 | App Pet | accept another required Pet | same conversation promoted to Combined Chat |
 
-Typed text is never discarded by a focus shortcut. Escape/back behavior stays one level at a time.
+Typed text is never discarded by a focus shortcut. Escape/back behavior stays one level at a time. File search is strictly constrained to user-selected directories from App Settings (`settings.useCustomSearchDirectories`).
 
 ## Unified Board content
 
