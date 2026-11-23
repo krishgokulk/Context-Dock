@@ -215,4 +215,33 @@ struct UnifiedGlobalLauncherSectionTests {
         )
         #expect(emptyCustom.isEmpty)
     }
+
+    @Test func globalFileAndFolderRowsMatchBoundedRootFolders() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        let settings = AppSettings.shared
+        let prevUseCustom = settings.useCustomSearchDirectories
+        let prevDirs = settings.searchDirectories
+        defer {
+            settings.useCustomSearchDirectories = prevUseCustom
+            settings.searchDirectories = prevDirs
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("UnifiedLauncherDownloadsTest-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        settings.useCustomSearchDirectories = true
+        settings.searchDirectories = [SearchDirectory(path: tempDir.path, displayName: tempDir.lastPathComponent)]
+
+        let rows = model.globalFileAndFolderRows(for: "DownloadsTest")
+        #expect(rows.count == 1)
+        if case .file(let url) = rows.first {
+            #expect(url.standardizedFileURL.path == tempDir.standardizedFileURL.path)
+            #expect(GlobalResultSection.title(for: rows[0]) == GlobalResultSection.files)
+        } else {
+            Issue.record("Expected .file row for bounded root folder")
+        }
+    }
 }

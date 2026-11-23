@@ -192,4 +192,51 @@ extension AppChatPromptModel {
         query = trimmed
         _ = submit()
     }
+
+    /// Bounded Files & Folders matches for Global Context:
+    /// 1. Any bounded root folder whose name matches `typed` (e.g. `downloads` -> `~/Downloads`).
+    /// 2. Indexed files/folders from `FileIndexManager.shared.search`, strictly bounded to
+    ///    `FileSearchService.boundedRoots` when custom directories are enabled.
+    func globalFileAndFolderRows(for typed: String, limit: Int = 8) -> [AppChatRow] {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return [] }
+        let lower = trimmed.lowercased()
+
+        let settings = AppSettings.shared
+        let roots = FileSearchService.boundedRoots(
+            useCustom: settings.useCustomSearchDirectories,
+            customDirectories: settings.searchDirectories.map(\.path)
+        )
+        guard !roots.isEmpty else { return [] }
+
+        var seenPaths = Set<String>()
+        var results: [AppChatRow] = []
+
+        // 1. Bounded root folders themselves (e.g. ~/Downloads, ~/Documents, ~/Desktop)
+        for root in roots where results.count < limit {
+            let url = URL(fileURLWithPath: root, isDirectory: true)
+            let name = url.lastPathComponent.lowercased()
+            if name.contains(lower), FileManager.default.fileExists(atPath: root) {
+                let std = url.standardizedFileURL.path
+                if seenPaths.insert(std).inserted {
+                    results.append(.file(url))
+                }
+            }
+        }
+
+        // 2. Indexed files & folders within bounded roots
+        let indexed = FileIndexManager.shared.search(query: trimmed, limit: limit * 2)
+        for item in indexed where results.count < limit {
+            guard let path = item.filePath, !path.isEmpty else { continue }
+            let std = URL(fileURLWithPath: path).standardizedFileURL.path
+            if settings.useCustomSearchDirectories {
+                guard FileSearchService.isInsideAny(std, roots: roots) else { continue }
+            }
+            if seenPaths.insert(std).inserted {
+                results.append(.file(URL(fileURLWithPath: std)))
+            }
+        }
+
+        return results
+    }
 }

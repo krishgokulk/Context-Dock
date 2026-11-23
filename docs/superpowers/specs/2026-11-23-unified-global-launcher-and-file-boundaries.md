@@ -1,6 +1,6 @@
 # Unified Global Launcher & Bounded File Search Specification
 
-> **Status:** Draft / Proposed (Owner review 2026-11-23).  
+> **Status:** Implemented (PR #499, updated 2026-11-23).  
 > **Topic:** Total unification of DoraX into a single zero-modal Liquid Glass launcher, dual hotkey alignment (`⌘⌘` & `⌥⌥` → Global Context), strict user-selected folder boundaries for file search, frontmost app action grouping, self-learning top hints, and dual AI escalation (General AI Chat vs Frontmost App Pet).  
 > **Source of Truth for:** `Context-Dock/App/ILauncherApp.swift`, `Context-Dock/UI/GlobalResultSection.swift`, `Context-Dock/UI/GlobalQuery.swift`, `Context-Dock/UI/GlobalFallbacks.swift`, `Context-Dock/UI/AppChatMenuBrowsing.swift`, `Context-Dock/AI/FileSearchService.swift`, `Context-Dock/App/AppSettings.swift`.
 
@@ -56,11 +56,12 @@ When the user types a query or presses `↓` (Down Arrow) on the resting pill, r
 │    [ 📁 ] ~/Documents/Roadmap.pdf                Documents Folder                      │
 │                                                                                        │
 │  ── INTELLIGENT AI & WEB FALLBACKS ─────────────────────────────────────────────────── │
-│    [ ✨ ] Ask Dora: "<query>"                    General AI Chat      ↵ / Tab          │
-│    [ 🤖 ] Ask Safari Pet: "<query>"              Frontmost Context    ⌥↵               │
+│    [ ✳️ ] Ask Dora: "<query>"                    General AI Chat      ↵ / Tab          │
+│    [ 🧭 ] Ask Safari Pet: "<query>"              Frontmost Context    ⌥↵               │
+│    [ 📝 ] Ask Notes Chat: "<query>"              Running App                           │
 │    [ 🌐 ] Search Google for "<query>"            Default Browser      ⌘↵               │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
-│  🔍 [ ✳️ Safari ⌄ ] [ 📄 PDF ] [ 🔗 URL ]  Search or ask anything…   [ + ] [ 📌 ] [ ⌃ ]│
+│  🔍  [ 📄 PDF ] [ 🔗 URL ]  Search apps, tools and menus…           [ + ] [ 📌 ] [ ⌃ ]│
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -129,10 +130,10 @@ When the user summons the launcher (e.g. `⌥⌥` at center of display with 3 ap
 
 ### 3.8 Pinned Actions Satellite Micro-Pills & Contextual Elevation
 Adopting Context Dock pin menus directly into the unified surface replaces the separate dock with high-efficiency access points:
-1. **Frontmost App Satellite Micro-Pills (Prompt Bar):**
-   - Beside the frontmost app chip (`[ ✳️ FrontmostApp ⌄ ]`), surface the user's top 2–3 pinned actions as compact clickable micro-pills (`[ 📄 PDF ] [ 🔗 URL ]`).
+1. **Frontmost App Satellite Micro-Pills (Prompt Bar, No Frontmost App Chip):**
+   - In Global Context, the prompt bar stays clean (`🔍` + query field — **no** frontmost app icon/chip in the bar, per owner 2026-11-23).
+   - When the underlying frontmost app has pinned actions, up to 2–3 compact clickable micro-pills (`[ 📄 PDF ] [ 🔗 URL ]`) appear beside `🔍` in the resting bar and smoothly collapse when long queries are typed (`query.count >= 16`).
    - Clicking executes the command or adapter action with $0\text{ms}$ delay.
-   - Smoothly collapses into the app chevron dropdown when long queries are typed.
 2. **Results Board Elevation (`★ Pinned for <App>`):**
    - When the frontmost app has pinned items (`DockPinStore.shared.pins(forApp: bundleID)`), they appear at the top of the board with a distinct `📌` badge.
    - Pinned items receive a `+300` score boost on matching query strings, placing them at Row 0 for instant execution.

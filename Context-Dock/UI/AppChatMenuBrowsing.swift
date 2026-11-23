@@ -184,6 +184,8 @@ extension AppChatPromptModel {
             rows += globalSourceRows(for: typed)
             // Frontmost app contextual actions (or active Finder folder when Finder is in front).
             rows += frontmostContextualActionRows(for: typed)
+            // Bounded Files & Folders from user-configured (or safe default) directories.
+            rows += globalFileAndFolderRows(for: lookup)
             // A time named — "today", "last week" — keeps only what happened then, with the
             // history of that time looked up for it (S3). Apps and commands stay.
             if let range = GlobalQuery.timeRange(in: typed) {

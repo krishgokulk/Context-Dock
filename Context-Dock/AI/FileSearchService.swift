@@ -206,7 +206,7 @@ nonisolated enum FileSearchService {
         URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
-    private static func isInsideAny(_ path: String, roots: [String]) -> Bool {
+    static func isInsideAny(_ path: String, roots: [String]) -> Bool {
         roots.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 
