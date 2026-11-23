@@ -20,6 +20,9 @@ extension AppChatPromptModel {
     /// How many commands the corner offers. Matches the suggestion list it replaces — the
     /// pill's height is a pure function of this count, so it cannot exceed what is drawn.
     static let menuRowLimit = 5
+    /// Multi-section Global Context gets a taller Raycast/Siri-grade viewport (9 slots ≈ 468pt)
+    /// so Top Hit + Apps + Files & Folders + Fallbacks are visible at a glance without scrolling.
+    static let globalVisibleSlotLimit = 9
 
     /// How many apps Global Context reads, most recently used first. Every running app's
     /// full menu is thousands of rows and seconds of AX; the ranking only ever shows five.
@@ -1817,7 +1820,10 @@ extension AppChatPromptModel {
                 if headers[index] != nil { slots.append(true) }
                 slots.append(false)
             }
-            var count = min(slots.count, Self.menuRowLimit)
+            let slotLimit = (isGlobalScope && headers.count >= 3)
+                ? Self.globalVisibleSlotLimit
+                : Self.menuRowLimit
+            var count = min(slots.count, slotLimit)
             if count > 1, slots[count - 1] { count -= 1 }
             return count
         }

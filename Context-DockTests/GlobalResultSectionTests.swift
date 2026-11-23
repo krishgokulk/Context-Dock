@@ -244,4 +244,18 @@ struct UnifiedGlobalLauncherSectionTests {
             Issue.record("Expected .file row for bounded root folder")
         }
     }
+
+    @Test func multiSectionGlobalContextShowsUpToNineVisibleSlots() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "s"
+        model.rows = [
+            pill("Safari", section: GlobalResultSection.applications),
+            pill("Screenshot", section: GlobalResultSection.commands),
+            .file(URL(fileURLWithPath: "/tmp/screenshot.png")),
+            pill("Ask Dora: s", section: GlobalFallbacks.section),
+        ]
+        // 4 section headers + 4 rows = 8 slots (all visible within 9-slot Global viewport)
+        #expect(model.listRowCount == 8)
+    }
 }
