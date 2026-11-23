@@ -271,4 +271,23 @@ struct UnifiedGlobalLauncherSectionTests {
         #expect(GlobalResultSection.title(for: grouped[0]) == GlobalResultSection.windowLayouts)
         #expect(GlobalResultSection.title(for: grouped[1]) == GlobalResultSection.menuCommands)
     }
+
+    @Test func rightArrowOnFolderInGlobalContextListsFolderContents() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("UnifiedFolderNav-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        try Data("hello".utf8).write(to: dir.appendingPathComponent("passport.pdf"))
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "UnifiedFolderNav"
+        model.rows = [.file(dir)]
+        model.focusedMenuIndex = 0
+
+        #expect(model.stepIntoFocusedRow())
+        #expect(model.isFinderScope)
+        #expect(model.returnsToGlobalScope)
+        #expect(model.rows.map(\.title) == ["passport.pdf"])
+    }
 }

@@ -1418,14 +1418,35 @@ extension AppChatPromptModel {
     /// lists the folder; typing filters it; Backspace on the empty field climbs back out.
     @discardableResult
     func enterFocusedFolder() -> Bool {
-        guard isFinderScope, case .file(let url)? = focusedRow, Self.isFolder(url)
-        else { return false }
-        finderBrowseStack.append(url)
-        query = ""
-        focusedMenuIndex = nil
-        updateFinderResults(for: "")
-        touch()
-        return true
+        let folderURL: URL? = {
+            switch focusedRow {
+            case .file(let url): return url
+            case .dock(let pill):
+                return pill.resolvedURL ?? pill.previewPath.map { URL(fileURLWithPath: $0) }
+            case .global(let doc):
+                return doc.filePath.map { URL(fileURLWithPath: $0) }
+            default: return nil
+            }
+        }()
+        guard let url = folderURL, Self.isFolder(url) else { return false }
+        if isFinderScope {
+            finderBrowseStack.append(url)
+            query = ""
+            focusedMenuIndex = nil
+            updateFinderResults(for: "")
+            touch()
+            return true
+        }
+        if isGlobalScope {
+            scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+            finderBrowseStack = [url]
+            query = ""
+            focusedMenuIndex = nil
+            updateFinderResults(for: "")
+            touch()
+            return true
+        }
+        return false
     }
 
     /// Backspace on an empty field inside a folder: up one level, and past the outermost
