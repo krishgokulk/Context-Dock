@@ -107,9 +107,12 @@ extension AppChatPromptModel {
         guard let bundleID = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier,
             !bundleID.isEmpty
         else { return [] }
-        return dockPins.pins(forApp: bundleID).prefix(limit).map { pin in
-            (pin: pin, symbol: appPinSymbol(pin) ?? pin.kind.fallbackSymbol)
-        }
+        return dockPins.pins(forApp: bundleID)
+            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(limit)
+            .map { pin in
+                (pin: pin, symbol: appPinSymbol(pin) ?? pin.kind.fallbackSymbol)
+            }
     }
 
     // MARK: The bar's leading icons

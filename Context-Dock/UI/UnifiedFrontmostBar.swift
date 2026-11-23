@@ -28,6 +28,7 @@ struct UnifiedFrontmostBar: View {
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
                             .background(Color.primary.opacity(0.07), in: Capsule())
+                            .fixedSize(horizontal: true, vertical: false)
                         }
                         .buttonStyle(.plain)
                         .help("Run pinned \(item.pin.title)")
