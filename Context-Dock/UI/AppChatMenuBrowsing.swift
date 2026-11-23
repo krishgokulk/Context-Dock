@@ -180,7 +180,7 @@ extension AppChatPromptModel {
                 rows = GlobalQuery.within(range, rows)
             }
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
-            var ordered = GlobalResultSection.grouped(safe, query: typed)
+            var ordered = GlobalResultSection.grouped(safe, query: typed, useCanonicalSectionOrder: true)
             // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
             // row these words were answered with before first (S5).
             let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
@@ -204,7 +204,7 @@ extension AppChatPromptModel {
                 + GlobalFallbacks.rows(for: typed) { [weak self] question in
                     self?.askFromGlobal(question)
                 }.map(AppChatRow.dock)
-                + GlobalResultSection.grouped(risky, query: typed)
+                + GlobalResultSection.grouped(risky, query: typed, useCanonicalSectionOrder: true)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)

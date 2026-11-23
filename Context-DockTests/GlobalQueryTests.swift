@@ -122,6 +122,17 @@ struct GlobalTopHitTests {
         #expect(GlobalQuery.topHit(rows, query: "history") == nil)
     }
 
+    @Test func anApplicationMatchingQueryIsTheTopHit() {
+        var appPill = DockPill(id: "app:Safari", name: "Safari", icon: "safari", badge: nil, execute: {})
+        appPill.resultSection = GlobalResultSection.applications
+        let rows: [AppChatRow] = [
+            .dock(appPill),
+            menu("Show Personal History", app: "Safari")
+        ]
+        #expect(GlobalQuery.topHit(rows, query: "safari")?.title == "Safari")
+        #expect(GlobalQuery.topHit(rows, query: "saf")?.title == "Safari")
+    }
+
     @Test func aBrowsersHistoryCommandsAreStable() {
         #expect(BrowserStableMenuCommand.isStable(title: "Show Personal History"))
         #expect(!BrowserStableMenuCommand.isStable(title: "New session - Claude"))
