@@ -1522,15 +1522,15 @@ final class OnDeviceToolSession {
 
         let response: LanguageModelSession.Response<String>
         if !imageURLs.isEmpty {
+            let ocrText = ocrExtractedText(from: imageURLs)
+            let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
             if #available(macOS 27.0, *) {
                 let attachments = imageURLs.map { Attachment(imageURL: $0) }
                 response = try await session.respond {
                     attachments
-                    message
+                    finalMessage
                 }
             } else {
-                let ocrText = ocrExtractedText(from: imageURLs)
-                let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
                 response = try await session.respond(to: finalMessage)
             }
         } else {
@@ -1597,18 +1597,20 @@ final class OnDeviceToolSession {
                     instructions: fullPrompt
                 )
 
-                // Images: native multimodal on macOS 27.0+, OCR fallback otherwise
+                // Images: native attachment + OCR text on macOS 27.0+, OCR-only fallback otherwise.
+                // The on-device model's vision is limited, so OCR text provides reliable context
+                // alongside the native attachment.
                 let responseStream: LanguageModelSession.ResponseStream<String>
                 if !imageURLs.isEmpty {
+                    let ocrText = self.ocrExtractedText(from: imageURLs)
+                    let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
                     if #available(macOS 27.0, *) {
                         let attachments = imageURLs.map { Attachment(imageURL: $0) }
                         responseStream = session.streamResponse(generating: String.self) {
                             attachments
-                            message
+                            finalMessage
                         }
                     } else {
-                        let ocrText = self.ocrExtractedText(from: imageURLs)
-                        let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
                         responseStream = session.streamResponse(to: finalMessage, generating: String.self)
                     }
                 } else {
