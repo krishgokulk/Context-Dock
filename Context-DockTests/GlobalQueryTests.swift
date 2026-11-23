@@ -138,6 +138,19 @@ struct GlobalTopHitTests {
         #expect(BrowserStableMenuCommand.isStable(title: "Show Personal History"))
         #expect(!BrowserStableMenuCommand.isStable(title: "New session - Claude"))
     }
+
+    @Test func exactWindowLayoutBeatsLongerMultiWordExtensionCommand() {
+        var windowPill = DockPill(id: "syscmd-windows-minimize", name: "Minimize", icon: "minus.square", badge: "Code", execute: {})
+        windowPill.rankingKind = "nativeWindow"
+        windowPill.resultSection = GlobalResultSection.windowLayouts
+        let longCommand = sysCommand("Minimize Code After Delay")
+        let rows: [AppChatRow] = [
+            longCommand,
+            .dock(windowPill)
+        ]
+        #expect(GlobalQuery.topHit(rows, query: "minimize")?.title == "Minimize")
+        #expect(GlobalQuery.topHit(rows, query: "minimiz")?.title == "Minimize")
+    }
 }
 
 /// S2: a named app's own commands join a list the engine filled with its pages.

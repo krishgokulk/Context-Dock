@@ -10,7 +10,7 @@ struct UnifiedFrontmostBar: View {
     @ObservedObject var model: AppChatPromptModel
 
     var body: some View {
-        if model.query.count < 16 {
+        if model.query.isEmpty {
             let microPills = model.frontmostPinnedMicroPills(limit: 3)
             if !microPills.isEmpty {
                 HStack(spacing: 4) {

@@ -119,19 +119,31 @@ enum GlobalQuery {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return nil }
 
-        // 1. Direct System Command / Command match (e.g. "empty" -> "Empty Trash", "lock" -> "Lock Screen", "dark" -> "Dark Mode", "sleep" -> "Sleep")
         let typed = Set(words(query))
-        if let commandHit = rows.first(where: { row in
-            guard GlobalResultSection.title(for: row) == GlobalResultSection.commands else { return false }
-            guard GlobalResultSection.appName(of: row).isEmpty else { return false }
-            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+
+        // 1. Exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
+        if let exactHit = rows.first(where: { row in
             let titleLower = row.title.lowercased()
-            return titleLower.hasPrefix(trimmed)
+            guard titleLower == trimmed else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            return true
         }) {
-            return commandHit
+            return exactHit
         }
 
-        // 2. Direct Application exact or prefix match (e.g. "safari" -> Safari, "term" -> Terminal, "calc" -> Calculator)
+        // 2. Direct Window layout or frontmost contextual action prefix match
+        if let frontmostPrefixHit = rows.first(where: { row in
+            let titleLower = row.title.lowercased()
+            guard titleLower.hasPrefix(trimmed) else { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            return sec == GlobalResultSection.windowLayouts
+                || sec.hasPrefix(GlobalResultSection.contextualActionsPrefix)
+                || sec.hasPrefix(GlobalResultSection.pinnedPrefix)
+        }) {
+            return frontmostPrefixHit
+        }
+
+        // 3. Direct Application exact or prefix match (e.g. "safari" -> Safari, "term" -> Terminal, "calc" -> Calculator)
         if let exactApp = rows.first(where: { row in
             guard GlobalResultSection.title(for: row) == GlobalResultSection.applications else { return false }
             return row.title.lowercased() == trimmed
@@ -145,7 +157,18 @@ enum GlobalQuery {
             return prefixApp
         }
 
-        // 3. Named app's own command whose app the words name and whose title holds every asked word
+        // 4. Direct System Command / Command match (e.g. "empty" -> "Empty Trash", "lock" -> "Lock Screen", "dark" -> "Dark Mode", "sleep" -> "Sleep")
+        if let commandHit = rows.first(where: { row in
+            guard GlobalResultSection.title(for: row) == GlobalResultSection.commands else { return false }
+            guard GlobalResultSection.appName(of: row).isEmpty else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            let titleLower = row.title.lowercased()
+            return titleLower.hasPrefix(trimmed)
+        }) {
+            return commandHit
+        }
+
+        // 5. Named app's own command whose app the words name and whose title holds every asked word
         let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty })
         let asked = askedWords(in: query, appNames: appNames)
         guard !asked.isEmpty else { return nil }

@@ -1840,7 +1840,7 @@ extension AppChatPromptModel {
                 if headers[index] != nil { slots.append(true) }
                 slots.append(false)
             }
-            let slotLimit = ((isGlobalScope && headers.count >= 3) || scopedCommand?.isWindowsBoard == true)
+            let slotLimit = (isGlobalScope || scopedCommand?.isWindowsBoard == true)
                 ? Self.globalVisibleSlotLimit
                 : Self.menuRowLimit
             var count = min(slots.count, slotLimit)

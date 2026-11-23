@@ -104,11 +104,17 @@ extension AppChatPromptModel {
     /// Top 2–3 pinned actions for the underlying frontmost app, shown as satellite micro-pills
     /// beside the frontmost app chip in Global Context.
     func frontmostPinnedMicroPills(limit: Int = 3) -> [(pin: DockPin, symbol: String)] {
-        guard let bundleID = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier,
+        guard let frontApp = AppDelegate.shared?.previousFrontmostApp,
+            let bundleID = frontApp.bundleIdentifier,
             !bundleID.isEmpty
         else { return [] }
+        let appName = (frontApp.localizedName ?? "").lowercased()
         return dockPins.pins(forApp: bundleID)
-            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .filter { pin in
+                let title = pin.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, pin.kind != .app, title.lowercased() != appName else { return false }
+                return true
+            }
             .prefix(limit)
             .map { pin in
                 (pin: pin, symbol: appPinSymbol(pin) ?? pin.kind.fallbackSymbol)

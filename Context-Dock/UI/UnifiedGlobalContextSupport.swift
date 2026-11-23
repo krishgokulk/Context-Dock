@@ -22,11 +22,36 @@ extension AppChatPromptModel {
     ///   `finderBrowseStack` subfolder) so files/folders appear immediately.
     /// - For other apps: lists matching adapter actions (and top cached menu commands when empty).
     func frontmostContextualActionRows(for typed: String) -> [AppChatRow] {
-        guard let frontApp = AppDelegate.shared?.previousFrontmostApp,
-            !frontApp.isTerminated,
+        let resolvedFrontApp: NSRunningApplication? = {
+            if let prev = AppDelegate.shared?.previousFrontmostApp,
+                !prev.isTerminated,
+                let bid = prev.bundleIdentifier,
+                !bid.isEmpty,
+                bid != Bundle.main.bundleIdentifier
+            {
+                return prev
+            }
+            if let owner = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                !owner.isTerminated,
+                let bid = owner.bundleIdentifier,
+                !bid.isEmpty,
+                bid != Bundle.main.bundleIdentifier
+            {
+                return owner
+            }
+            if let front = NSWorkspace.shared.frontmostApplication.flatMap({ AppDelegate.shared?.resolvedUserFacingApplication($0) }),
+                !front.isTerminated,
+                let bid = front.bundleIdentifier,
+                !bid.isEmpty,
+                bid != Bundle.main.bundleIdentifier
+            {
+                return front
+            }
+            return nil
+        }()
+        guard let frontApp = resolvedFrontApp,
             let bundleID = frontApp.bundleIdentifier,
-            !bundleID.isEmpty,
-            bundleID != Bundle.main.bundleIdentifier
+            !bundleID.isEmpty
         else { return [] }
 
         let appName = frontApp.localizedName ?? "App"
@@ -86,6 +111,94 @@ extension AppChatPromptModel {
                 items.append(.dock(pill))
             }
         }
+
+        // Native Window layouts answering the query for the frontmost app
+        if !trimmed.isEmpty {
+            let matchingWindowCmds = WindowManagementService.shared.matchingCommands(query: trimmed)
+            for cmd in matchingWindowCmds.prefix(4) {
+                var pill = DockPill(
+                    id: "global-ctx-window-\(bundleID)-\(cmd.id)",
+                    name: cmd.title,
+                    icon: cmd.icon,
+                    accentColorName: "blue",
+                    badge: appName,
+                    execute: {
+                        _ = WindowManagementService.shared.execute(cmd, sourceApp: frontApp)
+                    }
+                )
+                pill.rankingKind = "nativeWindow"
+                pill.resultSection = GlobalResultSection.windowLayouts
+                pill.sourceBundleId = bundleID
+                pill.sourceAppName = appName
+                items.append(.dock(pill))
+            }
+        }
+
+        // Frontmost app menu commands from capability cache (or AX menu scrape)
+        let cachedMenus = AppMenuCapabilityCache.shared.menuItems(for: frontApp, maxResults: 400)
+        let menuSource: [AXMenuItem]
+        if !cachedMenus.isEmpty {
+            menuSource = cachedMenus
+        } else if AXIsProcessTrusted() {
+            let live = AXMenuReader.shared.liveAXMenuItems(for: frontApp.processIdentifier, maxDepth: 5)
+            if !live.isEmpty {
+                AppMenuCapabilityCache.shared.store(items: live, for: frontApp)
+            }
+            menuSource = live
+        } else {
+            menuSource = []
+        }
+
+        let filteredMenus: [AXMenuItem] = {
+            if trimmed.isEmpty {
+                return Array(menuSource.filter { item in
+                    item.children.isEmpty && !item.title.isEmpty && item.title != "-"
+                        && !FrontmostMenuMatcher.isPlaceholderTitle(item.title)
+                        && !WindowManagementService.shared.handlesMenuPath(item.path)
+                }.prefix(4))
+            } else {
+                return menuSource.filter { item in
+                    guard item.children.isEmpty, !item.title.isEmpty, item.title != "-",
+                        !FrontmostMenuMatcher.isPlaceholderTitle(item.title)
+                    else { return false }
+                    let titleLower = item.title.lowercased()
+                    let pathLower = item.path.joined(separator: " ").lowercased()
+                    return titleLower.contains(trimmed) || pathLower.contains(trimmed) || trimmed.contains(titleLower)
+                }.sorted { a, b in
+                    let aTitle = a.title.lowercased()
+                    let bTitle = b.title.lowercased()
+                    let aExact = aTitle == trimmed
+                    let bExact = bTitle == trimmed
+                    if aExact != bExact { return aExact }
+                    let aPrefix = aTitle.hasPrefix(trimmed)
+                    let bPrefix = bTitle.hasPrefix(trimmed)
+                    if aPrefix != bPrefix { return aPrefix }
+                    return aTitle.count < bTitle.count
+                }
+            }
+        }()
+
+        for item in filteredMenus.prefix(6) {
+            if items.contains(where: { $0.title.lowercased() == item.title.lowercased() }) {
+                continue
+            }
+            var pill = DockPill(
+                id: "global-ctx-menu-\(bundleID)-\(item.path.joined(separator: ">"))",
+                name: item.title,
+                icon: "command",
+                badge: item.path.dropLast().joined(separator: " ▸ "),
+                execute: { [weak self] in
+                    self?.runMenuItem(item)
+                }
+            )
+            pill.sourceBundleId = bundleID
+            pill.sourceAppName = appName
+            pill.resultSection = section
+            pill.rankingKind = "menu"
+            pill.keyboardShortcutLabel = item.shortcutDisplay
+            items.append(.dock(pill))
+        }
+
         return items
     }
 

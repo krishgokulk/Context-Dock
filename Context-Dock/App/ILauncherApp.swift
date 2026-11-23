@@ -1209,6 +1209,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentation.dismiss()
             return
         }
+        if let front = menuBarOwningUserFacingApplication()
+            ?? NSWorkspace.shared.frontmostApplication.flatMap({ resolvedUserFacingApplication($0) })
+        {
+            if front.bundleIdentifier != Bundle.main.bundleIdentifier {
+                recordFrontmostApp(front)
+            }
+        }
         CornerDockController.shared.showCentred()
     }
 
@@ -1233,6 +1240,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         {
             presentation.dismiss()
             return
+        }
+        if let front = menuBarOwningUserFacingApplication()
+            ?? NSWorkspace.shared.frontmostApplication.flatMap({ resolvedUserFacingApplication($0) })
+        {
+            if front.bundleIdentifier != Bundle.main.bundleIdentifier {
+                recordFrontmostApp(front)
+            }
         }
         CornerDockController.shared.showBottomGlobalContext()
     }
