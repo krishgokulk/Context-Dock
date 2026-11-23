@@ -1477,9 +1477,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.option),
                 hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleOptionLaunch {
-                // ⌥⌥: Unified Global Launcher (same surface as ⌘⌘, center or bottom per settings).
+                // ⌥⌥: Unified Global Launcher at the center of the display (remembering
+                // any user-dragged position via `shownPanelOrigin`).
                 DoraXTurnLog.record("hotkey ⌥⌥")
-                DispatchQueue.main.async { self.activateUnifiedGlobalLauncher() }
+                DispatchQueue.main.async { self.toggleCentredCorner() }
             }
         }
 

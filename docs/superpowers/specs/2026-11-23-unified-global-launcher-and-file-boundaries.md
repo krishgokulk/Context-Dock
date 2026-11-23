@@ -70,9 +70,11 @@ When the user types a query or presses `↓` (Down Arrow) on the resting pill, r
 ## 3. Detailed Component Architecture
 
 ### 3.1 Hotkey Unification (`ILauncherApp.swift`)
-- Both `doubleOption` (`⌥⌥`) and `doubleCommand` (`⌘⌘`) route to the same universal entry point: `activateUnifiedGlobalLauncher()`.
+- Both `doubleOption` (`⌥⌥`) and `doubleCommand` (`⌘⌘`) open the same **Unified Global Launcher** (`Global Context`):
+  - `⌘⌘` (`activateUnifiedGlobalLauncher()`) respects `launcherPresentationMode` (Center or Bottom Dock).
+  - `⌥⌥` (`toggleCentredCorner()`) always opens at the **center of the display** (remembering any user-dragged `shownPanelOrigin`).
 - If the launcher is already open and focused, pressing the hotkey dismisses it.
-- Opening the launcher sets `model.summon(app: AppChatPromptModel.globalScopeName, bundleID: "")`, ensuring Global Context is active while immediately capturing `NSWorkspace.shared.frontmostApplication` as the contextual anchor.
+- Opening the launcher sets Global Context active while capturing `NSWorkspace.shared.frontmostApplication` for contextual actions and AI fallbacks.
 
 ### 3.2 Bounded File Search & Finder Integration
 - **Strict Settings Boundary:**
