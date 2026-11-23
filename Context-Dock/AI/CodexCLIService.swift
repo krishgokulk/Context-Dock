@@ -36,6 +36,24 @@ enum CodexCLIService {
         }
     }
 
+    /// Opens Terminal to run `codex login` for the user's ChatGPT subscription.
+    @discardableResult
+    static func launchSignIn() -> Bool {
+        let script = """
+            tell application "Terminal"
+                activate
+                do script "codex login"
+            end tell
+            """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        do { try process.run(); return true } catch {
+            log.error("codex sign-in launch failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
     /// One line of the `--json` event stream, reduced to what DoraX shows or keeps.
     enum StreamLine: Equatable {
         /// A factual stage worth a step row — a command being run.

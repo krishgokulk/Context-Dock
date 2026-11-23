@@ -65,7 +65,7 @@ enum CornerGeneralChatMetrics {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
         if hasAttachments { result += attachmentRowHeight }
-        if isExpanded { result += 36 }
+        if isExpanded { result += 22 }
         return result
     }
 
@@ -235,7 +235,7 @@ struct CornerGeneralChatView: View {
         !slashModMatches.isEmpty || !slashMatches.isEmpty || (clarification != nil && model.input.isEmpty) || approvals.pending(for: .corner) != nil
     }
     private var composerBarHeight: CGFloat {
-        CornerGeneralChatMetrics.rowHeight(lines: model.cornerComposerLines) + (isComposerExpanded ? 36 : 0)
+        CornerGeneralChatMetrics.rowHeight(lines: model.cornerComposerLines) + (isComposerExpanded ? 22 : 0)
     }
     private var composerHeight: CGFloat {
         CornerGeneralChatMetrics.composerHeight(
@@ -255,7 +255,6 @@ struct CornerGeneralChatView: View {
                     Spacer(minLength: 0)
                     composer
                         .frame(width: size.width, height: composerHeight)
-                        .padding(.bottom, 6)
                 }
                 .frame(width: size.width, height: size.height)
                 .background(GlassBackground(cornerRadius: 26, isDark: nil))
