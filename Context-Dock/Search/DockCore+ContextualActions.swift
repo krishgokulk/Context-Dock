@@ -1184,25 +1184,44 @@ extension DockCore {
     /// though the launcher itself is key. Empty query shows the full intelligent set;
     /// typing filters via the same matcher the app-scoped window pills use.
     func windowManagementScopePills(scopedBundleId: String, query: String) -> [DockPill] {
-        guard let app = AppDelegate.shared?.previousFrontmostApp,
-            !app.isTerminated,
+        let targetApp: NSRunningApplication? = {
+            if let prev = AppDelegate.shared?.previousFrontmostApp,
+                !prev.isTerminated,
+                let bid = prev.bundleIdentifier,
+                !bid.isEmpty,
+                bid != Bundle.main.bundleIdentifier
+            {
+                return prev
+            }
+            return NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != nil
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+        }()
+        guard let app = targetApp,
             let bundleId = app.bundleIdentifier,
             !bundleId.isEmpty
         else { return [] }
         let appName = app.localizedName ?? "Window"
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let commands: [WindowManagementService.Command] =
-            trimmed.isEmpty
-            ? [
-                .fill, .left, .right, .top, .bottom,
-                .topLeft, .topRight, .bottomLeft, .bottomRight,
-                .quarters, .center, .fullScreen, .restorePreviousSize,
-            ]
-            : WindowManagementService.shared.matchingCommands(query: trimmed)
-
+        let frontmostCommands: [WindowManagementService.Command] = [
+            .fill, .left, .right, .top, .bottom,
+            .center, .topLeft, .topRight, .bottomLeft, .bottomRight,
+            .fullScreen, .restorePreviousSize,
+        ]
+        let desktopLayoutCommands: [WindowManagementService.Command] = [
+            .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop, .quarters,
+        ]
         let appIcon = app.icon
-        return commands.map { command in
+        let secondaryIcon = secondaryDesktopAppIcon(excluding: bundleId)
+
+        func makeWindowPill(
+            _ command: WindowManagementService.Command,
+            section: String
+        ) -> DockPill {
             var pill = DockPill(
                 id: "syscmd-windows-\(command.id)",
                 name: command.title,
@@ -1216,19 +1235,79 @@ extension DockCore {
                     l2.focusedPillIndex = nil
                 }
             )
-            // Render a live layout preview: the frontmost app's icon sitting in the
-            // region the layout will move it to — instead of a generic split glyph.
             pill.menuItemImage = windowLayoutPreviewImage(
                 appIcon: appIcon,
-                secondaryIcon: secondaryDesktopAppIcon(excluding: bundleId),
+                secondaryIcon: secondaryIcon,
                 command: command)
-            pill.rankingKind = "systemCommand"
+            pill.rankingKind = "nativeWindow"
+            pill.resultSection = section
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = appName
             pill.trackingIdentifier = "syscmd-windows:\(command.id)"
             pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
+
+        // In Global Context search (non-Windows scope), return only the matching Window layouts.
+        guard scopedBundleId.hasPrefix("syscmd://") else {
+            let matching = WindowManagementService.shared.matchingCommands(query: trimmed)
+            return matching.map { makeWindowPill($0, section: GlobalResultSection.windowLayouts) }
+        }
+
+        // Inside `[ ← Windows ]` scope: show all frontmost window positions, desktop
+        // multi-window layouts, and apps on the current desktop with their app icons.
+        let lower = trimmed.lowercased()
+        var pills: [DockPill] = []
+
+        let frontMatches = trimmed.isEmpty
+            ? frontmostCommands
+            : frontmostCommands.filter { cmd in
+                cmd.searchTerms.contains { $0.lowercased().contains(lower) }
+                    || lower.contains(cmd.title.lowercased())
+            }
+        pills += frontMatches.map {
+            makeWindowPill($0, section: "Frontmost Window · \(appName)")
+        }
+
+        let desktopMatches = trimmed.isEmpty
+            ? desktopLayoutCommands
+            : desktopLayoutCommands.filter { cmd in
+                cmd.searchTerms.contains { $0.lowercased().contains(lower) }
+                    || lower.contains(cmd.title.lowercased())
+            }
+        pills += desktopMatches.map {
+            makeWindowPill($0, section: "Desktop Layouts")
+        }
+
+        let ownBundle = Bundle.main.bundleIdentifier
+        let desktopApps = NSWorkspace.shared.runningApplications.filter { running in
+            running.activationPolicy == .regular
+                && !running.isTerminated
+                && running.bundleIdentifier != ownBundle
+                && (trimmed.isEmpty || (running.localizedName ?? "").lowercased().contains(lower))
+        }
+        for running in desktopApps.prefix(8) {
+            guard let rBundle = running.bundleIdentifier else { continue }
+            let rName = running.localizedName ?? rBundle
+            var appPill = DockPill(
+                id: "syscmd-windows-app-\(rBundle)",
+                name: rName,
+                icon: "macwindow",
+                accentColorName: "green",
+                badge: rBundle == bundleId ? "Frontmost Window" : "Desktop App",
+                execute: {
+                    AppActivation.bringForward(bundleID: rBundle, name: rName)
+                }
+            )
+            appPill.menuItemImage = running.icon
+            appPill.rankingKind = "nativeWindow"
+            appPill.resultSection = "Apps on Current Desktop"
+            appPill.sourceBundleId = rBundle
+            appPill.sourceAppName = rName
+            appPill.trackingIdentifier = "syscmd-windows-app:\(rBundle)"
+            pills.append(appPill)
+        }
+        return pills
     }
 
     /// Live process/memory monitor scope. First row toggles the sort column; the

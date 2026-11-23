@@ -285,6 +285,7 @@ final class AppChatPromptModel: ObservableObject {
     var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    var globalFileSearchGeneration = 0
     /// The folder Finder's front window shows — the Desktop when no window is open — read
     /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
     var finderFrontFolder: URL?
@@ -334,7 +335,7 @@ final class AppChatPromptModel: ObservableObject {
     var isAnswering: Bool { conversation.isLoading }
     var liveSteps: [String] { conversation.liveSteps }
     /// Files the question should carry.
-    @Published private(set) var attachments: [URL] = []
+    @Published var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
     /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
     /// not a preference — it was a button that occasionally worked, so pressing it wrote the
@@ -378,7 +379,7 @@ final class AppChatPromptModel: ObservableObject {
 
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
-    private var hasPresentedConversation = false
+    var hasPresentedConversation = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
     /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
@@ -608,6 +609,7 @@ final class AppChatPromptModel: ObservableObject {
     ) {
         let outgoing = scopeKey
         let incoming = Self.scopeKey(name: name, bundleID: bundleID)
+        let isEnteringGlobal = incoming == Self.scopeKey(name: Self.globalScopeName, bundleID: "")
         let leavingChat = outgoing != incoming && phase == .chat
         if outgoing != incoming {
             if !appBundleID.isEmpty, conversation.scopeBundleId.isEmpty, !conversation.messages.isEmpty {
@@ -620,7 +622,7 @@ final class AppChatPromptModel: ObservableObject {
             stopAwaitingAnswer()
             // So did a conversation on screen or put away by its ⌄.
             hasPresentedConversation = false
-            isConversationHidden = false
+            isConversationHidden = isEnteringGlobal
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
             savedChatCache = nil
@@ -629,7 +631,7 @@ final class AppChatPromptModel: ObservableObject {
         appBundleID = bundleID
         showSuggestions(suggestions)
         capabilitySummary = summary
-        if leavingChat {
+        if leavingChat || isEnteringGlobal {
             set(restingInputPhase)
         }
     }
@@ -848,7 +850,7 @@ final class AppChatPromptModel: ObservableObject {
     /// The chat sheet put away — by its ⌄ (owner 2026-10-08), or ⌫ / ↓ on the empty field
     /// (2026-10-16): the conversation is kept, a turn keeps running, and the field's ⌃ or ↑
     /// brings it back (`showConversation`).
-    @Published private(set) var isConversationHidden = false
+    @Published var isConversationHidden = false
 
     @discardableResult
     func hideConversation() -> Bool {
@@ -1004,6 +1006,7 @@ final class AppChatPromptModel: ObservableObject {
     /// being a list of subcommands, and when the answer landed nothing put it back, so the
     /// tool looked like it had ignored the question entirely.
     private func followConversation(messages incoming: [AIChatMessage]) {
+        guard !isGlobalScope else { return }
         if incoming.isEmpty {
             // Our own question emptied it. Hold the card until the turn either shows up or
             // gives up, rather than treating the clear as "there is nothing here".
@@ -1457,17 +1460,28 @@ final class AppChatPromptModel: ObservableObject {
             return true
         }
 
+        // Global Context AI queries route to General Chat (Dora's Mac-wide conversation)
+        if isGlobalScope {
+            query = ""
+            attachments = []
+            focusedMenuIndex = nil
+            CornerDockController.shared.chatPresentation.showGeneral(seeding: question)
+            return true
+        }
+
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
         // The question was asked from the list, not into it.
         focusedMenuIndex = nil
         query = ""
         attachments = []
-        hasPresentedConversation = true
-        awaitingAnswer = true
-        isConversationHidden = false
-        armAnswerWatchdog()
-        set(.chat)
+        if !isGlobalScope {
+            hasPresentedConversation = true
+            awaitingAnswer = true
+            isConversationHidden = false
+            armAnswerWatchdog()
+            set(.chat)
+        }
         touch()
         return true
     }

@@ -18,9 +18,26 @@ extension AppChatPromptModel {
 
     // MARK: Pinning
 
-    /// Whether a list row can be pinned in this app's Context Dock.
+    private func pinTargetBundleID(for row: AppChatRow) -> String? {
+        if isAppContextDock { return appBundleID }
+        guard isGlobalScope else { return nil }
+        switch row {
+        case .dock(let pill) where !pill.sourceBundleId.isEmpty:
+            return pill.sourceBundleId
+        case .command(let item) where item.sourcePID != 0:
+            return NSRunningApplication(processIdentifier: item.sourcePID)?.bundleIdentifier
+        default:
+            if let bid = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier, !bid.isEmpty {
+                return bid
+            }
+            return nil
+        }
+    }
+
+    /// Whether a list row can be pinned in this app's Context Dock (or for its app in Global Context).
     func canPinToApp(_ row: AppChatRow) -> Bool {
-        isAppContextDock && DockPinKind(appRow: row) != nil
+        guard let target = pinTargetBundleID(for: row), !target.isEmpty else { return false }
+        return DockPinKind(appRow: row) != nil
     }
 
     /// Pins a Global row to the Dock, or unpins it when it already is — the list's right-click
@@ -61,15 +78,19 @@ extension AppChatPromptModel {
     }
 
     func isPinnedToApp(_ row: AppChatRow) -> Bool {
-        guard let kind = DockPinKind(appRow: row) else { return false }
-        return dockPins.isPinned(kind, app: appBundleID)
+        guard let target = pinTargetBundleID(for: row),
+            let kind = DockPinKind(appRow: row)
+        else { return false }
+        return dockPins.isPinned(kind, app: target)
     }
 
-    /// Pins a row for this app, or unpins it when it already is.
+    /// Pins a row for this app (or its source/frontmost app in Global Context), or unpins it when it already is.
     func toggleAppPin(_ row: AppChatRow) {
-        guard isAppContextDock, let kind = DockPinKind(appRow: row) else { return }
+        guard let target = pinTargetBundleID(for: row), !target.isEmpty,
+            let kind = DockPinKind(appRow: row)
+        else { return }
         defer { updateTabStrip() }
-        if let pin = dockPins.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
+        if let pin = dockPins.pins(forApp: target).first(where: { $0.kind == kind }) {
             dockPins.unpin(pin.id)
             return
         }
@@ -77,7 +98,28 @@ extension AppChatPromptModel {
             if case .global(let doc) = row { return doc.id }
             return nil
         }()
-        dockPins.pin(kind, title: row.title, documentID: documentID, app: appBundleID)
+        dockPins.pin(kind, title: row.title, documentID: documentID, app: target)
+    }
+
+    /// Top 2–3 pinned actions for the underlying frontmost app, shown as satellite micro-pills
+    /// beside the frontmost app chip in Global Context.
+    func frontmostPinnedMicroPills(limit: Int = 3) -> [(pin: DockPin, symbol: String)] {
+        guard let frontApp = AppDelegate.shared?.previousFrontmostApp,
+            let bundleID = frontApp.bundleIdentifier,
+            !bundleID.isEmpty
+        else { return [] }
+        let appName = (frontApp.localizedName ?? "").lowercased()
+        return dockPins.pins(forApp: bundleID)
+            .filter { pin in
+                let title = pin.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, title.lowercased() != appName else { return false }
+                if case .app = pin.kind { return false }
+                return true
+            }
+            .prefix(limit)
+            .map { pin in
+                (pin: pin, symbol: appPinSymbol(pin) ?? pin.kind.fallbackSymbol)
+            }
     }
 
     // MARK: The bar's leading icons
@@ -197,20 +239,23 @@ extension AppChatPromptModel {
             else { return }
             _ = WindowManagementService.shared.execute(command, sourceApp: app)
         case .appAction(let id):
+            let targetBundleID = pin.appBundleID ?? appBundleID
             guard let action = adapterActions.first(where: { $0.id == id })
-                ?? AppAdapterManager.shared.adapter(for: appBundleID)?.actions
+                ?? AppAdapterManager.shared.adapter(for: targetBundleID)?.actions
                     .first(where: { $0.id == id })
             else { return }
             runAdapterAction(action)
         case .menuCommand(let path):
             let bundleID = pin.appBundleID ?? appBundleID
-            let name = appName
+            let name = appName.isEmpty
+                ? (NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == bundleID }?.localizedName ?? "")
+                : appName
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 // A pinned command is one click from being run without its name being read
                 // again, so the gate that guards every AI menu click guards this one too.
                 guard await self.askMenuConsent(path, bundleID, name) else { return }
-                self.runPinnedMenuPath(path)
+                self.runPinnedMenuPath(path, bundleID: bundleID)
             }
         case .app(let bundleID):
             AppActivation.bringForward(bundleID: bundleID, name: pin.title)
@@ -220,13 +265,14 @@ extension AppChatPromptModel {
     }
 
     /// Runs a menu path through the dock's own execution path, the one a list row uses.
-    private func runPinnedMenuPath(_ path: [String]) {
-        if let performMenuPath {
+    private func runPinnedMenuPath(_ path: [String], bundleID: String = "") {
+        let targetBundleID = bundleID.isEmpty ? appBundleID : bundleID
+        if targetBundleID == appBundleID, let performMenuPath {
             performMenuPath(path)
             return
         }
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == appBundleID && !$0.isTerminated
+            $0.bundleIdentifier == targetBundleID && !$0.isTerminated
         }) else { return }
         let known = allMenuItems.first { $0.path == path }
         let request = MenuExecutionCoordinator.DockMenuActionRequest(

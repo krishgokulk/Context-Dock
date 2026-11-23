@@ -1488,6 +1488,31 @@ struct AIChatMessageView: View {
         }
     }
 
+    @ViewBuilder
+    private var codexSignInButton: some View {
+        Button {
+            CodexCLIService.launchSignIn()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.right.circle.fill")
+                Text("Sign in to ChatGPT").fontWeight(.semibold)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(providerColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(providerColor.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .help("Opens Terminal to run `codex login` for your ChatGPT plan, then re-send.")
+    }
+
+    private func isCodexAuthFailure(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("codex login") || lower.contains("sign in with chatgpt")
+    }
+
     /// Shown under an auth-failure error so the user recovers from the chat, not from Settings.
     /// Sign-in is interactive, so it opens Terminal (`ClaudeCodeCLIService.launchSignIn`); the
     /// user finishes there and re-sends. The `claude` CLI owns the login — DoraX never sees the
@@ -1897,7 +1922,9 @@ struct AIChatMessageView: View {
                 if message.enableAppRequest != nil {
                     enableAppButton
                 }
-                if message.isError, ClaudeCodeCLIService.isAuthFailure(message.content) {
+                if message.isError, isCodexAuthFailure(message.content) {
+                    codexSignInButton
+                } else if message.isError, ClaudeCodeCLIService.isAuthFailure(message.content) {
                     claudeSignInButton
                 }
                 if let card = message.noRouteOptions {

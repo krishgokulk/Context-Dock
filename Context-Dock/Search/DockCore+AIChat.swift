@@ -2431,10 +2431,18 @@ extension DockCore {
             return id.caseInsensitiveCompare("com.apple.finder") == .orderedSame
                 ? ContextDetector.shared.getFinderSelectedFiles() : []
         }()
+        let effectiveBundleId: String = {
+            if dockScope.isGlobalScope { return "" }
+            return scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        }()
+        let effectiveAppName: String = {
+            if dockScope.isGlobalScope { return "General" }
+            return scopedAppName.isEmpty ? frontmost.name : scopedAppName
+        }()
         let frontmostTaskPlan = FrontmostAppTaskPlan.make(
             query: query,
-            bundleId: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId,
-            appName: scopedAppName.isEmpty ? frontmost.name : scopedAppName,
+            bundleId: effectiveBundleId,
+            appName: effectiveAppName,
             hasSelection: liveSelectionForChat() != nil || !initialFinderSelection.isEmpty,
             hasAttachments: !contextDockChatFiles.isEmpty,
             priorConversation: l2.chatMessages.suffix(4).map(\.content).joined(separator: "\n"),

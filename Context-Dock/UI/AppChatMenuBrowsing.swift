@@ -20,6 +20,9 @@ extension AppChatPromptModel {
     /// How many commands the corner offers. Matches the suggestion list it replaces — the
     /// pill's height is a pure function of this count, so it cannot exceed what is drawn.
     static let menuRowLimit = 5
+    /// Multi-section Global Context gets a taller Raycast/Siri-grade viewport (9 slots ≈ 468pt)
+    /// so Top Hit + Apps + Files & Folders + Fallbacks are visible at a glance without scrolling.
+    static let globalVisibleSlotLimit = 9
 
     /// How many apps Global Context reads, most recently used first. Every running app's
     /// full menu is thousands of rows and seconds of AX; the ranking only ever shows five.
@@ -149,6 +152,16 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
+            if typed.isEmpty {
+                globalFileSearchGeneration &+= 1
+                rows = []
+                focusedMenuIndex = nil
+                menuMatches = []
+                updateGlobalTyping(for: typed)
+                updateGhostText(for: typed)
+                syncListPhase()
+                return
+            }
             // Looked up without its time words: "pdf today" finds PDFs, and the time then
             // keeps today's (S3). The rest reads the words as typed.
             let lookup = GlobalQuery.searchText(typed)
@@ -173,6 +186,25 @@ extension AppChatPromptModel {
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
             rows += globalSourceRows(for: typed)
+            if globalResultSource === GlobalContextResultSource.shared {
+                // Frontmost app contextual actions (or active Finder folder when Finder is in front).
+                rows += frontmostContextualActionRows(for: typed)
+                // Bounded Files & Folders from user-configured (or safe default) directories.
+                rows += globalFileAndFolderRows(for: lookup)
+            }
+            // When native Window layouts answer the query (e.g. "centre", "left", "maximize"),
+            // drop duplicate Menu commands with the same title (e.g. "Window ▸ Centre" in 11 apps)
+            // so the frontmost app's Window layout leads as Top Hit.
+            let windowLayoutTitles = Set(
+                rows.filter { GlobalResultSection.title(for: $0) == GlobalResultSection.windowLayouts }
+                    .map { $0.title.lowercased() }
+            )
+            if !windowLayoutTitles.isEmpty {
+                rows.removeAll { row in
+                    GlobalResultSection.title(for: row) == GlobalResultSection.menuCommands
+                        && windowLayoutTitles.contains(row.title.lowercased())
+                }
+            }
             // A time named — "today", "last week" — keeps only what happened then, with the
             // history of that time looked up for it (S3). Apps and commands stay.
             if let range = GlobalQuery.timeRange(in: typed) {
@@ -181,6 +213,10 @@ extension AppChatPromptModel {
             }
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed, useCanonicalSectionOrder: true)
+            let elevatedPins = elevatedFrontmostPinRows(for: typed)
+            if !elevatedPins.isEmpty {
+                ordered.insert(contentsOf: elevatedPins, at: 0)
+            }
             // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
             // row these words were answered with before first (S5).
             let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
@@ -201,18 +237,32 @@ extension AppChatPromptModel {
                 pill.resultSection = section
                 return pill
             }
-                + GlobalFallbacks.rows(for: typed) { [weak self] question in
-                    self?.askFromGlobal(question)
-                }.map(AppChatRow.dock)
+                + GlobalFallbacks.rows(
+                    for: typed,
+                    appTargets: globalFallbackAppTargets(),
+                    ask: { [weak self] question in
+                        self?.askFromGlobal(question)
+                    },
+                    askApp: { [weak self] target, question in
+                        self?.askAppChatFromGlobal(
+                            bundleID: target.bundleID,
+                            name: target.name,
+                            question: question
+                        )
+                    }
+                ).map(AppChatRow.dock)
                 + GlobalResultSection.grouped(risky, query: typed, useCanonicalSectionOrder: true)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
             updateGhostText(for: typed)
             syncListPhase()
+            appendGlobalDiskMatches(for: lookup)
             return
         }
-        if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,
+        if returnsToGlobalScope,
+            (!typed.isEmpty || scopedCommand != nil || appBundleID.hasPrefix("syscmd://")),
+            !isFinderScope,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName),
             !scoped.isEmpty {
             rows = scoped.map(AppChatRow.dock)
@@ -609,6 +659,8 @@ extension AppChatPromptModel {
             }
             MenuWarmCacheService.shared.warmRunningAppsForDock(runningApps, maxApps: 12)
         }
+        hasPresentedConversation = false
+        isConversationHidden = true
         refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)
@@ -962,8 +1014,12 @@ extension AppChatPromptModel {
     }
 
     /// The board is showing an extension's, a command's or a plugin's own interface.
+    /// `Windows` uses `AppChatListCard` directly so all window layouts, preview thumbnails,
+    /// desktop apps, and `⌘P` pinning render in the unified list.
     var showsExtensionPanel: Bool {
-        scopedExtension != nil || scopedCommand != nil || scopedPlugin != nil
+        scopedExtension != nil
+            || (scopedCommand != nil && scopedCommand?.isWindowsBoard != true)
+            || scopedPlugin != nil
     }
 
     /// Step into a plugin with a panel: the panel, in the corner's board, as a strip pin's
@@ -1041,6 +1097,7 @@ extension AppChatPromptModel {
         returnsToGlobalScope = true
         adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")
         rows = []
+        updateMenuMatches()
         updateGlobalTyping(for: "")
         syncListPhase()
         touch()
@@ -1120,10 +1177,62 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// Elevates pinned actions for the underlying frontmost app into a `★ Pinned for <App>`
+    /// section with a +300 score boost and numbered shortcuts (`⌘1`, `⌘2`, `⌘3`).
+    func elevatedFrontmostPinRows(for typed: String) -> [AppChatRow] {
+        guard let frontApp = AppDelegate.shared?.previousFrontmostApp,
+            !frontApp.isTerminated,
+            let bundleID = frontApp.bundleIdentifier,
+            !bundleID.isEmpty
+        else { return [] }
+        let pins = dockPins.pins(forApp: bundleID)
+        guard !pins.isEmpty else { return [] }
+        let appTitle = frontApp.localizedName ?? "App"
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matching = trimmed.isEmpty
+            ? Array(pins.prefix(3))
+            : pins.filter { $0.title.lowercased().contains(trimmed) }
+        guard !matching.isEmpty else { return [] }
+        let sectionTitle = GlobalResultSection.pinnedSectionTitle(forApp: appTitle)
+        return matching.enumerated().map { index, pin in
+            var pill = DockPill(
+                id: "pinned-global-\(pin.id.uuidString)",
+                name: pin.title,
+                icon: appPinSymbol(pin) ?? pin.kind.fallbackSymbol,
+                badge: "\(appTitle) Pin",
+                execute: { [weak self] in self?.openAppPin(pin) }
+            )
+            pill.sourceBundleId = bundleID
+            pill.sourceAppName = appTitle
+            pill.resultSection = sectionTitle
+            pill.rankingScore = Double(300 + max(0, 10 - index))
+            if index < 3 {
+                pill.keyboardShortcutLabel = "⌘\(index + 1)"
+            }
+            return AppChatRow.dock(pill)
+        }
+    }
+
     /// The fallback "Ask AI: …" row: the words go to the AI as a question, as Return does
     /// in a scope that asks (#258 G3). Running the row emptied the field first.
     func askFromGlobal(_ question: String) {
-        query = question
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        query = ""
+        attachments = []
+        focusedMenuIndex = nil
+        CornerDockController.shared.chatPresentation.showGeneral(seeding: trimmed)
+    }
+
+    /// Dual AI fallback (`⌥↵`): switches from Global Context into the underlying frontmost
+    /// app's App Pet and submits the question with full app context & `.doraxpack` skills.
+    func askFrontmostPetFromGlobal(_ question: String) {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+            CornerDockController.shared.chatPresentation.showFrontmostApp(target: target)
+        }
+        query = trimmed
         _ = submit()
     }
 
@@ -1233,11 +1342,15 @@ extension AppChatPromptModel {
         finderSearchGeneration &+= 1
         guard !typed.isEmpty else { return }
         let generation = finderSearchGeneration
-        let home = NSHomeDirectory()
+        let searchDirs = FileSearchService.boundedRoots(
+            useCustom: AppSettings.shared.useCustomSearchDirectories,
+            customDirectories: AppSettings.shared.searchDirectories.map(\.path)
+        )
+        guard !searchDirs.isEmpty else { return }
         Task { @MainActor [weak self] in
             let paths = await DockCore.spotlightSearchPaths(
                 predicate: NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
-                inDirectories: [home],
+                inDirectories: searchDirs,
                 sortByLastUsed: true,
                 limit: Self.menuRowLimit)
             guard let self, self.finderSearchGeneration == generation, self.isFinderScope,
@@ -1305,14 +1418,35 @@ extension AppChatPromptModel {
     /// lists the folder; typing filters it; Backspace on the empty field climbs back out.
     @discardableResult
     func enterFocusedFolder() -> Bool {
-        guard isFinderScope, case .file(let url)? = focusedRow, Self.isFolder(url)
-        else { return false }
-        finderBrowseStack.append(url)
-        query = ""
-        focusedMenuIndex = nil
-        updateFinderResults(for: "")
-        touch()
-        return true
+        let folderURL: URL? = {
+            switch focusedRow {
+            case .file(let url): return url
+            case .dock(let pill):
+                return pill.resolvedURL ?? pill.previewPath.map { URL(fileURLWithPath: $0) }
+            case .global(let doc):
+                return doc.filePath.map { URL(fileURLWithPath: $0) }
+            default: return nil
+            }
+        }()
+        guard let url = folderURL, Self.isFolder(url) else { return false }
+        if isFinderScope {
+            finderBrowseStack.append(url)
+            query = ""
+            focusedMenuIndex = nil
+            updateFinderResults(for: "")
+            touch()
+            return true
+        }
+        if isGlobalScope {
+            scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+            finderBrowseStack = [url]
+            query = ""
+            focusedMenuIndex = nil
+            updateFinderResults(for: "")
+            touch()
+            return true
+        }
+        return false
     }
 
     /// Backspace on an empty field inside a folder: up one level, and past the outermost
@@ -1705,7 +1839,7 @@ extension AppChatPromptModel {
     /// on an empty card.
     /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
     var globalSectionHeaders: [Int: String] {
-        if isGlobalScope {
+        if isGlobalScope || scopedCommand?.isWindowsBoard == true {
             guard let top = globalTopHitID, rows.first?.id == top else {
                 return GlobalResultSection.headers(for: rows)
             }
@@ -1735,7 +1869,10 @@ extension AppChatPromptModel {
                 if headers[index] != nil { slots.append(true) }
                 slots.append(false)
             }
-            var count = min(slots.count, Self.menuRowLimit)
+            let slotLimit = ((isGlobalScope && headers.count >= 3) || scopedCommand?.isWindowsBoard == true)
+                ? Self.globalVisibleSlotLimit
+                : Self.menuRowLimit
+            var count = min(slots.count, slotLimit)
             if count > 1, slots[count - 1] { count -= 1 }
             return count
         }
@@ -1770,7 +1907,14 @@ extension AppChatPromptModel {
         // The list closed back to just the field after a few seconds of nobody looking at
         // it, the same way the dock's own results sheet is never open until the arrow
         // keys ask for it. Reaching for it now is exactly that ask.
-        if phase == .prompt { set(.suggesting) }
+        if phase == .prompt {
+            set(.suggesting)
+            if isGlobalScope, query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                rows.isEmpty
+            {
+                populateEmptyGlobalContextBoard()
+            }
+        }
         if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             focusedMenuIndex = DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: 3)
             touch()

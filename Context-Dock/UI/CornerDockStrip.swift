@@ -755,6 +755,15 @@ struct CornerDockStrip: View {
                 })
             }
         }
+        let appPins = pins.pins(forApp: bundleID)
+        if !appPins.isEmpty {
+            items.append(.separator)
+            for appPin in appPins.prefix(5) {
+                items.append(.init(title: "★ \(appPin.title)") {
+                    model.openAppPin(appPin)
+                })
+            }
+        }
         if slot.isRunning {
             items.append(.separator)
             items.append(.init(title: "Quit \(slot.title)") {

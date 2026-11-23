@@ -164,7 +164,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
     }
 
-    private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
+    func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated, !Self.isSystemAgentUI(app) else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
         if let bundleID = app.bundleIdentifier, !bundleID.isEmpty, bundleID != ownBundleID {
@@ -1209,40 +1209,60 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             presentation.dismiss()
             return
         }
+        if let front = menuBarOwningUserFacingApplication()
+            ?? NSWorkspace.shared.frontmostApplication.flatMap({ resolvedUserFacingApplication($0) })
+        {
+            if front.bundleIdentifier != Bundle.main.bundleIdentifier {
+                recordFrontmostApp(front)
+            }
+        }
+        CornerDockController.shared.cancelPendingCommandSwitch()
         CornerDockController.shared.showCentred()
     }
 
-    /// ⌘⌘: Launch or toggle Context-Dock in the user's chosen presentation mode:
-    /// - Center of Display (Spotlight / Raycast style floating draggable window)
-    /// - Bottom Dock (Left, Centre, Right).
-    func activateContextDockFromDoubleCommand() {
+    /// Unified Global Launcher entry point shared by both ⌘⌘ and ⌥⌥.
+    /// Summons Global Context at the user's preferred placement (Center or Bottom),
+    /// or dismisses it if already open and focused.
+    func activateUnifiedGlobalLauncher() {
+        guard settings.enableLayer2 else { return }
         if settings.launcherPresentationMode == .centerScreen {
             toggleCentredCorner()
             return
         }
 
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+
         let presentation = CornerDockController.shared.chatPresentation
-        // Only an open field is put away: the resting bar at the bottom is not open, and ⌘⌘
-        // hid it instead of opening it (owner 2026-10-18).
-        if presentation.isVisible, presentation.mode == .frontmostApp,
+        if presentation.isVisible, presentation.mode == .globalContext,
             !CornerDockController.shared.isAutoHidden,
             CornerDockController.shared.prompt.phase.showsInput
         {
             presentation.dismiss()
             return
         }
-        openBottomAppChat()
+        if let front = menuBarOwningUserFacingApplication()
+            ?? NSWorkspace.shared.frontmostApplication.flatMap({ resolvedUserFacingApplication($0) })
+        {
+            if front.bundleIdentifier != Bundle.main.bundleIdentifier {
+                recordFrontmostApp(front)
+            }
+        }
+        CornerDockController.shared.cancelPendingCommandSwitch()
+        CornerDockController.shared.showBottomGlobalContext()
     }
 
-    /// The bottom dock's field for the app in front — what ⌘⌘ opens in bottom-dock mode.
+    /// ⌘⌘: Launch or toggle the Unified Global Launcher in the user's chosen presentation mode:
+    /// - Center of Display (Spotlight / Raycast style floating draggable window)
+    /// - Bottom Dock (Left, Centre, Right).
+    func activateContextDockFromDoubleCommand() {
+        activateUnifiedGlobalLauncher()
+    }
+
+    /// The bottom launcher: opens Global Context in bottom-dock placement.
     func openBottomAppChat() {
-        // From Global or General, straight to the app's Context Dock — not a toggle that
-        // would put a visible corner away instead.
-        activateAppChatPrompt(toggles: false)
-        // Already that app's resting dock, slid away by auto-hide: showing it again changed
-        // nothing, so it stayed hidden (owner 2026-10-11). Open the field, as a fresh ⌘⌘ does.
-        CornerDockController.shared.prompt.expandFromDock(seeding: nil)
-        CornerDockController.shared.armKeyboard()
+        CornerDockController.shared.showBottomGlobalContext()
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
@@ -1467,8 +1487,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.option),
                 hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleOptionLaunch {
-                // ⌥⌥: the Corner's Global Context in the middle of the display, like
-                // Spotlight — the Corner's own UI, not the old launcher (owner 2026-10-12).
+                // ⌥⌥: Unified Global Launcher at the center of the display (remembering
+                // any user-dragged position via `shownPanelOrigin`).
                 DoraXTurnLog.record("hotkey ⌥⌥")
                 DispatchQueue.main.async { self.toggleCentredCorner() }
             }

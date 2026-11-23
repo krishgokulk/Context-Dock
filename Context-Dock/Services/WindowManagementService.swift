@@ -82,10 +82,14 @@ final class WindowManagementService {
         var searchTerms: [String] {
             var terms = [title, rawValue, "window", "window manager"]
             switch self {
+            case .fill:
+                terms.append(contentsOf: ["maximize", "max"])
+            case .fullScreen:
+                terms.append("fullscreen")
             case .left, .right, .top, .bottom, .topLeft, .topRight, .bottomLeft, .bottomRight:
                 terms.append("move resize")
             case .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop, .quarters:
-                terms.append("arrange")
+                terms.append(contentsOf: ["arrange", "tile"])
             default:
                 break
             }

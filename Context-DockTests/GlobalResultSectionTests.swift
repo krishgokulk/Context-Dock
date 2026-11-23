@@ -169,3 +169,125 @@ struct ScopedAppQuitTests {
         #expect(model.appBundleID == "com.apple.calculator")
     }
 }
+
+@MainActor
+@Suite("Unified Global Launcher: sections, window management, bounded search")
+struct UnifiedGlobalLauncherSectionTests {
+    private func pill(_ name: String, section: String) -> AppChatRow {
+        var p = DockPill(id: name, name: name, icon: "app", badge: nil, execute: {})
+        p.resultSection = section
+        return .dock(p)
+    }
+
+    @Test func pinnedSectionRanksFirstInCanonicalOrder() {
+        let appRow = pill("Safari", section: GlobalResultSection.applications)
+        let contextRow = pill("New Tab", section: GlobalResultSection.contextualActionsTitle(forApp: "Safari"))
+        let windowRow = pill("Left", section: GlobalResultSection.windowLayouts)
+        let pinnedRow = pill("Export PDF", section: GlobalResultSection.pinnedSectionTitle(forApp: "Safari"))
+
+        let grouped = GlobalResultSection.grouped(
+            [appRow, windowRow, contextRow, pinnedRow],
+            query: "e",
+            useCanonicalSectionOrder: true
+        )
+        #expect(grouped.map(\.title) == ["Export PDF", "New Tab", "Safari", "Left"])
+    }
+
+    @Test func windowManagementKeywordsMatchAllCanonicalCommands() {
+        for keyword in ["left", "right", "center", "maximize", "tile", "arrange"] {
+            let matches = WindowManagementService.shared.matchingCommands(query: keyword)
+            #expect(!matches.isEmpty, "Expected window command match for '\(keyword)'")
+        }
+    }
+
+    @Test func boundedRootsEnforceCustomDirectoryBoundary() {
+        let custom = FileSearchService.boundedRoots(
+            useCustom: true,
+            customDirectories: ["/tmp/docs", "  "],
+            homeDirectory: "/Users/test"
+        )
+        #expect(custom == ["/tmp/docs"])
+
+        let emptyCustom = FileSearchService.boundedRoots(
+            useCustom: true,
+            customDirectories: [],
+            homeDirectory: "/Users/test"
+        )
+        #expect(emptyCustom.isEmpty)
+    }
+
+    @Test func globalFileAndFolderRowsMatchBoundedRootFolders() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        let settings = AppSettings.shared
+        let prevUseCustom = settings.useCustomSearchDirectories
+        let prevDirs = settings.searchDirectories
+        defer {
+            settings.useCustomSearchDirectories = prevUseCustom
+            settings.searchDirectories = prevDirs
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("UnifiedLauncherDownloadsTest-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        settings.useCustomSearchDirectories = true
+        settings.searchDirectories = [SearchDirectory(path: tempDir.path, displayName: tempDir.lastPathComponent)]
+
+        let rows = model.globalFileAndFolderRows(for: "DownloadsTest")
+        #expect(rows.count == 1)
+        if case .file(let url) = rows.first {
+            #expect(url.standardizedFileURL.path == tempDir.standardizedFileURL.path)
+            #expect(GlobalResultSection.title(for: rows[0]) == GlobalResultSection.files)
+        } else {
+            Issue.record("Expected .file row for bounded root folder")
+        }
+    }
+
+    @Test func multiSectionGlobalContextShowsUpToNineVisibleSlots() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "s"
+        model.rows = [
+            pill("Safari", section: GlobalResultSection.applications),
+            pill("Screenshot", section: GlobalResultSection.commands),
+            .file(URL(fileURLWithPath: "/tmp/screenshot.png")),
+            pill("Ask Dora: s", section: GlobalFallbacks.section),
+        ]
+        // 4 section headers + 4 rows = 8 slots (all visible within 9-slot Global viewport)
+        #expect(model.listRowCount == 8)
+    }
+
+    @Test func windowLayoutsRankAboveMenuCommandsInCanonicalOrder() {
+        let menuRow = pill("Centre", section: GlobalResultSection.menuCommands)
+        let windowRow = pill("Centre", section: GlobalResultSection.windowLayouts)
+
+        let grouped = GlobalResultSection.grouped(
+            [menuRow, windowRow],
+            query: "centre",
+            useCanonicalSectionOrder: true
+        )
+        #expect(GlobalResultSection.title(for: grouped[0]) == GlobalResultSection.windowLayouts)
+        #expect(GlobalResultSection.title(for: grouped[1]) == GlobalResultSection.menuCommands)
+    }
+
+    @Test func rightArrowOnFolderInGlobalContextListsFolderContents() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("UnifiedFolderNav-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        try Data("hello".utf8).write(to: dir.appendingPathComponent("passport.pdf"))
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "UnifiedFolderNav"
+        model.rows = [.file(dir)]
+        model.focusedMenuIndex = 0
+
+        #expect(model.stepIntoFocusedRow())
+        #expect(model.isFinderScope)
+        #expect(model.returnsToGlobalScope)
+        #expect(model.rows.map(\.title) == ["passport.pdf"])
+    }
+}

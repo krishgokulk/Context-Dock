@@ -956,7 +956,7 @@ struct AppChatPromptPill: View {
     /// simply the empty transcript: they occupy the same space answers will use later.
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.phase == .chat {
+            if model.phase == .chat, !model.isGlobalScope {
                 header
                 Divider().opacity(0.18)
                 // The card splits like Claude's chat (#191): the conversation on the left,
@@ -1301,6 +1301,10 @@ struct AppChatPromptPill: View {
                     .layoutPriority(1)
             }
 
+            if model.isGlobalScope, !model.isClipboardScope {
+                UnifiedFrontmostBar(model: model)
+            }
+
             ZStack(alignment: .leading) {
                 if model.isClipboardScope {
                     if clipboard.query.isEmpty {
@@ -1385,6 +1389,10 @@ struct AppChatPromptPill: View {
                         if model.showResultsCapsule,
                            model.queryIntent == .conversational || model.queryIntent == .webResearch
                         {
+                            if model.isGlobalScope {
+                                model.askFromGlobal(model.query)
+                                return
+                            }
                             model.submit()
                             return
                         }
@@ -1394,6 +1402,10 @@ struct AppChatPromptPill: View {
                             return
                         }
                         if model.returnRunsTopRow, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
+                        if model.isGlobalScope {
+                            model.askFromGlobal(model.query)
                             return
                         }
                         // Finder's Ask AI row, questions, and every app's composer: the question.

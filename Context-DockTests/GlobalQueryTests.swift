@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -137,6 +138,19 @@ struct GlobalTopHitTests {
         #expect(BrowserStableMenuCommand.isStable(title: "Show Personal History"))
         #expect(!BrowserStableMenuCommand.isStable(title: "New session - Claude"))
     }
+
+    @Test func exactWindowLayoutBeatsLongerMultiWordExtensionCommand() {
+        var windowPill = DockPill(id: "syscmd-windows-minimize", name: "Minimize", icon: "minus.square", badge: "Code", execute: {})
+        windowPill.rankingKind = "nativeWindow"
+        windowPill.resultSection = GlobalResultSection.windowLayouts
+        let longCommand = sysCommand("Minimize Code After Delay")
+        let rows: [AppChatRow] = [
+            longCommand,
+            .dock(windowPill)
+        ]
+        #expect(GlobalQuery.topHit(rows, query: "minimize")?.title == "Minimize")
+        #expect(GlobalQuery.topHit(rows, query: "minimiz")?.title == "Minimize")
+    }
 }
 
 /// S2: a named app's own commands join a list the engine filled with its pages.
@@ -209,5 +223,57 @@ struct AppScopeDestructiveTests {
         let rows = GlobalQuery.leadingOpenTabs(open, [fromHistory, other])
         #expect(rows.map(\.title) == ["Wikipedia", "Other"])
         #expect(rows.first?.id == open.first?.id)
+    }
+
+    @Test func dualAIFallbacksIncludeAskDoraAskAppPetAndSearchGoogle() {
+        let rows = GlobalFallbacks.rows(
+            for: "summarize",
+            frontmostAppName: "Safari",
+            ask: { _ in },
+            askPet: { _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: summarize",
+            "Ask Safari Pet: summarize",
+            "Search Google for “summarize”",
+        ])
+        #expect(rows.map(\.keyboardShortcutLabel) == ["↵", "⌥↵", "⌘↵"])
+    }
+
+    @Test func dualAIFallbacksOmitAppPetWhenNoFrontmostApp() {
+        let rows = GlobalFallbacks.rows(
+            for: "summarize",
+            frontmostAppName: nil,
+            ask: { _ in },
+            askPet: { _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: summarize",
+            "Search Google for “summarize”",
+        ])
+    }
+
+    @Test func runningAppFallbacksIncludeFrontmostPetAndRunningAppChatsWithIcons() {
+        let safariIcon = NSImage(size: NSSize(width: 16, height: 16))
+        let notesIcon = NSImage(size: NSSize(width: 16, height: 16))
+        let rows = GlobalFallbacks.rows(
+            for: "draft",
+            appTargets: [
+                GlobalFallbackAppTarget(bundleID: "com.apple.Safari", name: "Safari", icon: safariIcon, isFrontmost: true),
+                GlobalFallbackAppTarget(bundleID: "com.apple.Notes", name: "Notes", icon: notesIcon, isFrontmost: false),
+            ],
+            ask: { _ in },
+            askApp: { _, _ in }
+        )
+        #expect(rows.map(\.name) == [
+            "Ask Dora: draft",
+            "Ask Safari Pet: draft",
+            "Ask Notes Chat: draft",
+            "Search Google for “draft”",
+        ])
+        #expect(rows[1].menuItemImage === safariIcon)
+        #expect(rows[2].menuItemImage === notesIcon)
+        #expect(rows[1].keyboardShortcutLabel == "⌥↵")
+        #expect(rows[2].keyboardShortcutLabel == nil)
     }
 }

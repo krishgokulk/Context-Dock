@@ -173,7 +173,9 @@ extension DockCore {
         }
         return pills.filter { pill in
             guard !pill.isSeparator else { return false }
-            if scope.scopedBundleId.hasPrefix("syscmd://") { return pill.rankingKind == "systemCommand" }
+            if scope.scopedBundleId.hasPrefix("syscmd://") {
+                return pill.rankingKind == "systemCommand" || pill.rankingKind == "nativeWindow"
+            }
             if scope.scopedBundleId.hasPrefix("cli://") { return pill.rankingKind == "cliTool" }
             return ["menu", "submenuChild", "finderMenu", "adapter", "recentURL", "browserCommand"]
                 .contains(pill.rankingKind)
@@ -1338,7 +1340,17 @@ extension DockCore {
                 maxGroups: menuGroupLimit,
                 maxPills: menuBudget
             )
-        let menuPills = resolvedMenuGroups.flatMap { $0.pills }
+        let windowPills: [DockPill] = {
+            guard !q.isEmpty,
+                let frontApp = AppDelegate.shared?.previousFrontmostApp,
+                !frontApp.isTerminated,
+                let bundleID = frontApp.bundleIdentifier,
+                !bundleID.isEmpty,
+                !WindowManagementService.shared.matchingCommands(query: q).isEmpty
+            else { return [] }
+            return windowManagementScopePills(scopedBundleId: bundleID, query: q)
+        }()
+        let menuPills = windowPills + resolvedMenuGroups.flatMap { $0.pills }
         return finish(
             GlobalGroupedListNavigationState(
                 appResults: appResults,
