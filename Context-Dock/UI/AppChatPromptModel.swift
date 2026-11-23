@@ -1105,7 +1105,7 @@ final class AppChatPromptModel: ObservableObject {
         // A scope the user chose is not the frontmost app's to take. Global Context, a tool,
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
-        guard !isGlobalScope, !returnsToGlobalScope else { return }
+        guard !isGlobalScope, !returnsToGlobalScope, CornerChatPresentation.shared.mode != .globalContext else { return }
         // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
         // on the app it was pinned in, whatever comes forward after.
         guard !isPinned else { return }
@@ -1455,6 +1455,15 @@ final class AppChatPromptModel: ObservableObject {
         if question.lowercased() == "/skills" || question.lowercased() == "/capabilities" {
             openCapabilitiesSkillsBrowser()
             query = ""
+            return true
+        }
+
+        // Global Context AI queries route to General Chat (Dora's Mac-wide conversation)
+        if isGlobalScope {
+            query = ""
+            attachments = []
+            focusedMenuIndex = nil
+            CornerDockController.shared.chatPresentation.showGeneral(seeding: question)
             return true
         }
 

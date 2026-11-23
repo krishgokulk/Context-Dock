@@ -1389,6 +1389,10 @@ struct AppChatPromptPill: View {
                         if model.showResultsCapsule,
                            model.queryIntent == .conversational || model.queryIntent == .webResearch
                         {
+                            if model.isGlobalScope {
+                                model.askFromGlobal(model.query)
+                                return
+                            }
                             model.submit()
                             return
                         }
@@ -1398,6 +1402,10 @@ struct AppChatPromptPill: View {
                             return
                         }
                         if model.returnRunsTopRow, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
+                        if model.isGlobalScope {
+                            model.askFromGlobal(model.query)
                             return
                         }
                         // Finder's Ask AI row, questions, and every app's composer: the question.

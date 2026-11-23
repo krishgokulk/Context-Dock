@@ -127,6 +127,13 @@ final class CornerDockController: NSObject {
     /// gesture instead. Cancelled by the next Command press, so a real double-tap always
     /// wins the ambiguity rather than this firing first and the double-tap undoing it.
     private var pendingCommandSwitch: DispatchWorkItem?
+    private var lastSummonedAt: TimeInterval = 0
+
+    func cancelPendingCommandSwitch() {
+        pendingCommandSwitch?.cancel()
+        pendingCommandSwitch = nil
+        commandTapStarted = nil
+    }
     private var accumulatedChatSwipeX: CGFloat = 0
     private var accumulatedChatSwipeY: CGFloat = 0
     /// One action per swipe: set once a gesture has acted, so its momentum ending does not
@@ -308,6 +315,7 @@ final class CornerDockController: NSObject {
             .sink { [weak self] appInfo in
                 Task { @MainActor in
                     guard let self, self.prompt.phase.isVisible else { return }
+                    guard self.chatPresentation.mode == .frontmostApp, !self.prompt.isGlobalScope else { return }
                     let app = NSWorkspace.shared.runningApplications.first {
                         $0.bundleIdentifier == appInfo.bundleID && !$0.isTerminated
                     }
@@ -626,6 +634,8 @@ final class CornerDockController: NSObject {
     func showCentred() {
         ensurePanel()
         cancelPendingAutoHide()
+        cancelPendingCommandSwitch()
+        lastSummonedAt = Date().timeIntervalSinceReferenceDate
         chatPresentation.isCentred = true
         prompt.staysOpenWhenIdle = true
         isAutoHidden = false
@@ -645,13 +655,14 @@ final class CornerDockController: NSObject {
     func showBottomGlobalContext() {
         ensurePanel()
         cancelPendingAutoHide()
+        cancelPendingCommandSwitch()
+        lastSummonedAt = Date().timeIntervalSinceReferenceDate
         chatPresentation.isCentred = false
         prompt.staysOpenWhenIdle = true
         setAutoHidden(false)
         position()
         chatPresentation.showGlobalContext()
         panel?.orderFrontRegardless()
-        prompt.expandFromDock(seeding: nil)
         armKeyboard()
         refresh()
     }
@@ -1867,6 +1878,11 @@ final class CornerDockController: NSObject {
     /// would be worse than not having the gesture.
     private func handleCommandTap(_ event: NSEvent) -> NSEvent? {
         guard let panel, event.window === panel else { return event }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastSummonedAt > 0.5 else {
+            cancelPendingCommandSwitch()
+            return event
+        }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCommandDown = flags.contains(.command)
         let hasOtherModifier = !flags.subtracting([.command]).isEmpty

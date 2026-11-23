@@ -1214,8 +1214,12 @@ extension AppChatPromptModel {
     /// The fallback "Ask AI: …" row: the words go to the AI as a question, as Return does
     /// in a scope that asks (#258 G3). Running the row emptied the field first.
     func askFromGlobal(_ question: String) {
-        query = question
-        _ = submit()
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        query = ""
+        attachments = []
+        focusedMenuIndex = nil
+        CornerDockController.shared.chatPresentation.showGeneral(seeding: trimmed)
     }
 
     /// Dual AI fallback (`⌥↵`): switches from Global Context into the underlying frontmost

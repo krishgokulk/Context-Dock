@@ -1216,6 +1216,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 recordFrontmostApp(front)
             }
         }
+        CornerDockController.shared.cancelPendingCommandSwitch()
         CornerDockController.shared.showCentred()
     }
 
@@ -1248,6 +1249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 recordFrontmostApp(front)
             }
         }
+        CornerDockController.shared.cancelPendingCommandSwitch()
         CornerDockController.shared.showBottomGlobalContext()
     }
 

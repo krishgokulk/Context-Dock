@@ -403,6 +403,7 @@ final class CornerChatPresentation: ObservableObject {
     /// and the list underneath changes accordingly.
     func showGlobalContext() {
         cancelGeneralStandDown()
+        CornerDockController.shared.cancelPendingCommandSwitch()
         mode = .globalContext
         isVisible = true
         appChat.summonGlobalContext()
@@ -418,13 +419,20 @@ final class CornerChatPresentation: ObservableObject {
         showGeneral()
     }
 
-    private func showGeneral() {
+    func showGeneral(seeding query: String? = nil) {
+        CornerDockController.shared.cancelPendingCommandSwitch()
         mode = .general
         isVisible = true
         generalPhase = .expanded
-        generalChat.isConversationMinimized = true
+        generalChat.isConversationMinimized = false
         generalChat.openSession(.general, title: "General Chat")
+        if let query = query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            generalChat.input = query
+            generalChat.send()
+        }
         armGeneralStandDown(after: AppChatPromptModel.idleDwell)
+        CornerDockController.shared.publishKeyboardOwner()
+        CornerDockController.shared.requestComposerFocus()
         // The switch is drawn from what is already in memory; the disk catches up once it
         // has landed. Reloading first — listing the dock's chat folder and decoding the
         // thread index on the main thread — held every switch into General on the disk,
@@ -526,6 +534,7 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     func dismiss() {
+        CornerDockController.shared.cancelPendingCommandSwitch()
         cancelGeneralStandDown()
         isShowingKeysOverlay = false
         isVisible = false

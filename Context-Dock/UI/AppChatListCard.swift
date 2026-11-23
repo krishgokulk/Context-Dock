@@ -813,7 +813,13 @@ struct AppChatListCard: View {
         .frame(height: AppChatListMetrics.rowHeight)
         .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
-        .onTapGesture { model.submit() }
+        .onTapGesture {
+            if model.isGlobalScope {
+                model.askFromGlobal(model.query)
+            } else {
+                model.submit()
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Ask AI: \(model.query)")
@@ -847,7 +853,13 @@ struct AppChatListCard: View {
         .frame(height: AppChatListMetrics.rowHeight)
         .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
-        .onTapGesture { model.submit() }
+        .onTapGesture {
+            if model.isGlobalScope {
+                model.askFromGlobal(model.query)
+            } else {
+                model.submit()
+            }
+        }
     }
 
     /// Siri Fallback 2: Search web via default browser
