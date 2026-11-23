@@ -155,7 +155,7 @@ final class AppChatPromptModel: ObservableObject {
     @Published var query = ""
     /// The app the question is about, captured when the prompt opened — not read live,
     /// because opening the prompt is itself an app switch.
-    @Published private(set) var appName = ""
+    @Published private(set) var appName = Self.globalScopeName
     @Published private(set) var appBundleID = ""
     /// What this app can do, shown before anything is typed.
     @Published private(set) var suggestions: [AppChatSuggestion] = []

@@ -41,7 +41,7 @@ enum DevCornerRemote {
             // bottom dock after that, or it opens in the middle again.
             if presentation.isCentred { presentation.dismiss() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                AppDelegate.shared?.openBottomAppChat()
+                controller.showBottomGlobalContext()
             }
         case "global":
             presentation.showGlobalContext()

@@ -119,7 +119,7 @@ struct CornerChatTarget: Equatable {
 final class CornerChatPresentation: ObservableObject {
     static let shared = CornerChatPresentation()
 
-    @Published private(set) var mode: CornerChatMode = .frontmostApp
+    @Published private(set) var mode: CornerChatMode = .globalContext
     @Published private(set) var isVisible = false
     /// Opened by ⌥⌥: the same shell in the middle of the display, Spotlight's place, with
     /// the field on top and its boards opening downward (owner 2026-10-12).
@@ -295,7 +295,7 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     /// The scope General Chat was entered from, and goes back to.
-    private(set) var generalOrigin: CornerChatMode = .frontmostApp
+    private(set) var generalOrigin: CornerChatMode = .globalContext
 
     /// ← on an empty field: into General Chat. With something typed the arrow is the caret's.
     @discardableResult

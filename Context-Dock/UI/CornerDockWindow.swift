@@ -1074,17 +1074,13 @@ final class CornerDockController: NSObject {
     private func summonFromEdge() {
         cancelPendingAutoHide()
         pointerVisitedDock = true
-        // The edge always brings the app in front's Context Dock, as ⌘. and ⌘⌘ do — also when
-        // auto-hide slid it away in Global (owner 2026-10-11). Global is a ⌘ tap, ⌫ or swipe.
-        if !(chatPresentation.isVisible && chatPresentation.mode == .frontmostApp
+        // Unified Global Launcher: the edge brings up the unified dock resting in Global Context.
+        // App Pet is opened exclusively via ⌘, or explicit user action.
+        if !(chatPresentation.isVisible && chatPresentation.mode == .globalContext
             && prompt.phase == .dock)
         {
             edgeSummonKeepsKeys = true
-            if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
-                chatPresentation.showFrontmostApp(target: target)
-            } else {
-                chatPresentation.showGlobalContext()
-            }
+            chatPresentation.showGlobalContext()
             if !prompt.restAsDockNow() { edgeSummonKeepsKeys = false }
         }
         armKeyboard()
