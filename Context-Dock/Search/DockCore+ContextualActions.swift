@@ -1184,8 +1184,23 @@ extension DockCore {
     /// though the launcher itself is key. Empty query shows the full intelligent set;
     /// typing filters via the same matcher the app-scoped window pills use.
     func windowManagementScopePills(scopedBundleId: String, query: String) -> [DockPill] {
-        guard let app = AppDelegate.shared?.previousFrontmostApp,
-            !app.isTerminated,
+        let targetApp: NSRunningApplication? = {
+            if let prev = AppDelegate.shared?.previousFrontmostApp,
+                !prev.isTerminated,
+                let bid = prev.bundleIdentifier,
+                !bid.isEmpty,
+                bid != Bundle.main.bundleIdentifier
+            {
+                return prev
+            }
+            return NSWorkspace.shared.runningApplications.first {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != nil
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+        }()
+        guard let app = targetApp,
             let bundleId = app.bundleIdentifier,
             !bundleId.isEmpty
         else { return [] }

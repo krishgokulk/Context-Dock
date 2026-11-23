@@ -89,10 +89,10 @@ enum GlobalResultSection {
     static let canonicalOrder: [String] = [
         applications,
         commands,
+        windowLayouts,
         openTabs,
         menuCommands,
         actions,
-        windowLayouts,
         files,
         web,
         "Contacts",

@@ -190,6 +190,19 @@ extension AppChatPromptModel {
             rows += frontmostContextualActionRows(for: typed)
             // Bounded Files & Folders from user-configured (or safe default) directories.
             rows += globalFileAndFolderRows(for: lookup)
+            // When native Window layouts answer the query (e.g. "centre", "left", "maximize"),
+            // drop duplicate Menu commands with the same title (e.g. "Window ▸ Centre" in 11 apps)
+            // so the frontmost app's Window layout leads as Top Hit.
+            let windowLayoutTitles = Set(
+                rows.filter { GlobalResultSection.title(for: $0) == GlobalResultSection.windowLayouts }
+                    .map { $0.title.lowercased() }
+            )
+            if !windowLayoutTitles.isEmpty {
+                rows.removeAll { row in
+                    GlobalResultSection.title(for: row) == GlobalResultSection.menuCommands
+                        && windowLayoutTitles.contains(row.title.lowercased())
+                }
+            }
             // A time named — "today", "last week" — keeps only what happened then, with the
             // history of that time looked up for it (S3). Apps and commands stay.
             if let range = GlobalQuery.timeRange(in: typed) {
@@ -245,7 +258,9 @@ extension AppChatPromptModel {
             appendGlobalDiskMatches(for: lookup)
             return
         }
-        if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,
+        if returnsToGlobalScope,
+            (!typed.isEmpty || scopedCommand != nil || appBundleID.hasPrefix("syscmd://")),
+            !isFinderScope,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName),
             !scoped.isEmpty {
             rows = scoped.map(AppChatRow.dock)
@@ -1074,6 +1089,7 @@ extension AppChatPromptModel {
         returnsToGlobalScope = true
         adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")
         rows = []
+        updateMenuMatches()
         updateGlobalTyping(for: "")
         syncListPhase()
         touch()

@@ -258,4 +258,17 @@ struct UnifiedGlobalLauncherSectionTests {
         // 4 section headers + 4 rows = 8 slots (all visible within 9-slot Global viewport)
         #expect(model.listRowCount == 8)
     }
+
+    @Test func windowLayoutsRankAboveMenuCommandsInCanonicalOrder() {
+        let menuRow = pill("Centre", section: GlobalResultSection.menuCommands)
+        let windowRow = pill("Centre", section: GlobalResultSection.windowLayouts)
+
+        let grouped = GlobalResultSection.grouped(
+            [menuRow, windowRow],
+            query: "centre",
+            useCanonicalSectionOrder: true
+        )
+        #expect(GlobalResultSection.title(for: grouped[0]) == GlobalResultSection.windowLayouts)
+        #expect(GlobalResultSection.title(for: grouped[1]) == GlobalResultSection.menuCommands)
+    }
 }
