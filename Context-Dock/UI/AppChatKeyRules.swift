@@ -38,7 +38,7 @@ extension AppChatPromptModel {
     /// → means "the next app / scope" rather than anything in the field: nothing typed (no
     /// caret to move, no ghost to take), no row and no pill highlighted.
     var rightArrowWalksFromEmptyField: Bool {
-        query.isEmpty && focusedRow == nil && focusedPillIndex == nil
+        query.isEmpty && focusedRow == nil && focusedPillIndex == nil && !isFinderFileSearch
     }
 
     /// ←, Esc and Backspace while a result row is highlighted (C4–C6). Returns whether the
@@ -46,6 +46,17 @@ extension AppChatPromptModel {
     /// nothing and quits nothing.
     @discardableResult
     func applyResultFocusKey(_ key: DockKey) -> Bool {
+        // Inside a folder walk: ← climbs up to the parent folder (or back to Global Context);
+        // Backspace on an empty filter climbs up too, while Backspace with a filter passes
+        // through to the field to delete characters from the filter.
+        if isFinderFileSearch {
+            if key == .left {
+                return leaveFinderFolder()
+            }
+            if key == .backspace {
+                return query.isEmpty ? leaveFinderFolder() : false
+            }
+        }
         // The list the arrows opened — the Corner's rows open by the arrows alone, so a
         // highlighted row is what says so. A scope that rests on its list (a Finder
         // search) is not one Esc should close.

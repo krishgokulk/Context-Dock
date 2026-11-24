@@ -121,7 +121,13 @@ enum GlobalQuery {
 
         let typed = Set(words(query))
 
-        // 1. Exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
+        // 1. Exact folder match or exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
+        if let exactFolderHit = rows.first(where: { row in
+            guard case .file(let url) = row, AppChatPromptModel.isFolder(url) else { return false }
+            return row.title.lowercased() == trimmed
+        }) {
+            return exactFolderHit
+        }
         if let exactHit = rows.first(where: { row in
             let titleLower = row.title.lowercased()
             guard titleLower == trimmed else { return false }
@@ -166,6 +172,16 @@ enum GlobalQuery {
             return titleLower.hasPrefix(trimmed)
         }) {
             return commandHit
+        }
+
+        // 4b. Direct Folder prefix match (e.g. "downl" -> ~/Downloads, "pictu" -> ~/Pictures, "docum" -> ~/Documents)
+        if trimmed.count >= 3,
+            let folderPrefixHit = rows.first(where: { row in
+                guard case .file(let url) = row, AppChatPromptModel.isFolder(url) else { return false }
+                return row.title.lowercased().hasPrefix(trimmed)
+            })
+        {
+            return folderPrefixHit
         }
 
         // 5. Named app's own command whose app the words name and whose title holds every asked word

@@ -65,7 +65,7 @@ extension AppChatPromptModel {
             else { return [] }
             let urls = Self.folderListing(folder, matching: typed)
             return urls.prefix(8).map { url in
-                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                let isDir = Self.isFolder(url)
                 var pill = DockPill(
                     id: "global-finder-\(url.path)",
                     name: url.lastPathComponent,
@@ -73,8 +73,7 @@ extension AppChatPromptModel {
                     badge: folder.lastPathComponent,
                     execute: { [weak self] in
                         if isDir {
-                            self?.finderBrowseStack.append(url)
-                            self?.updateMenuMatches()
+                            _ = self?.enterFolder(url)
                         } else {
                             NSWorkspace.shared.open(url)
                         }

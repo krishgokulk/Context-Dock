@@ -32,6 +32,9 @@ final class SelectionScopeModel: ObservableObject {
     /// Opened by → on a file row: the card stands in for the list and field, which keep
     /// their query and highlight underneath for when it closes (owner 2026-10-11).
     @Published var coversChat = false
+    /// Opened by → on a file row inside a folder/result list: embedded in the right half of
+    /// `AppChatListCard` while the left half keeps listing the folder's files.
+    @Published var isEmbeddedInSidePanel = false
     @Published var query = ""
     /// What was selected, captured at summon time.
     @Published private(set) var text = ""
@@ -566,6 +569,9 @@ final class SelectionScopeModel: ObservableObject {
             }
             guard generation == self.rowBuildGeneration else { return }
             self.rows = (sendRow.map { [$0] } ?? []) + built
+            if self.isEmbeddedInSidePanel, self.focusedIndex == nil, typed.isEmpty, !self.rows.isEmpty {
+                self.focusedIndex = 0
+            }
             self.isBuildingRows = false
         }
     }

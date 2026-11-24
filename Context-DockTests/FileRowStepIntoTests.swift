@@ -31,4 +31,24 @@ struct FileRowStepIntoTests {
 
         #expect(!model.stepIntoFocusedRow())
     }
+
+    @Test func showSelectionForFileExpandsSidePanelWithoutCoveringChat() throws {
+        let fm = FileManager.default
+        let file = fm.temporaryDirectory.appendingPathComponent("SidePanelTest-\(UUID().uuidString).pdf")
+        try Data("pdf".utf8).write(to: file)
+        defer { try? fm.removeItem(at: file) }
+
+        let controller = CornerDockController.shared
+        controller.prompt.isSidePanelExpanded = false
+        defer {
+            controller.selection.dismiss()
+            controller.prompt.isSidePanelExpanded = false
+        }
+
+        #expect(controller.showSelection(forFile: file))
+        #expect(controller.selection.phase.isVisible)
+        #expect(controller.selection.isEmbeddedInSidePanel)
+        #expect(!controller.selection.coversChat)
+        #expect(controller.prompt.isSidePanelExpanded)
+    }
 }

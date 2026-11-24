@@ -1282,7 +1282,7 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible
+            selection: (selection.phase.isVisible && !selection.isEmbeddedInSidePanel)
                 ? SelectionScopeMetrics.size(
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
                     consent: selection.isAsking,
@@ -1326,6 +1326,7 @@ final class CornerDockController: NSObject {
     /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
     /// empty field (or Esc) brings the dock back.
     func showSelectionScopeFromDock() {
+        selection.isEmbeddedInSidePanel = false
         let opener: CornerChatMode? = chatPresentation.isVisible ? chatPresentation.mode : nil
         AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
         guard selection.phase.isVisible else { return }
@@ -1341,23 +1342,41 @@ final class CornerDockController: NSObject {
         let context = AXContext(
             appName: "Finder", bundleId: files.isEmpty ? "" : "com.apple.finder", pid: 0,
             selectedText: text, selectedFilePaths: files.map(\.path))
+        selection.isEmbeddedInSidePanel = false
         guard selection.summon(from: context) else { return }
         selection.coversChat = true
         refresh()
     }
 
-    /// → on a file row: that file's Selection card takes the list's and field's place.
+    /// → on a file row: expands the right side panel and shows that file's Selection Scope
+    /// on the right side while keeping the folder / file list on the left as it is.
     func showSelection(forFile url: URL) -> Bool {
         let context = AXContext(
             appName: "Finder", bundleId: "com.apple.finder", pid: 0,
             selectedFilePaths: [url.path])
-        guard selection.summon(from: context) else { return false }
-        selection.coversChat = true
+        selection.isEmbeddedInSidePanel = true
+        selection.coversChat = false
+        guard selection.summon(from: context) else {
+            selection.isEmbeddedInSidePanel = false
+            return false
+        }
+        withAnimation(FluidMotion.selectionGlide) {
+            prompt.isSidePanelExpanded = true
+        }
         refresh()
         return true
     }
 
     private func selectionPhaseDidChange(_ visible: Bool) {
+        if !visible, selection.isEmbeddedInSidePanel {
+            selection.isEmbeddedInSidePanel = false
+            withAnimation(FluidMotion.selectionGlide) {
+                prompt.isSidePanelExpanded = false
+            }
+            refresh()
+            requestComposerFocus()
+            return
+        }
         // Back from a file's card: the list and field it covered, query and row intact.
         if !visible, selection.coversChat {
             selection.coversChat = false
@@ -2071,8 +2090,23 @@ final class CornerDockController: NSObject {
             return nil
         }
 
-        // A file's card covers the field: its own field has every other key.
-        if selection.coversChat { return event }
+        // ← on the embedded side-panel selection card (when its field is empty) steps back
+        // out of the right side panel to the file list on the left.
+        if event.keyCode == 123,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            selection.phase.isVisible, selection.isEmbeddedInSidePanel,
+            selection.query.isEmpty,
+            keyboardState.owner == .selection
+        {
+            selection.dismiss()
+            return nil
+        }
+
+        // A file's card covers the field (or is active in the right side panel): its own field has every other key.
+        if selection.coversChat || (selection.isEmbeddedInSidePanel && selection.phase.isVisible && keyboardState.owner == .selection) {
+            return event
+        }
 
         // Esc puts an open shelf away — the same key that closes every other card here.
         if event.keyCode == 53,
@@ -2273,6 +2307,12 @@ final class CornerDockController: NSObject {
               prompt.phase.showsInput,
               !ClipboardPanelController.shared.model.isKeyboardArmed
         else { return event }
+        // ← while walking a folder climbs back up to the parent folder (or Global Context).
+        if chatPresentation.mode != .general, prompt.isFinderFileSearch,
+            prompt.leaveFinderFolder()
+        {
+            return nil
+        }
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
         // Global only: in an app's Context Dock, which can fold too now, ← is the way back.
@@ -2648,7 +2688,9 @@ struct CornerDockSurface: View {
     /// What answers the field: the selection, the app's commands, or its window.
     @ViewBuilder
     private var chatBoards: some View {
-        if CornerDockController.shared.selection.phase.isVisible {
+        if CornerDockController.shared.selection.phase.isVisible,
+            !CornerDockController.shared.selection.isEmbeddedInSidePanel
+        {
             SelectionScopeCard(model: CornerDockController.shared.selection)
                 .transition(boardTransition)
         }

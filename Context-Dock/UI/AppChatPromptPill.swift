@@ -1485,6 +1485,8 @@ struct AppChatPromptPill: View {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // The clipboard filter's caret, not the scope's.
                         if model.isClipboardScope { return .ignored }
+                        // Inside a folder walk, ← steps back out to the parent folder (or Global Context).
+                        if model.isFinderFileSearch, model.leaveFinderFolder() { return .handled }
                         // Left out of a scope entered from Global goes back to Global,
                         // before the walk between scopes is considered at all.
                         if model.query.isEmpty, model.stepBackThroughRunningApps() { return .handled }
@@ -1501,6 +1503,13 @@ struct AppChatPromptPill: View {
                         // failing all of that it leaves General Chat (CornerNavigation).
                         if model.stepIntoFocusedRow() { return .handled }
                         if model.acceptGhostCompletion() { return .handled }
+                        if model.phase == .suggesting, model.focusedMenuIndex == nil,
+                            !model.skipsTopRowOnBareReturn, !model.rows.isEmpty
+                        {
+                            model.focusedMenuIndex = 0
+                            if model.stepIntoFocusedRow() { return .handled }
+                            model.focusedMenuIndex = nil
+                        }
                         if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleRightArrow(draft: model.query) ? .handled : .ignored

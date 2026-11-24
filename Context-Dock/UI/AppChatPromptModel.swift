@@ -316,6 +316,9 @@ final class AppChatPromptModel: ObservableObject {
     /// The folders → has stepped into in the Finder scope, outermost first. Empty while the
     /// scope is a search. Backspace on an empty field climbs back out one at a time (C11, B3).
     @Published var finderBrowseStack: [URL] = []
+    /// The Global Context query and focused row ID before → stepped into a folder, so ← / ⌫
+    /// out of the outermost folder restores Global Context seamlessly.
+    var savedGlobalFolderOrigin: (query: String, focusedID: String?)?
     /// The Global Extension this scope is showing, drawn in the board above the field.
     @Published var scopedExtension: UserGlobalExtension?
     /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
@@ -655,6 +658,7 @@ final class AppChatPromptModel: ObservableObject {
         // The app in front's own Context Dock, not one stepped into from Global: a flag left
         // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
         returnsToGlobalScope = false
+        savedGlobalFolderOrigin = nil
         clearScopedPanel()
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
@@ -761,7 +765,7 @@ final class AppChatPromptModel: ObservableObject {
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Inside a folder the listing is what the step went to fetch, typed filter or not.
-        if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
+        if isFinderScope, !finderBrowseStack.isEmpty { return .suggesting }
         // "/" opens its list of apps by itself; Return takes the first (owner 2026-10-10).
         if slashAppFilter != nil { return rows.isEmpty ? .prompt : .suggesting }
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the

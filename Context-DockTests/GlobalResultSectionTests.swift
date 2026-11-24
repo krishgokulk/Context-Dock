@@ -289,5 +289,47 @@ struct UnifiedGlobalLauncherSectionTests {
         #expect(model.isFinderScope)
         #expect(model.returnsToGlobalScope)
         #expect(model.rows.map(\.title) == ["passport.pdf"])
+        #expect(model.focusedMenuIndex == 0)
+    }
+
+    @Test func folderWalkFromGlobalContextClimbsBackWithLeftArrowAndRestoresOrigin() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("UnifiedWalk-\(UUID().uuidString)")
+        let sub = root.appendingPathComponent("Projects")
+        try fm.createDirectory(at: sub, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        try Data("a".utf8).write(to: root.appendingPathComponent("notes.txt"))
+        try Data("b".utf8).write(to: sub.appendingPathComponent("spec.md"))
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "UnifiedWalk"
+        model.rows = [.file(root)]
+        model.focusedMenuIndex = 0
+
+        // Step into root folder -> top item ("Projects") is immediately focused
+        #expect(model.stepIntoFocusedRow())
+        #expect(model.finderBrowseStack == [root])
+        #expect(model.rows.map(\.title) == ["Projects", "notes.txt"])
+        #expect(model.focusedMenuIndex == 0)
+
+        // Pressing → again immediately steps into "Projects" without needing ↓ first
+        #expect(model.stepIntoFocusedRow())
+        #expect(model.finderBrowseStack.map { $0.resolvingSymlinksInPath().path }
+            == [root, sub].map { $0.resolvingSymlinksInPath().path })
+        #expect(model.rows.map(\.title) == ["spec.md"])
+        #expect(model.focusedMenuIndex == 0)
+
+        // Pressing ← climbs back to root and highlights "Projects"
+        #expect(model.applyResultFocusKey(.left))
+        #expect(model.finderBrowseStack == [root])
+        #expect(model.rows.map(\.title) == ["Projects", "notes.txt"])
+        #expect(model.focusedMenuIndex == 0)
+
+        // Pressing ← at outermost folder returns to Global Context
+        #expect(model.applyResultFocusKey(.left))
+        #expect(model.finderBrowseStack.isEmpty)
+        #expect(model.isGlobalScope)
+        #expect(model.query == "UnifiedWalk")
     }
 }

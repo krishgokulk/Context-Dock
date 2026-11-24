@@ -66,6 +66,7 @@ enum SelectionScopeMetrics {
 
 struct SelectionScopeCard: View {
     @ObservedObject var model: SelectionScopeModel
+    var embeddedInPanel: Bool = false
     /// Observed so the answer redraws as it streams in.
     @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
@@ -74,6 +75,28 @@ struct SelectionScopeCard: View {
     @Namespace private var selectionSpace
 
     var body: some View {
+        Group {
+            if embeddedInPanel {
+                embeddedBody
+            } else {
+                standaloneBody
+            }
+        }
+        .onHover { inside in model.pointerChanged(inside: inside) }
+        .onAppear { fieldFocused = keyboardState.owner == .selection }
+        .onChange(of: keyboardState.owner) { _, owner in fieldFocused = owner == .selection }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in
+            fieldFocused = keyboardState.owner == .selection
+        }
+        // The rows giving way to the answer, and the answer arriving, rebuild what sits above
+        // the field, and the field lost the caret: the window kept the keys, so a typed
+        // follow-up went nowhere. Take it back each time the card changes what it shows.
+        .onChange(of: model.isShowingAnswer) { _, _ in refocusField() }
+        .onChange(of: model.isAnswering) { _, _ in refocusField() }
+        .onChange(of: model.isSharing) { _, _ in refocusField() }
+    }
+
+    private var standaloneBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if model.isShowingAnswer {
@@ -97,18 +120,35 @@ struct SelectionScopeCard: View {
             alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .modifier(BoardGlass())
-        .onHover { inside in model.pointerChanged(inside: inside) }
-        .onAppear { fieldFocused = keyboardState.owner == .selection }
-        .onChange(of: keyboardState.owner) { _, owner in fieldFocused = owner == .selection }
-        .onChange(of: keyboardState.focusRequestToken) { _, _ in
-            fieldFocused = keyboardState.owner == .selection
+    }
+
+    private var embeddedBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if model.isShowingAnswer {
+                compactPreview
+                CornerTranscript(
+                    messages: model.answerMessages,
+                    isAnswering: model.isAnswering,
+                    liveSteps: conversation.liveSteps,
+                    appName: model.appName,
+                    appBundleID: model.appBundleID,
+                    appIcon: appIcon)
+                    .frame(maxHeight: .infinity)
+                resultActions
+            } else {
+                preview
+                embeddedRowList
+            }
+            if model.pendingConsent != nil { consentStrip }
+            if let row = model.pendingApproval { approvalStrip(row) }
+            if let pending = model.pendingSend { sendConfirmStrip(pending) }
+            if model.showsOutcome { outcomeLine }
+            Divider().opacity(0.14)
+            field
         }
-        // The rows giving way to the answer, and the answer arriving, rebuild what sits above
-        // the field, and the field lost the caret: the window kept the keys, so a typed
-        // follow-up went nowhere. Take it back each time the card changes what it shows.
-        .onChange(of: model.isShowingAnswer) { _, _ in refocusField() }
-        .onChange(of: model.isAnswering) { _, _ in refocusField() }
-        .onChange(of: model.isSharing) { _, _ in refocusField() }
+        .padding(.vertical, 6)
+        .boardPanelCard()
     }
 
     private func refocusField() {
@@ -467,6 +507,35 @@ struct SelectionScopeCard: View {
             .padding(.horizontal, 16)
     }
 
+    @ViewBuilder
+    private var embeddedRowList: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                        rowView(row, isFocused: index == model.focusedIndex)
+                            .id(row.id)
+                            .onHover { hovering in
+                                if hovering, mouseGate.moved() {
+                                    withAnimation(FluidMotion.selectionGlide) {
+                                        model.setFocusedIndex(index)
+                                    }
+                                }
+                            }
+                    }
+                }
+                .animation(FluidMotion.selectionGlide, value: model.focusedIndex)
+            }
+            .frame(maxHeight: .infinity)
+            .onChange(of: model.focusedIndex) { _, index in
+                guard let index, model.rows.indices.contains(index) else { return }
+                withAnimation(FluidMotion.selectionGlide) {
+                    proxy.scrollTo(model.rows[index].id)
+                }
+            }
+        }
+    }
+
     /// What can be done with the selection — the Dock's Selection rows, filtered as the field
     /// is typed into, the way the clipboard's preview sits above its input.
     @ViewBuilder
@@ -569,6 +638,11 @@ struct SelectionScopeCard: View {
                         if SelectionScopeModel.fieldHandlesEscape(keyboardOwner: keyboardState.owner) {
                             model.escapePressed()
                         }
+                        return .handled
+                    }
+                    .onKeyPress(.leftArrow) {
+                        guard model.isEmbeddedInSidePanel, model.query.isEmpty else { return .ignored }
+                        model.dismiss()
                         return .handled
                     }
             }

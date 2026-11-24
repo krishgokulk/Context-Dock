@@ -1373,7 +1373,7 @@ extension AppChatPromptModel {
         rows = finderBrowseStack.last.map {
             Self.folderListing($0, matching: typed).map(AppChatRow.file)
         } ?? []
-        focusedMenuIndex = nil
+        focusedMenuIndex = rows.isEmpty ? nil : 0
         syncListPhase()
     }
 
@@ -1428,33 +1428,92 @@ extension AppChatPromptModel {
             default: return nil
             }
         }()
-        guard let url = folderURL, Self.isFolder(url) else { return false }
+        guard let url = folderURL else { return false }
+        return enterFolder(url)
+    }
+
+    @discardableResult
+    func enterFolder(_ url: URL) -> Bool {
+        guard Self.isFolder(url) else { return false }
+        if CornerDockController.shared.selection.isEmbeddedInSidePanel {
+            CornerDockController.shared.selection.dismiss()
+        }
         if isFinderScope {
             finderBrowseStack.append(url)
             query = ""
-            focusedMenuIndex = nil
             updateFinderResults(for: "")
             touch()
             return true
         }
         if isGlobalScope {
-            scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+            savedGlobalFolderOrigin = (query: query, focusedID: focusedRow?.id)
+            returnsToGlobalScope = true
+            clearScopedPanel()
+            adoptScope(
+                name: "Finder", bundleID: "com.apple.finder",
+                suggestions: [], summary: "")
             finderBrowseStack = [url]
+            _ = leaveSelectionScope()
+            Self.changeScope(app: "Finder", bundleID: "com.apple.finder")
+            DockEngine.shared.core.globalContextActivation = .manual
             query = ""
-            focusedMenuIndex = nil
             updateFinderResults(for: "")
+            updateGlobalTyping(for: "")
+            syncListPhase()
             touch()
             return true
         }
         return false
     }
 
-    /// Backspace on an empty field inside a folder: up one level, and past the outermost
+    /// Backspace or ← on an empty field inside a folder: up one level, and past the outermost
     /// folder back to the search the walk started from.
     @discardableResult
     func leaveFinderFolder() -> Bool {
         guard !finderBrowseStack.isEmpty else { return false }
-        finderBrowseStack.removeLast()
+        if CornerDockController.shared.selection.isEmbeddedInSidePanel {
+            CornerDockController.shared.selection.dismiss()
+        }
+        let exitedFolder = finderBrowseStack.removeLast()
+        query = ""
+        if !finderBrowseStack.isEmpty {
+            updateFinderResults(for: "")
+            let exitedPath = exitedFolder.resolvingSymlinksInPath().path
+            if let idx = rows.firstIndex(where: {
+                if case .file(let u) = $0 { return u.resolvingSymlinksInPath().path == exitedPath }
+                return false
+            }) {
+                focusedMenuIndex = idx
+            }
+            touch()
+            return true
+        }
+        if let origin = savedGlobalFolderOrigin {
+            savedGlobalFolderOrigin = nil
+            _ = leaveScopeForGlobal()
+            if !origin.query.isEmpty {
+                query = origin.query
+                updateMenuMatches()
+                if let focusedID = origin.focusedID,
+                    let idx = rows.firstIndex(where: { $0.id == focusedID })
+                {
+                    focusedMenuIndex = idx
+                } else if !rows.isEmpty {
+                    focusedMenuIndex = 0
+                }
+                set(.suggesting)
+            } else {
+                populateEmptyGlobalContextBoard()
+                if let focusedID = origin.focusedID,
+                    let idx = rows.firstIndex(where: { $0.id == focusedID })
+                {
+                    focusedMenuIndex = idx
+                }
+                set(.suggesting)
+            }
+            touch()
+            return true
+        }
         focusedMenuIndex = nil
         // Past the top: back to what the scope lists — a file search, or Finder's menus
         // when Finder is the app in front.
@@ -1876,6 +1935,9 @@ extension AppChatPromptModel {
             if count > 1, slots[count - 1] { count -= 1 }
             return count
         }
+        if isFinderFileSearch {
+            return rows.isEmpty ? 2 : min(rows.count, Self.menuRowLimit)
+        }
         // Siri fallback rows (Ask AI, Search Web, Search in Finder) when query has no matching rows
         if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return 3
@@ -1980,6 +2042,7 @@ extension AppChatPromptModel {
                 scopeIntoApp(name: app.name, bundleID: app.bundleID)
                 return true
             }
+            if enterFocusedFolder() { return true }
             if let path = doc.filePath, !path.isEmpty, !path.hasSuffix(".app") {
                 return onStepIntoFile?(URL(fileURLWithPath: path)) ?? false
             }
@@ -1990,6 +2053,12 @@ extension AppChatPromptModel {
             if enterFocusedFolder() { return true }
             return onStepIntoFile?(url) ?? false
         case .dock(let pill):
+            if enterFocusedFolder() { return true }
+            if let url = pill.resolvedURL ?? pill.previewPath.map({ URL(fileURLWithPath: $0) }),
+                url.isFileURL, !url.path.hasSuffix(".app")
+            {
+                return onStepIntoFile?(url) ?? false
+            }
             // A Dock row for a command, extension or tool: into it, like its `.global` twin.
             if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup, manifest: pluginManifestLookup) {
                 focusedMenuIndex = nil

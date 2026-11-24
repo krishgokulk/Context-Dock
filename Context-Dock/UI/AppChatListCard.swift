@@ -98,6 +98,7 @@ private struct MenuRowIcon: View {
 /// The commands matching what is typed, or — before anything is typed — what the app can do.
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
+    @ObservedObject private var selectionModel = CornerDockController.shared.selection
     @Environment(\.sharesOneCard) private var sharesOneCard
     /// The item at the top of the list as it scrolls, and when the arrows last moved the
     /// highlight — so a hand scroll can keep the highlight in view without fighting the keys.
@@ -132,6 +133,17 @@ struct AppChatListCard: View {
                 maxScrollHeight: max(panelHeight - 70, 120),
                 subject: card.isOwnScope ? nil : (card.bundleID, card.name))
                 .boardPanelCard()
+        } else if case .file(let url) = preview, !AppChatPromptModel.isFolder(url),
+            selectionModel.isEmbeddedInSidePanel, selectionModel.phase.isVisible
+        {
+            SelectionScopeCard(model: selectionModel, embeddedInPanel: true)
+                .onChange(of: url) { _, newURL in
+                    if !AppChatPromptModel.isFolder(newURL),
+                        selectionModel.files.first?.standardizedFileURL.path != newURL.standardizedFileURL.path
+                    {
+                        _ = CornerDockController.shared.showSelection(forFile: newURL)
+                    }
+                }
         } else {
             CornerBoardPreviewPanel(preview: preview)
         }
@@ -160,7 +172,23 @@ struct AppChatListCard: View {
             // it — the same board, the way a turn shows its own reasoning. A second card is
             // for a terminal that needs one, and nothing here needs one yet.
 
-            if model.rows.isEmpty, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if model.isFinderFileSearch, model.rows.isEmpty {
+                let folderName = model.finderBrowseStack.last?.lastPathComponent ?? "Folder"
+                let filtered = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                VStack(spacing: 6) {
+                    Image(systemName: filtered ? "magnifyingglass" : "folder")
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundStyle(.secondary.opacity(0.6))
+                    Text(filtered ? "No matching items in \(folderName)" : "\(folderName) is empty")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text("Press ← or Backspace to go back")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary.opacity(0.65))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(.vertical, 24)
+            } else if model.rows.isEmpty, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 VStack(spacing: 0) {
                     fallbackAskAIRow(isFocused: (effectiveFocus ?? 0) == 0)
                         .onHover { hovering in
@@ -344,6 +372,11 @@ struct AppChatListCard: View {
             }
         }
         .onHover { _ in model.touch() }
+        .onChange(of: model.isSidePanelExpanded) { _, expanded in
+            if !expanded, selectionModel.isEmbeddedInSidePanel, selectionModel.phase.isVisible {
+                selectionModel.dismiss()
+            }
+        }
     }
 
     /// The board's foot, as Raycast's (owner 2026-10-14): on the left what Return is about to
@@ -662,6 +695,9 @@ struct AppChatListCard: View {
 
     private var headerText: String {
         if model.isGlobalScope { return "" }
+        if model.isFinderFileSearch, let folder = model.finderBrowseStack.last {
+            return "\(folder.lastPathComponent) · \(model.rows.count) item\(model.rows.count == 1 ? "" : "s")"
+        }
         if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let app = model.appName.isEmpty ? "App" : model.appName
@@ -672,6 +708,9 @@ struct AppChatListCard: View {
     /// What the field says before anything is typed, per scope.
     static func placeholder(for model: AppChatPromptModel) -> String {
         if model.isGlobalScope { return "Search apps, tools and menus…" }
+        if model.isFinderFileSearch, let folder = model.finderBrowseStack.last {
+            return "Search \(folder.lastPathComponent)…"
+        }
         // Scoped into a tool or command from Global, the field is a filter over that scope;
         // an App Pet selected in the Dock is a composer ("Ask <App>", #338).
         if model.returnsToGlobalScope, !model.isAppStepIn {
@@ -936,6 +975,7 @@ struct AppChatListCard: View {
     /// A file or folder from the Finder scope, with the path it lives at — two files called
     /// "Downloads" are told apart by where they are, not by their name.
     private func fileRow(_ url: URL, isFocused: Bool) -> some View {
+        let isFolder = AppChatPromptModel.isFolder(url)
         let isBookmark = url.pathExtension == "inetloc" || url.pathExtension == "webloc"
         let displayName: String = {
             if isBookmark {
@@ -973,9 +1013,26 @@ struct AppChatListCard: View {
             }
             Spacer(minLength: 4)
             if isFocused {
-                Image(systemName: "return")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(isFolder ? "Browse" : "Actions")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary.opacity(0.75))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.8))
+                    Image(systemName: "return")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            } else if isFolder {
+                HStack(spacing: 3) {
+                    Text("Folder")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary.opacity(0.6))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.45))
+                }
             } else {
                 Text(isBookmark ? "Bookmark" : "File")
                     .font(.system(size: 11))
@@ -986,7 +1043,13 @@ struct AppChatListCard: View {
         .frame(height: AppChatListMetrics.rowHeight)
         .fluidSelection(isSelected: isFocused, namespace: selectionSpace, cornerRadius: 8, paddingHorizontal: 8)
         .contentShape(Rectangle())
-        .onTapGesture { model.run(.file(url)) }
+        .onTapGesture {
+            if isFolder {
+                _ = model.enterFolder(url)
+            } else {
+                model.run(.file(url))
+            }
+        }
     }
 
     /// A Global Context result: whatever the machine offers for this query, with its own
