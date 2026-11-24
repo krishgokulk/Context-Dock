@@ -1468,7 +1468,7 @@ final class OnDeviceToolSession {
         return prompt
     }
 
-    /// Extract text from images using Vision OCR (fallback for pre-27.0 runtimes).
+    /// Extract text from images using Vision OCR (fallback for pre-27.0 runtimes and dense text supplement).
     func ocrExtractedText(from imageURLs: [URL]) -> String {
         let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
             NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
@@ -1480,7 +1480,8 @@ final class OnDeviceToolSession {
             try? handler.perform([req])
             return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         }
-        return ocrLines.isEmpty ? "" : "Image content:\n\(ocrLines.joined(separator: "\n"))"
+        guard !ocrLines.isEmpty else { return "" }
+        return OnDeviceImagePrompt.boundedOCRText("Image content:\n\(ocrLines.joined(separator: "\n"))")
     }
 
     /// Run a query through on-device AI.
@@ -1524,15 +1525,10 @@ final class OnDeviceToolSession {
         if !imageURLs.isEmpty {
             let ocrText = ocrExtractedText(from: imageURLs)
             let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-            let validURLs = imageURLs.filter {
-                $0.isFileURL
-                && FileManager.default.isReadableFile(atPath: $0.path)
-                && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
-            }
-            if !validURLs.isEmpty, #available(macOS 27.0, *) {
-                let attachments = validURLs.map { Attachment(imageURL: $0) }
+            let imagePrompts = OnDeviceImagePrompt.prompts(from: imageURLs)
+            if !imagePrompts.isEmpty {
                 response = try await session.respond {
-                    attachments
+                    imagePrompts
                     finalMessage
                 }
             } else {
@@ -1602,22 +1598,16 @@ final class OnDeviceToolSession {
                     instructions: fullPrompt
                 )
 
-                // Images: native attachment + OCR text on macOS 27.0+, OCR-only fallback otherwise.
-                // The on-device model's vision is limited, so OCR text provides reliable context
-                // alongside the native attachment.
+                // Images: runtime-safe native image prompt + bounded OCR text on macOS 27.0+,
+                // OCR-only fallback otherwise.
                 let responseStream: LanguageModelSession.ResponseStream<String>
                 if !imageURLs.isEmpty {
                     let ocrText = self.ocrExtractedText(from: imageURLs)
                     let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-                    let validURLs = imageURLs.filter {
-                        $0.isFileURL
-                        && FileManager.default.isReadableFile(atPath: $0.path)
-                        && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
-                    }
-                    if !validURLs.isEmpty, #available(macOS 27.0, *) {
-                        let attachments = validURLs.map { Attachment(imageURL: $0) }
+                    let imagePrompts = OnDeviceImagePrompt.prompts(from: imageURLs)
+                    if !imagePrompts.isEmpty {
                         responseStream = session.streamResponse(generating: String.self) {
-                            attachments
+                            imagePrompts
                             finalMessage
                         }
                     } else {

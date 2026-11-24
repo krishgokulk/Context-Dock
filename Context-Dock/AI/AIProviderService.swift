@@ -879,17 +879,24 @@ class AIProviderService: ObservableObject {
     ) async throws -> String {
         // Build the final user message first so image content factors into token budgeting.
         var finalMessage = message
-        let imageContent = onDeviceImageContentBlock(from: imageURLs)
+        let imageContent = OnDeviceImagePrompt.boundedOCRText(onDeviceImageContentBlock(from: imageURLs))
         if !imageContent.isEmpty {
             finalMessage = "\(imageContent)\n\nUser request: \(message)"
         }
+        let imagePrompts = OnDeviceImagePrompt.prompts(from: imageURLs)
+        let promptTokenBudget = max(
+            800,
+            OnDevicePromptBudget.maxPromptTokens
+                - imagePrompts.count * OnDeviceImagePrompt.estimatedTokensPerImage
+        )
 
         // E5b: proactive budgeting — trim history to fit before dispatch, avoiding overflow.
         let turnLimit = isRetry ? 2 : 6
         let fittedHistory = await OnDevicePromptBudget.fittingHistory(
             systemPrompt: contextPrompt,
             history: Array(history.suffix(turnLimit)),
-            message: finalMessage
+            message: finalMessage,
+            maxTokens: promptTokenBudget
         )
 
         var fullPrompt = contextPrompt + "\n\n"
@@ -903,18 +910,29 @@ class AIProviderService: ObservableObject {
         }
 
         do {
-            let session = try await onDeviceSession(for: fullPrompt)
-            let response: LanguageModelSession.Response<String>
-            let validImageURLs = imageURLs.filter {
-                $0.isFileURL
-                && FileManager.default.isReadableFile(atPath: $0.path)
-                && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
+            // Do not reuse a cached session when native image prompts are attached:
+            // LanguageModelSession retains image segments in its transcript across calls,
+            // which would accumulate image tokens on repeated queries with the same prompt.
+            let session: LanguageModelSession
+            if !imagePrompts.isEmpty {
+                resetOnDeviceSession()
+                session = try await onDeviceSession(for: fullPrompt)
+                resetOnDeviceSession()
+            } else {
+                session = try await onDeviceSession(for: fullPrompt)
             }
-            if !validImageURLs.isEmpty, #available(macOS 27.0, *) {
-                let attachments = validImageURLs.map { Attachment(imageURL: $0) }
-                response = try await session.respond {
-                    attachments
-                    finalMessage
+            let response: LanguageModelSession.Response<String>
+            if !imagePrompts.isEmpty {
+                do {
+                    response = try await session.respond {
+                        imagePrompts
+                        finalMessage
+                    }
+                } catch {
+                    if isContextWindowError(error) { throw error }
+                    // Graceful fallback to OCR-enriched text if the model rejects an image segment.
+                    let fallbackSession = try await onDeviceSession(for: fullPrompt)
+                    response = try await fallbackSession.respond(to: finalMessage)
                 }
             } else {
                 response = try await session.respond(to: finalMessage)
@@ -1027,17 +1045,24 @@ class AIProviderService: ObservableObject {
             includePrivateSafariData: false,
             additionalContextPrompt: additionalContextPrompt
         )
+        let imageURLs = extractImageURLs(from: context)
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *), useTools, let toolContext = onDeviceToolContext(for: context) {
             return try await OnDeviceToolSession.shared.respond(
                 to: message,
+                imageURLs: imageURLs,
                 systemPrompt: contextPrompt,
                 bundleId: toolContext.bundleId,
                 axContext: toolContext.axContext
             )
         }
         #endif
-        return try await sendToOnDevice(message: message, contextPrompt: contextPrompt, history: history)
+        return try await sendToOnDevice(
+            message: message,
+            contextPrompt: contextPrompt,
+            history: history,
+            imageURLs: imageURLs
+        )
     }
 
     // MARK: - On-Device Streaming
@@ -1141,15 +1166,22 @@ class AIProviderService: ObservableObject {
                     #endif
 
                     // ── 3. Build final message, then proactively budget history ──
-                    let imageContent = self.onDeviceImageContentBlock(from: imageURLs)
+                    let imageContent = OnDeviceImagePrompt.boundedOCRText(self.onDeviceImageContentBlock(from: imageURLs))
                     let finalMessage = imageContent.isEmpty
                         ? message
                         : "\(imageContent)\n\nUser request: \(message)"
+                    let imagePrompts = OnDeviceImagePrompt.prompts(from: imageURLs)
+                    let promptTokenBudget = max(
+                        800,
+                        OnDevicePromptBudget.maxPromptTokens
+                            - imagePrompts.count * OnDeviceImagePrompt.estimatedTokensPerImage
+                    )
 
                     let fittedHistory = await OnDevicePromptBudget.fittingHistory(
                         systemPrompt: contextPrompt,
                         history: Array(history.suffix(6)),
-                        message: finalMessage
+                        message: finalMessage,
+                        maxTokens: promptTokenBudget
                     )
                     var fullPrompt = contextPrompt + "\n\n"
                     if !fittedHistory.isEmpty {
@@ -1163,10 +1195,26 @@ class AIProviderService: ObservableObject {
 
                     // ── 4. Stream with one context-overflow retry ──
                     do {
-                        let session = try await self.onDeviceSession(for: fullPrompt)
+                        let session: LanguageModelSession
+                        if !imagePrompts.isEmpty {
+                            self.resetOnDeviceSession()
+                            session = try await self.onDeviceSession(for: fullPrompt)
+                            self.resetOnDeviceSession()
+                        } else {
+                            session = try await self.onDeviceSession(for: fullPrompt)
+                        }
                         var lastLength = 0
                         var finalContent = ""
-                        for try await snapshot in session.streamResponse(to: finalMessage, generating: String.self) {
+                        let stream: LanguageModelSession.ResponseStream<String>
+                        if !imagePrompts.isEmpty {
+                            stream = session.streamResponse(generating: String.self) {
+                                imagePrompts
+                                finalMessage
+                            }
+                        } else {
+                            stream = session.streamResponse(to: finalMessage, generating: String.self)
+                        }
+                        for try await snapshot in stream {
                             let full = snapshot.content
                             let delta = String(full.dropFirst(lastLength))
                             lastLength = full.count
@@ -1184,7 +1232,8 @@ class AIProviderService: ObservableObject {
                         let retryHistory = await OnDevicePromptBudget.fittingHistory(
                             systemPrompt: contextPrompt,
                             history: Array(history.suffix(2)),
-                            message: finalMessage
+                            message: finalMessage,
+                            maxTokens: promptTokenBudget
                         )
                         var condensedPrompt = contextPrompt + "\n\n"
                         if !retryHistory.isEmpty {

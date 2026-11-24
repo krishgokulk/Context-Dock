@@ -9,8 +9,10 @@ import FoundationModels
 
 // MARK: - Test image helper
 
-private func makeTestImage(text: String = "Hello World") -> URL? {
-    let size = NSSize(width: 300, height: 100)
+private func makeTestImage(
+    text: String = "Hello World",
+    size: NSSize = NSSize(width: 300, height: 100)
+) -> URL? {
     let image = NSImage(size: size, flipped: false) { rect in
         NSColor.white.setFill()
         rect.fill()
@@ -67,41 +69,86 @@ struct OnDeviceOCRFallbackTests {
     }
 }
 
-// MARK: - Native image attachment construction (macOS 27.0+)
+// MARK: - Runtime-safe native image prompt bridge tests
 
 struct NativeImageAttachmentTests {
 
-    @Test("Attachment can be constructed from imageURL")
-    func attachmentFromURL() throws {
-        guard #available(macOS 27.0, *) else { return }
+    @Test("OnDeviceImagePrompt returns empty array for empty, missing, or corrupt files without crashing")
+    func invalidInputsReturnEmptyWithoutCrashing() throws {
+        guard #available(macOS 26.0, *) else { return }
+        #expect(OnDeviceImagePrompt.prompts(from: []).isEmpty)
+
+        let missing = URL(fileURLWithPath: "/tmp/missing-image-\(UUID()).png")
+        #expect(OnDeviceImagePrompt.prompts(from: [missing]).isEmpty)
+
+        let webURL = try #require(URL(string: "https://example.com/image.png"))
+        #expect(OnDeviceImagePrompt.prompts(from: [webURL]).isEmpty)
+
+        let corrupt = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corrupt-\(UUID().uuidString).png")
+        try Data("not an image".utf8).write(to: corrupt)
+        defer { try? FileManager.default.removeItem(at: corrupt) }
+        #expect(OnDeviceImagePrompt.prompts(from: [corrupt]).isEmpty)
+    }
+
+    @Test("Single image URL builds native Prompt safely when supported at runtime")
+    func singleImageBuildsPromptSafely() throws {
+        guard #available(macOS 26.0, *) else { return }
         guard let url = makeTestImage(text: "Test") else {
             Issue.record("Could not create test image")
             return
         }
         defer { try? FileManager.default.removeItem(at: url) }
-        let attachment = Attachment(imageURL: url)
-        let prompt = Prompt(attachment)
-        _ = prompt
+        let prompts = OnDeviceImagePrompt.prompts(from: [url])
+        if OnDeviceImagePrompt.isSupportedAtRuntime {
+            #expect(prompts.count == 1)
+            let combined = Prompt {
+                prompts
+                "Describe this image"
+            }
+            _ = combined
+        } else {
+            #expect(prompts.isEmpty)
+        }
     }
 
-    @Test("Multiple attachments can be combined with text in a Prompt")
-    func multipleAttachmentsWithText() throws {
-        guard #available(macOS 27.0, *) else { return }
-        guard let url1 = makeTestImage(text: "One"),
-              let url2 = makeTestImage(text: "Two") else {
-            Issue.record("Could not create test images")
-            return
+    @Test("Multiple image attachments combine with text and cap at maxImagesPerTurn")
+    func multipleAttachmentsWithTextAndCap() throws {
+        guard #available(macOS 26.0, *) else { return }
+        var urls: [URL] = []
+        for idx in 1...6 {
+            if let u = makeTestImage(text: "Img \(idx)") {
+                urls.append(u)
+            }
         }
         defer {
-            try? FileManager.default.removeItem(at: url1)
-            try? FileManager.default.removeItem(at: url2)
+            for u in urls { try? FileManager.default.removeItem(at: u) }
         }
-        let attachments = [url1, url2].map { Attachment(imageURL: $0) }
-        let prompt = Prompt {
-            attachments
-            "Describe these images"
+        #expect(urls.count == 6)
+
+        let prompts = OnDeviceImagePrompt.prompts(from: urls)
+        if OnDeviceImagePrompt.isSupportedAtRuntime {
+            #expect(prompts.count == OnDeviceImagePrompt.maxImagesPerTurn)
+            let combined = Prompt {
+                prompts
+                "Describe these images"
+            }
+            _ = combined
+        } else {
+            #expect(prompts.isEmpty)
         }
-        _ = prompt
+    }
+
+    @Test("boundedOCRText truncates on line boundaries")
+    func boundedOCRTextTruncatesCleanly() {
+        guard #available(macOS 26.0, *) else { return }
+        let short = "Line 1\nLine 2"
+        #expect(OnDeviceImagePrompt.boundedOCRText(short, limit: 100) == short)
+
+        let long = (1...100).map { "Row \($0): 123,456.78" }.joined(separator: "\n")
+        let bounded = OnDeviceImagePrompt.boundedOCRText(long, limit: 120)
+        #expect(bounded.contains("Row 1:"))
+        #expect(bounded.hasSuffix("… (image text truncated)"))
     }
 }
 
