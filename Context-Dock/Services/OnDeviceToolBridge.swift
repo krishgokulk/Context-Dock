@@ -1524,8 +1524,9 @@ final class OnDeviceToolSession {
         if !imageURLs.isEmpty {
             let ocrText = ocrExtractedText(from: imageURLs)
             let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-            if #available(macOS 27.0, *) {
-                let attachments = imageURLs.map { Attachment(imageURL: $0) }
+            let validURLs = imageURLs.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+            if !validURLs.isEmpty, #available(macOS 27.0, *) {
+                let attachments = validURLs.map { Attachment(imageURL: $0) }
                 response = try await session.respond {
                     attachments
                     finalMessage
@@ -1604,8 +1605,9 @@ final class OnDeviceToolSession {
                 if !imageURLs.isEmpty {
                     let ocrText = self.ocrExtractedText(from: imageURLs)
                     let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-                    if #available(macOS 27.0, *) {
-                        let attachments = imageURLs.map { Attachment(imageURL: $0) }
+                    let validURLs = imageURLs.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+                    if !validURLs.isEmpty, #available(macOS 27.0, *) {
+                        let attachments = validURLs.map { Attachment(imageURL: $0) }
                         responseStream = session.streamResponse(generating: String.self) {
                             attachments
                             finalMessage
