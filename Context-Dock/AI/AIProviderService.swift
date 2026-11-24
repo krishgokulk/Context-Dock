@@ -905,7 +905,11 @@ class AIProviderService: ObservableObject {
         do {
             let session = try await onDeviceSession(for: fullPrompt)
             let response: LanguageModelSession.Response<String>
-            let validImageURLs = imageURLs.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+            let validImageURLs = imageURLs.filter {
+                $0.isFileURL
+                && FileManager.default.isReadableFile(atPath: $0.path)
+                && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
+            }
             if !validImageURLs.isEmpty, #available(macOS 27.0, *) {
                 let attachments = validImageURLs.map { Attachment(imageURL: $0) }
                 response = try await session.respond {

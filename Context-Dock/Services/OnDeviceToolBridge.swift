@@ -1524,7 +1524,11 @@ final class OnDeviceToolSession {
         if !imageURLs.isEmpty {
             let ocrText = ocrExtractedText(from: imageURLs)
             let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-            let validURLs = imageURLs.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+            let validURLs = imageURLs.filter {
+                $0.isFileURL
+                && FileManager.default.isReadableFile(atPath: $0.path)
+                && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
+            }
             if !validURLs.isEmpty, #available(macOS 27.0, *) {
                 let attachments = validURLs.map { Attachment(imageURL: $0) }
                 response = try await session.respond {
@@ -1605,7 +1609,11 @@ final class OnDeviceToolSession {
                 if !imageURLs.isEmpty {
                     let ocrText = self.ocrExtractedText(from: imageURLs)
                     let finalMessage = ocrText.isEmpty ? message : "\(ocrText)\n\n\(message)"
-                    let validURLs = imageURLs.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+                    let validURLs = imageURLs.filter {
+                        $0.isFileURL
+                        && FileManager.default.isReadableFile(atPath: $0.path)
+                        && CGImageSourceCreateWithURL($0 as CFURL, nil) != nil
+                    }
                     if !validURLs.isEmpty, #available(macOS 27.0, *) {
                         let attachments = validURLs.map { Attachment(imageURL: $0) }
                         responseStream = session.streamResponse(generating: String.self) {
