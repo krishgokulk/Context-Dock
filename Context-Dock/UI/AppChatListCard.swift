@@ -505,7 +505,7 @@ struct AppChatListCard: View {
                     switch row {
                     case .file(let url):
                         Button("Quick Look") {
-                            _ = model.previewFocusedRow()
+                            _ = model.toggleSidePanelPreview(force: true)
                         }
                         Button("Show in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -522,7 +522,7 @@ struct AppChatListCard: View {
                         if let path = doc.filePath, !path.isEmpty {
                             let url = URL(fileURLWithPath: path)
                             Button("Quick Look") {
-                                _ = model.previewFocusedRow()
+                                _ = model.toggleSidePanelPreview(force: true)
                             }
                             Button("Show in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([url])

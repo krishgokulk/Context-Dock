@@ -463,7 +463,13 @@ struct SelectionScopeCard: View {
                 .help("Space previews the file")
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.quickLook(url) }
+        .onTapGesture {
+            if model.isEmbeddedInSidePanel {
+                CornerDockController.shared.switchSidePanelFromSelectionToPreview()
+            } else {
+                model.quickLook(url)
+            }
+        }
         .padding(.horizontal, 16)
         .frame(height: SelectionScopeMetrics.previewHeight)
     }
@@ -631,6 +637,10 @@ struct SelectionScopeCard: View {
                     // in Finder. With text in the field it is just a space.
                     .onKeyPress(.space) {
                         guard model.query.isEmpty, !model.isShowingAnswer else { return .ignored }
+                        if model.isEmbeddedInSidePanel {
+                            CornerDockController.shared.switchSidePanelFromSelectionToPreview()
+                            return .handled
+                        }
                         return model.quickLook() ? .handled : .ignored
                     }
                     .onKeyPress(.escape) {

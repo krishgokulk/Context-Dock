@@ -1979,6 +1979,7 @@ extension AppChatPromptModel {
         }
         if rows.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             focusedMenuIndex = DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: 3)
+            arrowedIntoListSinceLastEdit = true
             touch()
             return true
         }
@@ -1988,6 +1989,7 @@ extension AppChatPromptModel {
             ? DockKeyRules.listArrowUnderAskRow(
                 down: delta > 0, focused: focusedMenuIndex, count: rows.count)
             : DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: rows.count)
+        arrowedIntoListSinceLastEdit = true
         touch()
         return true
     }

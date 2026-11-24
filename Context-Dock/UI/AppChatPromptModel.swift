@@ -286,6 +286,9 @@ final class AppChatPromptModel: ObservableObject {
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
     var globalFileSearchGeneration = 0
+    /// True once the user moves list focus with ↑/↓ after the last query edit, allowing Space
+    /// to toggle the right-side file preview without hijacking Space mid-word while typing.
+    var arrowedIntoListSinceLastEdit = false
     /// The folder Finder's front window shows — the Desktop when no window is open — read
     /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
     var finderFrontFolder: URL?
@@ -977,6 +980,7 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         lastTypedAt = Date()
+        arrowedIntoListSinceLastEdit = false
         // Text → empty: the user cleared what they were looking for, so the sheet goes with
         // it. Letting go of the highlighted row is what lets the resting phase close it.
         let typedNow = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

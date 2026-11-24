@@ -1411,9 +1411,13 @@ struct AppChatPromptPill: View {
                         // Finder's Ask AI row, questions, and every app's composer: the question.
                         model.submit()
                     }
-                    // Space is always a space: the result sheet stays open while typing, so a
-                    // row is nearly always highlighted, and Space opened Quick Look mid-word
-                    // (owner 2026-10-12). Quick Look is ⌘Y, as in Spotlight.
+                    // Space toggles the right-side file preview when browsing files on an empty
+                    // field or after arrowing onto a file result; mid-word typing stays a space.
+                    .onKeyPress(.space) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope { return .ignored }
+                        return model.toggleSidePanelPreview() ? .handled : .ignored
+                    }
                     .onKeyPress(keys: ["y"]) { press in
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         guard press.modifiers == .command, !model.isClipboardScope else {

@@ -8,6 +8,7 @@
 // it never takes the keys.
 
 import AppKit
+import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -211,7 +212,8 @@ private struct FilePreview: View {
                 PanelDivider()
                 FolderListing(url: url)
             } else {
-                // The file itself, as Quick Look draws it.
+                // Live native Quick Look preview inside the right side panel, backed by a crisp
+                // thumbnail while Quick Look initializes (and in headless unit tests).
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.black.opacity(0.18))
@@ -220,9 +222,17 @@ private struct FilePreview: View {
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fit)
                         .padding(thumbnail == nil ? 28 : 6)
+                    if !AppDelegate.isHostingTests, FileManager.default.fileExists(atPath: url.path) {
+                        EmbeddedQuickLookView(url: url)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 118)
+                .frame(height: 214)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
                 PanelDivider()
                 PanelSection(title: "Details")
                 details
@@ -255,12 +265,62 @@ private struct FilePreview: View {
         guard !isFolder else { return }
         let path = url.path
         ThumbnailGenerator.shared.getThumbnail(
-            for: path, size: CGSize(width: 560, height: 240)
+            for: path, size: CGSize(width: 640, height: 428)
         ) { image in
             DispatchQueue.main.async {
                 if url.path == path { thumbnail = image }
             }
         }
+    }
+}
+
+/// Embedded macOS `QLPreviewView` for reading PDFs, RTFs, text, code, images, and media right
+/// inside the side panel without opening an external floating Quick Look window or stealing
+/// keyboard focus from the search bar.
+private struct EmbeddedQuickLookView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> EmbeddedQuickLookContainerView {
+        let container = EmbeddedQuickLookContainerView(frame: .zero)
+        container.setPreviewURL(url)
+        return container
+    }
+
+    func updateNSView(_ nsView: EmbeddedQuickLookContainerView, context: Context) {
+        nsView.setPreviewURL(url)
+    }
+
+    static func dismantleNSView(_ nsView: EmbeddedQuickLookContainerView, coordinator: ()) {
+        nsView.tearDown()
+    }
+}
+
+private final class EmbeddedQuickLookContainerView: NSView {
+    private var previewView: QLPreviewView?
+    private var currentURL: URL?
+
+    override var acceptsFirstResponder: Bool { false }
+
+    func setPreviewURL(_ url: URL) {
+        let std = url.standardizedFileURL
+        guard currentURL != std else { return }
+        currentURL = std
+        if previewView == nil, let ql = QLPreviewView(frame: bounds, style: .compact) {
+            ql.autoresizingMask = [.width, .height]
+            ql.shouldCloseWithWindow = false
+            ql.autostarts = true
+            addSubview(ql)
+            previewView = ql
+        }
+        previewView?.previewItem = std as NSURL
+    }
+
+    func tearDown() {
+        currentURL = nil
+        previewView?.previewItem = nil
+        previewView?.close()
+        previewView?.removeFromSuperview()
+        previewView = nil
     }
 }
 

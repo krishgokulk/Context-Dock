@@ -1367,6 +1367,19 @@ final class CornerDockController: NSObject {
         return true
     }
 
+    /// Switches an embedded right-side Selection Scope card to the in-board File Preview
+    /// while keeping the right side panel expanded and returning focus to the file list.
+    func switchSidePanelFromSelectionToPreview() {
+        selection.isEmbeddedInSidePanel = false
+        selection.coversChat = false
+        selection.dismiss()
+        withAnimation(FluidMotion.selectionGlide) {
+            prompt.isSidePanelExpanded = true
+        }
+        refresh()
+        requestComposerFocus()
+    }
+
     private func selectionPhaseDidChange(_ visible: Bool) {
         if !visible, selection.isEmbeddedInSidePanel {
             selection.isEmbeddedInSidePanel = false
@@ -2103,6 +2116,19 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // Space on the embedded side-panel selection card (when its field is empty) switches
+        // the right side panel from Selection Scope to the file preview.
+        if event.keyCode == 49,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            selection.phase.isVisible, selection.isEmbeddedInSidePanel,
+            selection.query.isEmpty, !selection.isShowingAnswer,
+            keyboardState.owner == .selection
+        {
+            switchSidePanelFromSelectionToPreview()
+            return nil
+        }
+
         // A file's card covers the field (or is active in the right side panel): its own field has every other key.
         if selection.coversChat || (selection.isEmbeddedInSidePanel && selection.phase.isVisible && keyboardState.owner == .selection) {
             return event
@@ -2249,6 +2275,20 @@ final class CornerDockController: NSObject {
         {
             if prompt.focusedPillIndex != nil, prompt.applyPillRowKey(key) { return nil }
             if prompt.applyResultFocusKey(key) { return nil }
+        }
+
+        // Space on a highlighted file/folder row (when browsing an empty query or after
+        // arrowing into the list) toggles the right-side file preview panel.
+        if event.keyCode == 49,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput, prompt.phase != .chat,
+            keyboardState.owner != .selection, keyboardState.owner != .clipboard,
+            !ClipboardPanelController.shared.model.isKeyboardArmed,
+            prompt.toggleSidePanelPreview()
+        {
+            return nil
         }
 
         // Backspace on an empty field leaves the scope. Like Tab, the field's own handler

@@ -8,6 +8,7 @@
 import AppKit
 import Foundation
 import Quartz
+import SwiftUI
 
 extension SystemCommand {
     /// The Global Command for native Window Management (`provider:windows`).
@@ -592,5 +593,40 @@ extension AppChatPromptModel {
                 self.syncListPhase()
             }
         }
+    }
+
+    /// Whether `row` resolves to a file or folder preview in the right side panel.
+    func hasSidePanelFilePreview(_ row: AppChatRow?) -> Bool {
+        guard let preview = CornerBoardLayout.preview(
+            for: row, appName: appName, appBundleID: appBundleID,
+            cliCommand: cliCommand, lookup: searchDocumentLookup)
+        else { return false }
+        if case .file = preview { return true }
+        return false
+    }
+
+    /// Space on a file or folder row toggles the right-side preview panel (matching `→`
+    /// expanding the right side panel for Selection Scope), while keeping Space as a space
+    /// character whenever the user is mid-typing a query.
+    @discardableResult
+    func toggleSidePanelPreview(force: Bool = false) -> Bool {
+        guard phase == .suggesting, !isClipboardScope else { return false }
+        if !force {
+            guard query.isEmpty || arrowedIntoListSinceLastEdit else { return false }
+        }
+        let targetRow = skipsTopRowOnBareReturn ? focusedRow : (focusedRow ?? rows.first)
+        guard hasSidePanelFilePreview(targetRow) else { return false }
+
+        let controller = CornerDockController.shared
+        if controller.selection.isEmbeddedInSidePanel, controller.selection.phase.isVisible {
+            controller.switchSidePanelFromSelectionToPreview()
+        } else {
+            withAnimation(FluidMotion.selectionGlide) {
+                isSidePanelExpanded.toggle()
+            }
+            controller.refresh()
+        }
+        touch()
+        return true
     }
 }
