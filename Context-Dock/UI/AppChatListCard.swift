@@ -1154,7 +1154,9 @@ struct AppChatListCard: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 } else {
-                    CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
+                    let rowURL = pill.resolvedURL
+                        ?? pill.previewPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+                    CornerResultIcon(url: rowURL, fallback: pill.menuItemImage, symbol: pill.icon)
                         .overlay(alignment: .bottomTrailing) {
                             if foot.isRunningApp {
                                 Circle()
@@ -1279,25 +1281,51 @@ struct AppChatListCard: View {
 }
 
 /// Observing the cache redraws a page icon as soon as it arrives, without another keypress.
-private struct CornerResultIcon: View {
+/// Local `file://` URLs resolve directly to their macOS file/folder icon instead of `"globe"`.
+struct CornerResultIcon: View {
     @ObservedObject private var favicons = FaviconStore.shared
     let url: URL?
     let fallback: NSImage?
     let symbol: String
 
+    static func resolvedImage(
+        url: URL?, fallback: NSImage?, favicons: FaviconStore = .shared
+    ) -> NSImage? {
+        if let url {
+            if url.isFileURL {
+                return fallback ?? NSWorkspace.shared.icon(forFile: url.path)
+            }
+            return favicons.icon(for: url) ?? fallback
+        }
+        return fallback
+    }
+
+    static func fallbackSymbol(url: URL?, symbol: String) -> String {
+        if let url, !url.isFileURL { return "globe" }
+        return symbol
+    }
+
     var body: some View {
+        let image = Self.resolvedImage(url: url, fallback: fallback, favicons: favicons)
+        let side: CGFloat = (url?.isFileURL == true || image != nil) ? 26 : 20
         Group {
-            if let image = url.flatMap({ favicons.icon(for: $0) }) ?? (url == nil ? fallback : nil) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: url == nil ? symbol : "globe")
-                    .resizable().aspectRatio(contentMode: .fit)
+                Image(systemName: Self.fallbackSymbol(url: url, symbol: symbol))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 20, height: 20)
+        .frame(width: side, height: side)
         .task(id: url) {
-            if let url { favicons.fetchIfNeeded(for: url) }
+            if let url, !url.isFileURL {
+                favicons.fetchIfNeeded(for: url)
+            }
         }
     }
 }

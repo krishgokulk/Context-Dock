@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import PDFKit
 import Testing
 
 @testable import Context_Dock
@@ -133,5 +135,48 @@ struct FileRowStepIntoTests {
         #expect(!controller.selection.phase.isVisible)
         #expect(!controller.selection.isEmbeddedInSidePanel)
         #expect(controller.prompt.isSidePanelExpanded)
+    }
+
+    @Test func fileURLRowResolvesFileIconInsteadOfGlobe() throws {
+        let fm = FileManager.default
+        let pdf = fm.temporaryDirectory.appendingPathComponent("EmployerDetails-\(UUID().uuidString).pdf")
+        try Data("%PDF-1.4".utf8).write(to: pdf)
+        defer { try? fm.removeItem(at: pdf) }
+
+        let icon = CornerResultIcon.resolvedImage(url: pdf, fallback: nil)
+        #expect(icon != nil)
+        #expect(CornerResultIcon.fallbackSymbol(url: pdf, symbol: "doc") == "doc")
+        #expect(CornerResultIcon.fallbackSymbol(url: URL(string: "https://example.com")!, symbol: "doc") == "globe")
+    }
+
+    @Test func fullFilePreviewLoaderLoadsMultiPagePDFAndTextInFull() throws {
+        let fm = FileManager.default
+        let pdfURL = fm.temporaryDirectory.appendingPathComponent("TwoPage-\(UUID().uuidString).pdf")
+        let pdfDoc = PDFDocument()
+        pdfDoc.insert(PDFPage(), at: 0)
+        pdfDoc.insert(PDFPage(), at: 1)
+        #expect(pdfDoc.write(to: pdfURL))
+        defer { try? fm.removeItem(at: pdfURL) }
+
+        let pdfLoaded = FullFilePreviewLoader.load(url: pdfURL)
+        if case .pdf(_, let pages) = pdfLoaded {
+            #expect(pages == 2)
+        } else {
+            Issue.record("Expected full PDF preview content")
+        }
+        #expect(pdfLoaded.detailRows.contains { $0.0 == "Pages" && $0.1 == "2" })
+
+        let txtURL = fm.temporaryDirectory.appendingPathComponent("Notes-\(UUID().uuidString).txt")
+        try Data("Line 1\nLine 2\nLine 3".utf8).write(to: txtURL)
+        defer { try? fm.removeItem(at: txtURL) }
+
+        let txtLoaded = FullFilePreviewLoader.load(url: txtURL)
+        if case .plainText(let text, let isCode, let lines) = txtLoaded {
+            #expect(text == "Line 1\nLine 2\nLine 3")
+            #expect(!isCode)
+            #expect(lines == 3)
+        } else {
+            Issue.record("Expected full plain-text preview content")
+        }
     }
 }

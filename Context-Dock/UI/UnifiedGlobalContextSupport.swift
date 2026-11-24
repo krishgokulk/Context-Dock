@@ -80,6 +80,7 @@ extension AppChatPromptModel {
                         }
                     }
                 )
+                pill.menuItemImage = NSWorkspace.shared.icon(forFile: url.path)
                 pill.resolvedURL = url
                 pill.previewPath = url.path
                 pill.sourceBundleId = bundleID

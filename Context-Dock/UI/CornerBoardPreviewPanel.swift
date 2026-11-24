@@ -8,6 +8,8 @@
 // it never takes the keys.
 
 import AppKit
+import ImageIO
+import PDFKit
 import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
@@ -16,10 +18,15 @@ import WebKit
 struct CornerBoardPreviewPanel: View {
     let preview: CornerBoardPreview
 
+    private var showsScrollIndicators: Bool {
+        if case .file = preview { return true }
+        return false
+    }
+
     var body: some View {
         // Scrolls when there is more than the card holds (owner 2026-10-05: a file's details
         // were cut off under its preview). The wheel scrolls it; the keys stay with the list.
-        ScrollView(.vertical, showsIndicators: false) {
+        ScrollView(.vertical, showsIndicators: showsScrollIndicators) {
             VStack(alignment: .leading, spacing: 0) {
                 switch preview {
                 case .file(let url): FilePreview(url: url)
@@ -195,7 +202,8 @@ private func boardPanelKind(_ url: URL) -> String {
 
 private struct FilePreview: View {
     let url: URL
-    @State private var thumbnail: NSImage?
+    @State private var loadedContent: FullFilePreviewContent = .loading
+    @State private var fallbackThumbnail: NSImage?
 
     private var isFolder: Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
@@ -211,43 +219,119 @@ private struct FilePreview: View {
             if isFolder {
                 PanelDivider()
                 FolderListing(url: url)
+                PanelDivider()
+                PanelSection(title: "Details")
+                details(extraRows: [])
             } else {
-                // Live native Quick Look preview inside the right side panel, backed by a crisp
-                // thumbnail while Quick Look initializes (and in headless unit tests).
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.18))
-                    Image(nsImage: thumbnail ?? icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .padding(thumbnail == nil ? 28 : 6)
-                    if !AppDelegate.isHostingTests, FileManager.default.fileExists(atPath: url.path) {
-                        EmbeddedQuickLookView(url: url)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
+                fullDocumentBody(icon: icon)
+                PanelDivider()
+                PanelSection(title: "Details")
+                details(extraRows: loadedContent.detailRows)
+            }
+        }
+        .task(id: url) {
+            loadContent()
+        }
+    }
+
+    @ViewBuilder
+    private func fullDocumentBody(icon: NSImage) -> some View {
+        switch loadedContent {
+        case .pdf(let doc, let pageCount):
+            LazyVStack(spacing: 10) {
+                ForEach(0..<min(pageCount, 60), id: \.self) { index in
+                    PDFPageCardView(document: doc, pageIndex: index, totalPages: pageCount)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 214)
+                if pageCount > 60 {
+                    Text("+\(pageCount - 60) more pages")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+        case .attributedText(let attributed):
+            Text(attributed)
+                .font(.system(size: 12))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 310, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.20))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
                 )
-                PanelDivider()
-                PanelSection(title: "Details")
-                details
+
+        case .plainText(let text, let isCode, _):
+            Text(text.isEmpty ? "Empty file" : text)
+                .font(.system(size: 11.5, design: isCode ? .monospaced : .default))
+                .foregroundStyle(text.isEmpty ? Color.secondary : Color.primary.opacity(0.92))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 310, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.20))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+        case .image(let nsImage, _):
+            Image(nsImage: nsImage)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, minHeight: 260)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+        case .quickLook, .loading:
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.black.opacity(0.18))
+                Image(nsImage: fallbackThumbnail ?? icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .padding(fallbackThumbnail == nil ? 36 : 8)
+                if case .quickLook = loadedContent,
+                    !AppDelegate.isHostingTests,
+                    FileManager.default.fileExists(atPath: url.path)
+                {
+                    EmbeddedQuickLookView(url: url)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 326)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
         }
-        .onAppear(perform: loadThumbnail)
     }
 
-    private var details: some View {
+    private func details(extraRows: [(String, String)]) -> some View {
         let values = try? url.resourceValues(forKeys: [
             .localizedTypeDescriptionKey, .fileSizeKey, .contentModificationDateKey,
         ])
         return VStack(alignment: .leading, spacing: 0) {
             if let kind = values?.localizedTypeDescription {
                 PanelRow(label: "Kind", value: kind, trailing: boardPanelKind(url))
+            }
+            ForEach(Array(extraRows.enumerated()), id: \.offset) { _, pair in
+                PanelRow(label: pair.0, value: pair.1)
             }
             if let size = values?.fileSize {
                 PanelRow(
@@ -261,22 +345,211 @@ private struct FilePreview: View {
         }
     }
 
-    private func loadThumbnail() {
+    private func loadContent() {
         guard !isFolder else { return }
-        let path = url.path
-        ThumbnailGenerator.shared.getThumbnail(
-            for: path, size: CGSize(width: 640, height: 428)
-        ) { image in
-            DispatchQueue.main.async {
-                if url.path == path { thumbnail = image }
+        let targetURL = url
+        loadedContent = FullFilePreviewLoader.load(url: targetURL)
+        if case .quickLook = loadedContent {
+            let path = targetURL.path
+            ThumbnailGenerator.shared.getThumbnail(
+                for: path, size: CGSize(width: 680, height: 652)
+            ) { image in
+                DispatchQueue.main.async {
+                    if url.path == path { fallbackThumbnail = image }
+                }
             }
         }
     }
 }
 
-/// Embedded macOS `QLPreviewView` for reading PDFs, RTFs, text, code, images, and media right
-/// inside the side panel without opening an external floating Quick Look window or stealing
-/// keyboard focus from the search bar.
+enum FullFilePreviewContent {
+    case loading
+    case pdf(PDFDocument, pageCount: Int)
+    case attributedText(AttributedString)
+    case plainText(String, isCode: Bool, lineCount: Int)
+    case image(NSImage, pixelSize: CGSize?)
+    case quickLook
+
+    var detailRows: [(String, String)] {
+        switch self {
+        case .pdf(_, let pages):
+            return [("Pages", "\(pages)")]
+        case .plainText(_, _, let lines) where lines > 0:
+            return [("Lines", "\(lines)")]
+        case .image(_, let size?):
+            return [("Dimensions", "\(Int(size.width)) × \(Int(size.height))")]
+        default:
+            return []
+        }
+    }
+}
+
+enum FullFilePreviewLoader {
+    private static let codeExtensions: Set<String> = [
+        "swift", "py", "js", "ts", "tsx", "jsx", "rs", "go", "c", "cpp", "h", "hpp",
+        "java", "kt", "rb", "sh", "zsh", "bash", "json", "yaml", "yml", "toml", "xml",
+        "html", "css", "scss", "sql", "ini", "env", "plist",
+    ]
+
+    private static let plainTextExtensions: Set<String> = [
+        "txt", "md", "markdown", "csv", "tsv", "log", "gitignore", "conf", "cfg",
+    ]
+
+    private static let richTextExtensions: Set<String> = ["rtf", "rtfd"]
+
+    static func load(url: URL) -> FullFilePreviewContent {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .quickLook }
+        let ext = url.pathExtension.lowercased()
+        let utType = UTType(filenameExtension: ext)
+
+        // 1. Full multi-page PDF document
+        if ext == "pdf" || utType?.conforms(to: .pdf) == true {
+            if let doc = PDFDocument(url: url), doc.pageCount > 0 {
+                return .pdf(doc, pageCount: doc.pageCount)
+            }
+        }
+
+        // 2. Rich text (.rtf / .rtfd)
+        if richTextExtensions.contains(ext) || utType?.conforms(to: .rtf) == true || utType?.conforms(to: .rtfd) == true {
+            if let nsAttr = try? NSAttributedString(url: url, options: [:], documentAttributes: nil) {
+                let mutable = NSMutableAttributedString(attributedString: nsAttr)
+                let fullRange = NSRange(location: 0, length: mutable.length)
+                mutable.removeAttribute(.foregroundColor, range: fullRange)
+                mutable.removeAttribute(.backgroundColor, range: fullRange)
+                if let attr = try? AttributedString(mutable, including: \.appKit) {
+                    return .attributedText(attr)
+                }
+                let raw = nsAttr.string
+                return .plainText(raw, isCode: false, lineCount: raw.components(separatedBy: .newlines).count)
+            }
+        }
+
+        // 3. Full-width Image
+        if utType?.conforms(to: .image) == true {
+            if let loaded = loadFullImage(url: url) {
+                return .image(loaded.image, pixelSize: loaded.pixelSize)
+            }
+        }
+
+        // 4. Plain text, Markdown, Source code, JSON, Logs, CSV
+        let isCode = codeExtensions.contains(ext) || utType?.conforms(to: .sourceCode) == true
+            || utType?.conforms(to: .json) == true || utType?.conforms(to: .xml) == true
+            || utType?.conforms(to: .script) == true
+        let isText = isCode || plainTextExtensions.contains(ext)
+            || utType?.conforms(to: .plainText) == true
+            || utType?.conforms(to: .commaSeparatedText) == true
+        if isText, let text = readTextPrefix(url: url, maxBytes: 160_000) {
+            let lineCount = text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
+            return .plainText(text, isCode: isCode, lineCount: lineCount)
+        }
+
+        return .quickLook
+    }
+
+    private static func readTextPrefix(url: URL, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maxBytes) else { return nil }
+        // Guard against binary files mislabeled with a text extension
+        if data.prefix(512).contains(0) { return nil }
+        if let utf8 = String(data: data, encoding: .utf8) {
+            return data.count >= maxBytes ? utf8 + "\n\n… (truncated)" : utf8
+        }
+        if let latin = String(data: data, encoding: .isoLatin1) {
+            return data.count >= maxBytes ? latin + "\n\n… (truncated)" : latin
+        }
+        return nil
+    }
+
+    private static func loadFullImage(url: URL) -> (image: NSImage, pixelSize: CGSize?)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            guard let img = NSImage(contentsOf: url) else { return nil }
+            return (img, nil)
+        }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let pixelSize: CGSize? = {
+            if let w = props?[kCGImagePropertyPixelWidth] as? CGFloat,
+                let h = props?[kCGImagePropertyPixelHeight] as? CGFloat,
+                w > 0, h > 0
+            {
+                return CGSize(width: w, height: h)
+            }
+            return nil
+        }()
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1280,
+        ]
+        if let cgImg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) {
+            let size = NSSize(width: cgImg.width, height: cgImg.height)
+            return (NSImage(cgImage: cgImg, size: size), pixelSize)
+        }
+        guard let img = NSImage(contentsOf: url) else { return nil }
+        return (img, pixelSize)
+    }
+}
+
+/// Renders one PDF page crisp and edge-to-edge across the right preview panel.
+private struct PDFPageCardView: View {
+    let document: PDFDocument
+    let pageIndex: Int
+    let totalPages: Int
+    @State private var renderedPage: NSImage?
+
+    private var aspectRatio: CGFloat {
+        guard let page = document.page(at: pageIndex) else { return 1 / 1.414 }
+        let box = page.bounds(for: .mediaBox)
+        let rotated = (page.rotation % 180) != 0
+        let w = rotated ? box.height : box.width
+        let h = rotated ? box.width : box.height
+        guard w > 0, h > 0 else { return 1 / 1.414 }
+        return w / h
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white)
+                if let renderedPage {
+                    Image(nsImage: renderedPage)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                }
+            }
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.5)
+            )
+            if totalPages > 1 {
+                Text("Page \(pageIndex + 1) of \(totalPages)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary.opacity(0.75))
+            }
+        }
+        .onAppear(perform: renderIfNeeded)
+    }
+
+    private func renderIfNeeded() {
+        guard renderedPage == nil, let page = document.page(at: pageIndex) else { return }
+        let box = page.bounds(for: .mediaBox)
+        let rotated = (page.rotation % 180) != 0
+        let w = max(rotated ? box.height : box.width, 1)
+        let h = max(rotated ? box.width : box.height, 1)
+        let targetWidth: CGFloat = 680
+        let targetSize = NSSize(width: targetWidth, height: round(targetWidth * (h / w)))
+        renderedPage = page.thumbnail(of: targetSize, for: .mediaBox)
+    }
+}
+
+/// Embedded macOS `QLPreviewView` for Office, iWork, audio/video, and other rich formats,
+/// filling the visible viewport so `Details` sits below at the end of the scroll.
 private struct EmbeddedQuickLookView: NSViewRepresentable {
     let url: URL
 
@@ -305,7 +578,7 @@ private final class EmbeddedQuickLookContainerView: NSView {
         let std = url.standardizedFileURL
         guard currentURL != std else { return }
         currentURL = std
-        if previewView == nil, let ql = QLPreviewView(frame: bounds, style: .compact) {
+        if previewView == nil, let ql = QLPreviewView(frame: bounds, style: .normal) {
             ql.autoresizingMask = [.width, .height]
             ql.shouldCloseWithWindow = false
             ql.autostarts = true
@@ -327,7 +600,7 @@ private final class EmbeddedQuickLookContainerView: NSView {
 /// A folder's first items, folders first — each a row with its kind, as Claude lists files.
 private struct FolderListing: View {
     let url: URL
-    private static let limit = 7
+    private static let limit = 50
 
     var body: some View {
         let items = Self.items(in: url)
