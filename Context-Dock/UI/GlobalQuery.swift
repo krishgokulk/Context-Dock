@@ -64,7 +64,7 @@ enum GlobalQuery {
             }
             if case .cachedMenu(_, _, let path, _, _) = doc.action { text += path }
         case .command(let item): text += item.path
-        case .file(let url): text.append(url.deletingLastPathComponent().lastPathComponent)
+        case .file(let url): text.append(url.path)
         case .action(let action): text.append(action.description)
         case .app, .cliSuggestion: break
         }
@@ -120,11 +120,24 @@ enum GlobalQuery {
         guard !trimmed.isEmpty else { return nil }
 
         let typed = Set(words(query))
+        let singularTrimmed = (trimmed.count > 3 && trimmed.hasSuffix("s") && !trimmed.hasSuffix("ss"))
+            ? String(trimmed.dropLast()) : trimmed
 
-        // 1. Exact folder match or exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
+        // 0. Direct file/folder path query (e.g. "/Users/name/Pictures/Screenshot", "~/Pictures/Screenshot", "Pictures/Screenshot")
+        if (trimmed.contains("/") || trimmed.hasPrefix("~")),
+            let pathHit = rows.first(where: {
+                if case .file = $0 { return true }
+                return false
+            })
+        {
+            return pathHit
+        }
+
+        // 1. Exact folder match (including singular/plural fold) or exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
         if let exactFolderHit = rows.first(where: { row in
             guard case .file(let url) = row, AppChatPromptModel.isFolder(url) else { return false }
-            return row.title.lowercased() == trimmed
+            let titleLower = row.title.lowercased()
+            return titleLower == trimmed || titleLower == singularTrimmed
         }) {
             return exactFolderHit
         }

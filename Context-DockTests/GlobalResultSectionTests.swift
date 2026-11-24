@@ -332,4 +332,73 @@ struct UnifiedGlobalLauncherSectionTests {
         #expect(model.isGlobalScope)
         #expect(model.query == "UnifiedWalk")
     }
+
+    @Test func homeAndICloudSearchFindsPicturesAndNestedScreenshotFolders() throws {
+        let fm = FileManager.default
+        let fakeHome = fm.temporaryDirectory.appendingPathComponent("FakeHome-\(UUID().uuidString)")
+        let fakeCloud = fakeHome.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+        let homePictures = fakeHome.appendingPathComponent("Pictures")
+        let docPictures = fakeHome.appendingPathComponent("Documents/Pictures")
+        let cloudPictures = fakeCloud.appendingPathComponent("Pictures")
+        let homeScreenshotSingular = homePictures.appendingPathComponent("Screenshot")
+        let homeScreenshotsPlural = homePictures.appendingPathComponent("Screenshots")
+        let downloadsPhotos = fakeHome.appendingPathComponent("Downloads/Photos")
+
+        for dir in [homePictures, docPictures, cloudPictures, homeScreenshotSingular, homeScreenshotsPlural, downloadsPhotos] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        defer { try? fm.removeItem(at: fakeHome) }
+        try Data("png".utf8).write(to: downloadsPhotos.appendingPathComponent("Screenshot 2026-08-24 at 14.58.15.png"))
+
+        let settings = AppSettings.shared
+        let prevUseCustom = settings.useCustomSearchDirectories
+        let prevDirs = settings.searchDirectories
+        defer {
+            settings.useCustomSearchDirectories = prevUseCustom
+            settings.searchDirectories = prevDirs
+        }
+
+        // User added iCloud Drive and Home dir in Search Directories
+        settings.useCustomSearchDirectories = false
+        settings.searchDirectories = [
+            SearchDirectory(path: fakeCloud.path, displayName: "com~apple~CloudDocs"),
+            SearchDirectory(path: fakeHome.path, displayName: "FakeHome"),
+        ]
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+
+        // 1. Searching "pictures" finds all Pictures folders and ranks ~/Pictures ahead of ~/Documents/Pictures and iCloud
+        let picRows = model.globalFileAndFolderRows(for: "pictures")
+        let picPaths = picRows.compactMap { row -> String? in
+            if case .file(let u) = row { return u.resolvingSymlinksInPath().path }
+            return nil
+        }
+        #expect(picPaths.contains(homePictures.resolvingSymlinksInPath().path))
+        #expect(picPaths.contains(docPictures.resolvingSymlinksInPath().path))
+        #expect(picPaths.contains(cloudPictures.resolvingSymlinksInPath().path))
+        #expect(picPaths.first == homePictures.resolvingSymlinksInPath().path)
+
+        // 2. Searching "screenshots" (plural) finds BOTH ~/Pictures/Screenshots AND ~/Pictures/Screenshot (singular) ahead of .png files
+        let shotRows = model.globalFileAndFolderRows(for: "screenshots")
+        let shotPaths = shotRows.compactMap { row -> String? in
+            if case .file(let u) = row { return u.resolvingSymlinksInPath().path }
+            return nil
+        }
+        #expect(shotPaths.contains(homeScreenshotsPlural.resolvingSymlinksInPath().path))
+        #expect(shotPaths.contains(homeScreenshotSingular.resolvingSymlinksInPath().path))
+        let topTwo = Array(shotPaths.prefix(2))
+        #expect(topTwo.contains(homeScreenshotsPlural.resolvingSymlinksInPath().path))
+        #expect(topTwo.contains(homeScreenshotSingular.resolvingSymlinksInPath().path))
+
+        // 3. Entering full path "/.../Pictures/Screenshot" is NOT intercepted by slashAppFilter and resolves directly
+        model.query = homeScreenshotSingular.path
+        #expect(model.slashAppFilter == nil)
+        let pathRows = model.globalFileAndFolderRows(for: homeScreenshotSingular.path)
+        if case .file(let firstURL) = pathRows.first {
+            #expect(firstURL.resolvingSymlinksInPath().path == homeScreenshotSingular.resolvingSymlinksInPath().path)
+        } else {
+            Issue.record("Expected direct folder match for full path query")
+        }
+    }
 }

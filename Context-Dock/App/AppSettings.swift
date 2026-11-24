@@ -2173,6 +2173,9 @@ class AppSettings: ObservableObject {
             let decoder = JSONDecoder()
             searchDirectories = try decoder.decode(
                 [SearchDirectory].self, from: searchDirectoriesData)
+            if !searchDirectories.isEmpty, !useCustomSearchDirectories {
+                useCustomSearchDirectories = true
+            }
         } catch {
             #if DEBUG
                 print("⚠️ Failed to decode search directories: \(error)")
@@ -2551,6 +2554,7 @@ class AppSettings: ObservableObject {
 
         let directory = SearchDirectory(path: path, displayName: displayName)
         searchDirectories.append(directory)
+        useCustomSearchDirectories = true
         triggerSearchIndexRefresh()
     }
 
@@ -2587,6 +2591,7 @@ class AppSettings: ObservableObject {
         let directory = SearchDirectory(
             path: url.path, displayName: displayName, bookmarkData: bookmarkData)
         searchDirectories.append(directory)
+        useCustomSearchDirectories = true
         triggerSearchIndexRefresh()
     }
 
@@ -2687,6 +2692,9 @@ class AppSettings: ObservableObject {
 
     func removeSearchDirectory(_ directory: SearchDirectory) {
         searchDirectories.removeAll { $0.id == directory.id }
+        if searchDirectories.isEmpty {
+            useCustomSearchDirectories = false
+        }
         triggerSearchIndexRefresh()
     }
 

@@ -137,9 +137,15 @@ enum GlobalResultSection {
         }
 
         let typed = query.lowercased()
+        let singularTyped = (typed.count > 3 && typed.hasSuffix("s") && !typed.hasSuffix("ss"))
+            ? String(typed.dropLast()) : typed
         func isNamed(_ row: AppChatRow) -> Bool {
             let app = appName(of: row).lowercased()
             return !app.isEmpty && typed.contains(app)
+        }
+        func isFolderRow(_ row: AppChatRow) -> Bool {
+            if case .file(let url) = row { return AppChatPromptModel.isFolder(url) }
+            return false
         }
 
         return order.flatMap { section -> [AppChatRow] in
@@ -150,6 +156,11 @@ enum GlobalResultSection {
             if !useCanonicalSectionOrder {
                 return sectionRows.filter(isNamed) + sectionRows.filter { !isNamed($0) }
             }
+            if section == files {
+                // `globalFileAndFolderRows` already ranks files & folders by exact path,
+                // folder-first, shallow local home path before iCloud, and name length.
+                return sectionRows
+            }
 
             return sectionRows.sorted { a, b in
                 let aNamed = isNamed(a)
@@ -159,12 +170,16 @@ enum GlobalResultSection {
                 let aTitle = a.title.lowercased()
                 let bTitle = b.title.lowercased()
 
-                let aExact = aTitle == typed
-                let bExact = bTitle == typed
+                let aExact = aTitle == typed || aTitle == singularTyped
+                let bExact = bTitle == typed || bTitle == singularTyped
                 if aExact != bExact { return aExact }
 
-                let aPrefix = aTitle.hasPrefix(typed)
-                let bPrefix = bTitle.hasPrefix(typed)
+                let aFolder = isFolderRow(a)
+                let bFolder = isFolderRow(b)
+                if aFolder != bFolder { return aFolder }
+
+                let aPrefix = aTitle.hasPrefix(typed) || aTitle.hasPrefix(singularTyped)
+                let bPrefix = bTitle.hasPrefix(typed) || bTitle.hasPrefix(singularTyped)
                 if aPrefix != bPrefix { return aPrefix }
 
                 let aFrecency = UsageTracker.shared.getScore(for: a.id)

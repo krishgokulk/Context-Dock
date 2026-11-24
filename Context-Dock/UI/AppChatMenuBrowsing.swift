@@ -1280,7 +1280,7 @@ extension AppChatPromptModel {
     var slashAppFilter: String? {
         guard isGlobalScope || isAppContextDock, query.hasPrefix("/") else { return nil }
         let rest = query.dropFirst()
-        guard !rest.contains(" ") else { return nil }
+        guard !rest.contains(" "), !rest.contains("/") else { return nil }
         return rest.lowercased()
     }
 

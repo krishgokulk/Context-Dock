@@ -313,13 +313,15 @@ extension AppChatPromptModel {
     }
 
     /// Bounded Files & Folders matches for Global Context:
-    /// 1. Any bounded root folder whose name matches `typed` (e.g. `downloads` -> `~/Downloads`).
-    /// 2. Indexed files/folders from `FileIndexManager.shared.search`, strictly bounded to
-    ///    `FileSearchService.boundedRoots` when custom directories are enabled.
+    /// 1. Direct or partial filesystem path resolution (e.g. `/Users/name/Pictures/Screenshot`, `~/Pictures/Screenshot`, `Pictures/Screenshot`).
+    /// 2. Multi-level bounded folder & file scan across all configured roots (including user home subfolders like `~/Pictures`, `~/Pictures/Screenshot`, and `iCloud Drive`), ranked folder-first and shallow-local-path-first.
+    /// 3. Indexed files/folders from `FileIndexManager.shared.search`, strictly bounded to `FileSearchService.boundedRoots`.
     func globalFileAndFolderRows(for typed: String, limit: Int = 8) -> [AppChatRow] {
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return [] }
         let lower = trimmed.lowercased()
+        let singularLower = (lower.count > 3 && lower.hasSuffix("s") && !lower.hasSuffix("ss"))
+            ? String(lower.dropLast()) : lower
 
         let settings = AppSettings.shared
         let roots = FileSearchService.boundedRoots(
@@ -328,57 +330,208 @@ extension AppChatPromptModel {
         )
         guard !roots.isEmpty else { return [] }
 
-        var seenPaths = Set<String>()
-        var results: [AppChatRow] = []
-
         let fm = FileManager.default
-        let home = NSHomeDirectory()
+        let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
+        let normalizedRoots = roots.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        let enforceBoundary = settings.useCustomSearchDirectories || !settings.searchDirectories.isEmpty
 
-        // 1. Bounded root folders themselves + fast depth-1 scan of user folders (works with Spotlight off).
-        var fastScanDirs = roots
-        if roots.contains(home) {
-            fastScanDirs = FileSearchService.defaultRoots(homeDirectory: home) + roots
+        var seenPaths = Set<String>()
+        var candidates: [URL] = []
+
+        func addCandidate(_ url: URL) {
+            let std = url.standardizedFileURL.path
+            guard !std.isEmpty else { return }
+            if enforceBoundary {
+                guard FileSearchService.isInsideAny(std, roots: normalizedRoots) else { return }
+            }
+            guard !FileSearchService.isExcluded(std, roots: normalizedRoots, home: home) else { return }
+            if seenPaths.insert(std).inserted {
+                candidates.append(URL(fileURLWithPath: std))
+            }
         }
-        for root in fastScanDirs where results.count < limit {
-            let url = URL(fileURLWithPath: root, isDirectory: true)
-            let name = url.lastPathComponent.lowercased()
-            if name.contains(lower), fm.fileExists(atPath: root) {
-                let std = url.standardizedFileURL.path
-                if seenPaths.insert(std).inserted {
-                    results.append(.file(url))
+
+        // 0. Direct or partial path query (e.g. "/Users/gokulakannan/Pictures/Screenshot", "~/Pictures/Screenshot", "Pictures/Screenshot")
+        var resolvedExactPaths = Set<String>()
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") || trimmed.contains("/") {
+            let tildeExpanded: String = {
+                if trimmed == "~" { return home }
+                if trimmed.hasPrefix("~/") { return home + "/" + String(trimmed.dropFirst(2)) }
+                return trimmed
+            }()
+
+            var pathQueries: [String] = []
+            if tildeExpanded.hasPrefix("/") {
+                pathQueries.append(tildeExpanded)
+            } else {
+                for r in normalizedRoots {
+                    pathQueries.append(r + "/" + tildeExpanded)
+                }
+                if !normalizedRoots.contains(home) {
+                    pathQueries.append(home + "/" + tildeExpanded)
                 }
             }
-            guard results.count < limit,
-                let children = try? fm.contentsOfDirectory(
-                    at: url,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                )
-            else { continue }
-            for child in children.prefix(250) where results.count < limit {
-                if child.lastPathComponent.lowercased().contains(lower) {
-                    let std = child.standardizedFileURL.path
-                    if seenPaths.insert(std).inserted {
-                        results.append(.file(URL(fileURLWithPath: std)))
+
+            for rawCandidate in pathQueries {
+                let cleanedPath = rawCandidate.hasSuffix("/") && rawCandidate.count > 1
+                    ? String(rawCandidate.dropLast()) : rawCandidate
+                let stdPath = URL(fileURLWithPath: cleanedPath).standardizedFileURL.path
+                if fm.fileExists(atPath: stdPath) {
+                    let exactURL = URL(fileURLWithPath: stdPath)
+                    resolvedExactPaths.insert(stdPath.lowercased())
+                    addCandidate(exactURL)
+                    if Self.isFolder(exactURL),
+                        let children = try? fm.contentsOfDirectory(
+                            at: exactURL,
+                            includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                        )
+                    {
+                        for child in children.prefix(limit * 2) {
+                            addCandidate(child)
+                        }
+                    }
+                }
+                let parentPath = (stdPath as NSString).deletingLastPathComponent
+                let leafPrefix = (stdPath as NSString).lastPathComponent.lowercased()
+                if !leafPrefix.isEmpty, parentPath != stdPath, fm.fileExists(atPath: parentPath),
+                    let siblings = try? fm.contentsOfDirectory(
+                        at: URL(fileURLWithPath: parentPath, isDirectory: true),
+                        includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                        options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                    )
+                {
+                    for sibling in siblings where sibling.lastPathComponent.lowercased().contains(leafPrefix) {
+                        addCandidate(sibling)
                     }
                 }
             }
         }
 
-        // 2. Indexed files & folders within bounded roots
-        let indexed = FileIndexManager.shared.search(query: trimmed, limit: limit * 2)
-        for item in indexed where results.count < limit {
-            guard let path = item.filePath, !path.isEmpty else { continue }
-            let std = URL(fileURLWithPath: path).standardizedFileURL.path
-            if settings.useCustomSearchDirectories {
-                guard FileSearchService.isInsideAny(std, roots: roots) else { continue }
-            }
-            if seenPaths.insert(std).inserted {
-                results.append(.file(URL(fileURLWithPath: std)))
+        func nameMatches(_ fileName: String) -> Bool {
+            let fLower = fileName.lowercased()
+            return fLower.contains(lower) || (singularLower != lower && fLower.contains(singularLower))
+        }
+
+        // 1. Expand roots to scan depth-1 and depth-2 user & iCloud directories (e.g. ~/Pictures, ~/Pictures/Screenshot, iCloud Drive/Pictures).
+        var scanDirs: [String] = []
+        var seenScanDirs = Set<String>()
+        func enqueueScanDir(_ dirPath: String) {
+            let std = URL(fileURLWithPath: dirPath).standardizedFileURL.path
+            guard !std.isEmpty,
+                !FileSearchService.isExcluded(std, roots: normalizedRoots, home: home),
+                seenScanDirs.insert(std).inserted
+            else { return }
+            scanDirs.append(std)
+        }
+
+        // Put local home roots ahead of iCloud Drive when scanning
+        let orderedRoots = normalizedRoots.sorted { a, b in
+            let aCloud = a.contains("/Mobile Documents/") || a.contains("com~apple~CloudDocs")
+            let bCloud = b.contains("/Mobile Documents/") || b.contains("com~apple~CloudDocs")
+            if aCloud != bCloud { return !aCloud }
+            return a.count < b.count
+        }
+
+        let prioritySubfolderNames: Set<String> = [
+            "pictures", "documents", "downloads", "desktop", "movies", "music",
+            "projects", "developer", "screenshots", "screenshot",
+        ]
+
+        for root in orderedRoots {
+            enqueueScanDir(root)
+            guard let level1 = try? fm.contentsOfDirectory(
+                at: URL(fileURLWithPath: root, isDirectory: true),
+                includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+
+            for item in level1.prefix(120) {
+                guard Self.isFolder(item) else { continue }
+                let itemPath = item.standardizedFileURL.path
+                enqueueScanDir(itemPath)
+                if prioritySubfolderNames.contains(item.lastPathComponent.lowercased()),
+                    scanDirs.count < 160,
+                    let level2 = try? fm.contentsOfDirectory(
+                        at: item,
+                        includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                        options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                    )
+                {
+                    for sub in level2.prefix(60) where Self.isFolder(sub) {
+                        enqueueScanDir(sub.standardizedFileURL.path)
+                    }
+                }
             }
         }
 
-        return results
+        for dir in scanDirs {
+            let dirURL = URL(fileURLWithPath: dir, isDirectory: true)
+            if nameMatches(dirURL.lastPathComponent), fm.fileExists(atPath: dir) {
+                addCandidate(dirURL)
+            }
+            guard let children = try? fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+
+            for child in children.prefix(250) {
+                if nameMatches(child.lastPathComponent) {
+                    addCandidate(child)
+                }
+            }
+        }
+
+        // 2. Indexed files & folders within bounded roots
+        let indexed = FileIndexManager.shared.search(query: trimmed, limit: limit * 3)
+        for item in indexed {
+            guard let path = item.filePath, !path.isEmpty else { continue }
+            addCandidate(URL(fileURLWithPath: path))
+        }
+
+        // 3. Rank all candidates: exact path first, then exact/prefix folders (local home before iCloud), then files.
+        func rankTuple(for url: URL) -> (Int, Int, Int, Int, String) {
+            let stdPath = url.standardizedFileURL.path
+            let pathLower = stdPath.lowercased()
+            let exactPathRank = resolvedExactPaths.contains(pathLower) ? 0 : 1
+            let isDir = Self.isFolder(url)
+            let nameLower = url.lastPathComponent.lowercased()
+            let baseLower = url.deletingPathExtension().lastPathComponent.lowercased()
+
+            let matchTier: Int = {
+                if isDir && nameLower == lower { return 0 }
+                if isDir && nameLower == singularLower { return 1 }
+                if !isDir && (nameLower == lower || baseLower == lower || baseLower == singularLower) { return 2 }
+                if isDir && (nameLower.hasPrefix(lower) || nameLower.hasPrefix(singularLower)) { return 3 }
+                if isDir && (nameLower.contains(lower) || nameLower.contains(singularLower)) { return 4 }
+                if !isDir && (nameLower.hasPrefix(lower) || nameLower.hasPrefix(singularLower)) { return 5 }
+                return 6
+            }()
+
+            let isCloud = stdPath.contains("/Mobile Documents/") || stdPath.contains("com~apple~CloudDocs")
+            let localBaseRoot = orderedRoots.first(where: { r in
+                let rCloud = r.contains("/Mobile Documents/") || r.contains("com~apple~CloudDocs")
+                return !rCloud && (stdPath == r || stdPath.hasPrefix(r + "/"))
+            }) ?? home
+            let relativeDepth: Int = {
+                if !isCloud, stdPath == localBaseRoot {
+                    return 0
+                }
+                if !isCloud, stdPath.hasPrefix(localBaseRoot + "/") {
+                    let rel = String(stdPath.dropFirst(localBaseRoot.count + 1))
+                    return rel.split(separator: "/").count
+                }
+                return (isCloud ? 50 : 20) + stdPath.split(separator: "/").count
+            }()
+
+            return (exactPathRank, matchTier, relativeDepth, nameLower.count, nameLower)
+        }
+
+        let sorted = candidates.sorted { lhs, rhs in
+            rankTuple(for: lhs) < rankTuple(for: rhs)
+        }
+
+        return sorted.prefix(limit).map { AppChatRow.file($0) }
     }
 
     /// Async deeper bounded disk/Spotlight search for Global Context (handles Macs with Spotlight off).
@@ -395,11 +548,11 @@ extension AppChatPromptModel {
         guard !roots.isEmpty else { return }
 
         Task.detached(priority: .userInitiated) {
-            var options = FileSearchService.Options(roots: roots)
-            options.maxResults = 8
+            var options = FileSearchService.Options(roots: roots, includeDirectories: true)
+            options.maxResults = 10
             options.maxDepth = 4
-            options.maxVisited = 8_000
-            options.scanTimeBudget = 0.4
+            options.maxVisited = 12_000
+            options.scanTimeBudget = 0.45
             let outcome = FileSearchService.search(query: trimmed, options: options)
             guard !outcome.paths.isEmpty else { return }
 
@@ -420,10 +573,16 @@ extension AppChatPromptModel {
                 guard !newRows.isEmpty else { return }
 
                 let focusedID = self.focusedRow?.id
-                if let fallbackIdx = self.rows.firstIndex(where: {
-                    GlobalResultSection.title(for: $0) == GlobalFallbacks.section
+                if let lastFileIdx = self.rows.lastIndex(where: {
+                    GlobalResultSection.title(for: $0) == GlobalResultSection.files
                 }) {
-                    self.rows.insert(contentsOf: newRows, at: fallbackIdx)
+                    self.rows.insert(contentsOf: newRows, at: lastFileIdx + 1)
+                } else if let clipOrFallbackIdx = self.rows.firstIndex(where: {
+                    let sec = GlobalResultSection.title(for: $0) ?? ""
+                    return sec == "Clipboard" || sec == "Quick Notes" || sec == "Notifications"
+                        || sec == GlobalFallbacks.section
+                }) {
+                    self.rows.insert(contentsOf: newRows, at: clipOrFallbackIdx)
                 } else {
                     self.rows.append(contentsOf: newRows)
                 }

@@ -30,10 +30,13 @@ nonisolated enum FileSearchService {
         /// Wall-clock budget for one `mdfind`, seconds.
         var spotlightTimeout: TimeInterval = 4
         var homeDirectory = NSHomeDirectory()
+        /// When true, matching directories (folders) are also returned by `scan`.
+        var includeDirectories = false
 
-        init(roots: [String]? = nil, homeDirectory: String = NSHomeDirectory()) {
+        init(roots: [String]? = nil, homeDirectory: String = NSHomeDirectory(), includeDirectories: Bool = false) {
             self.homeDirectory = homeDirectory
             self.roots = roots ?? FileSearchService.defaultRoots(homeDirectory: homeDirectory)
+            self.includeDirectories = includeDirectories
         }
     }
 
@@ -55,22 +58,30 @@ nonisolated enum FileSearchService {
     typealias SpotlightRunner = @Sendable (_ tokens: [String], _ roots: [String], _ timeout: TimeInterval) -> [String]
 
     static func defaultRoots(homeDirectory: String = NSHomeDirectory()) -> [String] {
-        ["Desktop", "Documents", "Downloads", "Library/Mobile Documents/com~apple~CloudDocs"]
+        [
+            "Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music",
+            "Developer", "Projects",
+            "Library/Mobile Documents/com~apple~CloudDocs",
+        ]
             .map { homeDirectory + "/" + $0 }
             .filter { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// Strict directory boundary: when custom search directories are enabled, search ONLY
-    /// those directories; otherwise search the safe standard user roots.
+    /// Strict directory boundary: when custom search directories are enabled (or configured),
+    /// search those directories; otherwise search the safe standard user roots.
     static func boundedRoots(
         useCustom: Bool,
         customDirectories: [String],
         homeDirectory: String = NSHomeDirectory()
     ) -> [String] {
+        let cleaned = customDirectories
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         if useCustom {
-            return customDirectories
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
+            return cleaned
+        }
+        if !cleaned.isEmpty {
+            return cleaned
         }
         return defaultRoots(homeDirectory: homeDirectory)
     }
@@ -181,13 +192,16 @@ nonisolated enum FileSearchService {
                 let isPackage = values?.isPackage ?? false
 
                 if isDirectory {
-                    if enumerator.level >= options.maxDepth
-                        || isExcluded(path, roots: roots, home: options.homeDirectory)
-                    {
+                    let excluded = isExcluded(path, roots: roots, home: options.homeDirectory)
+                    if enumerator.level >= options.maxDepth || excluded {
                         enumerator.skipDescendants()
                     }
-                    // A package (.pages, .app) is one file to the user; a folder is not a hit.
-                    guard isPackage else { continue }
+                    // A package (.pages, .app) is one file to the user; a folder is a hit when includeDirectories is enabled.
+                    if !options.includeDirectories {
+                        guard isPackage else { continue }
+                    } else if excluded {
+                        continue
+                    }
                 }
                 guard matches(name: item.lastPathComponent, tokens: tokens),
                     seen.insert(path).inserted
@@ -213,12 +227,15 @@ nonisolated enum FileSearchService {
     /// Hidden components and ~/Library are never searched — unless the root itself is inside
     /// them, as iCloud Drive is.
     static func isExcluded(_ path: String, roots: [String], home: String) -> Bool {
-        guard let root = roots.first(where: { path == $0 || path.hasPrefix($0 + "/") })
+        let matchingRoots = roots.filter { path == $0 || path.hasPrefix($0 + "/") }
+        guard let mostSpecificRoot = matchingRoots.max(by: { $0.count < $1.count })
         else { return true }
-        let relative = String(path.dropFirst(root.count))
-        if relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { return true }
+        let relative = String(path.dropFirst(mostSpecificRoot.count))
+        let components = relative.split(separator: "/")
+        if components.contains(where: { $0.hasPrefix(".") }) { return true }
+        if components.first == "Library" { return true }
         let library = standardized(home) + "/Library"
-        if path == library || (path.hasPrefix(library + "/") && !root.hasPrefix(library)) {
+        if path == library || (path.hasPrefix(library + "/") && !mostSpecificRoot.hasPrefix(library)) {
             return true
         }
         return false
