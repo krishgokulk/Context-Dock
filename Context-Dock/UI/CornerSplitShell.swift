@@ -352,9 +352,10 @@ struct CornerSplitStrip: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: icon, height: icon)
+                .frame(width: max(icon - 8, 20), height: max(icon - 8, 20))
                 Circle().fill(Color.clear).frame(width: 3, height: 3)
             }
+            .frame(width: icon, height: icon)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -376,12 +377,13 @@ struct CornerSplitStrip: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: icon, height: icon)
+                .frame(width: max(icon - 8, 20), height: max(icon - 8, 20))
                 .opacity((slot.pin.map { $0.kind.isAvailable } ?? true) ? 1 : 0.4)
                 Circle()
                     .fill(Color.primary.opacity(slot.isRunning ? 0.55 : 0))
                     .frame(width: 3, height: 3)
             }
+            .frame(width: icon, height: icon)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -445,11 +447,9 @@ private struct StripChrome: ViewModifier {
                 .clipShape(Capsule())
                 .glassEffect(.regular.interactive(), in: Capsule())
                 .overlay {
-                    if settings.glassDarkness > 0 {
-                        Capsule()
-                            .fill(Color.black.opacity(settings.glassDarkness * (isDark ? 0.65 : 0.45)))
-                            .allowsHitTesting(false)
-                    }
+                    Capsule()
+                        .fill(Color.black.opacity(isDark ? (0.45 + settings.glassDarkness * 0.45) : (0.15 + settings.glassDarkness * 0.35)))
+                        .allowsHitTesting(false)
                 }
                 .modifier(AppLaunchGlow(shape: Capsule()))
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)

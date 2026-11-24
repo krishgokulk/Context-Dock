@@ -46,6 +46,9 @@ enum GlobalContextRow {
         if case .cliScope = doc.action {
             return doc.filePath.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Command-line tool"
         }
+        if case .systemCommandScope = doc.action { return "System command" }
+        if doc.subtitle.hasPrefix("syscmd://") { return "System command" }
+        if doc.subtitle.hasPrefix("cli://") { return "Command-line tool" }
         if !doc.subtitle.isEmpty { return doc.subtitle }
         switch doc.action {
         case .activatePID: return "Running app"

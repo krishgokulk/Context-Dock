@@ -147,7 +147,7 @@ struct AppChatListCard: View {
         VStack(spacing: 0) {
         HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
-            if sectionHeaders.isEmpty {
+            if sectionHeaders.isEmpty, !headerText.isEmpty {
                 Text(headerText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary.opacity(0.7))
@@ -251,6 +251,7 @@ struct AppChatListCard: View {
                                 .id(row.id)
                             }
                         }
+                        .padding(.bottom, 6)
                         // Fluid gliding selection capsule travels smoothly between rows
                         .animation(FluidMotion.selectionGlide, value: effectiveFocus)
                         .scrollTargetLayout()
@@ -332,7 +333,7 @@ struct AppChatListCard: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.75))
                 .background(GlassBackground(cornerRadius: 22, isDark: nil))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
@@ -351,67 +352,74 @@ struct AppChatListCard: View {
     /// its path pills on the left instead.
     private var footer: some View {
         let foot = model.boardFoot
-        return HStack(spacing: 8) {
-            if model.finderPathTrail.isEmpty {
-                contextPill(foot)
-            } else {
-                finderPathPills
-            }
-
-            Spacer(minLength: 8)
-
-            BoardFooter.pill {
-                Button {
-                    if !model.runReturnRow(runsTopRow: true) {
-                        model.submit()
-                    }
-                } label: {
-                    BoardFooter.action(foot.verb, keys: ["↩"])
+        return VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+            HStack(spacing: 8) {
+                if model.finderPathTrail.isEmpty {
+                    contextPill(foot)
+                } else {
+                    finderPathPills
                 }
-                .buttonStyle(.plain)
 
-                if tabStepsIn {
-                    BoardFooter.divider
+                Spacer(minLength: 8)
+
+                BoardFooter.pill {
                     Button {
-                        _ = model.stepIntoFocusedRow()
+                        if !model.runReturnRow(runsTopRow: true) {
+                            model.submit()
+                        }
                     } label: {
-                        BoardFooter.action("Step in", keys: ["⇥"])
+                        BoardFooter.action(foot.verb, keys: ["↩"])
                     }
                     .buttonStyle(.plain)
+
+                    if tabStepsIn {
+                        BoardFooter.divider
+                        Button {
+                            _ = model.stepIntoFocusedRow()
+                        } label: {
+                            BoardFooter.action("Step in", keys: ["⇥"])
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    // A running app's row: quit it (owner 2026-10-11).
+                    if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
+                        BoardFooter.divider
+                        Button { _ = model.quitFocusedApp() } label: {
+                            BoardFooter.action("Quit app", keys: ["⌘", "⌫"])
+                        }
+                        .buttonStyle(.plain)
+                        .help("Quit \(app.name) (⌘⌫)")
+                    }
                 }
-                // A running app's row: quit it (owner 2026-10-11).
-                if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
-                    BoardFooter.divider
-                    Button { _ = model.quitFocusedApp() } label: {
-                        BoardFooter.action("Quit app", keys: ["⌘", "⌫"])
+                .animation(.smooth(duration: 0.15), value: foot)
+
+                actionsMenu(foot: foot)
+
+                BoardFooter.pill {
+                    Button {
+                        withAnimation(FluidMotion.selectionGlide) {
+                            model.isSidePanelExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: model.isSidePanelExpanded ? "sidebar.trailing" : "sidebar.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(model.isSidePanelExpanded ? Color.accentColor : Color.secondary)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Quit \(app.name) (⌘⌫)")
+                    .help(model.isSidePanelExpanded ? "Collapse preview panel (⌘B)" : "Expand preview panel (⌘B)")
                 }
+
+                pinPill
             }
-            .animation(.smooth(duration: 0.15), value: foot)
-
-            actionsMenu(foot: foot)
-
-            BoardFooter.pill {
-                Button {
-                    withAnimation(FluidMotion.selectionGlide) {
-                        model.isSidePanelExpanded.toggle()
-                    }
-                } label: {
-                    Image(systemName: model.isSidePanelExpanded ? "sidebar.trailing" : "sidebar.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(model.isSidePanelExpanded ? Color.accentColor : Color.secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(model.isSidePanelExpanded ? "Collapse preview panel (⌘B)" : "Expand preview panel (⌘B)")
-            }
-
-            pinPill
+            .padding(.horizontal, 12)
+            .frame(height: AppChatListMetrics.footerHeight - 1)
         }
-        .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
     }
 
     /// Standalone pin pill at the far right end, highlighted in accent when active.
@@ -648,14 +656,15 @@ struct AppChatListCard: View {
     private var visibleSlots: Int {
         let height = size.height - 2 * AppChatListMetrics.verticalPadding
             - AppChatListMetrics.footerHeight
-            - (model.globalSectionHeaders.isEmpty ? AppChatListMetrics.headerHeight : 0)
+            - (model.globalSectionHeaders.isEmpty && !headerText.isEmpty ? AppChatListMetrics.headerHeight : 0)
         return max(Int(height / AppChatListMetrics.rowHeight), 1)
     }
 
     private var headerText: String {
-        let app = model.appName.isEmpty ? "App" : model.appName
+        if model.isGlobalScope { return "" }
         if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let app = model.appName.isEmpty ? "App" : model.appName
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
     }
@@ -927,7 +936,24 @@ struct AppChatListCard: View {
     /// A file or folder from the Finder scope, with the path it lives at — two files called
     /// "Downloads" are told apart by where they are, not by their name.
     private func fileRow(_ url: URL, isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
+        let isBookmark = url.pathExtension == "inetloc" || url.pathExtension == "webloc"
+        let displayName: String = {
+            if isBookmark {
+                let base = url.deletingPathExtension().lastPathComponent
+                if base.hasPrefix("com.apple.") {
+                    let cleaned = base.replacingOccurrences(of: "com.apple.", with: "")
+                    return "\(cleaned) Bookmark"
+                }
+                return base
+            }
+            return url.lastPathComponent
+        }()
+        let displayPath: String = {
+            let parent = url.deletingLastPathComponent().path
+                .replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            return isBookmark ? "\(parent) · Web Bookmark" : parent
+        }()
+        return HStack(spacing: 10) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
@@ -936,18 +962,25 @@ struct AppChatListCard: View {
                 .fluidIconZoom(isFocused: isFocused)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(url.lastPathComponent)
+                Text(displayName)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                Text(
-                    url.deletingLastPathComponent().path
-                        .replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                Text(displayPath)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary.opacity(0.75))
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             Spacer(minLength: 4)
+            if isFocused {
+                Image(systemName: "return")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(isBookmark ? "Bookmark" : "File")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.6))
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
@@ -1044,7 +1077,12 @@ struct AppChatListCard: View {
         // "Show N more" is a control, not a result: a small chevron, quieter text, no status
         // (owner 2026-10-17).
         let isShowMore = pill.rankingKind == GlobalResultSection.showMoreKind
-        let subtitle = pill.menuContext ?? pill.badge ?? pill.sourceAppName
+        let rawSubtitle = pill.menuContext ?? pill.badge ?? pill.sourceAppName
+        let subtitle: String = {
+            if rawSubtitle.hasPrefix("syscmd://") { return "System command" }
+            if rawSubtitle.hasPrefix("cli://") { return "Command-line tool" }
+            return rawSubtitle
+        }()
         let foot = model.foot(for: .dock(pill))
         return HStack(spacing: 12) {
             Group {

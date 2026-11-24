@@ -67,13 +67,13 @@ struct CornerCombinedCard: ViewModifier {
                 ZStack {
                     LauncherDragBackground()
                     RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                        .fill(Color.clear)
-                        .background(GlassBackground(cornerRadius: Self.radius, isDark: nil))
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(active ? 0.75 : 0))
+                        .background(GlassBackground(cornerRadius: Self.radius, isDark: nil, isVisible: active))
                         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
+                                .strokeBorder(Color.white.opacity(active ? 0.14 : 0), lineWidth: 1))
+                        .shadow(color: .black.opacity(active ? 0.34 : 0), radius: 24, y: 12)
                         // An app opening or quitting glows the one card, as it glows the dock.
                         .modifier(AppLaunchGlow(
                             shape: RoundedRectangle(cornerRadius: Self.radius, style: .continuous)))

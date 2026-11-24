@@ -73,7 +73,7 @@ struct HighlightInViewTests {
     }
 }
 
-/// #3: a tool's row never shows its internal "cli://" id.
+/// #3: a tool's row never shows its internal "cli://" id and system commands never show "syscmd://".
 @Suite("Result sheet polish: tool subtitle")
 struct ToolSubtitleTests {
     @Test func aToolSaysWhatItIsNotItsScopeID() {
@@ -84,5 +84,17 @@ struct ToolSubtitleTests {
             rankingBoost: 0, icon: nil, usageTrackingKey: "cli://tailscale",
             action: .cliScope(command: "tailscale", displayName: "tailscale"))
         #expect(!GlobalContextRow.subtitle(for: doc).contains("cli://"))
+    }
+
+    @Test func aSystemCommandSaysWhatItIsNotItsUUID() {
+        let doc = GlobalSearchService.SearchDocument(
+            id: "syscmd://8DF48EF3-D6FF-4138-8CB1-C3B1B74118D8", title: "Screenshots",
+            subtitle: "syscmd://8DF48EF3-D6FF-4138-8CB1-C3B1B74118D8", bundleId: "",
+            filePath: nil, normalizedTitle: "screenshots", titleWords: ["screenshots"],
+            acronym: "s", aliases: [], aliasWords: [], sourceKind: .installed,
+            rankingBoost: 0, icon: nil, usageTrackingKey: "syscmd://shot",
+            action: .systemCommandScope(commandKey: "Screenshots"))
+        #expect(!GlobalContextRow.subtitle(for: doc).contains("syscmd://"))
+        #expect(GlobalContextRow.subtitle(for: doc) == "System command")
     }
 }

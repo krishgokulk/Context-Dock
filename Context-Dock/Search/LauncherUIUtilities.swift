@@ -162,6 +162,7 @@ struct GlassBackground: NSViewRepresentable {
     /// Use for nested glass elements (e.g. row-selection highlights) that must stay
     /// visibly lighter than the outer container at any darkness level.
     var ignoresDarkness: Bool = false
+    var isVisible: Bool = true
     @ObservedObject private var settings = AppSettings.shared
 
     func makeNSView(context: Context) -> NSView {
@@ -169,6 +170,7 @@ struct GlassBackground: NSViewRepresentable {
         if #available(macOS 26.0, *) {
             let glass = NonInteractiveGlassEffectView()
             glass.wantsLayer = true
+            glass.isHidden = !isVisible
             configureGlass(glass)
             return glass
         }
@@ -176,11 +178,14 @@ struct GlassBackground: NSViewRepresentable {
         ve.blendingMode = .behindWindow
         ve.state = .active
         ve.wantsLayer = true
+        ve.isHidden = !isVisible
         configure(ve)
         return ve
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        view.isHidden = !isVisible
+        if !isVisible { return }
         if #available(macOS 26.0, *), let glass = view as? NSGlassEffectView {
             configureGlass(glass)
             return
@@ -203,9 +208,9 @@ struct GlassBackground: NSViewRepresentable {
         // visibly lighter than the outer container at any darkness level.
         let d = ignoresDarkness ? 0.0 : max(0, min(1, settings.glassDarkness))
         if dark {
-            glass.tintColor = NSColor.black.withAlphaComponent(0.15 + d * 0.65)
+            glass.tintColor = NSColor.black.withAlphaComponent(0.60 + d * 0.35)
         } else {
-            glass.tintColor = NSColor(calibratedWhite: 0.86, alpha: 0.08 + d * 0.35)
+            glass.tintColor = NSColor(calibratedWhite: 0.92, alpha: 0.65 + d * 0.25)
         }
     }
 
@@ -237,8 +242,8 @@ struct GlassBackground: NSViewRepresentable {
         base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         base.backgroundColor =
             dark
-            ? CGColor(red: 0.02, green: 0.024, blue: 0.03, alpha: 0.20 + d * 0.65)
-            : CGColor(red: 0.78, green: 0.80, blue: 0.80, alpha: 0.15 + d * 0.45)
+            ? CGColor(red: 0.02, green: 0.024, blue: 0.03, alpha: 0.68 + d * 0.28)
+            : CGColor(red: 0.88, green: 0.90, blue: 0.92, alpha: 0.65 + d * 0.25)
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
         let grad = existingGradientLayer(named: "gradientOverlay", in: rootLayer) {

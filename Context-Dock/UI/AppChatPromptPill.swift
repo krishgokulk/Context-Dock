@@ -2020,19 +2020,12 @@ struct AppChatPromptPill: View {
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)
                 .transition(.opacity)
-        } else if model.phase == .suggesting {
-            HStack(spacing: 6) {
-                Text(AppChatListCard.placeholder(for: model))
-                    .foregroundStyle(.secondary.opacity(0.85))
-                Text("— press Enter to send…")
-                    .foregroundStyle(.secondary.opacity(0.45))
-            }
-            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
-            .lineLimit(1)
         } else {
-            Text("\(AppChatListCard.placeholder(for: model))…")
+            let base = AppChatListCard.placeholder(for: model)
+            let text = base.hasSuffix("…") ? base : "\(base)…"
+            Text(text)
                 .font(.system(size: DockFieldLines.fontSize, weight: .medium))
-                .foregroundStyle(.secondary.opacity(0.6))
+                .foregroundStyle(.secondary.opacity(model.phase == .suggesting ? 0.75 : 0.6))
                 .lineLimit(1)
         }
     }
