@@ -131,6 +131,10 @@ final class AppChatPromptModel: ObservableObject {
     /// Whether the result sheet expands horizontally to display the preview side panel.
     /// Defaults to false (compact single-column mode matching input width like Siri).
     @Published var isSidePanelExpanded = false
+    /// Active full-sheet file submode (`Preview`, `Selection Scope`, `Search in File`,
+    /// or `User Actions`) rendered inside the result sheet with Raycast-style input chrome.
+    @Published var fileSubmode: FileSheetSubmodeState?
+    var isInFileSubmode: Bool { fileSubmode != nil }
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
 
@@ -766,6 +770,7 @@ final class AppChatPromptModel: ObservableObject {
     /// still there: ↓ opens it (`moveMenuFocus`), the same door the dock's own results
     /// sheet has, and the capability summary under the field still says what is in scope.
     private var restingInputPhase: AppChatPromptPhase {
+        if isInFileSubmode { return .suggesting }
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Inside a folder the listing is what the step went to fetch, typed filter or not.
         if isFinderScope, !finderBrowseStack.isEmpty { return .suggesting }
@@ -1060,9 +1065,14 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// Any interaction puts the clock back, unless the surface is pinned.
+    func cancelIdleTimer() {
+        cancel()
+    }
+
     func touch() {
         // A dock has no clock to put back.
-        guard !isPinned, !isAnswering, !isShowingScopeCard, phase.isVisible, phase != .dock
+        guard !isPinned, !isAnswering, !isShowingScopeCard, !isInFileSubmode,
+            phase.isVisible, phase != .dock
         else { return }
         armForIdle()
     }
@@ -1414,6 +1424,11 @@ final class AppChatPromptModel: ObservableObject {
 
     func dismiss() {
         cancel()
+        if fileSubmode != nil {
+            fileSubmode = nil
+            CornerDockController.shared.selection.isSheetSubmode = false
+            CornerDockController.shared.selection.dismiss()
+        }
         windowRowTask?.cancel()
         dockPreviewTarget = nil
         hoveredStripTarget = nil

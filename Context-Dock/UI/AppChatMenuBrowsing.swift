@@ -1435,6 +1435,7 @@ extension AppChatPromptModel {
     @discardableResult
     func enterFolder(_ url: URL) -> Bool {
         guard Self.isFolder(url) else { return false }
+        if isInFileSubmode { _ = leaveFileSubmode() }
         if CornerDockController.shared.selection.isEmbeddedInSidePanel {
             CornerDockController.shared.selection.dismiss()
         }
@@ -1471,6 +1472,7 @@ extension AppChatPromptModel {
     @discardableResult
     func leaveFinderFolder() -> Bool {
         guard !finderBrowseStack.isEmpty else { return false }
+        if isInFileSubmode { _ = leaveFileSubmode() }
         if CornerDockController.shared.selection.isEmbeddedInSidePanel {
             CornerDockController.shared.selection.dismiss()
         }

@@ -35,6 +35,8 @@ final class SelectionScopeModel: ObservableObject {
     /// Opened by → on a file row inside a folder/result list: embedded in the right half of
     /// `AppChatListCard` while the left half keeps listing the folder's files.
     @Published var isEmbeddedInSidePanel = false
+    /// Active as a full-sheet file submode driven by `AppChatPromptPill`'s main input bar.
+    @Published var isSheetSubmode = false
     @Published var query = ""
     /// What was selected, captured at summon time.
     @Published private(set) var text = ""
@@ -394,7 +396,8 @@ final class SelectionScopeModel: ObservableObject {
     /// Whether the user is on the card right now — the pointer over it, or its field holding
     /// the keyboard while Context Dock is the active app. The idle clock does not run then.
     var isInUse: () -> Bool = {
-        NSApp.isActive && CornerDockController.shared.keyboardState.owner == .selection
+        if CornerDockController.shared.selection.isSheetSubmode { return true }
+        return NSApp.isActive && CornerDockController.shared.keyboardState.owner == .selection
     }
     private(set) var pointerInside = false
     /// Said when the hotkey finds nothing selected, rather than doing nothing silently.
@@ -506,7 +509,9 @@ final class SelectionScopeModel: ObservableObject {
         pendingSend = nil
         set(.showing)
         refreshRows()
-        arm(after: Self.idleDwell)
+        if !isSheetSubmode {
+            arm(after: Self.idleDwell)
+        }
         return true
     }
 
@@ -569,7 +574,9 @@ final class SelectionScopeModel: ObservableObject {
             }
             guard generation == self.rowBuildGeneration else { return }
             self.rows = (sendRow.map { [$0] } ?? []) + built
-            if self.isEmbeddedInSidePanel, self.focusedIndex == nil, typed.isEmpty, !self.rows.isEmpty {
+            if (self.isEmbeddedInSidePanel || self.isSheetSubmode),
+                self.focusedIndex == nil, typed.isEmpty, !self.rows.isEmpty
+            {
                 self.focusedIndex = 0
             }
             self.isBuildingRows = false

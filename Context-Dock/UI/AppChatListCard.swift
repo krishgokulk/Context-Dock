@@ -157,6 +157,20 @@ struct AppChatListCard: View {
         // the list on the left, what the highlighted row is on the right — and one foot
         // under both.
         VStack(spacing: 0) {
+        if let submode = model.fileSubmode {
+            FileSheetSubmodeView(
+                model: model,
+                selectionModel: selectionModel,
+                submode: submode,
+                height: size.height - AppChatListMetrics.footerHeight
+            )
+            .frame(
+                width: size.width,
+                height: size.height - AppChatListMetrics.footerHeight,
+                alignment: .topLeading
+            )
+            fileSubmodeFooter(submode)
+        } else {
         HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
             if sectionHeaders.isEmpty, !headerText.isEmpty {
@@ -352,6 +366,7 @@ struct AppChatListCard: View {
             alignment: .topLeading)
         footer
         }
+        }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
@@ -444,6 +459,83 @@ struct AppChatListCard: View {
                     }
                     .buttonStyle(.plain)
                     .help(model.isSidePanelExpanded ? "Collapse preview panel (⌘B)" : "Expand preview panel (⌘B)")
+                }
+
+                pinPill
+            }
+            .padding(.horizontal, 12)
+            .frame(height: AppChatListMetrics.footerHeight - 1)
+        }
+        .frame(height: AppChatListMetrics.footerHeight)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+    }
+
+    /// Contextual Raycast-style footer while viewing a file in Preview, Selection Scope,
+    /// Search Inside File, or User Actions mode.
+    private func fileSubmodeFooter(_ submode: FileSheetSubmodeState) -> some View {
+        let primaryVerb: String = {
+            switch submode.kind {
+            case .preview:
+                let hasText = !submode.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                return hasText ? "Ask AI" : (submode.isFolder ? "Open Folder" : "Open")
+            case .selectionScope:
+                return selectionModel.isShowingAnswer ? "Ask" : "Run"
+            case .userActions:
+                return "Run"
+            case .searchInFile:
+                return "Show in Preview"
+            }
+        }()
+        return VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+            HStack(spacing: 8) {
+                BoardFooter.pill {
+                    Button {
+                        _ = model.leaveFileSubmode()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            LiveFileIconView(url: submode.url, size: 14)
+                            Text(submode.kind.shortLabel)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer(minLength: 8)
+
+                BoardFooter.pill {
+                    Button {
+                        _ = model.submitFileSubmode()
+                    } label: {
+                        BoardFooter.action(primaryVerb, keys: ["↩"])
+                    }
+                    .buttonStyle(.plain)
+
+                    BoardFooter.divider
+
+                    if submode.kind == .preview {
+                        Button {
+                            model.switchFileSubmode(.selectionScope)
+                        } label: {
+                            BoardFooter.action("Selection Scope", keys: ["→"])
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            model.switchFileSubmode(.preview)
+                        } label: {
+                            BoardFooter.action("Preview", keys: ["␣"])
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 pinPill

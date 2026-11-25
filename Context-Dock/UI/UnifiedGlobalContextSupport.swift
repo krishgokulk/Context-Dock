@@ -606,28 +606,25 @@ extension AppChatPromptModel {
         return false
     }
 
-    /// Space on a file or folder row toggles the right-side preview panel (matching `→`
-    /// expanding the right side panel for Selection Scope), while keeping Space as a space
-    /// character whenever the user is mid-typing a query.
+    /// Space on a file or folder row opens the full-size in-sheet File Preview (repurposing
+    /// the top input bar with `<` Back and the right-end mode dropdown), while keeping Space
+    /// as a space character whenever the user is mid-typing a query.
     @discardableResult
     func toggleSidePanelPreview(force: Bool = false) -> Bool {
+        if let sub = fileSubmode {
+            guard force || sub.query.isEmpty else { return false }
+            if sub.kind == .preview {
+                return leaveFileSubmode()
+            } else {
+                switchFileSubmode(.preview)
+                return true
+            }
+        }
         guard phase == .suggesting, !isClipboardScope else { return false }
         if !force {
             guard query.isEmpty || arrowedIntoListSinceLastEdit else { return false }
         }
-        let targetRow = skipsTopRowOnBareReturn ? focusedRow : (focusedRow ?? rows.first)
-        guard hasSidePanelFilePreview(targetRow) else { return false }
-
-        let controller = CornerDockController.shared
-        if controller.selection.isEmbeddedInSidePanel, controller.selection.phase.isVisible {
-            controller.switchSidePanelFromSelectionToPreview()
-        } else {
-            withAnimation(FluidMotion.selectionGlide) {
-                isSidePanelExpanded.toggle()
-            }
-            controller.refresh()
-        }
-        touch()
-        return true
+        guard let url = targetFileSubmodeURL() else { return false }
+        return enterFileSubmode(url: url, kind: .preview)
     }
 }

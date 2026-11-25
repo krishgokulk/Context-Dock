@@ -67,7 +67,9 @@ enum DockShellWidth {
     /// the boards above them.
     @MainActor
     static var current: CGFloat {
-        let isExpanded = CornerDockController.shared.prompt.isSidePanelExpanded
+        let prompt = CornerDockController.shared.prompt
+        if prompt.isInFileSubmode { return results }
+        let isExpanded = prompt.isSidePanelExpanded
         return CornerDockController.shared.showsBoardUnderField && isExpanded ? results : field
     }
 }

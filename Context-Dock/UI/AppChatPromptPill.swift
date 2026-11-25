@@ -699,8 +699,10 @@ struct AppChatPromptPill: View {
         // Split, the apps and pins stand beside the field in their own piece (Part B): the
         // strip under the field would only show through it — a pinned extension sat in the
         // middle of the text (owner 2026-10-07).
-        let stripShown = model.phase == .dock
+        let stripShown = !model.isInFileSubmode && (
+            model.phase == .dock
             || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
+        )
         return ZStack(alignment: globalStackAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
@@ -1283,6 +1285,10 @@ struct AppChatPromptPill: View {
         HStack(spacing: 10) {
             if model.isClipboardScope {
                 clipboardBackChip
+            } else if let submode = model.fileSubmode {
+                FileSubmodeLeadingBar(submode: submode) {
+                    _ = model.leaveFileSubmode()
+                }
             } else if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
                     // The strip's own size in Global: the field opens on the icon the
@@ -1301,7 +1307,7 @@ struct AppChatPromptPill: View {
                     .layoutPriority(1)
             }
 
-            if model.isGlobalScope, !model.isClipboardScope {
+            if model.isGlobalScope, !model.isClipboardScope, !model.isInFileSubmode {
                 UnifiedFrontmostBar(model: model)
             }
 
@@ -1311,6 +1317,13 @@ struct AppChatPromptPill: View {
                         Text("Type to filter entries…")
                             .font(.system(size: DockFieldLines.fontSize, weight: .medium))
                             .foregroundStyle(.secondary.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                } else if let submode = model.fileSubmode {
+                    if submode.query.isEmpty {
+                        Text(submode.placeholder(isShowingAnswer: CornerDockController.shared.selection.isShowingAnswer))
+                            .font(.system(size: DockFieldLines.fontSize, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.65))
                             .lineLimit(1)
                     }
                 } else if model.query.isEmpty {
@@ -1324,7 +1337,7 @@ struct AppChatPromptPill: View {
                     if let ghost = model.ghostText, !ghost.isEmpty { return ghost }
                     return ""
                 }()
-                if !model.isClipboardScope, !activeGhost.isEmpty, !model.query.isEmpty,
+                if !model.isClipboardScope, !model.isInFileSubmode, !activeGhost.isEmpty, !model.query.isEmpty,
                     model.fieldLines == 1
                 {
                     HStack(spacing: 0) {
@@ -1361,6 +1374,10 @@ struct AppChatPromptPill: View {
                         if model.isClipboardScope {
                             ClipboardPanelController.shared.pasteMany(
                                 clipboard.actionableEntries())
+                            return
+                        }
+                        if model.isInFileSubmode {
+                            _ = model.submitFileSubmode()
                             return
                         }
                         // A chosen row runs — a command or an adapter action. On an app
@@ -1637,6 +1654,10 @@ struct AppChatPromptPill: View {
             // what is typed, so the field itself — not just a row you have to look down
             // at — says what is about to open. Whichever row the arrows landed on, or the
             // top one otherwise, same as the row hint and the ghost text agree with.
+            if let submode = model.fileSubmode {
+                Spacer(minLength: 8)
+                FileSubmodeDropdown(model: model, submode: submode)
+            } else {
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.rows.isEmpty
             {
@@ -1799,6 +1820,7 @@ struct AppChatPromptPill: View {
                     .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
                     .allowsHitTesting(false)
             }
+            }
         }
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? (model.phase == .chat ? 10 : 14))
@@ -1921,10 +1943,17 @@ struct AppChatPromptPill: View {
     /// What the field edits: the question, or — while the clipboard board is open — the
     /// clipboard's filter. The question is kept as it was, for Back.
     private var fieldText: Binding<String> {
-        guard model.isClipboardScope else { return $model.query }
-        return Binding(
-            get: { clipboard.query },
-            set: { clipboard.setBoardQuery($0) })
+        if model.isClipboardScope {
+            return Binding(
+                get: { clipboard.query },
+                set: { clipboard.setBoardQuery($0) })
+        }
+        if model.isInFileSubmode {
+            return Binding(
+                get: { model.fileSubmode?.query ?? "" },
+                set: { model.setFileSubmodeQuery($0) })
+        }
+        return $model.query
     }
 
     /// Raycast's back button, leading the field while the clipboard board is open.

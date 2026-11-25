@@ -260,6 +260,9 @@ extension AppChatPromptModel {
     /// The list card and its panel together: the size the window reserves for the board.
     var boardSize: CGSize {
         let baseWidth = AppChatPromptMetrics.boardWidth(for: self)
+        if isInFileSubmode {
+            return CGSize(width: max(baseWidth, 680), height: 440)
+        }
         let isExpanded = isSidePanelExpanded && (
             CornerDockController.shared.showsBoardUnderField
             || CornerDockController.shared.chatPresentation.isCentred

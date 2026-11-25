@@ -393,16 +393,7 @@ private struct FilePreview: View {
     }
 
     private func expandFullScreenPreview() {
-        let prompt = CornerDockController.shared.prompt
-        let siblings = prompt.rows.compactMap { row -> URL? in
-            if let path = prompt.previewPath(for: row), !path.isEmpty {
-                return URL(fileURLWithPath: path)
-            }
-            return nil
-        }
-        _ = PreviewController.shared.presentFullScreen(url: url, siblings: siblings) {
-            CornerDockController.shared.requestComposerFocus()
-        }
+        _ = CornerDockController.shared.prompt.enterFileSubmode(url: url, kind: .preview)
     }
 }
 
@@ -535,11 +526,12 @@ enum FullFilePreviewLoader {
     }
 }
 
-/// Renders one PDF page crisp and edge-to-edge across the right preview panel.
-private struct PDFPageCardView: View {
+/// Renders one PDF page crisp and edge-to-edge across the preview panel.
+struct PDFPageCardView: View {
     let document: PDFDocument
     let pageIndex: Int
     let totalPages: Int
+    var renderPixelWidth: CGFloat = 680
     @State private var renderedPage: NSImage?
 
     private var aspectRatio: CGFloat {
@@ -586,7 +578,7 @@ private struct PDFPageCardView: View {
         let rotated = (page.rotation % 180) != 0
         let w = max(rotated ? box.height : box.width, 1)
         let h = max(rotated ? box.width : box.height, 1)
-        let targetWidth: CGFloat = 680
+        let targetWidth: CGFloat = renderPixelWidth
         let targetSize = NSSize(width: targetWidth, height: round(targetWidth * (h / w)))
         renderedPage = page.thumbnail(of: targetSize, for: .mediaBox)
     }
@@ -594,7 +586,7 @@ private struct PDFPageCardView: View {
 
 /// Embedded macOS `QLPreviewView` for Office, iWork, audio/video, and other rich formats,
 /// filling the visible viewport so `Details` sits below at the end of the scroll.
-private struct EmbeddedQuickLookView: NSViewRepresentable {
+struct EmbeddedQuickLookView: NSViewRepresentable {
     let url: URL
 
     func makeNSView(context: Context) -> EmbeddedQuickLookContainerView {
@@ -612,7 +604,7 @@ private struct EmbeddedQuickLookView: NSViewRepresentable {
     }
 }
 
-private final class EmbeddedQuickLookContainerView: NSView {
+final class EmbeddedQuickLookContainerView: NSView {
     private var previewView: QLPreviewView?
     private var currentURL: URL?
 

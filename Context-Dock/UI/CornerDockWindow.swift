@@ -950,7 +950,7 @@ final class CornerDockController: NSObject {
             stripShowing: chatPresentation.isVisible && chatPresentation.mode != .general
                 && prompt.phase == .dock,
             hoverCardShowing: showsHoverCard,
-            selectionShowing: selection.phase.isVisible,
+            selectionShowing: selection.phase.isVisible && !selection.isSheetSubmode,
             clipboardExpanded: clipboardModel.phase == .expanded,
             shelfNeedsAttention: shelf.phase != .collapsed,
             pluginEditing: PluginKeyboardClaim.shared.isEditing,
@@ -1282,7 +1282,7 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: (selection.phase.isVisible && !selection.isEmbeddedInSidePanel)
+            selection: (selection.phase.isVisible && !selection.isEmbeddedInSidePanel && !selection.isSheetSubmode)
                 ? SelectionScopeMetrics.size(
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
                     consent: selection.isAsking,
@@ -1326,6 +1326,8 @@ final class CornerDockController: NSObject {
     /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
     /// empty field (or Esc) brings the dock back.
     func showSelectionScopeFromDock() {
+        if prompt.isInFileSubmode { _ = prompt.leaveFileSubmode() }
+        selection.isSheetSubmode = false
         selection.isEmbeddedInSidePanel = false
         let opener: CornerChatMode? = chatPresentation.isVisible ? chatPresentation.mode : nil
         AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
@@ -1338,41 +1340,38 @@ final class CornerDockController: NSObject {
     /// Services "Open with…": the files or text, as their Selection card in the centred
     /// Corner — where the old launcher used to open (owner 2026-10-12).
     func showCentredSelection(files: [URL], text: String?) {
+        if prompt.isInFileSubmode { _ = prompt.leaveFileSubmode() }
         showCentred()
         let context = AXContext(
             appName: "Finder", bundleId: files.isEmpty ? "" : "com.apple.finder", pid: 0,
             selectedText: text, selectedFilePaths: files.map(\.path))
+        selection.isSheetSubmode = false
         selection.isEmbeddedInSidePanel = false
         guard selection.summon(from: context) else { return }
         selection.coversChat = true
         refresh()
     }
 
-    /// → on a file row: expands the right side panel and shows that file's Selection Scope
-    /// on the right side while keeping the folder / file list on the left as it is.
+    /// → on a file row: opens Selection Scope across the full result sheet, repurposing the
+    /// main top input bar (`<` Back + right-end mode dropdown) while preserving the file list
+    /// underneath for instant return.
     func showSelection(forFile url: URL) -> Bool {
-        let context = AXContext(
-            appName: "Finder", bundleId: "com.apple.finder", pid: 0,
-            selectedFilePaths: [url.path])
-        selection.isEmbeddedInSidePanel = true
-        selection.coversChat = false
-        guard selection.summon(from: context) else {
-            selection.isEmbeddedInSidePanel = false
-            return false
-        }
-        withAnimation(FluidMotion.selectionGlide) {
-            prompt.isSidePanelExpanded = true
-        }
-        refresh()
-        return true
+        prompt.enterFileSubmode(url: url, kind: .selectionScope)
     }
 
-    /// Switches an embedded right-side Selection Scope card to the in-board File Preview
-    /// while keeping the right side panel expanded and returning focus to the file list.
+    /// Switches an embedded right-side Selection Scope card to the full-sheet File Preview.
     func switchSidePanelFromSelectionToPreview() {
+        if prompt.isInFileSubmode {
+            prompt.switchFileSubmode(.preview)
+            return
+        }
         selection.isEmbeddedInSidePanel = false
         selection.coversChat = false
         selection.dismiss()
+        if let url = prompt.targetFileSubmodeURL() {
+            _ = prompt.enterFileSubmode(url: url, kind: .preview)
+            return
+        }
         withAnimation(FluidMotion.selectionGlide) {
             prompt.isSidePanelExpanded = true
         }
@@ -1537,7 +1536,7 @@ final class CornerDockController: NSObject {
         chatPresentation.isVisible
             && chatPresentation.mode != .general
             && prompt.phase == .suggesting
-            && prompt.listRowCount > 0
+            && (prompt.isInFileSubmode || prompt.listRowCount > 0)
     }
 
     /// An extension's own interface, in the board slot.
@@ -1581,7 +1580,7 @@ final class CornerDockController: NSObject {
     /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
     /// and in an app's Context Dock alike. See `CornerSplitShell`.
     var showsSplitShell: Bool {
-        CornerSplitShell.splits(
+        !prompt.isInFileSubmode && CornerSplitShell.splits(
             isVisible: chatPresentation.isVisible,
             isGeneral: chatPresentation.mode == .general,
             isGlobalScope: prompt.isGlobalScope,
@@ -1725,7 +1724,7 @@ final class CornerDockController: NSObject {
     func publishKeyboardOwner() {
         keyboardState.ownerChanged(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionWantsKeyboard: selection.phase.isVisible,
+            selectionWantsKeyboard: selection.phase.isVisible && !selection.isSheetSubmode,
             chatShowsInput: prompt.phase.showsInput,
             pluginEditing: PluginKeyboardClaim.shared.isEditing)
     }
@@ -1739,7 +1738,7 @@ final class CornerDockController: NSObject {
         guard
             CornerKeyboardOwner.owner(
                 clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-                selectionWantsKeyboard: selection.phase.isVisible,
+                selectionWantsKeyboard: selection.phase.isVisible && !selection.isSheetSubmode,
                 chatShowsInput: prompt.phase.showsInput) == .chat
         else { return }
         chatPresentation.composerInteracted()
@@ -1756,7 +1755,7 @@ final class CornerDockController: NSObject {
         if dragHoldsKeyboard { return }
         if CornerKeyboardOwner.panelHoldsKeyboard(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionWantsKeyboard: selection.phase.isVisible,
+            selectionWantsKeyboard: selection.phase.isVisible && !selection.isSheetSubmode,
             chatShowsInput: prompt.phase.showsInput,
             pluginEditing: PluginKeyboardClaim.shared.isEditing)
         {
@@ -2163,6 +2162,13 @@ final class CornerDockController: NSObject {
         {
             applyClipboardBoardKey(key)
             return nil
+        }
+
+        // Full-sheet File Submode (`Preview`, `Selection Scope`, `Search in File`, `User Actions`):
+        // routes Esc, empty Backspace/←/→/Space, ↑/↓, and ↩ cleanly while letting the top
+        // input bar's TextField receive normal typing.
+        if let panel, event.window === panel, prompt.isInFileSubmode {
+            return prompt.handleFileSubmodeKeyEvent(event) ? nil : event
         }
 
         // ⌘N in Quick Note: a new note, as in the Dock's editor. (With the editor's caret the
@@ -2728,10 +2734,11 @@ struct CornerDockSurface: View {
     /// What answers the field: the selection, the app's commands, or its window.
     @ViewBuilder
     private var chatBoards: some View {
-        if CornerDockController.shared.selection.phase.isVisible,
-            !CornerDockController.shared.selection.isEmbeddedInSidePanel
+        if selectionModel.phase.isVisible,
+            !selectionModel.isEmbeddedInSidePanel,
+            !selectionModel.isSheetSubmode
         {
-            SelectionScopeCard(model: CornerDockController.shared.selection)
+            SelectionScopeCard(model: selectionModel)
                 .transition(boardTransition)
         }
         if chatPresentation.isVisible, !selectionModel.coversChat,

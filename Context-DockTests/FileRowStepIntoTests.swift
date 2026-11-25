@@ -43,15 +43,29 @@ struct FileRowStepIntoTests {
         let controller = CornerDockController.shared
         controller.prompt.isSidePanelExpanded = false
         defer {
+            _ = controller.prompt.leaveFileSubmode()
             controller.selection.dismiss()
             controller.prompt.isSidePanelExpanded = false
         }
 
         #expect(controller.showSelection(forFile: file))
         #expect(controller.selection.phase.isVisible)
-        #expect(controller.selection.isEmbeddedInSidePanel)
+        #expect(controller.selection.isSheetSubmode)
         #expect(!controller.selection.coversChat)
+        #expect(controller.prompt.isInFileSubmode)
+        #expect(controller.prompt.fileSubmode?.kind == .selectionScope)
         #expect(controller.prompt.isSidePanelExpanded)
+
+        // Filtering from the top input bar updates Selection Scope query without touching parent query
+        controller.prompt.query = "untitled.rtf"
+        controller.prompt.setFileSubmodeQuery("copy")
+        #expect(controller.selection.query == "copy")
+        #expect(controller.prompt.query == "untitled.rtf")
+
+        // Leaving restores parent state cleanly
+        #expect(controller.prompt.leaveFileSubmode())
+        #expect(!controller.prompt.isInFileSubmode)
+        #expect(controller.prompt.query == "untitled.rtf")
     }
 
     @Test func spaceKeyTogglesSidePanelFilePreviewWhenBrowsingFiles() throws {
@@ -63,6 +77,7 @@ struct FileRowStepIntoTests {
         let controller = CornerDockController.shared
         controller.selection.dismiss()
         defer {
+            _ = controller.prompt.leaveFileSubmode()
             controller.selection.dismiss()
             controller.prompt.isSidePanelExpanded = false
         }
@@ -76,19 +91,33 @@ struct FileRowStepIntoTests {
         model.isSidePanelExpanded = false
 
         #expect(model.toggleSidePanelPreview())
-        #expect(model.isSidePanelExpanded)
-        #expect(model.boardPreview == .file(file))
+        #expect(model.isInFileSubmode)
+        #expect(model.fileSubmode?.kind == .preview)
+        #expect(model.fileSubmode?.url.standardizedFileURL == file.standardizedFileURL)
+        #expect(model.boardSize.width >= 680)
 
+        // Switching modes in-place (dropdown / shortcuts) preserves the active file
+        model.switchFileSubmode(.searchInFile)
+        #expect(model.fileSubmode?.kind == .searchInFile)
+        model.switchFileSubmode(.userActions)
+        #expect(model.fileSubmode?.kind == .userActions)
+        model.switchFileSubmode(.preview)
+        #expect(model.fileSubmode?.kind == .preview)
+
+        // Pressing Space again on empty submode query closes back to the file list
         #expect(model.toggleSidePanelPreview())
+        #expect(!model.isInFileSubmode)
         #expect(!model.isSidePanelExpanded)
-        #expect(model.boardPreview == nil)
     }
 
     @Test func spaceKeyDoesNotHijackMidWordTypingUntilArrowedIntoList() throws {
         let fm = FileManager.default
         let file = fm.temporaryDirectory.appendingPathComponent("MidWord-\(UUID().uuidString).pdf")
         try Data("pdf".utf8).write(to: file)
-        defer { try? fm.removeItem(at: file) }
+        defer {
+            CornerDockController.shared.selection.dismiss()
+            try? fm.removeItem(at: file)
+        }
 
         let model = AppChatPromptModel()
         model.summonGlobalContext()
@@ -100,12 +129,14 @@ struct FileRowStepIntoTests {
 
         // Typing mid-query without pressing ↑/↓: Space must NOT open the preview panel.
         #expect(!model.toggleSidePanelPreview())
-        #expect(!model.isSidePanelExpanded)
+        #expect(!model.isInFileSubmode)
 
-        // Once the user presses ↓ to move focus into the list, Space toggles the preview panel.
+        // Once the user presses ↓ to move focus into the list, Space opens full-sheet preview.
         #expect(model.moveMenuFocus(by: 1))
         #expect(model.toggleSidePanelPreview())
-        #expect(model.isSidePanelExpanded)
+        #expect(model.isInFileSubmode)
+        #expect(model.fileSubmode?.kind == .preview)
+        #expect(model.leaveFileSubmode())
 
         // Typing again resets arrowed state so subsequent Space characters type into the query.
         model.query = "authorization letter"
@@ -115,26 +146,30 @@ struct FileRowStepIntoTests {
 
     @Test func spaceInEmbeddedSelectionSwitchesToFilePreviewKeepingSidePanelOpen() throws {
         let fm = FileManager.default
-        let file = fm.temporaryDirectory.appendingPathComponent("SwitchToPreview-\(UUID().uuidString).pdf")
-        try Data("pdf".utf8).write(to: file)
+        let file = fm.temporaryDirectory.appendingPathComponent("SwitchToPreview-\(UUID().uuidString).txt")
+        try Data("alpha line\nbeta target match\ngamma line".utf8).write(to: file)
         defer { try? fm.removeItem(at: file) }
 
         let controller = CornerDockController.shared
         controller.prompt.isSidePanelExpanded = false
         defer {
+            _ = controller.prompt.leaveFileSubmode()
             controller.selection.dismiss()
             controller.prompt.isSidePanelExpanded = false
         }
 
         #expect(controller.showSelection(forFile: file))
-        #expect(controller.selection.isEmbeddedInSidePanel)
-        #expect(controller.selection.phase.isVisible)
-        #expect(controller.prompt.isSidePanelExpanded)
+        #expect(controller.prompt.fileSubmode?.kind == .selectionScope)
 
         controller.switchSidePanelFromSelectionToPreview()
-        #expect(!controller.selection.phase.isVisible)
-        #expect(!controller.selection.isEmbeddedInSidePanel)
-        #expect(controller.prompt.isSidePanelExpanded)
+        #expect(controller.prompt.isInFileSubmode)
+        #expect(controller.prompt.fileSubmode?.kind == .preview)
+
+        // Verify in-document text search extracts and matches segments accurately
+        let segments = FileInDocumentSearch.extractSearchableSegments(url: file)
+        let matches = FileInDocumentSearch.matches(in: segments, query: "target")
+        #expect(matches.count == 1)
+        #expect(matches.first?.locationLabel == "Line 2")
     }
 
     @Test func fileURLRowResolvesFileIconInsteadOfGlobe() throws {
