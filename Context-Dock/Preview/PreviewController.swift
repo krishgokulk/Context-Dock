@@ -147,6 +147,20 @@ final class PreviewController: ObservableObject {
         return present(items: items, focus: focus, toggleIfSame: toggleIfSame, onClose: onClose)
     }
 
+    /// Opens `url` in the Preview window expanded to the full visible screen frame.
+    @discardableResult
+    func presentFullScreen(url: URL, siblings: [URL] = [], onClose: (() -> Void)? = nil) -> Bool {
+        guard present(url: url, siblings: siblings, toggleIfSame: false, onClose: onClose),
+            let window = liveWindow
+        else { return false }
+        if let screen = window.screen ?? NSScreen.main {
+            window.setFrame(screen.visibleFrame, display: true, animate: true)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
     func close() {
         guard let window = liveWindow else { return }
         window.close()

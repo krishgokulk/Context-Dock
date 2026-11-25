@@ -1837,13 +1837,24 @@ extension AppChatPromptModel {
             // A menu command with no image of its own shows its app, as the foot does — not ⌘.
             if let url = pill.resolvedURL {
                 if url.isFileURL {
-                    return pill.menuItemImage ?? NSWorkspace.shared.icon(forFile: url.path)
+                    return FileThumbnailCache.shared.thumbnail(for: url.path, size: 56) { [weak self] in
+                        self?.objectWillChange.send()
+                    } ?? pill.menuItemImage ?? NSWorkspace.shared.icon(forFile: url.path)
                 }
                 if let fav = FaviconStore.shared.icon(for: url) { return fav }
             }
             return pill.menuItemImage ?? boardFoot.icon
-        case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
-        case .global(let doc): return doc.icon
+        case .file(let url):
+            return FileThumbnailCache.shared.thumbnail(for: url.path, size: 56) { [weak self] in
+                self?.objectWillChange.send()
+            } ?? NSWorkspace.shared.icon(forFile: url.path)
+        case .global(let doc):
+            if let path = doc.filePath, !path.isEmpty, !path.hasSuffix(".app") {
+                return FileThumbnailCache.shared.thumbnail(for: path, size: 56) { [weak self] in
+                    self?.objectWillChange.send()
+                } ?? doc.icon ?? NSWorkspace.shared.icon(forFile: path)
+            }
+            return doc.icon
         case .app(let entry): return entry.icon
         default: return nil
         }

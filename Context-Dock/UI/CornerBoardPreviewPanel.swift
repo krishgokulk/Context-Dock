@@ -87,13 +87,19 @@ extension View {
 /// The card's title line: what this is, and one dimmed line under it.
 struct PanelHeader: View {
     let icon: NSImage?
+    var fileURL: URL? = nil
     let title: String
     let subtitle: String
     var status: Color? = nil
+    var trailingSymbol: String? = nil
+    var trailingHelp: String = ""
+    var trailingAction: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
-            if let icon {
+            if let fileURL {
+                LiveFileIconView(url: fileURL, size: 30, fallback: icon)
+            } else if let icon {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
@@ -115,7 +121,26 @@ struct PanelHeader: View {
                         .truncationMode(.middle)
                 }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
+            if let trailingAction, let trailingSymbol {
+                Button(action: trailingAction) {
+                    Image(systemName: trailingSymbol)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.primary.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(trailingHelp)
+            }
         }
         .padding(.bottom, 10)
     }
@@ -214,8 +239,14 @@ private struct FilePreview: View {
         let icon = NSWorkspace.shared.icon(forFile: url.path)
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
-                icon: icon, title: url.lastPathComponent,
-                subtitle: boardPanelPath(url.deletingLastPathComponent()))
+                icon: icon,
+                fileURL: url,
+                title: url.lastPathComponent,
+                subtitle: boardPanelPath(url.deletingLastPathComponent()),
+                trailingSymbol: "arrow.up.left.and.arrow.down.right",
+                trailingHelp: "Expand full-screen preview",
+                trailingAction: expandFullScreenPreview
+            )
             if isFolder {
                 PanelDivider()
                 FolderListing(url: url)
@@ -358,6 +389,19 @@ private struct FilePreview: View {
                     if url.path == path { fallbackThumbnail = image }
                 }
             }
+        }
+    }
+
+    private func expandFullScreenPreview() {
+        let prompt = CornerDockController.shared.prompt
+        let siblings = prompt.rows.compactMap { row -> URL? in
+            if let path = prompt.previewPath(for: row), !path.isEmpty {
+                return URL(fileURLWithPath: path)
+            }
+            return nil
+        }
+        _ = PreviewController.shared.presentFullScreen(url: url, siblings: siblings) {
+            CornerDockController.shared.requestComposerFocus()
         }
     }
 }
@@ -607,9 +651,19 @@ private struct FolderListing: View {
         VStack(alignment: .leading, spacing: 0) {
             PanelSection(title: items.isEmpty ? "Empty folder" : "\(items.count) items")
             ForEach(items.prefix(Self.limit), id: \.self) { item in
-                PanelRow(
-                    icon: NSWorkspace.shared.icon(forFile: item.path),
-                    value: item.lastPathComponent, trailing: boardPanelKind(item))
+                HStack(spacing: 8) {
+                    LiveFileIconView(url: item, size: 16)
+                    Text(item.lastPathComponent)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Text(boardPanelKind(item))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary.opacity(0.8))
+                        .lineLimit(1)
+                }
+                .frame(height: 24)
             }
             if items.count > Self.limit {
                 Text("+\(items.count - Self.limit) more")

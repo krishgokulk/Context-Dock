@@ -994,10 +994,7 @@ struct AppChatListCard: View {
             return isBookmark ? "\(parent) · Web Bookmark" : parent
         }()
         return HStack(spacing: 10) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 22, height: 22)
+            LiveFileIconView(url: url, size: 26)
                 .frame(width: 28, height: 28)
                 .fluidIconZoom(isFocused: isFocused)
 
@@ -1133,6 +1130,12 @@ struct AppChatListCard: View {
 
     private func pageURL(_ doc: GlobalSearchService.SearchDocument) -> URL? {
         if case .browserURL(let url, _, _, _, _) = doc.action { return url }
+        if let path = doc.filePath, !path.isEmpty, !path.hasSuffix(".app") {
+            return URL(fileURLWithPath: path)
+        }
+        if case .launchPath(let path) = doc.action, !path.isEmpty, !path.hasSuffix(".app") {
+            return URL(fileURLWithPath: path)
+        }
         return nil
     }
 
@@ -1293,7 +1296,9 @@ struct CornerResultIcon: View {
     ) -> NSImage? {
         if let url {
             if url.isFileURL {
-                return fallback ?? NSWorkspace.shared.icon(forFile: url.path)
+                return FileThumbnailCache.shared.cachedThumbnail(for: url.path)
+                    ?? fallback
+                    ?? NSWorkspace.shared.icon(forFile: url.path)
             }
             return favicons.icon(for: url) ?? fallback
         }
@@ -1306,25 +1311,29 @@ struct CornerResultIcon: View {
     }
 
     var body: some View {
-        let image = Self.resolvedImage(url: url, fallback: fallback, favicons: favicons)
-        let side: CGFloat = (url?.isFileURL == true || image != nil) ? 26 : 20
-        Group {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                Image(systemName: Self.fallbackSymbol(url: url, symbol: symbol))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(.secondary)
+        if let url, url.isFileURL {
+            LiveFileIconView(url: url, size: 26, fallback: fallback)
+        } else {
+            let image = Self.resolvedImage(url: url, fallback: fallback, favicons: favicons)
+            let side: CGFloat = image != nil ? 26 : 20
+            Group {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: Self.fallbackSymbol(url: url, symbol: symbol))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundStyle(.secondary)
+                }
             }
-        }
-        .frame(width: side, height: side)
-        .task(id: url) {
-            if let url, !url.isFileURL {
-                favicons.fetchIfNeeded(for: url)
+            .frame(width: side, height: side)
+            .task(id: url) {
+                if let url, !url.isFileURL {
+                    favicons.fetchIfNeeded(for: url)
+                }
             }
         }
     }

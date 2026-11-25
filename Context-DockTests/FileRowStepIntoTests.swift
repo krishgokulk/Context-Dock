@@ -179,4 +179,34 @@ struct FileRowStepIntoTests {
             Issue.record("Expected full plain-text preview content")
         }
     }
+
+    @Test func directDocumentThumbnailRendersRealPDFPageImage() throws {
+        let fm = FileManager.default
+        let pdfURL = fm.temporaryDirectory.appendingPathComponent("RealDocIcon-\(UUID().uuidString).pdf")
+        let pdfDoc = PDFDocument()
+        pdfDoc.insert(PDFPage(), at: 0)
+        #expect(pdfDoc.write(to: pdfURL))
+        defer { try? fm.removeItem(at: pdfURL) }
+
+        #expect(FileThumbnailCache.benefitsFromThumbnail(pdfURL.path))
+        let thumb = FileThumbnailCache.renderDirectThumbnail(url: pdfURL, maxPixelSize: 128)
+        #expect(thumb != nil)
+        #expect((thumb?.size.width ?? 0) >= 16)
+    }
+
+    @Test func presentFullScreenOpensExpandedPreviewWindow() throws {
+        let fm = FileManager.default
+        let pdfURL = fm.temporaryDirectory.appendingPathComponent("FullScreenPreview-\(UUID().uuidString).pdf")
+        let pdfDoc = PDFDocument()
+        pdfDoc.insert(PDFPage(), at: 0)
+        #expect(pdfDoc.write(to: pdfURL))
+        defer {
+            PreviewController.shared.close()
+            try? fm.removeItem(at: pdfURL)
+        }
+
+        #expect(PreviewController.shared.presentFullScreen(url: pdfURL))
+        #expect(PreviewController.shared.isOpen)
+        #expect(PreviewController.shared.currentURL?.standardizedFileURL == pdfURL.standardizedFileURL)
+    }
 }
