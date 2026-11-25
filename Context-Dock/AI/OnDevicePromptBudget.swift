@@ -34,6 +34,8 @@ enum OnDevicePromptBudget {
     /// Token headroom reserved for the model's reply — never consumed by prompt content.
     static let replyReserve = 1_000
     /// Maximum tokens that system instructions + history + user message may occupy.
+    /// When native multimodal image prompts are attached on macOS 27.0+, callers subtract
+    /// `OnDeviceImagePrompt.estimatedTokensPerImage` per image (~130–200 tokens) from this cap.
     static let maxPromptTokens = windowTokens - replyReserve  // 3,096
 
     /// Returns the history slice that fits within `maxTokens` when combined with
