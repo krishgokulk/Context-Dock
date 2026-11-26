@@ -27,8 +27,8 @@
       "mode": "list",
       "keywords": ["apple notes", "search notes", "recent notes"],
       "script": "commands/list-notes.py",
-      "timeout_seconds": 8,
-      "cache_ttl_seconds": 30,
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 45,
       "safety": "read"
     },
     {

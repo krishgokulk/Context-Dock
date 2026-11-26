@@ -15,14 +15,50 @@ tell application "Messages"
         set c to item i of cList
         set cname to ""
         try
-            set cname to name of c
+            set rawName to name of c
+            if rawName is not missing value then set cname to (rawName as string)
         end try
         set cid to ""
         try
-            set cid to id of c
+            set rawID to id of c
+            if rawID is not missing value then set cid to (rawID as string)
         end try
-        if cname is "" then set cname to cid
-        set end of outLines to (cname & "|||" & cid)
+        set pNames to {}
+        set primaryHandle to ""
+        set pCount to 0
+        try
+            set plist to participants of c
+            set pCount to count of plist
+            set maxP to pCount
+            if maxP > 3 then set maxP to 3
+            repeat with j from 1 to maxP
+                set p to item j of plist
+                set h to ""
+                try
+                    set rawH to handle of p
+                    if rawH is not missing value then set h to (rawH as string)
+                end try
+                if primaryHandle is "" and h is not "" then set primaryHandle to h
+                set fn to ""
+                try
+                    set rawFN to full name of p
+                    if rawFN is not missing value then set fn to (rawFN as string)
+                end try
+                if fn is "" then
+                    try
+                        set rawN to name of p
+                        if rawN is not missing value then set fn to (rawN as string)
+                    end try
+                end if
+                if fn is "" then set fn to h
+                if fn is not "" then set end of pNames to fn
+            end repeat
+        end try
+        set AppleScript's text item delimiters to ", "
+        set pJoined to pNames as text
+        set AppleScript's text item delimiters to ""
+        if cname is "" then set cname to pJoined
+        set end of outLines to (cname & "|||" & cid & "|||" & primaryHandle & "|||" & (pCount as string) & "|||" & pJoined)
     end repeat
     set AppleScript's text item delimiters to "\\n"
     return outLines as text
@@ -33,7 +69,7 @@ end tell
 def main():
     _ = sys.stdin.read()
     try:
-        proc = subprocess.run(["/usr/bin/osascript", "-e", AS], capture_output=True, text=True, timeout=4.5)
+        proc = subprocess.run(["/usr/bin/osascript", "-e", AS], capture_output=True, text=True, timeout=5.5)
     except Exception as exc:
         print(json.dumps({
             "detail": {"markdown": f"### Messages Query Timed Out or Unavailable\n`{exc}`"}
@@ -57,26 +93,51 @@ def main():
 
     items = []
     for idx, line in enumerate((proc.stdout or "").splitlines()):
-        if "|||" not in line:
+        parts = line.split("|||")
+        if len(parts) < 2:
             continue
-        name, cid = line.split("|||", 1)
-        handle = cid.split(";-;")[-1] if ";-;" in cid else cid
+        cname = parts[0].strip()
+        cid = parts[1].strip()
+        primary_handle = parts[2].strip() if len(parts) > 2 else ""
+        p_count = int(parts[3].strip()) if len(parts) > 3 and parts[3].strip().isdigit() else 0
+        p_joined = parts[4].strip() if len(parts) > 4 else ""
+
+        fallback_handle = cid.split(";-;")[-1] if ";-;" in cid else ""
+        handle = primary_handle or fallback_handle
+        title = cname or handle
+        if not title:
+            continue
+
+        is_group = ";+;" in cid or p_count > 1
+        tag_text = "Group" if is_group else "Direct"
+        subtitle = f"Group · {p_count} participants" if is_group and p_count > 0 else (handle or p_joined or "iMessage / SMS")
         uri = f"imessage://{urllib.parse.quote(handle)}" if handle else "imessage://"
+        copy_val = handle or cname or cid
+
         items.append({
-            "id": cid or str(idx),
-            "title": name.strip() or handle or f"Chat {idx+1}",
-            "subtitle": handle or cid,
-            "icon": "message.fill",
+            "id": cid or f"{title}-{idx}",
+            "title": title,
+            "subtitle": subtitle,
+            "icon": "person.2.fill" if is_group else "message.fill",
             "app_icon_bundle_id": "com.apple.MobileSMS",
-            "accessories": [{"kind": "tag", "text": "Thread", "color": "#34C759"}],
+            "category": tag_text,
+            "accessories": [{"kind": "tag", "text": tag_text, "color": "#34C759"}],
+            "detail": {
+                "markdown": f"### {title}\n\n**Type:** {tag_text}\n\n**Participants:** {p_joined or title}",
+                "metadata": [
+                    {"label": "Kind", "value": tag_text, "color": "#34C759"},
+                    {"label": "Handle", "value": handle or "-"},
+                ]
+            },
             "actions": [
                 {"id": "open-thread", "title": "Open Chat in Messages", "icon": "message", "shortcut": "↵", "kind": "open", "value": uri},
-                {"id": "copy-handle", "title": "Copy Handle / ID", "icon": "doc.on.doc", "shortcut": "⌘C", "kind": "copy", "value": handle or cid},
+                {"id": "copy-handle", "title": "Copy Handle / Name", "icon": "doc.on.doc", "shortcut": "⌘C", "kind": "copy", "value": copy_val},
             ]
         })
 
     print(json.dumps({
-        "items": items,
+        "items": items[:25],
+        "filter_options": ["All", "Direct", "Group"],
         "empty_message": "No Messages chats returned."
     }))
 

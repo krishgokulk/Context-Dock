@@ -44,13 +44,11 @@ def main():
         items.append({
             "id": node.get("ID") or host,
             "title": host,
-            "subtitle": f"{role} · {dns or ip4}",
+            "subtitle": f"{role} · {ip4} · {os_name}",
             "icon": "laptopcomputer" if "mac" in os_name.lower() else "server.rack",
             "category": status_label,
             "accessories": [
-                {"kind": "tag", "text": status_label, "color": color},
-                {"kind": "metric", "text": ip4},
-                {"kind": "tag", "text": os_name, "color": "#38BDF8"}
+                {"kind": "tag", "text": status_label, "color": color}
             ],
             "detail": {
                 "markdown": f"### {host}\n\n**Tailscale IP:** `{ip4}`\n\n**MagicDNS:** `{dns or host}`\n\n**OS:** {os_name}",

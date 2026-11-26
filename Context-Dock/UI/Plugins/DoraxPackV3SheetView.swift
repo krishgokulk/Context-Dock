@@ -491,23 +491,8 @@ struct DoraxPackV3SheetView: View {
     private func splitDetailPane(_ detail: DoraxItemDetail) -> some View {
         HStack(alignment: .top, spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let attributed = try? AttributedString(
-                        markdown: detail.markdown,
-                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                    ) {
-                        Text(attributed)
-                            .font(.system(size: 12))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text(detail.markdown)
-                            .font(.system(size: 12, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(12)
+                DoraxMarkdownBlockView(markdown: detail.markdown)
+                    .padding(12)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -1271,6 +1256,155 @@ struct DoraxPackV3SheetView: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             if statusBanner == text { statusBanner = nil }
+        }
+    }
+}
+
+// MARK: - Block-Aware Markdown Detail Renderer
+
+private struct DoraxMarkdownBlockView: View {
+    let markdown: String
+
+    private enum Block: Identifiable {
+        case heading(id: Int, level: Int, text: String)
+        case code(id: Int, text: String)
+        case quote(id: Int, text: String)
+        case bullet(id: Int, text: String)
+        case paragraph(id: Int, text: String)
+
+        var id: Int {
+            switch self {
+            case .heading(let id, _, _),
+                 .code(let id, _),
+                 .quote(let id, _),
+                 .bullet(let id, _),
+                 .paragraph(let id, _):
+                return id
+            }
+        }
+    }
+
+    private var blocks: [Block] {
+        var result: [Block] = []
+        var nextID = 0
+        var inCode = false
+        var codeLines: [String] = []
+        var paraLines: [String] = []
+
+        func flushPara() {
+            let joined = paraLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            paraLines.removeAll()
+            guard !joined.isEmpty else { return }
+            result.append(.paragraph(id: nextID, text: joined))
+            nextID += 1
+        }
+
+        for rawLine in markdown.components(separatedBy: .newlines) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
+                if inCode {
+                    result.append(.code(id: nextID, text: codeLines.joined(separator: "\n")))
+                    nextID += 1
+                    codeLines.removeAll()
+                    inCode = false
+                } else {
+                    flushPara()
+                    inCode = true
+                }
+                continue
+            }
+            if inCode {
+                codeLines.append(rawLine)
+                continue
+            }
+            if trimmed.isEmpty {
+                flushPara()
+                continue
+            }
+            if trimmed.hasPrefix("### ") {
+                flushPara()
+                result.append(.heading(id: nextID, level: 3, text: String(trimmed.dropFirst(4))))
+                nextID += 1
+            } else if trimmed.hasPrefix("## ") {
+                flushPara()
+                result.append(.heading(id: nextID, level: 2, text: String(trimmed.dropFirst(3))))
+                nextID += 1
+            } else if trimmed.hasPrefix("# ") {
+                flushPara()
+                result.append(.heading(id: nextID, level: 1, text: String(trimmed.dropFirst(2))))
+                nextID += 1
+            } else if trimmed.hasPrefix("> ") {
+                flushPara()
+                result.append(.quote(id: nextID, text: String(trimmed.dropFirst(2))))
+                nextID += 1
+            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                flushPara()
+                result.append(.bullet(id: nextID, text: String(trimmed.dropFirst(2))))
+                nextID += 1
+            } else {
+                paraLines.append(rawLine)
+            }
+        }
+        if inCode && !codeLines.isEmpty {
+            result.append(.code(id: nextID, text: codeLines.joined(separator: "\n")))
+        }
+        flushPara()
+        return result
+    }
+
+    private func inlineMarkdownText(_ raw: String, font: Font) -> Text {
+        if let attr = try? AttributedString(
+            markdown: raw,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return Text(attr).font(font)
+        }
+        return Text(raw).font(font)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(blocks) { block in
+                switch block {
+                case .heading(_, let level, let text):
+                    inlineMarkdownText(
+                        text,
+                        font: .system(size: level == 1 ? 15 : (level == 2 ? 13.5 : 12.5), weight: .bold)
+                    )
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                case .code(_, let text):
+                    Text(text.isEmpty ? " " : text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 7))
+                case .quote(_, let text):
+                    HStack(alignment: .top, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.accentColor.opacity(0.75))
+                            .frame(width: 3)
+                        inlineMarkdownText(text, font: .system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 2)
+                case .bullet(_, let text):
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+                        inlineMarkdownText(text, font: .system(size: 12))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                case .paragraph(_, let text):
+                    inlineMarkdownText(text, font: .system(size: 12))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
     }
 }
