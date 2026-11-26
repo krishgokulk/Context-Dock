@@ -1148,7 +1148,9 @@ extension AppChatPromptModel {
     func openExtensionStudio(
         target: ExtensionStudioTarget = .globalCommand,
         contextFile: URL? = nil,
-        contextBundleID: String? = nil
+        contextBundleID: String? = nil,
+        upgradePackID: String? = nil,
+        packStudioMode: ExtensionStudioPackMode? = nil
     ) {
         let contextBundle = contextBundleID ?? (isGlobalScope ? nil : appBundleID)
         if isInFileSubmode {
@@ -1157,7 +1159,9 @@ extension AppChatPromptModel {
         ExtensionStudioModel.shared.configure(
             initialTarget: target,
             contextFile: contextFile,
-            bundleID: contextBundle
+            bundleID: contextBundle,
+            upgradePackID: upgradePackID,
+            packStudioMode: packStudioMode
         )
         let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isStudioBoard })
             ?? SystemCommand(

@@ -241,11 +241,40 @@ enum ExtensionStudioTarget: String, CaseIterable, Identifiable {
     }
 }
 
+enum ExtensionStudioPackMode: String, CaseIterable, Identifiable {
+    case createNew = "create"
+    case upgradeExisting = "upgrade"
+    case importRaycast = "raycast"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .createNew: return "Create"
+        case .upgradeExisting: return "Upgrade AI"
+        case .importRaycast: return "Import Raycast"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .createNew: return "plus.square"
+        case .upgradeExisting: return "wand.and.stars"
+        case .importRaycast: return "square.and.arrow.down"
+        }
+    }
+}
+
 @MainActor
 final class ExtensionStudioModel: ObservableObject {
     static let shared = ExtensionStudioModel()
 
     @Published var target: ExtensionStudioTarget = .globalCommand
+    @Published var packStudioMode: ExtensionStudioPackMode = .createNew
+    @Published var selectedUpgradePackID: String = ""
+    @Published var upgradeInstruction: String = ""
+    @Published var raycastSourceText: String = ""
+    @Published var raycastMergeTargetPackID: String = ""
     @Published var name: String = ""
     @Published var icon: String = "sparkles"
     @Published var keywordsText: String = ""
@@ -264,10 +293,25 @@ final class ExtensionStudioModel: ObservableObject {
 
     var pluginCreator = PluginCreatorModel(text: PluginCreatorPane.starter)
 
-    func configure(initialTarget: ExtensionStudioTarget, contextFile: URL? = nil, bundleID: String? = nil) {
+    func configure(
+        initialTarget: ExtensionStudioTarget,
+        contextFile: URL? = nil,
+        bundleID: String? = nil,
+        upgradePackID: String? = nil,
+        packStudioMode explicitMode: ExtensionStudioPackMode? = nil
+    ) {
         target = initialTarget
         previewContextFileURL = contextFile
         statusMessage = nil
+        if let upgradePackID, !upgradePackID.isEmpty {
+            selectedUpgradePackID = upgradePackID
+            packStudioMode = explicitMode ?? .upgradeExisting
+        } else if let explicitMode {
+            packStudioMode = explicitMode
+        }
+        if selectedUpgradePackID.isEmpty {
+            selectedUpgradePackID = DoraxPackV3Registry.shared.packs.first?.id ?? "youtube"
+        }
         if let contextFile, fileFilterText.isEmpty {
             let ext = contextFile.pathExtension.lowercased()
             if !ext.isEmpty { fileFilterText = ext }
@@ -517,11 +561,16 @@ struct ExtensionStudioBoardCard: View {
     @ObservedObject private var pluginCreator = ExtensionStudioModel.shared.pluginCreator
     @ObservedObject private var notchPins = NotchPinStore.shared
     @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var v3Registry = DoraxPackV3Registry.shared
     @Environment(\.sharesOneCard) private var sharesOneCard
 
     @State private var selectedV3Template: DoraxPackV3Template = .appCompanion
     @State private var v3Synthesis: DoraxPackV3SynthesisResult? = nil
     @State private var isSynthesizingV3: Bool = false
+    @State private var upgradePatch: DoraxPackV3Patch? = nil
+    @State private var isProposingUpgrade: Bool = false
+    @State private var raycastImportResult: RaycastImportResult? = nil
+    @State private var isImportingRaycast: Bool = false
 
     var onCloseOverride: (() -> Void)? = nil
 
@@ -653,103 +702,147 @@ struct ExtensionStudioBoardCard: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 if studio.target == .appPlugin {
-                    HStack(spacing: 6) {
-                        Text("Target")
+                    // Phase 1 & 2 Sub-Mode Bar: Create | Upgrade AI | Import Raycast
+                    HStack(spacing: 5) {
+                        ForEach(ExtensionStudioPackMode.allCases) { mode in
+                            Button {
+                                studio.packStudioMode = mode
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: mode.symbol)
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                    Text(mode.title)
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                                .foregroundStyle(studio.packStudioMode == mode ? Color.accentColor : .secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(studio.packStudioMode == mode ? Color.accentColor.opacity(0.18) : Color.white.opacity(0.05))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    switch studio.packStudioMode {
+                    case .createNew:
+                        HStack(spacing: 6) {
+                            Text("Target")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Picker("", selection: $studio.targetBundleID) {
+                                Text("Frontmost").tag("")
+                                if !studio.targetBundleID.isEmpty,
+                                   !adapterManager.adapters.contains(where: { $0.bundleId == studio.targetBundleID })
+                                {
+                                    Text(AppDelegate.shared?.previousFrontmostApp?.localizedName ?? studio.targetBundleID)
+                                        .tag(studio.targetBundleID)
+                                }
+                                ForEach(adapterManager.adapters.filter { !$0.bundleId.isEmpty }, id: \.bundleId) { a in
+                                    Text(a.appName.isEmpty ? a.bundleId : a.appName).tag(a.bundleId)
+                                }
+                            }
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .frame(maxWidth: 100)
+                            .onChange(of: studio.targetBundleID) { _, bid in
+                                studio.pluginCreator.selectedTargetBundleID = bid
+                            }
+                            Spacer(minLength: 4)
+                            Button {
+                                Task {
+                                    isSynthesizingV3 = true
+                                    let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
+                                    let res = await DoraxPackV3Builder.buildForTarget(
+                                        bundleID: activeAppBundleID,
+                                        appName: activeFrontmostContextLabel,
+                                        activeURL: activeURL,
+                                        template: nil)
+                                    v3Synthesis = res
+                                    pluginCreator.text = res.packJSONText
+                                    isSynthesizingV3 = false
+                                }
+                            } label: {
+                                Label(
+                                    isSynthesizingV3 ? "Building v3…" : "Create for \(activeFrontmostContextLabel)",
+                                    systemImage: "wand.and.stars"
+                                )
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .lineLimit(1)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+
+                        // Starter Templates Strip (.doraxpack v3)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(DoraxPackV3Template.allCases) { tpl in
+                                    Button {
+                                        selectedV3Template = tpl
+                                        Task {
+                                            isSynthesizingV3 = true
+                                            let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
+                                            let res = await DoraxPackV3Builder.buildForTarget(
+                                                bundleID: activeAppBundleID,
+                                                appName: activeFrontmostContextLabel,
+                                                activeURL: activeURL,
+                                                template: tpl)
+                                            v3Synthesis = res
+                                            pluginCreator.text = res.packJSONText
+                                            isSynthesizingV3 = false
+                                        }
+                                    } label: {
+                                        Label(tpl.title, systemImage: tpl.icon)
+                                            .font(.system(size: 10, weight: .medium))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 4)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .fill(selectedV3Template == tpl ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.06))
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        Text("pack.json (.doraxpack v3)")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Picker("", selection: $studio.targetBundleID) {
-                            Text("Frontmost").tag("")
-                            if !studio.targetBundleID.isEmpty,
-                               !adapterManager.adapters.contains(where: { $0.bundleId == studio.targetBundleID })
-                            {
-                                Text(AppDelegate.shared?.previousFrontmostApp?.localizedName ?? studio.targetBundleID)
-                                    .tag(studio.targetBundleID)
-                            }
-                            ForEach(adapterManager.adapters.filter { !$0.bundleId.isEmpty }, id: \.bundleId) { a in
-                                Text(a.appName.isEmpty ? a.bundleId : a.appName).tag(a.bundleId)
-                            }
-                        }
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .frame(maxWidth: 100)
-                        .onChange(of: studio.targetBundleID) { _, bid in
-                            studio.pluginCreator.selectedTargetBundleID = bid
-                        }
-                        Spacer(minLength: 4)
-                        Button {
-                            Task {
-                                isSynthesizingV3 = true
-                                let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
-                                let res = await DoraxPackV3Builder.buildForTarget(
-                                    bundleID: activeAppBundleID,
-                                    appName: activeFrontmostContextLabel,
-                                    activeURL: activeURL,
-                                    template: nil)
-                                v3Synthesis = res
-                                pluginCreator.text = res.packJSONText
-                                isSynthesizingV3 = false
-                            }
-                        } label: {
-                            Label(
-                                isSynthesizingV3 ? "Building v3…" : "Create for \(activeFrontmostContextLabel)",
-                                systemImage: "wand.and.stars"
+                        TextEditor(text: $pluginCreator.text)
+                            .font(.system(size: 11, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .frame(height: 156)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.black.opacity(0.22))
                             )
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .lineLimit(1)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+                            )
 
-                    // Starter Templates Strip (.doraxpack v3)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(DoraxPackV3Template.allCases) { tpl in
-                                Button {
-                                    selectedV3Template = tpl
-                                    Task {
-                                        isSynthesizingV3 = true
-                                        let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
-                                        let res = await DoraxPackV3Builder.buildForTarget(
-                                            bundleID: activeAppBundleID,
-                                            appName: activeFrontmostContextLabel,
-                                            activeURL: activeURL,
-                                            template: tpl)
-                                        v3Synthesis = res
-                                        pluginCreator.text = res.packJSONText
-                                        isSynthesizingV3 = false
-                                    }
-                                } label: {
-                                    Label(tpl.title, systemImage: tpl.icon)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .padding(.horizontal, 7)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(selectedV3Template == tpl ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.06))
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
+                    case .upgradeExisting:
+                        UpgradePackStudioLeftView(
+                            studio: studio,
+                            v3Registry: v3Registry,
+                            upgradePatch: $upgradePatch,
+                            isProposingUpgrade: $isProposingUpgrade)
 
-                    Text("pack.json (.doraxpack v3)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: $pluginCreator.text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .padding(8)
-                        .frame(height: 185)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.black.opacity(0.22))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
-                        )
+                    case .importRaycast:
+                        ImportRaycastStudioLeftView(
+                            studio: studio,
+                            v3Registry: v3Registry,
+                            raycastImportResult: $raycastImportResult,
+                            isImportingRaycast: $isImportingRaycast)
+                    }
                 } else {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -870,7 +963,56 @@ struct ExtensionStudioBoardCard: View {
                     notchPinManagerCard
                 }
 
-                if studio.target == .appPlugin, let syn = v3Synthesis {
+                if studio.target == .appPlugin, studio.packStudioMode == .upgradeExisting, let patch = upgradePatch {
+                    UpgradePatchReviewCardView(
+                        patch: patch,
+                        studio: studio,
+                        v3Registry: v3Registry,
+                        upgradePatch: $upgradePatch)
+                } else if studio.target == .appPlugin, studio.packStudioMode == .importRaycast, let imported = raycastImportResult {
+                    RaycastImportReviewCardView(
+                        imported: imported,
+                        studio: studio,
+                        v3Registry: v3Registry,
+                        raycastImportResult: $raycastImportResult)
+                } else if studio.target == .appPlugin, studio.packStudioMode == .upgradeExisting,
+                          let activePack = v3Registry.pack(id: studio.selectedUpgradePackID) ?? v3Registry.packs.first
+                {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(activePack.name, systemImage: activePack.metadata.icon)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(activePack.metadata.description)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                        HStack(spacing: 8) {
+                            Text("v\(activePack.metadata.version)")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.white.opacity(0.08), in: Capsule())
+                            Text("\((activePack.metadata.commands ?? []).count) commands")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("Describe what to add or change on the left, then click Propose Upgrade with AI.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                } else if studio.target == .appPlugin, studio.packStudioMode == .importRaycast {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Raycast Import Ready", systemImage: "square.and.arrow.down")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Supports # @raycast.* script commands (.sh, .py, .applescript), local Raycast extension folders (package.json), and Raycast Store / GitHub URLs.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                } else if studio.target == .appPlugin, let syn = v3Synthesis {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Label(syn.review.packName, systemImage: syn.pack.metadata.icon)

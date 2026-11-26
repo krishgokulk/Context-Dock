@@ -102,7 +102,19 @@ enum DevCornerRemote {
             if !presentation.isVisible {
                 controller.showCentred()
             }
-            controller.prompt.openExtensionStudio(target: .appPlugin)
+            if argument.hasPrefix("upgrade:") {
+                let packID = String(argument.dropFirst("upgrade:".count))
+                controller.prompt.openExtensionStudio(
+                    target: .appPlugin,
+                    upgradePackID: packID,
+                    packStudioMode: .upgradeExisting)
+            } else if argument == "raycast" {
+                controller.prompt.openExtensionStudio(
+                    target: .appPlugin,
+                    packStudioMode: .importRaycast)
+            } else {
+                controller.prompt.openExtensionStudio(target: .appPlugin)
+            }
             controller.refresh()
         case "notch":
             if argument == "dismiss" {

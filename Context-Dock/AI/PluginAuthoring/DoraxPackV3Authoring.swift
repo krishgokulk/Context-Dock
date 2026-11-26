@@ -499,3 +499,315 @@ enum DoraxPackV3Builder {
             persistToDisk: persistToDisk)
     }
 }
+
+// MARK: - Phase 1: In-Place AI Pack Architect & Upgrader
+
+@MainActor
+enum DoraxPackV3AIArchitect {
+
+    /// Proposes a non-destructive multi-file upgrade patch (`DoraxPackV3Patch`) for an existing
+    /// `.doraxpack` bundle, preserves existing commands/capabilities/preferences, validates via
+    /// `DoraxPackV3Validator`, and runs a read-only dry run before owner approval.
+    static func proposeUpgrade(
+        pack: DoraxPackV2,
+        instruction rawInstruction: String,
+        stagingRoot: URL? = nil,
+        useLiveAI: Bool = !AppDelegate.isHostingTests
+    ) async -> DoraxPackV3Patch {
+        let instruction = rawInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentJSON = (try? String(contentsOf: pack.folderURL.appendingPathComponent("pack.json"), encoding: .utf8))
+            ?? encodeMetadata(pack.metadata)
+
+        if useLiveAI, !instruction.isEmpty {
+            let sysPrompt = """
+            You are DoraX's `.doraxpack` v3 AI Pack Architect.
+            The user wants to upgrade the existing pack "\(pack.name)" (id: "\(pack.id)").
+            Return ONLY strict JSON (no markdown fences) with shape:
+            {"summary":"One-sentence description of what changed","pack_json":{...complete valid v3 pack.json...},"files":{"commands/example.py":"#!/usr/bin/env python3\\n..."}}
+            Rules:
+            - MUST keep format_version=2, schema_version=3, and id="\(pack.id)".
+            - Preserve existing commands, capabilities, preferences, scope, and permissions unless the user asked to modify or remove one.
+            - Scripts must read context JSON from `sys.stdin` and never read secrets from env vars; output DoraxCommandOutput JSON (`{"items":[...],"detail":{...}}`).
+            - Any hook in `hooks[]` MUST declare a non-empty `filter` and matching permission in `permissions[]`.
+            - Paths in `files` must be relative (e.g. `commands/my-cmd.py`, `AGENT.md`, `skills/s/SKILL.md`), never containing `..`.
+            """
+            let userMsg = """
+            Upgrade Request:
+            \(instruction)
+
+            Existing pack.json:
+            \(String(currentJSON.prefix(8_000)))
+            """
+            if let reply = try? await PanelAssistant.ask(
+                userMsg,
+                title: "DoraX AI Pack Architect",
+                subtitle: "Upgrade \(pack.name) (.doraxpack v3)",
+                extraPrompt: sysPrompt,
+                history: [],
+                provider: AppSettings.shared.selectedAIProvider
+            ),
+               let parsed = parseAIStructuredUpgrade(reply, basePack: pack, stagingRoot: stagingRoot)
+            {
+                return await finalizeStagedPatch(parsed, basePack: pack)
+            }
+        }
+
+        // Deterministic offline / fallback upgrade builder
+        let fallback = buildDeterministicUpgradePatch(pack: pack, instruction: instruction, stagingRoot: stagingRoot)
+        return await finalizeStagedPatch(fallback, basePack: pack)
+    }
+
+    private struct RawAIUpgradeDraft {
+        var summary: String
+        var packJSONText: String
+        var files: [DoraxPackV3FileChange]
+        var stagingFolder: URL
+    }
+
+    private static func parseAIStructuredUpgrade(
+        _ raw: String,
+        basePack: DoraxPackV2,
+        stagingRoot: URL?
+    ) -> RawAIUpgradeDraft? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let start = trimmed.firstIndex(of: "{"),
+              let end = trimmed.lastIndex(of: "}"),
+              let data = String(trimmed[start...end]).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var packObj = obj["pack_json"] as? [String: Any]
+        else { return nil }
+
+        packObj["format_version"] = 2
+        packObj["schema_version"] = 3
+        packObj["id"] = basePack.id
+
+        guard let normalizedData = try? JSONSerialization.data(withJSONObject: packObj, options: [.prettyPrinted, .sortedKeys]),
+              let decodedMeta = try? JSONDecoder().decode(DoraxPackMetadata.self, from: normalizedData),
+              let jsonText = String(data: normalizedData, encoding: .utf8)
+        else { return nil }
+
+        _ = decodedMeta // validated decode
+        let summary = (obj["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawFiles = obj["files"] as? [String: String] ?? [:]
+        var changes: [DoraxPackV3FileChange] = []
+        for (rel, content) in rawFiles.sorted(by: { $0.key < $1.key }) {
+            guard let safeRel = DoraxPackV3EditorService.validateRelativePath(rel) else { continue }
+            let existed = FileManager.default.fileExists(atPath: basePack.folderURL.appendingPathComponent(safeRel).path)
+            changes.append(DoraxPackV3FileChange(relativePath: safeRel, content: content, isNew: !existed))
+        }
+
+        let stageFolder = makeStagingFolder(pack: basePack, packJSON: jsonText, files: changes, stagingRoot: stagingRoot)
+        return RawAIUpgradeDraft(
+            summary: (summary?.isEmpty == false ? summary! : "Upgraded \(basePack.name) with AI."),
+            packJSONText: jsonText,
+            files: changes,
+            stagingFolder: stageFolder)
+    }
+
+    private static func buildDeterministicUpgradePatch(
+        pack: DoraxPackV2,
+        instruction: String,
+        stagingRoot: URL?
+    ) -> RawAIUpgradeDraft {
+        var meta = pack.metadata
+        meta.formatVersion = 2
+        meta.schemaVersion = 3
+        meta.version = bumpPatchVersion(meta.version)
+
+        var changes: [DoraxPackV3FileChange] = []
+        let cleanInstr = instruction.isEmpty ? "Custom quick command" : instruction
+        let lower = cleanInstr.lowercased()
+
+        // If user specifically requested a hex color tint change, update tint while keeping commands
+        if let hexRange = cleanInstr.range(of: "#[0-9A-Fa-f]{6}", options: .regularExpression) {
+            let newHex = String(cleanInstr[hexRange]).uppercased()
+            let currentGlow = meta.appearance?.glow.normalized ?? .soft
+            meta.appearance = DoraxPackAppearance(tint: newHex, glow: currentGlow == .none ? .soft : currentGlow)
+        }
+
+        let slug = slugify(String(cleanInstr.prefix(36)), fallback: "custom-action")
+        let cmdID = uniqueCommandID(slug: slug, existing: Set((meta.commands ?? []).map(\.id)))
+        let title = String(cleanInstr.prefix(42)).capitalized
+        let scriptRel = "commands/\(cmdID).py"
+
+        let newCmd = DoraxPackCommand(
+            id: cmdID,
+            title: title,
+            subtitle: "Upgraded workflow for \(pack.name): \(cleanInstr)",
+            icon: lower.contains("notch") ? "waveform.path.ecg" : "sparkles",
+            mode: lower.contains("notch") ? .notch : .list,
+            keywords: [pack.id, slug, "upgraded"],
+            script: scriptRel,
+            timeoutSeconds: 6,
+            cacheTTLSeconds: 15,
+            safety: "read")
+
+        var cmds = meta.commands ?? []
+        cmds.append(newCmd)
+        meta.commands = cmds
+
+        var caps = meta.capabilities
+        caps.append(PluginPackCapability(
+            id: "\(pack.id).\(cmdID)",
+            name: title,
+            intent: cleanInstr,
+            triggers: [title.lowercased(), "\(pack.id) \(slug)"],
+            type: "aiPrompt",
+            script: cleanInstr,
+            safety: "read"))
+        meta.capabilities = caps
+
+        let pyScript: String
+        if lower.contains("notch") {
+            let tint = meta.appearance?.tint ?? "#38BDF8"
+            pyScript = """
+            #!/usr/bin/env python3
+            import json, sys
+            _ = sys.stdin.read()
+            print(json.dumps({
+                "notch": {
+                    "wing_text": "\(String(pack.name.prefix(10)))",
+                    "wing_icon": "\(meta.icon)",
+                    "wing_color": "\(tint)",
+                    "title": "\(pack.name) · \(title.replacingOccurrences(of: "\"", with: ""))",
+                    "subtitle": "Live status from upgraded command"
+                },
+                "toast": "Pinned \(pack.name) to Dynamic Notch"
+            }))
+            """
+        } else {
+            pyScript = """
+            #!/usr/bin/env python3
+            import json, sys
+            try:
+                ctx = json.loads(sys.stdin.read().strip() or "{}")
+            except Exception:
+                ctx = {}
+            q = (ctx.get("query") or "").strip()
+            front = (ctx.get("frontmost") or {}).get("appName") or "\(pack.name)"
+            print(json.dumps({
+                "items": [{
+                    "id": "\(cmdID)-ready",
+                    "title": "\(title.replacingOccurrences(of: "\"", with: ""))",
+                    "subtitle": f"Context: {front}" + (f" · Query: {q}" if q else ""),
+                    "icon": "sparkles",
+                    "detail": {
+                        "markdown": "### \(title.replacingOccurrences(of: "\"", with: ""))\\n\\nAdded to **\(pack.name)** via AI Pack Architect.\\n\\nEdit `\(scriptRel)` to customize live data fetching.",
+                        "metadata": [{"label": "Pack", "value": "\(pack.name)"}, {"label": "Version", "value": "\(meta.version)"}]
+                    },
+                    "actions": [
+                        {"id": "copy-summary", "title": "Copy Summary", "icon": "doc.on.doc", "shortcut": "↵", "kind": "copy", "value": "\(title.replacingOccurrences(of: "\"", with: ""))"}
+                    ]
+                }]
+            }))
+            """
+        }
+        changes.append(DoraxPackV3FileChange(relativePath: scriptRel, content: pyScript, isNew: true))
+
+        let jsonText = encodeMetadata(meta)
+        let stageFolder = makeStagingFolder(pack: pack, packJSON: jsonText, files: changes, stagingRoot: stagingRoot)
+        return RawAIUpgradeDraft(
+            summary: "Added \"\(title)\" (\(scriptRel)) to \(pack.name) v\(meta.version), keeping all \(max(0, (pack.metadata.commands ?? []).count)) existing command(s).",
+            packJSONText: jsonText,
+            files: changes,
+            stagingFolder: stageFolder)
+    }
+
+    private static func makeStagingFolder(
+        pack: DoraxPackV2,
+        packJSON: String,
+        files: [DoraxPackV3FileChange],
+        stagingRoot: URL?
+    ) -> URL {
+        let base = stagingRoot ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("doraxpack-v3-upgrade-staging", isDirectory: true)
+        let folder = base.appendingPathComponent("\(pack.id)-\(UUID().uuidString.prefix(6)).doraxpack", isDirectory: true)
+        let fm = FileManager.default
+        try? fm.removeItem(at: folder)
+        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+        if fm.fileExists(atPath: pack.folderURL.path) {
+            try? fm.copyItem(at: pack.folderURL, to: folder)
+        } else {
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try? Data(packJSON.utf8).write(to: folder.appendingPathComponent("pack.json"), options: .atomic)
+        for change in files {
+            guard let safe = DoraxPackV3EditorService.validateRelativePath(change.relativePath) else { continue }
+            let dest = folder.appendingPathComponent(safe)
+            try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data(change.content.utf8).write(to: dest, options: .atomic)
+            if ["py", "sh", "zsh"].contains(dest.pathExtension.lowercased()) {
+                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+            }
+        }
+        return folder
+    }
+
+    private static func finalizeStagedPatch(_ draft: RawAIUpgradeDraft, basePack: DoraxPackV2) async -> DoraxPackV3Patch {
+        let loaded = (try? DoraxPackV2Loader.load(from: draft.stagingFolder))
+            ?? DoraxPackV2(
+                metadata: basePack.metadata, agentInstructions: basePack.agentInstructions,
+                modes: basePack.modes, skills: basePack.skills, scripts: basePack.scripts,
+                pageScripts: basePack.pageScripts, folderURL: draft.stagingFolder)
+        let diagnostics = DoraxPackV3Validator.validate(loaded)
+
+        let existingIDs = Set((basePack.metadata.commands ?? []).map(\.id))
+        let targetCmd = (loaded.metadata.commands ?? []).first { !existingIDs.contains($0.id) && $0.safety.lowercased() == "read" }
+            ?? (loaded.metadata.commands ?? []).first { $0.safety.lowercased() == "read" }
+
+        var dryOutput: DoraxCommandOutput? = nil
+        var dryError: String? = nil
+        if let cmd = targetCmd {
+            let res = await DoraxPackV3Runtime.shared.runCommand(cmd, in: loaded, forceRefresh: true)
+            switch res {
+            case .success(let out): dryOutput = out
+            case .failure(let err): dryError = err.message
+            }
+        }
+
+        let oldPerms = Set(basePack.metadata.permissions ?? [])
+        let newPerms = (loaded.metadata.permissions ?? []).filter { !oldPerms.contains($0) }
+        let oldHooks = Set((basePack.metadata.hooks ?? []).map(\.id))
+        let newHooks = (loaded.metadata.hooks ?? []).filter { !oldHooks.contains($0.id) }.map { "\($0.id) (\($0.on.rawValue))" }
+
+        return DoraxPackV3Patch(
+            packID: loaded.id,
+            packName: loaded.name,
+            summary: draft.summary,
+            updatedPackJSON: draft.packJSONText,
+            files: draft.files,
+            addedPermissions: newPerms,
+            addedHooks: newHooks,
+            diagnostics: diagnostics,
+            dryRunOutput: dryOutput,
+            dryRunError: dryError,
+            stagedFolderURL: draft.stagingFolder)
+    }
+
+    static func encodeMetadata(_ metadata: DoraxPackMetadata) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = (try? encoder.encode(metadata)) ?? Data("{}".utf8)
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    static func slugify(_ raw: String, fallback: String = "command") -> String {
+        let s = raw.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return s.isEmpty ? fallback : s
+    }
+
+    private static func uniqueCommandID(slug: String, existing: Set<String>) -> String {
+        if !existing.contains(slug) { return slug }
+        var idx = 2
+        while existing.contains("\(slug)-\(idx)") { idx += 1 }
+        return "\(slug)-\(idx)"
+    }
+
+    private static func bumpPatchVersion(_ version: String) -> String {
+        let parts = version.split(separator: ".").map(String.init)
+        guard parts.count == 3, let patch = Int(parts[2]) else { return "3.0.1" }
+        return "\(parts[0]).\(parts[1]).\(patch + 1)"
+    }
+}

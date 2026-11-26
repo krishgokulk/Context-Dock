@@ -98,14 +98,17 @@ creating a new registry (`StorePackInstaller.swift`, completed in Task U8c):
   two rows: `Apps` (per-app adapters, capabilities, `AGENT.md`, and permissions) and `Store / Packs`
   (with `[+ Create Pack]` / `✨ Build Pack with AI` powered by `AgenticAIPackBuilder`).
 - **The Creator is a 4-stage agentic pack authoring mode** (`AgenticAIPackBuilder`), not a separate window.
+- **One Entity = One Living `.doraxpack` v3 Pack + Copy-on-Write Upgrades (`DoraxPackV3EditorService` / `DoraxPackV3AIArchitect`):** Shipped packs stay read-only in `Packs/`. Upgrading or merging commands into any pack copies-on-write into `~/Library/Application Support/Context-Dock/plugins/v3/<id>.doraxpack`, saves timestamped rollback snapshots under `plugins/v3/.backups/<id>/`, validates via `DoraxPackV3Validator`, and rolls back automatically on error.
+- **Native Apple Intelligence Pack Runtime (`DoraxAppleIntelligenceRunner`):** `dorax.appleIntelligence.*` native sources run macOS `FoundationModels` (`SystemLanguageModel.default`) directly on-device for Proofread, Rewrite, Tone, Summarize, Key Points, List, Table, Writing Tools Form, and Ask — zero external API keys required.
+- **Raycast Script & Extension Importer (`RaycastImporter`):** Deterministically converts `@raycast.*` Script Commands (`.sh`, `.py`, `.applescript`) and maps Raycast extension `package.json` manifests into standalone `.doraxpack` v3 packs or merges them into existing packs inside `ExtensionStudioBoardCard`.
 
 ## Code homes
 
 ```
-Packs/                6 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor)
-Services/Plugins/     DoraxPackV3, DoraxContextBridge, DoraxPackV3Runtime, DoraxPackHookDispatcher, LegacyPluginCleanup, DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
+Packs/                19 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor, AppleIntelligence, YouTube, GitHub, Homebrew, Spotify, Obsidian, Tailscale, WhatsApp, Claude, ChatGPT, Messages, Notes, GoogleDrive)
+Services/Plugins/     DoraxPackV3, DoraxPackV3EditorService, DoraxAppleIntelligenceRunner, DoraxContextBridge, DoraxPackV3Runtime, DoraxPackHookDispatcher, LegacyPluginCleanup, DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
 Services/             SafariExtensionHookRegistry, SafariEscalationPolicy, NotchPinStore
 UI/Plugins/           DoraxPackV3SheetView, renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace
-UI/                   DockAuraEngine, NotchQuickActionsView, DynamicNotchLiveActivityView, ExtensionStudioBoardCard
-AI/PluginAuthoring/   DoraxPackV3Authoring, AgenticAIPackBuilder, AIPackSynthesizer, PluginAuthoringEngine, PluginAuthoringPrompt
+UI/                   DockAuraEngine, NotchQuickActionsView, DynamicNotchLiveActivityView, ExtensionStudioBoardCard, ExtensionStudioPackFlows
+AI/PluginAuthoring/   DoraxPackV3Authoring, RaycastImporter, AgenticAIPackBuilder, AIPackSynthesizer, PluginAuthoringEngine, PluginAuthoringPrompt
 ```

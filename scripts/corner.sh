@@ -36,6 +36,7 @@ COMMAND="${1:?usage: corner.sh [--app <bundle id>] centre|bottom|global|general|
 [ "$COMMAND" = "attach" ] && COMMAND="attach:${2:?attach needs an absolute file path}"
 [ "$COMMAND" = "type" ] && COMMAND="type:${2:-}"
 [ "$COMMAND" = "v3" ] && COMMAND="v3:${2:?v3 needs <packID>/<commandID>}"
+[ "$COMMAND" = "studio" ] && [ -n "${2:-}" ] && COMMAND="studio:$2"
 [ "$COMMAND" = "notch" ] && COMMAND="notch:${2:-dismiss}"
 
 pgrep -x Context-Dock >/dev/null || { echo "Context-Dock is not running — ./scripts/dev-run.sh first." >&2; exit 1; }

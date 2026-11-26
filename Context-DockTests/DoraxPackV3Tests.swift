@@ -524,4 +524,226 @@ struct DoraxPackV3Tests {
         #expect(DoraxPackHookDispatcher.matchesFilter(filter, event: matching))
         #expect(!DoraxPackHookDispatcher.matchesFilter(filter, event: wrongSender))
     }
+
+    // MARK: - Curated 13 Packs, Apple Intelligence, AI Upgrader & Raycast Importer
+
+    @Test("All 19 shipped .doraxpack v3 packs (including 13 curated extensions + corrected Antigravity) validate with 0 errors")
+    func curatedPacksLoadAndValidateCleanly() throws {
+        let packsDir = try #require(FirstPartyPacks.resolvePacksDirectory())
+        let packURLs = DoraxPackV2Loader.discoverPacks(in: packsDir)
+        let loaded = try packURLs.map { try DoraxPackV2Loader.load(from: $0) }
+        let byID = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
+
+        let expectedNewIDs = [
+            "youtube", "github", "homebrew", "spotify", "obsidian", "tailscale",
+            "whatsapp", "claude", "chatgpt", "messages", "notes", "google-drive",
+            "apple-intelligence", "antigravity"
+        ]
+        for id in expectedNewIDs {
+            let pack = try #require(byID[id], "Missing curated pack \(id)")
+            #expect(pack.metadata.schemaVersion == 3)
+            #expect(pack.agentInstructions?.isEmpty == false, "\(id) missing AGENT.md")
+            #expect(!pack.skills.isEmpty, "\(id) missing skills")
+            #expect(!(pack.metadata.commands ?? []).isEmpty, "\(id) missing commands")
+            let errors = DoraxPackV3Validator.validate(pack).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(id) validation errors: \(errors.map(\.message))")
+        }
+
+        let agy = try #require(byID["antigravity"])
+        #expect(agy.metadata.bundleId == "com.google.antigravity")
+        #expect(agy.metadata.effectiveScope.matchesBundleID("com.google.antigravity"))
+    }
+
+    @Test("Contextual ranking matches newly curated native apps and web domains cleanly")
+    func contextualRankingNewNativeAndWebApps() throws {
+        let packsDir = try #require(FirstPartyPacks.resolvePacksDirectory())
+        let cfgURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ctx-curated-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: cfgURL) }
+        let registry = DoraxPackV3Registry(roots: [packsDir], configFileURL: cfgURL)
+
+        let nativePairs: [(bundle: String, packID: String)] = [
+            ("com.spotify.client", "spotify"),
+            ("md.obsidian", "obsidian"),
+            ("com.google.antigravity", "antigravity"),
+            ("net.whatsapp.WhatsApp", "whatsapp"),
+            ("com.anthropic.claudefordesktop", "claude"),
+            ("com.openai.codex", "chatgpt"),
+            ("com.apple.Notes", "notes"),
+            ("com.apple.MobileSMS", "messages"),
+            ("com.google.drivefs", "google-drive"),
+            ("io.tailscale.ipn.macsys", "tailscale"),
+        ]
+        for (bundle, packID) in nativePairs {
+            let matches = registry.contextualCommands(frontmostBundleID: bundle, frontmostURL: nil, query: "")
+            #expect(matches.contains(where: { $0.pack.id == packID && $0.isContextual }),
+                    "Expected contextual match for \(bundle) -> \(packID)")
+        }
+
+        let webPairs: [(url: String, packID: String)] = [
+            ("https://www.youtube.com/watch?v=abc", "youtube"),
+            ("https://github.com/owner/repo/pulls", "github"),
+            ("https://claude.ai/chat/123", "claude"),
+            ("https://chatgpt.com/c/123", "chatgpt"),
+            ("https://drive.google.com/drive/my-drive", "google-drive"),
+        ]
+        for (url, packID) in webPairs {
+            let matches = registry.contextualCommands(frontmostBundleID: "com.apple.Safari", frontmostURL: url, query: "")
+            #expect(matches.contains(where: { $0.pack.id == packID && $0.isContextual }),
+                    "Expected web contextual match for \(url) -> \(packID)")
+        }
+    }
+
+    @Test("Apple Intelligence native commands execute cleanly via DoraxPackV3Runtime in test mode")
+    func appleIntelligenceCommandsRunCleanly() async throws {
+        let packsDir = try #require(FirstPartyPacks.resolvePacksDirectory())
+        let pack = try DoraxPackV2Loader.load(from: packsDir.appendingPathComponent("AppleIntelligence.doraxpack", isDirectory: true))
+        let runtime = DoraxPackV3Runtime()
+
+        let proofread = try #require(pack.metadata.commands?.first { $0.id == "proofread" })
+        let out = try await runtime.runCommand(
+            proofread, in: pack, query: "Helo wrld this is a tset", forceRefresh: true).get()
+        #expect(out.detail?.markdown.contains("Proofread") == true)
+        #expect(out.items.first?.actions.contains(where: { $0.kind == "copy" }) == true)
+
+        let formCmd = try #require(pack.metadata.commands?.first { $0.id == "writing-tools" })
+        let formOut = try await runtime.runCommand(
+            formCmd, in: pack, formValues: ["action": "Make Concise", "text": "Long sample text"], forceRefresh: true).get()
+        #expect(formOut.detail?.markdown.contains("Make Concise") == true)
+    }
+
+    @Test("Phase 1: DoraxPackV3EditorService copy-on-write upgrades, creates backups, rejects invalid patches, rolls back, and resets")
+    func editorServiceCopyOnWriteAndRollback() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-editor-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let packsDir = tmp.appendingPathComponent("ShippedPacks", isDirectory: true)
+        let v3Root = tmp.appendingPathComponent("UserV3", isDirectory: true)
+        let backupRoot = tmp.appendingPathComponent("Backups", isDirectory: true)
+        let stagingRoot = tmp.appendingPathComponent("Staging", isDirectory: true)
+
+        let shippedDir = packsDir.appendingPathComponent("Demo.doraxpack", isDirectory: true)
+        try FileManager.default.createDirectory(at: shippedDir.appendingPathComponent("skills/s"), withIntermediateDirectories: true)
+        let baseMeta = DoraxPackMetadata(
+            formatVersion: 2, schemaVersion: 3, id: "demo", name: "Demo", version: "3.0.0",
+            capabilities: [PluginPackCapability(id: "demo.hi", name: "Hi", intent: "Hi", triggers: ["hi"], type: "aiPrompt", script: "hi", safety: "read")],
+            scope: DoraxPackScope(surfaces: ["global"], apps: [], domains: []),
+            commands: [DoraxPackCommand(id: "base-cmd", title: "Base Cmd", mode: .list, source: "dorax.windows")])
+        try Data(DoraxPackV3AIArchitect.encodeMetadata(baseMeta).utf8).write(to: shippedDir.appendingPathComponent("pack.json"))
+        try Data("# Demo\n".utf8).write(to: shippedDir.appendingPathComponent("AGENT.md"))
+        try Data("# Skill\n".utf8).write(to: shippedDir.appendingPathComponent("skills/s/SKILL.md"))
+
+        let cfgURL = tmp.appendingPathComponent("cfg.json")
+        let registry = DoraxPackV3Registry(roots: [packsDir, v3Root], configFileURL: cfgURL)
+        let editor = DoraxPackV3EditorService()
+        let basePack = try #require(registry.pack(id: "demo"))
+
+        // Propose AI upgrade in offline mode
+        let patch = await DoraxPackV3AIArchitect.proposeUpgrade(
+            pack: basePack, instruction: "Add release notes checker", stagingRoot: stagingRoot, useLiveAI: false)
+        #expect(!patch.hasBlockingErrors)
+        #expect(!patch.files.isEmpty)
+
+        // Apply upgrade via Copy-on-Write
+        let upgraded = try editor.applyPatch(
+            patch, to: basePack, v3Root: v3Root, backupRoot: backupRoot, registry: registry, persistToDisk: false)
+        #expect(upgraded.metadata.commands?.count == 2)
+        #expect(upgraded.metadata.commands?.contains(where: { $0.id == "base-cmd" }) == true)
+        #expect(editor.isUserOverride(packID: "demo", v3Root: v3Root))
+        #expect(editor.listBackups(for: "demo", backupRoot: backupRoot).count == 1)
+
+        // Invalid path traversal must be rejected without corrupting pack
+        let badPatch = DoraxPackV3Patch(
+            packID: "demo", packName: "Demo", summary: "Bad",
+            updatedPackJSON: patch.updatedPackJSON,
+            files: [DoraxPackV3FileChange(relativePath: "../escape.py", content: "bad", isNew: true)],
+            addedPermissions: [], addedHooks: [], diagnostics: [],
+            dryRunOutput: nil, dryRunError: nil, stagedFolderURL: patch.stagedFolderURL)
+        #expect(throws: DoraxPackEditorError.self) {
+            try editor.applyPatch(badPatch, to: upgraded, v3Root: v3Root, backupRoot: backupRoot, registry: registry, persistToDisk: false)
+        }
+
+        // Rollback restores original 1-command state
+        let rolledBack = try editor.rollback(
+            packID: "demo", v3Root: v3Root, backupRoot: backupRoot, registry: registry, persistToDisk: false)
+        #expect(rolledBack.metadata.commands?.count == 1)
+
+        // Reset removes user override completely
+        let reset = try editor.resetToDefault(
+            packID: "demo", v3Root: v3Root, packsDirectory: packsDir, registry: registry, persistToDisk: false)
+        #expect(reset?.metadata.version == "3.0.0")
+        #expect(!editor.isUserOverride(packID: "demo", v3Root: v3Root))
+    }
+
+    @Test("Phase 2: RaycastImporter converts Script Commands and local Raycast package.json extensions (standalone & merge)")
+    func raycastScriptAndExtensionImport() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-raycast-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        // 1. Raycast Script Command
+        let scriptFile = tmp.appendingPathComponent("hello-raycast.sh")
+        let scriptContent = """
+        #!/bin/bash
+        # @raycast.schemaVersion 1
+        # @raycast.title Flush DNS Cache
+        # @raycast.mode inline
+        # @raycast.packageName Network Utils
+        # @raycast.refreshTime 5m
+        # @raycast.argument1 { "type": "text", "placeholder": "Host", "optional": true }
+        echo "OK $1"
+        """
+        try Data(scriptContent.utf8).write(to: scriptFile)
+
+        let parsed = try #require(RaycastImporter.parseScriptMetadata(content: scriptContent))
+        #expect(parsed.title == "Flush DNS Cache")
+        #expect(parsed.mode == "inline")
+        #expect(parsed.arguments.count == 1)
+        #expect(RaycastImporter.parseRefreshSeconds(parsed.refreshTime) == 300)
+
+        let scriptImport = try await RaycastImporter.importScriptCommand(
+            fileURL: scriptFile,
+            stagingRoot: tmp.appendingPathComponent("stage1"))
+        let syn = try #require(scriptImport.synthesis)
+        #expect(!scriptImport.hasBlockingErrors)
+        #expect(syn.pack.metadata.commands?.first?.mode == .form)
+        #expect(syn.pack.metadata.commands?.first?.refreshSeconds == 300)
+
+        // Merge same script into existing pack
+        let targetPack = syn.pack
+        let mergeImport = try await RaycastImporter.importScriptCommand(
+            fileURL: scriptFile,
+            mergeIntoPack: targetPack,
+            stagingRoot: tmp.appendingPathComponent("stage-merge"))
+        #expect(mergeImport.patch != nil)
+        #expect(!mergeImport.hasBlockingErrors)
+
+        // 2. Raycast local extension package.json
+        let extDir = tmp.appendingPathComponent("my-raycast-ext", isDirectory: true)
+        try FileManager.default.createDirectory(at: extDir, withIntermediateDirectories: true)
+        let pkgJSON = """
+        {
+          "name": "sample-ext",
+          "title": "Sample Extension",
+          "description": "Two sample Raycast commands.",
+          "commands": [
+            {"name": "search-items", "title": "Search Items", "description": "Find items", "mode": "view"},
+            {"name": "quick-ping", "title": "Quick Ping", "description": "Ping quietly", "mode": "no-view"}
+          ],
+          "preferences": [
+            {"name": "apiToken", "title": "API Token", "type": "password", "required": true}
+          ]
+        }
+        """
+        try Data(pkgJSON.utf8).write(to: extDir.appendingPathComponent("package.json"))
+        let extImport = try await RaycastImporter.importExtension(
+            from: extDir.path,
+            stagingRoot: tmp.appendingPathComponent("stage-ext"),
+            useLiveAI: false)
+        let extSyn = try #require(extImport.synthesis)
+        #expect(!extImport.hasBlockingErrors)
+        #expect(extSyn.pack.metadata.commands?.count == 2)
+        #expect(extSyn.pack.metadata.preferences?.first?.type == .secret)
+    }
 }

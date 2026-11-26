@@ -19,6 +19,12 @@ None — ready for the next queued task.
 
 ## Done (most recent first)
 
+**feat(plugins): 13 Curated `.doraxpack` v3 Packs, On-Device Apple Intelligence, Phase 1 AI Upgrader & Phase 2 Raycast Importer (2026-11-26):**
+- Added native on-device FoundationModels runner `DoraxAppleIntelligenceRunner` (`dorax.appleIntelligence.*`) supporting Proofread, Rewrite, Friendly, Professional, Concise, Summarize, Key Points, Make List, Make Table, Custom Writing Tools, and Ask (zero external API keys).
+- Shipped 13 curated `.doraxpack` v3 packs tailored to installed Mac apps/CLIs across Global, Web-App, Native App, and Notch scopes (`AppleIntelligence`, `YouTube`, `GitHub`, `Homebrew`, `Spotify`, `Obsidian`, `Tailscale`, `WhatsApp`, `Claude`, `ChatGPT`, `Messages`, `Notes`, `GoogleDrive`) and updated `Packs/Antigravity.doraxpack` to `com.google.antigravity`.
+- Phase 1 (`DoraxPackV3EditorService` + `DoraxPackV3AIArchitect`): Copy-on-Write overrides in `plugins/v3/`, automatic rollback backups in `plugins/v3/.backups/`, `⌘K → Upgrade Pack with AI…`, and in-sheet `[Create | Upgrade AI | Import Raycast]` Studio workflows (`ExtensionStudioBoardCard` + `ExtensionStudioPackFlows`).
+- Phase 2 (`RaycastImporter`): Deterministic `@raycast.*` script command parser and local/Store `package.json` extension converter with standalone install or merge-into-existing-pack support.
+
 **feat(plugins): `.doraxpack` v3 Unified Runtime, File-Search Fix, Legacy Cleanup & Flagship ProcessMonitor Pack (2026-11-26, `2ff0e9ed`):**
 - Spec: `docs/superpowers/specs/2026-11-26-doraxpack-v3-master-architecture-plan.md`, `docs/architecture/PLUGINS.md`.
 - Excluded `graphify-out`, `.cache`, `.git`, `.build`, `DerivedData`, `node_modules`, and 32+-char hex-hash cache files from Global File Search (`FileSearchService`, `FileIndexManager`).
