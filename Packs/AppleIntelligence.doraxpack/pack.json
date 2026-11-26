@@ -1,0 +1,218 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "apple-intelligence",
+  "name": "Apple Intelligence",
+  "version": "3.0.0",
+  "icon": "apple.intelligence",
+  "description": "On-device Apple Intelligence Writing Tools & Ask (Proofread, Rewrite, Tone, Summarize, Key Points, List, Table) — zero API keys needed.",
+  "scope": {
+    "surfaces": ["global", "selection", "notch"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#EC4899",
+    "glow": "pulse"
+  },
+  "permissions": [
+    "context:frontmost",
+    "context:selection",
+    "context:clipboard"
+  ],
+  "keywords": ["apple intelligence", "writing tools", "proofread", "rewrite", "summarize", "tone", "on-device", "friendly", "professional", "concise", "key points", "table", "list", "ai"],
+  "commands": [
+    {
+      "id": "writing-tools",
+      "title": "Apple Intelligence Writing Tools",
+      "subtitle": "Proofread, rewrite, change tone, summarize, or transform text privately on-device",
+      "icon": "apple.intelligence",
+      "mode": "form",
+      "keywords": ["writing tools", "apple intelligence", "proofread", "rewrite", "tone", "form"],
+      "source": "dorax.appleIntelligence.custom",
+      "form_fields": [
+        {
+          "id": "action",
+          "title": "Writing Tool",
+          "type": "select",
+          "default": "Proofread",
+          "options": [
+            "Proofread",
+            "Rewrite",
+            "Make Friendly",
+            "Make Professional",
+            "Make Concise",
+            "Summarize",
+            "Key Points",
+            "Make List",
+            "Make Table",
+            "Custom Prompt"
+          ],
+          "required": true
+        },
+        {
+          "id": "text",
+          "title": "Text (blank = active selection or clipboard)",
+          "type": "text",
+          "placeholder": "Leave blank to use Selection or Clipboard",
+          "required": false
+        },
+        {
+          "id": "instructions",
+          "title": "Custom Instruction (for Custom Prompt)",
+          "type": "text",
+          "placeholder": "e.g. Translate to crisp bullet points for an exec update",
+          "required": false
+        }
+      ],
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "proofread",
+      "title": "Proofread",
+      "subtitle": "Fix grammar & spelling on selection or clipboard on-device",
+      "icon": "textformat.abc.dottedunderline",
+      "mode": "ai",
+      "keywords": ["proofread", "grammar", "spelling", "fix text", "apple intelligence"],
+      "source": "dorax.appleIntelligence.proofread",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "rewrite",
+      "title": "Rewrite",
+      "subtitle": "Rephrase selection or clipboard cleanly on-device",
+      "icon": "arrow.triangle.2.circlepath",
+      "mode": "ai",
+      "keywords": ["rewrite", "rephrase", "polish", "apple intelligence"],
+      "source": "dorax.appleIntelligence.rewrite",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "friendly",
+      "title": "Make Friendly",
+      "subtitle": "Adjust tone to warm and friendly on-device",
+      "icon": "face.smiling",
+      "mode": "ai",
+      "keywords": ["friendly", "warm tone", "rewrite", "apple intelligence"],
+      "source": "dorax.appleIntelligence.friendly",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "professional",
+      "title": "Make Professional",
+      "subtitle": "Adjust tone to clear and professional on-device",
+      "icon": "briefcase.fill",
+      "mode": "ai",
+      "keywords": ["professional", "formal tone", "work", "apple intelligence"],
+      "source": "dorax.appleIntelligence.professional",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "concise",
+      "title": "Make Concise",
+      "subtitle": "Trim wordiness while preserving essential meaning",
+      "icon": "scissors",
+      "mode": "ai",
+      "keywords": ["concise", "shorten", "trim", "brief", "apple intelligence"],
+      "source": "dorax.appleIntelligence.concise",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "summarize",
+      "title": "Summarize",
+      "subtitle": "Condense selection or clipboard on-device",
+      "icon": "text.alignleft",
+      "mode": "ai",
+      "keywords": ["summarize", "summary", "tldr", "condense", "apple intelligence"],
+      "source": "dorax.appleIntelligence.summarize",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "key-points",
+      "title": "Create Key Points",
+      "subtitle": "Extract essential takeaways as bullet points on-device",
+      "icon": "list.bullet.rectangle",
+      "mode": "ai",
+      "keywords": ["key points", "takeaways", "bullets", "apple intelligence"],
+      "source": "dorax.appleIntelligence.keyPoints",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "make-list",
+      "title": "Make List",
+      "subtitle": "Convert text into a clean Markdown list on-device",
+      "icon": "list.dash",
+      "mode": "ai",
+      "keywords": ["make list", "bullet list", "apple intelligence"],
+      "source": "dorax.appleIntelligence.makeList",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "make-table",
+      "title": "Make Table",
+      "subtitle": "Convert structured text into a Markdown table on-device",
+      "icon": "tablecells",
+      "mode": "ai",
+      "keywords": ["make table", "markdown table", "apple intelligence"],
+      "source": "dorax.appleIntelligence.makeTable",
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "ask-apple-intelligence",
+      "title": "Ask Apple Intelligence",
+      "subtitle": "Ask any quick question directly using on-device Foundation Models",
+      "icon": "sparkles",
+      "mode": "form",
+      "keywords": ["ask apple intelligence", "on-device", "foundation models", "local ai"],
+      "source": "dorax.appleIntelligence.ask",
+      "form_fields": [
+        {
+          "id": "prompt",
+          "title": "Prompt",
+          "type": "text",
+          "placeholder": "Ask Apple Intelligence anything on-device…",
+          "required": true
+        },
+        {
+          "id": "text",
+          "title": "Optional Context (or leave blank)",
+          "type": "text",
+          "placeholder": "Optional extra text or blank for selection/clipboard",
+          "required": false
+        }
+      ],
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "appleIntelligence.proofread",
+      "name": "Proofread Text (On-Device)",
+      "intent": "Proofread selected or copied text using Apple Intelligence on-device.",
+      "triggers": ["proofread", "fix grammar", "apple intelligence proofread"],
+      "type": "aiPrompt",
+      "script": "Proofread the user's selected or clipboard text cleanly on-device.",
+      "safety": "read"
+    },
+    {
+      "id": "appleIntelligence.summarize",
+      "name": "Summarize Text (On-Device)",
+      "intent": "Summarize selected or copied text using Apple Intelligence on-device.",
+      "triggers": ["summarize text", "tldr selection", "apple intelligence summarize"],
+      "type": "aiPrompt",
+      "script": "Summarize the user's text concisely on-device.",
+      "safety": "read"
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "github",
+  "name": "GitHub",
+  "version": "3.0.0",
+  "icon": "chevron.left.forwardslash.chevron.right",
+  "description": "Search repositories, inspect your open PRs & issues, run gh CLI, and pin PR status to Dynamic Notch.",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": [],
+    "domains": ["github.com", "gist.github.com"]
+  },
+  "appearance": {
+    "tint": "#6366F1",
+    "glow": "soft"
+  },
+  "permissions": [
+    "context:frontmost",
+    "context:url",
+    "hook:url",
+    "cli:execute"
+  ],
+  "keywords": ["github", "gh", "pr", "pull requests", "issues", "repos", "git", "code", "gist"],
+  "commands": [
+    {
+      "id": "my-prs",
+      "title": "My Pull Requests",
+      "subtitle": "Open GitHub pull requests authored by you via gh CLI",
+      "icon": "arrow.triangle.pull",
+      "mode": "list",
+      "keywords": ["pr", "pull request", "github pr", "review"],
+      "script": "commands/list-prs.py",
+      "filter_options": ["All", "Ready", "Draft"],
+      "refresh_seconds": 60,
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 45,
+      "safety": "read"
+    },
+    {
+      "id": "my-issues",
+      "title": "My Assigned Issues",
+      "subtitle": "Open GitHub issues assigned to you across repositories",
+      "icon": "exclamationmark.circle.fill",
+      "mode": "list",
+      "keywords": ["issues", "github issues", "bugs", "tasks"],
+      "script": "commands/list-issues.py",
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 45,
+      "safety": "read"
+    },
+    {
+      "id": "my-repos",
+      "title": "My Repositories",
+      "subtitle": "Browse your GitHub repositories, stars, and clone URLs",
+      "icon": "folder.badge.gearshape",
+      "mode": "list",
+      "keywords": ["repos", "repositories", "github repos", "clone"],
+      "script": "commands/list-repos.py",
+      "filter_options": ["All", "Public", "Private"],
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    },
+    {
+      "id": "gh-status-cli",
+      "title": "GitHub Status (CLI)",
+      "subtitle": "Run gh status via strict argv CLI execution",
+      "icon": "terminal",
+      "mode": "cli",
+      "keywords": ["gh status", "github status", "cli"],
+      "binary": "/opt/homebrew/bin/gh",
+      "args": ["status"],
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "notch-prs",
+      "title": "Pin GitHub PRs to Notch",
+      "subtitle": "Display your open pull request count in the Dynamic Island Notch",
+      "icon": "waveform.path.ecg",
+      "mode": "notch",
+      "keywords": ["github notch", "prs notch", "live status"],
+      "script": "commands/notch-prs.py",
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-repos",
+      "name": "Search GitHub Repositories",
+      "description": "Searches GitHub repositories using gh search repos.",
+      "script": "tools/search-repos.py",
+      "safety": "read"
+    }
+  ],
+  "hooks": [
+    {
+      "id": "on-github-url",
+      "on": "url-change",
+      "script": "hooks/on-url.py",
+      "filter": {
+        "domains": ["github.com", "gist.github.com"]
+      },
+      "debounce_ms": 500
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "github.prs",
+      "name": "List My Pull Requests",
+      "intent": "List open GitHub pull requests authored by the user.",
+      "triggers": ["my prs", "github pull requests", "open prs"],
+      "type": "aiPrompt",
+      "script": "Run My Pull Requests or check gh pr list via GitHub CLI.",
+      "safety": "read"
+    },
+    {
+      "id": "github.repos",
+      "name": "List My Repositories",
+      "intent": "List GitHub repositories owned by the user.",
+      "triggers": ["github repos", "my repositories"],
+      "type": "aiPrompt",
+      "script": "Use @github.search-repos or My Repositories to list GitHub repos.",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "gh",
+      "binary": "/opt/homebrew/bin/gh",
+      "description": "GitHub CLI for PRs, issues, repositories, and notifications."
+    }
+  ]
+}

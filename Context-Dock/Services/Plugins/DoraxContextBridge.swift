@@ -311,6 +311,17 @@ enum DoraxContextBridge {
         "dorax.files",
         "dorax.calendar",
         "dorax.notifications",
+        "dorax.appleIntelligence.proofread",
+        "dorax.appleIntelligence.rewrite",
+        "dorax.appleIntelligence.friendly",
+        "dorax.appleIntelligence.professional",
+        "dorax.appleIntelligence.concise",
+        "dorax.appleIntelligence.summarize",
+        "dorax.appleIntelligence.keyPoints",
+        "dorax.appleIntelligence.makeList",
+        "dorax.appleIntelligence.makeTable",
+        "dorax.appleIntelligence.custom",
+        "dorax.appleIntelligence.ask",
     ]
 
     static func resolveNativeSource(

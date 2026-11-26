@@ -1,0 +1,111 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "obsidian",
+  "name": "Obsidian",
+  "version": "3.0.0",
+  "icon": "book.closed.fill",
+  "description": "Search Obsidian vault Markdown notes with split preview, open via obsidian://, Quick Capture notes, and Daily Note.",
+  "bundle_id": "md.obsidian",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["md.obsidian"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#A855F7",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost"],
+  "preferences": [
+    {
+      "id": "vault_path",
+      "title": "Vault Path Override (Optional)",
+      "type": "string",
+      "required": false,
+      "placeholder": "Auto-detected from Obsidian config"
+    }
+  ],
+  "keywords": ["obsidian", "vault", "notes", "markdown", "daily note", "capture", "wiki", "md"],
+  "commands": [
+    {
+      "id": "search-notes",
+      "title": "Search Obsidian Notes",
+      "subtitle": "Search Markdown notes across your Obsidian vault with live preview",
+      "icon": "doc.text.magnifyingglass",
+      "mode": "list",
+      "keywords": ["obsidian search", "notes", "markdown", "vault"],
+      "script": "commands/search-notes.py",
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "quick-capture",
+      "title": "Quick Capture to Obsidian",
+      "subtitle": "Create or append a Markdown note directly inside your Obsidian vault",
+      "icon": "square.and.pencil",
+      "mode": "form",
+      "keywords": ["obsidian capture", "new note", "quick note", "inbox"],
+      "script": "commands/quick-capture.py",
+      "form_fields": [
+        {
+          "id": "title",
+          "title": "Note Title",
+          "type": "text",
+          "placeholder": "e.g. Project Ideas",
+          "required": true
+        },
+        {
+          "id": "folder",
+          "title": "Subfolder (Optional)",
+          "type": "text",
+          "placeholder": "e.g. Inbox",
+          "required": false
+        },
+        {
+          "id": "content",
+          "title": "Markdown Content",
+          "type": "text",
+          "placeholder": "Write note body…",
+          "required": false
+        }
+      ],
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "daily-note",
+      "title": "Today's Daily Note",
+      "subtitle": "Preview or open today's YYYY-MM-DD Markdown note in Obsidian",
+      "icon": "calendar.badge.plus",
+      "mode": "instant",
+      "keywords": ["daily note", "today", "obsidian journal"],
+      "script": "commands/daily-note.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-vault",
+      "name": "Search Obsidian Vault",
+      "description": "Searches note titles and Markdown snippets in the user's Obsidian vault.",
+      "script": "tools/search-vault.py",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "obsidian.search",
+      "name": "Search Obsidian Vault",
+      "intent": "Find Markdown notes in the Obsidian vault matching a topic.",
+      "triggers": ["obsidian search", "find in obsidian", "vault note"],
+      "type": "aiPrompt",
+      "script": "Use @obsidian.search-vault or Search Obsidian Notes to locate Markdown notes.",
+      "safety": "read"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "messages",
+  "name": "Messages",
+  "version": "3.0.0",
+  "icon": "message.fill",
+  "description": "Inspect recent macOS Messages chats, compose safe sms:/imessage:// drafts (never auto-sends), and inspect app menus.",
+  "bundle_id": "com.apple.MobileSMS",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["com.apple.MobileSMS"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#34C759",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:clipboard"],
+  "keywords": ["messages", "imessage", "sms", "text", "chat", "draft"],
+  "commands": [
+    {
+      "id": "recent-chats",
+      "title": "Messages Chats",
+      "subtitle": "Browse recent iMessage/SMS threads via Messages AppleScript",
+      "icon": "bubble.left.and.bubble.right.fill",
+      "mode": "list",
+      "keywords": ["messages chats", "recent messages", "imessage", "threads"],
+      "script": "commands/recent-chats.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "compose-message",
+      "title": "Compose Message Draft",
+      "subtitle": "Open Messages with recipient and draft body for manual review (never auto-sends)",
+      "icon": "square.and.pencil",
+      "mode": "form",
+      "keywords": ["compose message", "text someone", "send imessage", "draft sms"],
+      "script": "commands/compose-message.py",
+      "form_fields": [
+        {
+          "id": "recipient",
+          "title": "Recipient (Phone or Apple ID Email)",
+          "type": "text",
+          "placeholder": "+15551234567 or friend@icloud.com",
+          "required": true
+        },
+        {
+          "id": "body",
+          "title": "Draft Message (reviewed inside Messages)",
+          "type": "text",
+          "placeholder": "Hey, wanted to check in…",
+          "required": false
+        }
+      ],
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "messages-menus",
+      "title": "Messages Menus",
+      "subtitle": "Inspect live menu items when Messages is frontmost",
+      "icon": "command",
+      "mode": "list",
+      "keywords": ["messages menu", "shortcuts"],
+      "source": "dorax.frontmost.menus",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "messages.open",
+      "name": "Open Messages",
+      "intent": "Open Apple Messages.",
+      "triggers": ["open messages", "launch messages"],
+      "type": "url",
+      "url_scheme": "imessage://",
+      "safety": "read"
+    }
+  ]
+}

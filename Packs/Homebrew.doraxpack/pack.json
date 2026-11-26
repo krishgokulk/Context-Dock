@@ -1,0 +1,100 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "homebrew",
+  "name": "Homebrew",
+  "version": "3.0.0",
+  "icon": "shippingbox.fill",
+  "description": "Browse installed Homebrew formulae & casks, inspect outdated packages, search brew, and run brew doctor.",
+  "scope": {
+    "surfaces": ["global"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#F59E0B",
+    "glow": "soft"
+  },
+  "permissions": ["cli:execute"],
+  "keywords": ["homebrew", "brew", "packages", "formula", "cask", "upgrade", "outdated", "doctor"],
+  "commands": [
+    {
+      "id": "installed-packages",
+      "title": "Installed Brew Packages",
+      "subtitle": "All installed Homebrew formulae & casks with versions and quick commands",
+      "icon": "shippingbox.fill",
+      "mode": "list",
+      "keywords": ["brew installed", "formula", "cask", "packages"],
+      "script": "commands/list-installed.py",
+      "filter_options": ["All", "Formula", "Cask"],
+      "timeout_seconds": 10,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    },
+    {
+      "id": "outdated-packages",
+      "title": "Outdated Brew Packages",
+      "subtitle": "Inspect outdated formulae & casks and upgrade safely",
+      "icon": "arrow.up.circle.fill",
+      "mode": "list",
+      "keywords": ["brew outdated", "brew upgrade", "updates"],
+      "script": "commands/list-outdated.py",
+      "filter_options": ["All", "Formula", "Cask"],
+      "timeout_seconds": 12,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    },
+    {
+      "id": "search-brew",
+      "title": "Search Homebrew",
+      "subtitle": "Search Homebrew formulae and casks by name",
+      "icon": "magnifyingglass",
+      "mode": "form",
+      "keywords": ["brew search", "install", "formula"],
+      "script": "commands/search-brew.py",
+      "form_fields": [
+        {
+          "id": "query",
+          "title": "Package Name",
+          "type": "text",
+          "placeholder": "e.g. ripgrep, ffmpeg, jq",
+          "required": true
+        }
+      ],
+      "timeout_seconds": 12,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "brew-doctor",
+      "title": "Brew Doctor (CLI)",
+      "subtitle": "Run /opt/homebrew/bin/brew doctor via strict argv CLI mode",
+      "icon": "stethoscope",
+      "mode": "cli",
+      "keywords": ["brew doctor", "diagnostics", "homebrew"],
+      "binary": "/opt/homebrew/bin/brew",
+      "args": ["doctor"],
+      "timeout_seconds": 15,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "homebrew.list",
+      "name": "List Installed Brew Packages",
+      "intent": "List installed Homebrew formulae and casks.",
+      "triggers": ["brew list", "installed packages", "homebrew"],
+      "type": "shell",
+      "script": "/opt/homebrew/bin/brew list --versions | head -40",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "brew",
+      "binary": "/opt/homebrew/bin/brew",
+      "description": "The Missing Package Manager for macOS."
+    }
+  ]
+}

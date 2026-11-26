@@ -1,0 +1,80 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "tailscale",
+  "name": "Tailscale",
+  "version": "3.0.0",
+  "icon": "network.badge.shield.half.filled",
+  "description": "Inspect Tailscale tailnet devices, copy IPs & MagicDNS names, copy SSH commands, and pin tailnet status to Notch.",
+  "bundle_id": "io.tailscale.ipn.macsys",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["io.tailscale.ipn.macsys"],
+    "domains": ["login.tailscale.com"]
+  },
+  "appearance": {
+    "tint": "#38BDF8",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "cli:execute", "notch:activity"],
+  "keywords": ["tailscale", "vpn", "tailnet", "mesh", "ip", "ssh", "magicdns", "devices", "peers"],
+  "commands": [
+    {
+      "id": "devices",
+      "title": "Tailscale Devices",
+      "subtitle": "Live tailnet nodes, Tailscale IPs, OS tags, and one-click SSH / ping",
+      "icon": "network",
+      "mode": "list",
+      "keywords": ["tailscale", "devices", "peers", "ip", "ssh"],
+      "script": "commands/list-devices.py",
+      "filter_options": ["All", "Online", "Offline"],
+      "refresh_seconds": 15,
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 10,
+      "safety": "read"
+    },
+    {
+      "id": "status-cli",
+      "title": "Tailscale Status (CLI)",
+      "subtitle": "Run tailscale status via strict argv CLI execution",
+      "icon": "terminal",
+      "mode": "cli",
+      "keywords": ["tailscale status", "vpn status", "cli"],
+      "binary": "/usr/local/bin/tailscale",
+      "args": ["status"],
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    },
+    {
+      "id": "notch-tailscale",
+      "title": "Pin Tailscale to Notch",
+      "subtitle": "Show connected Tailscale device count in Dynamic Island Notch",
+      "icon": "waveform.path.ecg",
+      "mode": "notch",
+      "keywords": ["tailscale notch", "vpn wing"],
+      "script": "commands/notch-status.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "tailscale.status",
+      "name": "Tailscale Tailnet Status",
+      "intent": "Check connected Tailscale VPN status and peer devices.",
+      "triggers": ["tailscale status", "vpn devices", "tailnet"],
+      "type": "shell",
+      "script": "/usr/local/bin/tailscale status",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "tailscale",
+      "binary": "/usr/local/bin/tailscale",
+      "description": "Tailscale mesh VPN CLI."
+    }
+  ]
+}

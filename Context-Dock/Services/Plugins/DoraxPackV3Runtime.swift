@@ -444,7 +444,16 @@ final class DoraxPackV3Runtime: ObservableObject {
 
         // 1. Native `dorax.*` zero-script data source
         if let source = command.source, !source.isEmpty {
-            let output = DoraxContextBridge.resolveNativeSource(source, query: query)
+            let output: DoraxCommandOutput
+            if source.hasPrefix("dorax.appleIntelligence.") {
+                output = await DoraxAppleIntelligenceRunner.run(
+                    source: source,
+                    query: query,
+                    formValues: formValues,
+                    commandTitle: command.title)
+            } else {
+                output = DoraxContextBridge.resolveNativeSource(source, query: query)
+            }
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             cache[key] = DoraxCommandCacheEntry(output: output, fetchedAt: Date(), isRefreshing: false, lastError: nil)
             appendLog(packID: pack.id, commandID: command.id, level: .info, durationMs: ms,

@@ -1,0 +1,101 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "spotify",
+  "name": "Spotify",
+  "version": "3.0.0",
+  "icon": "music.note.list",
+  "description": "Control Spotify playback, inspect Now Playing track details, search Spotify, and pin a green track wing to Dynamic Notch.",
+  "bundle_id": "com.spotify.client",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["com.spotify.client"],
+    "domains": ["open.spotify.com"]
+  },
+  "appearance": {
+    "tint": "#1DB954",
+    "glow": "breathe"
+  },
+  "permissions": ["context:frontmost", "notch:activity"],
+  "keywords": ["spotify", "music", "play", "pause", "next", "track", "album", "now playing", "audio"],
+  "commands": [
+    {
+      "id": "now-playing",
+      "title": "Spotify Now Playing",
+      "subtitle": "Current Spotify track, artist, album, and quick playback controls",
+      "icon": "music.note",
+      "mode": "list",
+      "keywords": ["spotify", "now playing", "current track", "song"],
+      "script": "commands/now-playing.py",
+      "refresh_seconds": 5,
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 4,
+      "safety": "read"
+    },
+    {
+      "id": "controls",
+      "title": "Spotify Controls",
+      "subtitle": "Play/Pause, Next, Previous, Volume Up/Down visual grid",
+      "icon": "playpause.fill",
+      "mode": "grid",
+      "keywords": ["spotify controls", "play", "pause", "skip", "next", "previous", "volume"],
+      "script": "commands/controls-grid.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    },
+    {
+      "id": "search-spotify",
+      "title": "Search Spotify",
+      "subtitle": "Jump directly to a song, artist, or playlist search in Spotify",
+      "icon": "magnifyingglass",
+      "mode": "form",
+      "keywords": ["search spotify", "find song", "artist", "playlist"],
+      "script": "commands/search-spotify.py",
+      "form_fields": [
+        {
+          "id": "query",
+          "title": "Track, Artist, or Playlist",
+          "type": "text",
+          "placeholder": "e.g. Daft Punk Discovery",
+          "required": true
+        }
+      ],
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "notch-spotify",
+      "title": "Pin Spotify to Notch",
+      "subtitle": "Show live Spotify track and artist in the Dynamic Island Notch",
+      "icon": "waveform.path.ecg",
+      "mode": "notch",
+      "keywords": ["spotify notch", "track wing", "live status"],
+      "script": "commands/notch-spotify.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 4,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "spotify.playpause",
+      "name": "Play / Pause Spotify",
+      "intent": "Toggle playback in Spotify Desktop.",
+      "triggers": ["play pause spotify", "pause spotify", "resume spotify"],
+      "type": "applescript",
+      "script": "tell application \"Spotify\" to playpause",
+      "safety": "read"
+    },
+    {
+      "id": "spotify.next",
+      "name": "Next Spotify Track",
+      "intent": "Skip to the next track in Spotify.",
+      "triggers": ["next track", "skip song spotify"],
+      "type": "applescript",
+      "script": "tell application \"Spotify\" to next track",
+      "safety": "read"
+    }
+  ]
+}

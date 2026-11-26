@@ -1,0 +1,68 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "google-drive",
+  "name": "Google Drive & Docs",
+  "version": "3.0.0",
+  "icon": "externaldrive.fill.badge.icloud",
+  "description": "Search synced Google Drive files locally, create new Docs/Sheets/Slides, and inspect Drive browser tabs.",
+  "bundle_id": "com.google.drivefs",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["com.google.drivefs"],
+    "domains": ["drive.google.com", "docs.google.com", "sheets.google.com", "slides.google.com"]
+  },
+  "appearance": {
+    "tint": "#4285F4",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:url", "browser:tabs"],
+  "keywords": ["google drive", "drive", "docs", "sheets", "slides", "cloud storage", "files"],
+  "commands": [
+    {
+      "id": "search-drive",
+      "title": "Search Google Drive Files",
+      "subtitle": "Search synced local Google Drive folders across connected Google accounts",
+      "icon": "externaldrive.fill.badge.icloud",
+      "mode": "list",
+      "keywords": ["google drive", "drive files", "search drive", "docs", "sheets"],
+      "script": "commands/search-drive.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "quick-create",
+      "title": "Google Drive & Docs Quick Actions",
+      "subtitle": "Create a New Google Doc, Sheet, Slide, or open Google Drive Web & Local Folder",
+      "icon": "square.grid.2x2",
+      "mode": "grid",
+      "keywords": ["new google doc", "new sheet", "new slide", "google drive web"],
+      "script": "commands/quick-create.py",
+      "timeout_seconds": 4,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    },
+    {
+      "id": "drive-tabs",
+      "title": "Open Google Drive / Docs Tabs",
+      "subtitle": "Inspect active drive.google.com and docs.google.com tabs",
+      "icon": "safari.fill",
+      "mode": "list",
+      "keywords": ["drive tab", "docs tab", "sheets tab"],
+      "source": "dorax.browser.tabs",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "googleDrive.open",
+      "name": "Open Google Drive",
+      "intent": "Open Google Drive in the browser.",
+      "triggers": ["open google drive", "drive web"],
+      "type": "url",
+      "url_scheme": "https://drive.google.com/",
+      "safety": "read"
+    }
+  ]
+}

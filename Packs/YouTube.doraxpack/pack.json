@@ -1,0 +1,175 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "youtube",
+  "name": "YouTube & YT Music",
+  "version": "3.0.0",
+  "icon": "play.rectangle.fill",
+  "description": "Search YouTube with yt-dlp, play in IINA, download MP4/MP3 or send to Downie 4, inspect tabs, and control YT Music.",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": [
+      "com.apple.Safari.WebApp.C222359F-FF6E-4A9F-AEBE-A3DAF23433F6",
+      "com.apple.Safari.WebApp.5BC642E1-8DDC-48B3-81C8-3F603742B4FF"
+    ],
+    "domains": ["youtube.com", "youtu.be", "music.youtube.com"]
+  },
+  "appearance": {
+    "tint": "#FF0033",
+    "glow": "soft"
+  },
+  "permissions": [
+    "context:frontmost",
+    "context:url",
+    "context:clipboard",
+    "browser:tabs",
+    "hook:url",
+    "cli:execute"
+  ],
+  "preferences": [
+    {
+      "id": "download_dir",
+      "title": "Download Folder",
+      "type": "string",
+      "required": false,
+      "default": "~/Downloads",
+      "placeholder": "~/Downloads"
+    },
+    {
+      "id": "default_player",
+      "title": "Default Video Player",
+      "type": "select",
+      "required": false,
+      "default": "IINA",
+      "options": ["IINA", "Browser", "Downie 4"]
+    }
+  ],
+  "keywords": ["youtube", "yt", "yt music", "video", "yt-dlp", "iina", "downie", "download", "mp3", "mp4"],
+  "commands": [
+    {
+      "id": "search-videos",
+      "title": "Search YouTube Videos",
+      "subtitle": "Search YouTube via yt-dlp, play in IINA, download MP4/MP3, or send to Downie 4",
+      "icon": "magnifyingglass.circle.fill",
+      "mode": "form",
+      "keywords": ["youtube search", "yt search", "videos", "iina", "yt-dlp"],
+      "script": "commands/search-videos.py",
+      "form_fields": [
+        {
+          "id": "query",
+          "title": "Search Query",
+          "type": "text",
+          "placeholder": "e.g. SwiftUI animations or lofi beats",
+          "required": true
+        },
+        {
+          "id": "limit",
+          "title": "Max Results",
+          "type": "select",
+          "default": "8",
+          "options": ["8", "15", "20"],
+          "required": false
+        }
+      ],
+      "timeout_seconds": 15,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "quick-media",
+      "title": "YouTube Link Actions",
+      "subtitle": "Play in IINA, download MP4/MP3 via yt-dlp, or queue in Downie 4 from URL, active tab, or clipboard",
+      "icon": "arrow.down.circle.fill",
+      "mode": "form",
+      "keywords": ["youtube download", "play in iina", "downie", "yt-dlp", "mp4", "mp3"],
+      "script": "commands/quick-media.py",
+      "form_fields": [
+        {
+          "id": "url",
+          "title": "YouTube URL (blank = active tab or clipboard)",
+          "type": "text",
+          "placeholder": "https://www.youtube.com/watch?v=...",
+          "required": false
+        },
+        {
+          "id": "action",
+          "title": "Action",
+          "type": "select",
+          "default": "Play in IINA",
+          "options": ["Play in IINA", "Download MP4 (yt-dlp)", "Download MP3 (yt-dlp)", "Send to Downie 4", "Open in Browser"],
+          "required": true
+        }
+      ],
+      "timeout_seconds": 25,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "yt-music-now",
+      "title": "YouTube Music Now Playing",
+      "subtitle": "Inspect live playback and track info from YouTube Music or active media",
+      "icon": "music.note",
+      "mode": "list",
+      "keywords": ["yt music", "youtube music", "now playing", "track"],
+      "source": "dorax.nowPlaying",
+      "safety": "read"
+    },
+    {
+      "id": "youtube-tabs",
+      "title": "Open YouTube Tabs",
+      "subtitle": "Inspect open YouTube tabs via WebContextEngine",
+      "icon": "safari.fill",
+      "mode": "list",
+      "keywords": ["youtube tab", "safari youtube", "active video"],
+      "source": "dorax.browser.tabs",
+      "safety": "read"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-youtube",
+      "name": "Search YouTube",
+      "description": "Searches YouTube via yt-dlp and returns titles, channels, durations, and watch URLs.",
+      "script": "tools/search-youtube.py",
+      "safety": "read"
+    }
+  ],
+  "hooks": [
+    {
+      "id": "on-youtube-url",
+      "on": "url-change",
+      "script": "hooks/on-url.py",
+      "filter": {
+        "domains": ["youtube.com", "youtu.be", "music.youtube.com"]
+      },
+      "debounce_ms": 500
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "youtube.search",
+      "name": "Search YouTube",
+      "intent": "Search YouTube videos or music and open or play in IINA.",
+      "triggers": ["search youtube", "find video", "youtube"],
+      "type": "aiPrompt",
+      "script": "Use @youtube.search-youtube or Search YouTube Videos to find results cleanly.",
+      "safety": "read"
+    },
+    {
+      "id": "youtube.playInIINA",
+      "name": "Play YouTube Video in IINA",
+      "intent": "Open a YouTube video URL directly in IINA.",
+      "triggers": ["play in iina", "watch in iina", "iina youtube"],
+      "type": "aiPrompt",
+      "script": "Open the active YouTube URL in IINA using /usr/bin/open -a IINA <url>.",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "yt-dlp",
+      "binary": "/opt/homebrew/bin/yt-dlp",
+      "description": "Search and download YouTube videos and audio."
+    }
+  ]
+}

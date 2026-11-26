@@ -1,0 +1,92 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "notes",
+  "name": "Apple Notes",
+  "version": "3.0.0",
+  "icon": "note.text",
+  "description": "Search and read Apple Notes, create quick notes in any folder, and inspect Notes menus.",
+  "bundle_id": "com.apple.Notes",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["com.apple.Notes"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#FACC15",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost"],
+  "keywords": ["notes", "apple notes", "note", "memo", "quick note", "folder"],
+  "commands": [
+    {
+      "id": "list-notes",
+      "title": "Search Apple Notes",
+      "subtitle": "Read recent Apple Notes with live preview and quick open",
+      "icon": "note.text",
+      "mode": "list",
+      "keywords": ["apple notes", "search notes", "recent notes"],
+      "script": "commands/list-notes.py",
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "quick-note",
+      "title": "Create Apple Note",
+      "subtitle": "Create a new note in Apple Notes inside the target folder",
+      "icon": "square.and.pencil",
+      "mode": "form",
+      "keywords": ["new apple note", "create note", "quick note"],
+      "script": "commands/create-note.py",
+      "form_fields": [
+        {
+          "id": "title",
+          "title": "Note Title",
+          "type": "text",
+          "placeholder": "e.g. Meeting Summary",
+          "required": true
+        },
+        {
+          "id": "folder",
+          "title": "Folder Name",
+          "type": "text",
+          "default": "Notes",
+          "placeholder": "Notes",
+          "required": false
+        },
+        {
+          "id": "body",
+          "title": "Note Body",
+          "type": "text",
+          "placeholder": "Write note text…",
+          "required": false
+        }
+      ],
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "notes-menus",
+      "title": "Apple Notes Menus",
+      "subtitle": "Inspect live menu items when Apple Notes is frontmost",
+      "icon": "command",
+      "mode": "list",
+      "keywords": ["notes menu", "shortcuts"],
+      "source": "dorax.frontmost.menus",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "notes.open",
+      "name": "Open Apple Notes",
+      "intent": "Open the Apple Notes app.",
+      "triggers": ["open notes", "launch notes"],
+      "type": "url",
+      "url_scheme": "notes://",
+      "safety": "read"
+    }
+  ]
+}

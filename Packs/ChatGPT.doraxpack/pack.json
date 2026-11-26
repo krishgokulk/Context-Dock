@@ -1,0 +1,95 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "chatgpt",
+  "name": "ChatGPT",
+  "version": "3.0.0",
+  "icon": "bubble.left.and.text.bubble.right.fill",
+  "description": "Ask ChatGPT on chatgpt.com or ChatGPT Desktop, launch Temporary Chats, and inspect tabs & menus.",
+  "bundle_id": "com.openai.codex",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["com.openai.codex", "com.openai.chat"],
+    "domains": ["chatgpt.com", "chat.openai.com"]
+  },
+  "appearance": {
+    "tint": "#10A37F",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:url", "context:clipboard", "browser:tabs"],
+  "keywords": ["chatgpt", "openai", "codex", "ai", "gpt", "temporary chat"],
+  "commands": [
+    {
+      "id": "ask-chatgpt",
+      "title": "Ask ChatGPT",
+      "subtitle": "Send a prompt directly to chatgpt.com or stage in ChatGPT Desktop",
+      "icon": "bubble.left.and.text.bubble.right.fill",
+      "mode": "form",
+      "keywords": ["ask chatgpt", "chatgpt prompt", "openai"],
+      "script": "commands/ask-chatgpt.py",
+      "form_fields": [
+        {
+          "id": "prompt",
+          "title": "Prompt (blank = uses Clipboard if available)",
+          "type": "text",
+          "placeholder": "Ask ChatGPT anything…",
+          "required": false
+        },
+        {
+          "id": "target",
+          "title": "Destination",
+          "type": "select",
+          "default": "ChatGPT Web (chatgpt.com)",
+          "options": ["ChatGPT Web (chatgpt.com)", "Temporary Chat (Web)", "ChatGPT Desktop"],
+          "required": true
+        }
+      ],
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "quick-actions",
+      "title": "ChatGPT Quick Actions",
+      "subtitle": "Open ChatGPT Desktop, New Web Chat, Temporary Chat, or Codex",
+      "icon": "square.grid.2x2",
+      "mode": "grid",
+      "keywords": ["chatgpt desktop", "chatgpt web", "temporary chat", "codex"],
+      "script": "commands/quick-actions.py",
+      "timeout_seconds": 4,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    },
+    {
+      "id": "chatgpt-tabs",
+      "title": "Open ChatGPT Tabs",
+      "subtitle": "Inspect open chatgpt.com browser tabs",
+      "icon": "safari.fill",
+      "mode": "list",
+      "keywords": ["chatgpt tab", "browser"],
+      "source": "dorax.browser.tabs",
+      "safety": "read"
+    },
+    {
+      "id": "chatgpt-menus",
+      "title": "ChatGPT App Menus",
+      "subtitle": "Inspect live menus when ChatGPT Desktop is frontmost",
+      "icon": "command",
+      "mode": "list",
+      "keywords": ["chatgpt menu", "shortcuts"],
+      "source": "dorax.frontmost.menus",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "chatgpt.open",
+      "name": "Open ChatGPT",
+      "intent": "Open ChatGPT Desktop or chatgpt.com.",
+      "triggers": ["open chatgpt", "launch chatgpt"],
+      "type": "url",
+      "url_scheme": "https://chatgpt.com/",
+      "safety": "read"
+    }
+  ]
+}

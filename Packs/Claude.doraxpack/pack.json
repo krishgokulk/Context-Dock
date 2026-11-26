@@ -1,0 +1,95 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "claude",
+  "name": "Claude",
+  "version": "3.0.0",
+  "icon": "sparkles",
+  "description": "Ask Claude on claude.ai or Claude Desktop, launch quick actions, and inspect Claude tabs & menus.",
+  "bundle_id": "com.anthropic.claudefordesktop",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["com.anthropic.claudefordesktop"],
+    "domains": ["claude.ai", "console.anthropic.com"]
+  },
+  "appearance": {
+    "tint": "#D97757",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:url", "context:clipboard", "browser:tabs"],
+  "keywords": ["claude", "anthropic", "ai", "ask claude", "claude.ai"],
+  "commands": [
+    {
+      "id": "ask-claude",
+      "title": "Ask Claude",
+      "subtitle": "Send a prompt directly to claude.ai or stage in Claude Desktop",
+      "icon": "sparkles",
+      "mode": "form",
+      "keywords": ["ask claude", "claude prompt", "new chat claude"],
+      "script": "commands/ask-claude.py",
+      "form_fields": [
+        {
+          "id": "prompt",
+          "title": "Prompt (blank = uses Clipboard if available)",
+          "type": "text",
+          "placeholder": "Ask Claude anything…",
+          "required": false
+        },
+        {
+          "id": "target",
+          "title": "Destination",
+          "type": "select",
+          "default": "Claude Web (claude.ai)",
+          "options": ["Claude Web (claude.ai)", "Claude Desktop"],
+          "required": true
+        }
+      ],
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "quick-actions",
+      "title": "Claude Quick Actions",
+      "subtitle": "Open Claude Desktop, start a new Web chat, or open Anthropic Console",
+      "icon": "square.grid.2x2",
+      "mode": "grid",
+      "keywords": ["claude desktop", "claude web", "anthropic console"],
+      "script": "commands/quick-actions.py",
+      "timeout_seconds": 4,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    },
+    {
+      "id": "claude-tabs",
+      "title": "Open Claude Tabs",
+      "subtitle": "Inspect open claude.ai browser tabs",
+      "icon": "safari.fill",
+      "mode": "list",
+      "keywords": ["claude tab", "claude browser"],
+      "source": "dorax.browser.tabs",
+      "safety": "read"
+    },
+    {
+      "id": "claude-menus",
+      "title": "Claude Desktop Menus",
+      "subtitle": "Inspect live menus when Claude Desktop is frontmost",
+      "icon": "command",
+      "mode": "list",
+      "keywords": ["claude menu", "shortcuts"],
+      "source": "dorax.frontmost.menus",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "claude.open",
+      "name": "Open Claude",
+      "intent": "Open Claude Desktop or claude.ai.",
+      "triggers": ["open claude", "launch claude"],
+      "type": "url",
+      "url_scheme": "https://claude.ai/new",
+      "safety": "read"
+    }
+  ]
+}

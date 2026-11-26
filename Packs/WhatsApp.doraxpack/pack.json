@@ -1,0 +1,84 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "whatsapp",
+  "name": "WhatsApp",
+  "version": "3.0.0",
+  "icon": "message.circle.fill",
+  "description": "Open WhatsApp chats with draft messages for safe user confirmation, quick Desktop/Web actions, and app menus.",
+  "bundle_id": "net.whatsapp.WhatsApp",
+  "scope": {
+    "surfaces": ["global", "appPet"],
+    "apps": ["net.whatsapp.WhatsApp"],
+    "domains": ["web.whatsapp.com"]
+  },
+  "appearance": {
+    "tint": "#25D366",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:clipboard"],
+  "keywords": ["whatsapp", "chat", "message", "call", "wa"],
+  "commands": [
+    {
+      "id": "open-chat",
+      "title": "Open WhatsApp Chat / Draft",
+      "subtitle": "Open a phone number in WhatsApp with optional pre-filled draft (never auto-sends)",
+      "icon": "message.fill",
+      "mode": "form",
+      "keywords": ["whatsapp chat", "whatsapp message", "wa.me", "draft"],
+      "script": "commands/open-chat.py",
+      "form_fields": [
+        {
+          "id": "phone",
+          "title": "Phone Number (with country code)",
+          "type": "text",
+          "placeholder": "+15551234567",
+          "required": true
+        },
+        {
+          "id": "message",
+          "title": "Draft Message (Optional)",
+          "type": "text",
+          "placeholder": "Review and press Send inside WhatsApp",
+          "required": false
+        }
+      ],
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "quick-actions",
+      "title": "WhatsApp Quick Actions",
+      "subtitle": "Open WhatsApp Desktop, WhatsApp Web, or generate a wa.me link",
+      "icon": "square.grid.2x2",
+      "mode": "grid",
+      "keywords": ["whatsapp web", "whatsapp desktop", "wa"],
+      "script": "commands/quick-actions.py",
+      "timeout_seconds": 4,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    },
+    {
+      "id": "whatsapp-menus",
+      "title": "WhatsApp Menus",
+      "subtitle": "Inspect cached menu items when WhatsApp Desktop is active",
+      "icon": "command",
+      "mode": "list",
+      "keywords": ["whatsapp menu", "shortcuts"],
+      "source": "dorax.frontmost.menus",
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "whatsapp.open",
+      "name": "Open WhatsApp",
+      "intent": "Bring WhatsApp Desktop forward.",
+      "triggers": ["open whatsapp", "launch whatsapp"],
+      "type": "url",
+      "url_scheme": "whatsapp://",
+      "safety": "read"
+    }
+  ]
+}
