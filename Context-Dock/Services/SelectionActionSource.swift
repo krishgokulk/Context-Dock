@@ -697,15 +697,14 @@ final class SelectionActionSource: SelectionActionProviding {
         let nq = DockTextMatch.normalized(q)
         guard nq.count >= 2 else { return [] }
         guard !snapshot.isEmpty else { return [] }
-        let genericVerbs = ["share", "send", "export"]
-        let destinationVerbs = ["airdrop", "mail", "message", "messages", "notes", "reminders"]
-        let isGeneric = genericVerbs.contains { $0.hasPrefix(nq) }
-        let isDestination = destinationVerbs.contains { $0.hasPrefix(nq) }
-        guard isGeneric || isDestination else { return [] }
-
         let listingItems = SelectionActions.items(for: snapshot)
         guard !listingItems.isEmpty else { return [] }
+
+        let genericVerbs = ["share", "send", "export"]
+        let isGeneric = genericVerbs.contains { $0.hasPrefix(nq) || nq.hasPrefix($0) }
         let filter = isGeneric ? "" : nq
+        // Match against ALL installed macOS NSSharingService destinations (AirDrop, Messages,
+        // Journal, Mail, Notes, Reminders, Freeform, third-party apps) instead of a fixed list.
         return shareDestinationPills(listingItems: listingItems, filter: filter)
     }
 

@@ -11,13 +11,16 @@
 //   Search Inside File, and User Actions & Extensions.
 
 import AppKit
+import ImageIO
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
+import Vision
 
 enum FileSubmodeKind: String, CaseIterable, Equatable, Identifiable {
     case preview
     case selectionScope
+    case extractedText
     case searchInFile
     case userActions
 
@@ -27,6 +30,7 @@ enum FileSubmodeKind: String, CaseIterable, Equatable, Identifiable {
         switch self {
         case .preview: return "Preview File"
         case .selectionScope: return "Selection Scope"
+        case .extractedText: return "Extract Text (OCR)"
         case .searchInFile: return "Search Inside File"
         case .userActions: return "User Actions & Extensions"
         }
@@ -36,6 +40,7 @@ enum FileSubmodeKind: String, CaseIterable, Equatable, Identifiable {
         switch self {
         case .preview: return "Preview"
         case .selectionScope: return "Selection Scope"
+        case .extractedText: return "Extracted Text"
         case .searchInFile: return "Search in File"
         case .userActions: return "User Actions"
         }
@@ -45,6 +50,7 @@ enum FileSubmodeKind: String, CaseIterable, Equatable, Identifiable {
         switch self {
         case .preview: return "doc.text.magnifyingglass"
         case .selectionScope: return "sparkles"
+        case .extractedText: return "doc.text.viewfinder"
         case .searchInFile: return "text.magnifyingglass"
         case .userActions: return "bolt.horizontal.circle"
         }
@@ -58,6 +64,10 @@ struct FileSheetSubmodeState: Equatable {
     var wasSidePanelExpanded: Bool = false
     var focusedRowIndex: Int = 0
     var previewScrollStep: Int = 0
+    var outputTitle: String = "Extracted Text"
+    var customOutputText: String? = nil
+    var isRunningExtension: Bool = false
+    var returnToSelectionOnBack: Bool = false
 
     var fileName: String { url.lastPathComponent }
 
@@ -77,11 +87,107 @@ struct FileSheetSubmodeState: Equatable {
                 : "Search inside \(fileName) or ask AI…"
         case .selectionScope:
             return "Search Selection Scope or ask about \(fileName)…"
+        case .extractedText:
+            return "Filter \(outputTitle.lowercased()) in \(fileName)…"
         case .searchInFile:
             return "Search text inside \(fileName)…"
         case .userActions:
             return "Search user actions & extensions…"
         }
+    }
+}
+
+// MARK: - Local Document & Vision OCR Text Extractor
+
+enum LocalFileTextExtractor {
+    nonisolated static func extractText(from url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        let utType = UTType(filenameExtension: ext)
+
+        // 1. PDF: native PDFKit text with Vision OCR fallback per scanned page
+        if ext == "pdf" || utType?.conforms(to: .pdf) == true,
+            let doc = PDFDocument(url: url)
+        {
+            var pages: [String] = []
+            let limit = min(doc.pageCount, 80)
+            for idx in 0..<limit {
+                guard let page = doc.page(at: idx) else { continue }
+                let native = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if native.count >= 12 {
+                    pages.append(limit > 1 ? "— Page \(idx + 1) —\n\(native)" : native)
+                } else if let cgImage = renderPDFPageForOCR(page) {
+                    let ocr = recognizeText(in: cgImage).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !ocr.isEmpty {
+                        pages.append(limit > 1 ? "— Page \(idx + 1) (OCR) —\n\(ocr)" : ocr)
+                    }
+                } else if !native.isEmpty {
+                    pages.append(native)
+                }
+            }
+            return pages.joined(separator: "\n\n")
+        }
+
+        // 2. Images: Apple Vision VNRecognizeTextRequest OCR
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "heif", "webp", "tiff", "tif", "bmp", "gif"]
+        if imageExts.contains(ext) || utType?.conforms(to: .image) == true {
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            {
+                return recognizeText(in: cgImage)
+            }
+        }
+
+        // 3. Rich Text (.rtf / .rtfd)
+        if ["rtf", "rtfd"].contains(ext) || utType?.conforms(to: .rtf) == true || utType?.conforms(to: .rtfd) == true,
+            let attr = try? NSAttributedString(url: url, options: [:], documentAttributes: nil)
+        {
+            return attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // 4. Plain text / Markdown / JSON / Code
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 400_000),
+            !data.prefix(512).contains(0),
+            let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+        else { return "" }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func renderPDFPageForOCR(_ page: PDFPage) -> CGImage? {
+        let bounds = page.bounds(for: .mediaBox)
+        guard bounds.width > 1, bounds.height > 1 else { return nil }
+        let scale: CGFloat = min(2.2, 1800.0 / max(bounds.width, bounds.height))
+        let width = max(Int(bounds.width * scale), 1)
+        let height = max(Int(bounds.height * scale), 1)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.saveGState()
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: -bounds.minX, y: -bounds.minY)
+        page.draw(with: .mediaBox, to: ctx)
+        ctx.restoreGState()
+        return ctx.makeImage()
+    }
+
+    private nonisolated static func recognizeText(in cgImage: CGImage) -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([request])
+        let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -247,12 +353,18 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// Switches between Preview, Selection Scope, Search Inside File, and User Actions in-place.
+    /// Switches between Preview, Selection Scope, Extracted Text, Search Inside File, and User Actions in-place.
     func switchFileSubmode(_ newKind: FileSubmodeKind) {
         guard var sub = fileSubmode else { return }
         let selection = CornerDockController.shared.selection
         sub.kind = newKind
         sub.focusedRowIndex = 0
+        if newKind == .extractedText && sub.customOutputText == nil {
+            sub.outputTitle = "Extracted Text"
+        }
+        if newKind != .extractedText {
+            sub.returnToSelectionOnBack = false
+        }
         if newKind == .selectionScope || newKind == .userActions {
             if !selection.phase.isVisible || selection.files.first?.standardizedFileURL != sub.url.standardizedFileURL {
                 let context = AXContext(
@@ -275,6 +387,79 @@ extension AppChatPromptModel {
         }
         CornerDockController.shared.requestComposerFocus()
         touch()
+    }
+
+    /// Runs a Selection Scope or User Extension row while keeping output inside the same Result Sheet.
+    @discardableResult
+    func runSelectionRowInSheet(_ row: SelectionActionRow) -> Bool {
+        guard let sub = fileSubmode else { return false }
+        let selection = CornerDockController.shared.selection
+        let lowerID = row.id.lowercased()
+        let lowerTitle = row.title.lowercased()
+
+        // 1. Local Extract Text / OCR Image -> instant in-sheet output reader
+        if lowerID.contains("extract-text")
+            || lowerID.contains("ocr-image")
+            || lowerTitle == "extract text"
+            || lowerTitle == "ocr image"
+        {
+            var next = sub
+            next.kind = .extractedText
+            next.outputTitle = row.title
+            next.customOutputText = nil
+            next.isRunningExtension = false
+            next.returnToSelectionOnBack = true
+            next.query = ""
+            withAnimation(FluidMotion.selectionGlide) {
+                fileSubmode = next
+            }
+            CornerDockController.shared.requestComposerFocus()
+            touch()
+            return true
+        }
+
+        // 2. User-authored Selection Extension -> execute & show output right in Result Sheet
+        if let userExt = UserSelectionExtensionStore.shared.item(forRowID: row.id) {
+            let targetURL = sub.url
+            let currentQuery = sub.query
+            let selText = selection.text
+            if userExt.outputPresentation == .copyToClipboard {
+                Task { @MainActor in
+                    let out = await UserSelectionExtensionStore.shared.execute(
+                        userExt, fileURL: targetURL, selectedText: selText, query: currentQuery)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(out, forType: .string)
+                    DockActionFeedback.showResult("Copied \(userExt.name)", icon: "doc.on.clipboard", success: true)
+                }
+                return true
+            }
+
+            var next = sub
+            next.kind = .extractedText
+            next.outputTitle = userExt.name
+            next.customOutputText = nil
+            next.isRunningExtension = true
+            next.returnToSelectionOnBack = true
+            next.query = ""
+            withAnimation(FluidMotion.selectionGlide) {
+                fileSubmode = next
+            }
+            Task { @MainActor [weak self] in
+                let out = await UserSelectionExtensionStore.shared.execute(
+                    userExt, fileURL: targetURL, selectedText: selText, query: currentQuery)
+                guard var current = self?.fileSubmode, current.url == targetURL else { return }
+                current.customOutputText = out
+                current.isRunningExtension = false
+                self?.fileSubmode = current
+            }
+            CornerDockController.shared.requestComposerFocus()
+            touch()
+            return true
+        }
+
+        // 3. Default Selection Scope execution (Share destinations, Finder actions, Ask AI, etc.)
+        selection.run(row)
+        return true
     }
 
     /// Updates the top input bar's text while inside a file submode without disturbing the
@@ -369,6 +554,18 @@ extension AppChatPromptModel {
                 CornerDockController.shared.requestComposerFocus()
                 return true
             }
+            if !selection.isShowingAnswer, let focused = selection.focusedRow {
+                let lowerID = focused.id.lowercased()
+                let lowerTitle = focused.title.lowercased()
+                if lowerID.contains("extract-text")
+                    || lowerID.contains("ocr-image")
+                    || lowerTitle == "extract text"
+                    || lowerTitle == "ocr image"
+                    || UserSelectionExtensionStore.shared.item(forRowID: focused.id) != nil
+                {
+                    return runSelectionRowInSheet(focused)
+                }
+            }
             if !trimmed.isEmpty, selection.focusedRow == nil || ({
                 if let r = selection.focusedRow, case .ask = r.kind { return true }
                 return false
@@ -382,14 +579,25 @@ extension AppChatPromptModel {
             }
             return selection.returnPressed()
 
+        case .extractedText:
+            let textToCopy = sub.customOutputText ?? LocalFileTextExtractor.extractText(from: sub.url)
+            guard !textToCopy.isEmpty else { return false }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(textToCopy, forType: .string)
+            DockActionFeedback.showResult("Copied \(sub.outputTitle)", icon: "doc.on.clipboard", success: true)
+            return true
+
         case .userActions:
             let filtered = userActionRows(from: selection.rows)
             if filtered.indices.contains(sub.focusedRowIndex) {
-                selection.run(filtered[sub.focusedRowIndex])
-                return true
+                return runSelectionRowInSheet(filtered[sub.focusedRowIndex])
             }
             if sub.focusedRowIndex == filtered.count {
                 switchFileSubmode(.searchInFile)
+                return true
+            }
+            if sub.focusedRowIndex == filtered.count + 1 {
+                openExtensionStudio(target: .selectionExtension, contextFile: sub.url)
                 return true
             }
             return false
@@ -414,9 +622,9 @@ extension AppChatPromptModel {
             return true
         }
 
-        // ⌘1..⌘4 switches directly between the 4 dropdown modes
+        // ⌘1..⌘5 switches directly between the dropdown modes
         if mods == .command, let ch = event.charactersIgnoringModifiers,
-            let num = Int(ch), (1...4).contains(num)
+            let num = Int(ch), (1...FileSubmodeKind.allCases.count).contains(num)
         {
             let all = FileSubmodeKind.allCases
             switchFileSubmode(all[num - 1])
@@ -439,6 +647,10 @@ extension AppChatPromptModel {
                 setFileSubmodeQuery("")
                 return true
             }
+            if sub.kind == .extractedText && sub.returnToSelectionOnBack {
+                switchFileSubmode(.selectionScope)
+                return true
+            }
             return leaveFileSubmode()
 
         case 51: // Backspace on empty field -> step back like `<`
@@ -447,12 +659,20 @@ extension AppChatPromptModel {
                 selection.escapePressed()
                 return true
             }
+            if sub.kind == .extractedText && sub.returnToSelectionOnBack {
+                switchFileSubmode(.selectionScope)
+                return true
+            }
             return leaveFileSubmode()
 
         case 123: // ← Left Arrow on empty field -> step back like `<`
             guard sub.query.isEmpty else { return false }
             if sub.kind == .selectionScope, selection.isShowingAnswer {
                 selection.escapePressed()
+                return true
+            }
+            if sub.kind == .extractedText && sub.returnToSelectionOnBack {
+                switchFileSubmode(.selectionScope)
                 return true
             }
             return leaveFileSubmode()
@@ -500,7 +720,7 @@ extension AppChatPromptModel {
         selection: SelectionScopeModel
     ) {
         switch sub.kind {
-        case .preview:
+        case .preview, .extractedText:
             sub.previewScrollStep = max(0, sub.previewScrollStep + delta)
             fileSubmode = sub
         case .selectionScope:
@@ -508,7 +728,7 @@ extension AppChatPromptModel {
                 _ = selection.moveFocus(by: delta)
             }
         case .userActions:
-            let total = userActionRows(from: selection.rows).count + 1 // +1 for "Search Inside File"
+            let total = userActionRows(from: selection.rows).count + 2 // +Search Inside File, +Create Extension
             guard total > 0 else { return }
             sub.focusedRowIndex = max(0, min(total - 1, sub.focusedRowIndex + delta))
             fileSubmode = sub
@@ -606,6 +826,11 @@ struct FileSubmodeDropdown: View {
             }
             Divider()
             Button {
+                model.openExtensionStudio(target: .selectionExtension, contextFile: submode.url)
+            } label: {
+                Label("Create Extension with AI…", systemImage: "wand.and.stars")
+            }
+            Button {
                 _ = model.leaveFileSubmode()
             } label: {
                 Label("Back to Search Results", systemImage: "chevron.left")
@@ -649,6 +874,9 @@ struct FileSheetSubmodeView: View {
     @ObservedObject private var conversation = AppChatConversation.shared
     @State private var searchableSegments: [(label: String, index: Int, text: String)] = []
     @State private var loadedSegmentsURL: URL?
+    @State private var extractedDocumentText: String = ""
+    @State private var extractedURL: URL?
+    @State private var isExtractingText: Bool = false
     @State private var mouseGate = MouseGate()
     @Namespace private var submodeSelectionSpace
 
@@ -663,6 +891,8 @@ struct FileSheetSubmodeView: View {
                 fullPreviewBody
             case .selectionScope:
                 fullSelectionScopeBody(onlyUserActions: false)
+            case .extractedText:
+                extractedTextBody
             case .userActions:
                 fullSelectionScopeBody(onlyUserActions: true)
             case .searchInFile:
@@ -679,6 +909,22 @@ struct FileSheetSubmodeView: View {
             if submode.url == target {
                 searchableSegments = segments
                 loadedSegmentsURL = target
+            }
+        }
+        .task(id: "\(submode.url.path)::\(submode.kind == .extractedText)::\(submode.customOutputText == nil)") {
+            guard submode.kind == .extractedText, submode.customOutputText == nil, !submode.isRunningExtension else {
+                return
+            }
+            let target = submode.url
+            guard extractedURL != target else { return }
+            isExtractingText = true
+            let text = await Task.detached(priority: .userInitiated) {
+                LocalFileTextExtractor.extractText(from: target)
+            }.value
+            if submode.url == target {
+                extractedDocumentText = text
+                extractedURL = target
+                isExtractingText = false
             }
         }
     }
@@ -942,6 +1188,35 @@ struct FileSheetSubmodeView: View {
                     )
                 }
                 .buttonStyle(.plain)
+
+                // Direct In-Sheet AI Extension Studio launcher
+                Button {
+                    model.openExtensionStudio(target: .selectionExtension, contextFile: submode.url)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 28, height: 28)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Create Selection Extension with AI…")
+                                .font(.system(size: 13.5, weight: .medium))
+                            Text("Build a custom file/text action that outputs right in this sheet")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .frame(height: AppChatListMetrics.rowHeight)
+                    .fluidSelection(
+                        isSelected: focus == userRows.count + 1,
+                        namespace: submodeSelectionSpace,
+                        cornerRadius: 8,
+                        paddingHorizontal: 10
+                    )
+                }
+                .buttonStyle(.plain)
             }
             .padding(.vertical, 6)
         }
@@ -1002,7 +1277,134 @@ struct FileSheetSubmodeView: View {
             if case .ask = row.kind, typed.isEmpty {
                 CornerDockController.shared.requestComposerFocus()
             } else {
-                selectionModel.run(row)
+                _ = model.runSelectionRowInSheet(row)
+            }
+        }
+    }
+
+    // MARK: 2b. In-Sheet Extracted Text & User Extension Output Reader
+
+    private var extractedTextBody: some View {
+        let activeText = submode.customOutputText ?? extractedDocumentText
+        let filterQuery = submode.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayedText: String = {
+            guard !filterQuery.isEmpty else { return activeText }
+            let matchingLines = activeText
+                .components(separatedBy: .newlines)
+                .filter { $0.localizedCaseInsensitiveContains(filterQuery) }
+            return matchingLines.isEmpty ? activeText : matchingLines.joined(separator: "\n")
+        }()
+        let wordCount = activeText.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+
+        return GeometryReader { geo in
+            let boardWidth = max(geo.size.width, 680)
+            let filePreview = CornerBoardPreview.file(submode.url)
+            let leftWidth = CornerBoardLayout.listWidth(board: boardWidth, preview: filePreview)
+            let rightWidth = CornerBoardLayout.panelWidth(board: boardWidth)
+
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text.viewfinder")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                        Text(submode.isRunningExtension || isExtractingText
+                            ? "Running \(submode.outputTitle)…"
+                            : "\(submode.outputTitle) · \(wordCount) words")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: AppChatListMetrics.headerHeight)
+
+                    if submode.isRunningExtension || isExtractingText {
+                        VStack(spacing: 10) {
+                            ProgressView().controlSize(.regular)
+                            Text("Extracting from \(submode.fileName)…")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if activeText.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.secondary.opacity(0.6))
+                            Text("No text found in \(submode.fileName)")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            Text(highlightedSnippet(displayedText, query: filterQuery))
+                                .font(.system(size: 12.5))
+                                .lineSpacing(3.5)
+                                .textSelection(.enabled)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+
+                    // Action Pills Strip (Copy All, Save .txt, Quick Note, Create Extension)
+                    HStack(spacing: 6) {
+                        Button {
+                            _ = model.submitFileSubmode()
+                        } label: {
+                            Label("Copy All", systemImage: "doc.on.doc")
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color.accentColor.opacity(0.16), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            let dest = submode.url.deletingPathExtension().appendingPathExtension("extracted.txt")
+                            try? activeText.write(to: dest, atomically: true, encoding: .utf8)
+                            DockActionFeedback.showResult("Saved \(dest.lastPathComponent)", icon: "arrow.down.doc.fill", success: true)
+                        } label: {
+                            Label("Save .txt", systemImage: "arrow.down.doc")
+                                .font(.system(size: 11, weight: .medium))
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            _ = QuickNotesStore.shared.add(
+                                "\(submode.outputTitle) — \(submode.fileName)\n\n\(activeText)"
+                            )
+                            DockActionFeedback.showResult("Saved to Quick Note", icon: "note.text.badge.plus", success: true)
+                        } label: {
+                            Label("Quick Note", systemImage: "note.text.badge.plus")
+                                .font(.system(size: 11, weight: .medium))
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+                .frame(width: leftWidth, height: geo.size.height, alignment: .topLeading)
+
+                Color.clear.frame(width: CornerBoardLayout.dividerWidth)
+
+                CornerBoardPreviewPanel(preview: filePreview)
+                    .frame(
+                        width: rightWidth,
+                        height: max(geo.size.height - 2 * AppChatListMetrics.verticalPadding, 120),
+                        alignment: .topLeading
+                    )
+                    .padding(.vertical, AppChatListMetrics.verticalPadding)
             }
         }
     }

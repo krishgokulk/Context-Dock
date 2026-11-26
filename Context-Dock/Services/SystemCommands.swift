@@ -806,6 +806,25 @@ final class SystemCommandsRegistry {
             enabled: false
         ),
         SystemCommand(
+            name: "Emoji & Symbols",
+            icon: "face.smiling",
+            keywords: ["emoji", "emojis", "symbols", "icons", "picker", "character", "provider:emoji"],
+            scriptType: "applescript",
+            script: "return",
+            description: "Search and copy emojis & symbols in a grid"
+        ),
+        SystemCommand(
+            name: "Create Extension",
+            icon: "wand.and.stars",
+            keywords: [
+                "create extension", "new extension", "create command", "create plugin",
+                "notch action", "quicklink", "studio", "build pack", "provider:studio",
+            ],
+            scriptType: "applescript",
+            script: "return",
+            description: "Create Global Commands, Selection Extensions, App Plugins & Notch Actions with AI"
+        ),
+        SystemCommand(
             name: "Scratch Notes",
             icon: "square.and.pencil",
             keywords: ["note", "notes", "scratch", "jot", "capture", "provider:custom", "query:live", "refresh:1"],

@@ -1297,8 +1297,10 @@ final class CornerDockController: NSObject {
                 ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
-                    ?? (prompt.scopedCommand?.hasOwnCornerBoard == true
-                        ? ClipboardBoardMetrics.size : ExtensionScopeMetrics.size))
+                    ?? (prompt.scopedCommand?.isEmojiBoard == true || prompt.scopedCommand?.isStudioBoard == true
+                        ? CGSize(width: DockShellWidth.results, height: 440)
+                        : (prompt.scopedCommand?.hasOwnCornerBoard == true
+                            ? ClipboardBoardMetrics.size : ExtensionScopeMetrics.size)))
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
@@ -2783,6 +2785,16 @@ struct CornerDockSurface: View {
             {
                 // Capabilities & Skills Browser (#335): browse and inspect available capabilities and learned skills.
                 CapabilitiesSkillsBoardCard(prompt: prompt)
+                    .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isEmojiBoard == true
+            {
+                EmojiSymbolsBoardCard(prompt: prompt)
+                    .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isStudioBoard == true
+            {
+                ExtensionStudioBoardCard(prompt: prompt)
                     .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(

@@ -20,6 +20,8 @@ enum GlobalFallbacks {
     static let askKind = "fallbackAsk"
     static let askPetKind = "fallbackAskPet"
     static let webKind = "fallbackWeb"
+    static let finderKind = "fallbackFinder"
+    static let defineKind = "fallbackDefine"
     static let terminalKind = "fallbackTerminal"
 
     /// The fallback rows for what is typed, in order: Ask Dora (General AI Chat),
@@ -80,6 +82,37 @@ enum GlobalFallbacks {
                 L2AppActionRouter.openWebSearch(text)
             }
         )
+        // Search Files in Finder fallback
+        let finderIcon = NSWorkspace.shared.icon(forFile: "/System/Library/CoreServices/Finder.app")
+        rows.append(
+            pill("finder", "Search Files for “\(text)” in Finder", "folder.badge.questionmark", finderKind, image: finderIcon) {
+                if let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                    let url = URL(string: "x-apple-findertag:\(encoded)")
+                {
+                    _ = url
+                }
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                proc.arguments = ["-a", "Finder"]
+                try? proc.run()
+            }
+        )
+        // Native macOS Dictionary Define "<word>" when a dictionary entry exists
+        if !text.contains(" ") || text.split(separator: " ").count <= 2,
+            let def = GlobalDictionaryLookup.definition(for: text)
+        {
+            let summary = String(def.replacingOccurrences(of: "\n", with: " ").prefix(110))
+            rows.append(
+                pill("define", "Define “\(text)” — \(summary)…", "character.book.closed.fill", defineKind) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(def, forType: .string)
+                    DockActionFeedback.showResult("Copied definition of “\(text)”", icon: "character.book.closed.fill", success: true)
+                    if let dictURL = URL(string: "dict://\(text.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? text)") {
+                        NSWorkspace.shared.open(dictURL)
+                    }
+                }
+            )
+        }
         if looksLikeShellCommand(text) {
             rows.append(pill("terminal", "Run in Terminal: \(text)", "terminal", terminalKind) {
                 runInTerminal(text)

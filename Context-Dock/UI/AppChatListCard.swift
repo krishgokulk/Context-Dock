@@ -480,6 +480,8 @@ struct AppChatListCard: View {
                 return hasText ? "Ask AI" : (submode.isFolder ? "Open Folder" : "Open")
             case .selectionScope:
                 return selectionModel.isShowingAnswer ? "Ask" : "Run"
+            case .extractedText:
+                return "Copy All"
             case .userActions:
                 return "Run"
             case .searchInFile:
@@ -493,7 +495,11 @@ struct AppChatListCard: View {
             HStack(spacing: 8) {
                 BoardFooter.pill {
                     Button {
-                        _ = model.leaveFileSubmode()
+                        if submode.kind == .extractedText && submode.returnToSelectionOnBack {
+                            model.switchFileSubmode(.selectionScope)
+                        } else {
+                            _ = model.leaveFileSubmode()
+                        }
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "chevron.left")
@@ -659,6 +665,13 @@ struct AppChatListCard: View {
             }
 
             Section("Launcher") {
+                Button("Create Extension or Plugin with AI…") {
+                    model.openExtensionStudio(
+                        target: model.targetFileSubmodeURL() != nil ? .selectionExtension : .globalCommand,
+                        contextFile: model.targetFileSubmodeURL()
+                    )
+                }
+
                 Button("Keyboard Shortcuts...") {
                     CornerDockController.shared.chatPresentation.toggleKeysOverlay()
                 }

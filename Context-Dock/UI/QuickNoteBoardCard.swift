@@ -70,7 +70,8 @@ extension SystemCommand {
 
     /// A command the Corner draws as a board of its own rather than as its list panel.
     var hasOwnCornerBoard: Bool {
-        isNotificationsBoard || isQuickNoteBoard || isConversationsBoard || isCapabilitiesSkillsBoard
+        isNotificationsBoard || isQuickNoteBoard || isConversationsBoard
+            || isCapabilitiesSkillsBoard || isEmojiBoard || isStudioBoard
     }
 }
 

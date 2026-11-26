@@ -219,12 +219,17 @@ extension AppChatPromptModel {
             }
             // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
             // row these words were answered with before first (S5).
-            let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
-                ?? GlobalQuery.topHit(ordered, query: typed)
-            globalTopHitID = topHit?.id
-            if let topHit {
-                ordered.removeAll { $0.id == topHit.id }
-                ordered.insert(topHit, at: 0)
+            if let calcRow = GlobalInlineCalculator.makeRow(for: typed) {
+                ordered.insert(calcRow, at: 0)
+                globalTopHitID = calcRow.id
+            } else {
+                let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
+                    ?? GlobalQuery.topHit(ordered, query: typed)
+                globalTopHitID = topHit?.id
+                if let topHit {
+                    ordered.removeAll { $0.id == topHit.id }
+                    ordered.insert(topHit, at: 0)
+                }
             }
             rows = GlobalResultSection.capped(
                 ordered,
@@ -1090,6 +1095,30 @@ extension AppChatPromptModel {
     /// Step into a Global Command — the panel the pinned window shows, in the corner's
     /// board. These are what Settings calls Commands, and they carry `syscmd://` ids; the
     /// extension work before this one covered `userext://` and so never reached them.
+    /// Opens the Unified In-Sheet AI Extension, Plugin & Notch Studio (`provider:studio`)
+    /// directly inside the 680 × 440 Result Sheet.
+    func openExtensionStudio(target: ExtensionStudioTarget = .globalCommand, contextFile: URL? = nil) {
+        let contextBundle = isGlobalScope ? nil : appBundleID
+        if isInFileSubmode {
+            _ = leaveFileSubmode()
+        }
+        ExtensionStudioModel.shared.configure(
+            initialTarget: target,
+            contextFile: contextFile,
+            bundleID: contextBundle
+        )
+        let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.isStudioBoard })
+            ?? SystemCommand(
+                name: "Create Extension",
+                icon: "wand.and.stars",
+                keywords: ["provider:studio"],
+                scriptType: "applescript",
+                script: "return",
+                description: "Create Global Commands, Selection Extensions, App Plugins & Notch Actions with AI"
+            )
+        scopeIntoCommand(cmd)
+    }
+
     func scopeIntoCommand(_ command: SystemCommand) {
         scopedExtension = nil
         scopedPlugin = nil

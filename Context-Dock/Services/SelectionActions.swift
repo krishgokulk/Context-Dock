@@ -238,11 +238,14 @@ enum SelectionActions {
         return row.actsOnLiveTextSelection ? .hidden : .needsConsent(bundleID: app)
     }
 
-    /// Pure: the corner's list is the Dock's, in the Dock's order. Of the share rows only
-    /// "Share Selection" is kept: it opens the destinations inside the card, which is where
-    /// every one of them is listed.
-    static func cornerRows(_ rows: [SelectionActionRow]) -> [SelectionActionRow] {
-        rows.filter { $0.kind != .share || $0.id == SelectionShare.entryRowID }
+    /// Pure: the corner's list is the Dock's, in the Dock's order. At rest (`query` empty),
+    /// only "Share Selection" is kept so the opening list stays uncluttered; as soon as the
+    /// user types (`airdrop`, `messages`, `journal`, `notes`, `mail`, etc.), matching share
+    /// destination rows stay directly visible and actionable.
+    static func cornerRows(_ rows: [SelectionActionRow], query: String = "") -> [SelectionActionRow] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else { return rows }
+        return rows.filter { $0.kind != .share || $0.id == SelectionShare.entryRowID }
     }
 
     /// Pure: what the end-of-answer Replace does. Replacing writes into another app through its

@@ -339,9 +339,14 @@ final class SelectionScopeModel: ObservableObject {
     }
 
     private func share(_ row: SelectionActionRow) {
-        if performShare(row.id, sharePayload) {
-            // The destination's own sheet takes over; the card has done its job.
-            dismiss()
+        let payload = sharePayload.isEmpty ? SelectionShare.items(for: snapshot) : sharePayload
+        if performShare(row.id, payload) {
+            // The destination's own sheet takes over; close any active file submode or card.
+            if isSheetSubmode {
+                _ = CornerDockController.shared.prompt.leaveFileSubmode()
+            } else {
+                dismiss()
+            }
         } else {
             reportResult("\(row.title) is not available", false)
         }
@@ -567,13 +572,28 @@ final class SelectionScopeModel: ObservableObject {
                 captured == self.snapshot
             else { return }
             let built = SelectionActions.cornerRows(
-                self.provider?.selectionRows(for: captured, query: typed) ?? []
+                self.provider?.selectionRows(for: captured, query: typed) ?? [],
+                query: typed
             ).filter {
                 SelectionActions.screenGate(
                     $0, snapshot: captured, computerUseAllowed: self.computerUseAllowed) != .hidden
             }
+            let customExtRows = UserSelectionExtensionStore.shared.matchingRows(
+                for: captured, query: typed
+            )
+            // When the user types a destination name (e.g. "airdrop", "message", "journal"),
+            // ensure matching native NSSharingService rows from SelectionShare are included
+            // even if the custom provider didn't emit them, deduplicated by id.
+            let extraShareRows: [SelectionActionRow] = {
+                let qTrim = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard qTrim.count >= 2 else { return [] }
+                let existingIDs = Set(built.map(\.id))
+                let items = SelectionShare.items(for: captured)
+                guard !items.isEmpty else { return [] }
+                return self.shareRows(items, qTrim).filter { !existingIDs.contains($0.id) }
+            }()
             guard generation == self.rowBuildGeneration else { return }
-            self.rows = (sendRow.map { [$0] } ?? []) + built
+            self.rows = (sendRow.map { [$0] } ?? []) + customExtRows + extraShareRows + built
             if (self.isEmbeddedInSidePanel || self.isSheetSubmode),
                 self.focusedIndex == nil, typed.isEmpty, !self.rows.isEmpty
             {

@@ -13,18 +13,16 @@ import AppKit
 import SwiftUI
 
 enum ExtensionScopeMetrics {
-    /// The board stands exactly as wide as the field below it: the shell's one width (#189).
-    static var width: CGFloat { DockShellWidth.current }
-    static let headerHeight: CGFloat = 32
-    /// Enough for a converter, a note, a short list. Beyond this the extension scrolls
-    /// inside its own view rather than pushing the field off the screen.
-    static let bodyHeight: CGFloat = 300
-    static let verticalPadding: CGFloat = 8
+    /// Every Global Command, Extension, and Plugin panel fills the unified 680 × 440 Result Sheet.
+    static var width: CGFloat { max(DockShellWidth.current, DockShellWidth.results) }
+    static let headerHeight: CGFloat = 34
+    static let verticalPadding: CGFloat = 6
+    static var bodyHeight: CGFloat {
+        440 - headerHeight - BoardFooter.height - verticalPadding * 2
+    }
 
     static var size: CGSize {
-        CGSize(
-            width: width,
-            height: headerHeight + bodyHeight + BoardFooter.height + verticalPadding * 2)
+        CGSize(width: width, height: 440)
     }
 }
 
