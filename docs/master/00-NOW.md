@@ -19,6 +19,11 @@ None — ready for the next queued task.
 
 ## Done (most recent first)
 
+**feat(ui,plugins): Unified Raycast Extension Header, Live Selection Summarize Fix & 3 Global `.doraxpack` v3 Packs (2026-11-26):**
+- **Unified Raycast Extension Header (`ExtensionHeaderBarState`):** Stepping into any extension (`DoraxPackV3SheetView`, `ExtensionScopeCard`, `EmojiSymbolsBoardCard`, `ExtensionStudioBoardCard`, Clipboard) mounts `[<] + icon + title (+ count)` on the left and the single-chevron filter dropdown (`All ▾`) + refresh/spinner on the right inside the single `AppChatPromptPill` bar, hiding the bulky `[← Extension Name]` pill, running apps capsule, pin button, and redundant second sheet header.
+- **Live Selection Capture for Apple Intelligence (`DoraxAppleIntelligenceRunner`):** `CornerDockWindow` (`showCentred` / `showBottomGlobalContext`) snapshots live highlighted text via Accessibility + WebKit marker + Safari JS bridge before the launcher panel steals focus, clears stale `dorax.appleIntelligence.*` cached output on fresh zero-form runs, and updates `Summarize` instructions for direct concise summaries without meta-commentary.
+- **3 New Global `.doraxpack` v3 Packs (`Packs/SystemUtilities.doraxpack`, `Packs/CurrencyConverter.doraxpack`, `Packs/FocusShortcuts.doraxpack`):** Upgraded Appearance, Wi-Fi, Bluetooth, Volume, Keep Awake, Lock/Sleep/Trash, Currency Converter (live `open.er-api.com` + offline cache), Apple Shortcuts runner, and Focus Modes into native Result View packs, retiring duplicate legacy `Currency Converter`.
+
 **feat(plugins): 13 Curated `.doraxpack` v3 Packs, On-Device Apple Intelligence, Phase 1 AI Upgrader & Phase 2 Raycast Importer (2026-11-26):**
 - Added native on-device FoundationModels runner `DoraxAppleIntelligenceRunner` (`dorax.appleIntelligence.*`) supporting Proofread, Rewrite, Friendly, Professional, Concise, Summarize, Key Points, Make List, Make Table, Custom Writing Tools, and Ask (zero external API keys).
 - Shipped 13 curated `.doraxpack` v3 packs tailored to installed Mac apps/CLIs across Global, Web-App, Native App, and Notch scopes (`AppleIntelligence`, `YouTube`, `GitHub`, `Homebrew`, `Spotify`, `Obsidian`, `Tailscale`, `WhatsApp`, `Claude`, `ChatGPT`, `Messages`, `Notes`, `GoogleDrive`) and updated `Packs/Antigravity.doraxpack` to `com.google.antigravity`.

@@ -635,6 +635,7 @@ final class CornerDockController: NSObject {
         ensurePanel()
         cancelPendingAutoHide()
         cancelPendingCommandSwitch()
+        DoraxAppleIntelligenceRunner.captureLiveSelectionBeforeSummon()
         lastSummonedAt = Date().timeIntervalSinceReferenceDate
         chatPresentation.isCentred = true
         prompt.staysOpenWhenIdle = true
@@ -656,6 +657,7 @@ final class CornerDockController: NSObject {
         ensurePanel()
         cancelPendingAutoHide()
         cancelPendingCommandSwitch()
+        DoraxAppleIntelligenceRunner.captureLiveSelectionBeforeSummon()
         lastSummonedAt = Date().timeIntervalSinceReferenceDate
         chatPresentation.isCentred = false
         prompt.staysOpenWhenIdle = true
@@ -1584,7 +1586,7 @@ final class CornerDockController: NSObject {
     /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
     /// and in an app's Context Dock alike. See `CornerSplitShell`.
     var showsSplitShell: Bool {
-        !prompt.isInFileSubmode && CornerSplitShell.splits(
+        !prompt.isInFileSubmode && !prompt.showsExtensionPanel && CornerSplitShell.splits(
             isVisible: chatPresentation.isVisible,
             isGeneral: chatPresentation.mode == .general,
             isGlobalScope: prompt.isGlobalScope,

@@ -813,6 +813,10 @@ struct AppChatListCard: View {
     /// What the field says before anything is typed, per scope.
     static func placeholder(for model: AppChatPromptModel) -> String {
         if model.isGlobalScope { return "Search apps, tools and menus…" }
+        if model.showsExtensionPanel {
+            let ph = ExtensionHeaderBarState.shared.placeholder.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ph.isEmpty ? "Filter…" : ph
+        }
         if model.isFinderFileSearch, let folder = model.finderBrowseStack.last {
             return "Search \(folder.lastPathComponent)…"
         }

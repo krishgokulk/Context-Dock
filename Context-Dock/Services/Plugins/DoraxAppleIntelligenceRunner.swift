@@ -15,6 +15,91 @@ enum DoraxAppleIntelligenceRunner {
 
     static let tintHex = "#EC4899"
 
+    /// Captures the frontmost app's live selected text right as the Dock is summoned
+    /// (before DoraX's panel takes focus or while an extension is launched from Global Context).
+    private static var cachedSummonSelection: (text: String, appName: String, capturedAt: Date)?
+
+    static func captureLiveSelectionBeforeSummon(frontApp: NSRunningApplication? = nil) {
+        guard let targetApp = targetApplication(override: frontApp),
+              targetApp.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return }
+        if let text = readSelectionDirectly(from: targetApp) {
+            cachedSummonSelection = (text, targetApp.localizedName ?? "App", Date())
+        }
+    }
+
+    /// Reads the currently highlighted text across AXSelectedText, AXSelectedTextRange,
+    /// WebKit AXSelectedTextMarkerRange, Safari JS bridge, and System Events fallback.
+    private static func readSelectionDirectly(from app: NSRunningApplication) -> String? {
+        if let direct = ContextDetector.shared.getSelectedText(from: app) {
+            let trimmed = direct.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return String(trimmed.prefix(12_000)) }
+        }
+        AXContextReader.shared.refresh(from: app)
+        if let axSel = AXContextReader.shared.current.selectedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !axSel.isEmpty
+        {
+            return String(axSel.prefix(12_000))
+        }
+        if app.bundleIdentifier == "com.apple.Safari",
+           let safariSel = SafariBrowserBridge.shared.selectedTextIfRecent()?
+               .trimmingCharacters(in: .whitespacesAndNewlines), !safariSel.isEmpty
+        {
+            return String(safariSel.prefix(12_000))
+        }
+        return nil
+    }
+
+    private static func targetApplication(override: NSRunningApplication? = nil) -> NSRunningApplication? {
+        if let override, override.bundleIdentifier != Bundle.main.bundleIdentifier {
+            return override
+        }
+        if let prev = AppDelegate.shared?.previousFrontmostApp,
+           prev.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            return prev
+        }
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            return front
+        }
+        return nil
+    }
+
+    /// Resolves live selection cleanly using all available sources (live AX -> summon snapshot ->
+    /// Safari JS bridge -> SelectionScope snapshot), never returning stale text older than 45s.
+    static func resolveLiveSelection(overrideText: String? = nil) -> (text: String, sourceLabel: String)? {
+        if let overrideText {
+            let trimmed = overrideText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return (String(trimmed.prefix(12_000)), "Selection") }
+        }
+        if let targetApp = targetApplication(),
+           let fresh = readSelectionDirectly(from: targetApp)
+        {
+            let appLabel = targetApp.localizedName ?? "Selection"
+            cachedSummonSelection = (fresh, appLabel, Date())
+            return (fresh, "Selection (\(appLabel))")
+        }
+        if let cached = cachedSummonSelection,
+           Date().timeIntervalSince(cached.capturedAt) < 45,
+           !cached.text.isEmpty
+        {
+            return (cached.text, "Selection (\(cached.appName))")
+        }
+        if let safariSel = SafariBrowserBridge.shared.selectedTextIfRecent()?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !safariSel.isEmpty
+        {
+            return (String(safariSel.prefix(12_000)), "Selection (Safari)")
+        }
+        let snapText = CornerDockController.shared.selection.snapshot.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !snapText.isEmpty {
+            return (String(snapText.prefix(12_000)), "Selection")
+        }
+        return nil
+    }
+
     struct OperationSpec {
         let key: String
         let label: String
@@ -74,7 +159,7 @@ enum DoraxAppleIntelligenceRunner {
         case "summarize":
             return OperationSpec(
                 key: "summarize", label: "Summarize",
-                systemInstruction: "Summarize the provided text concisely, capturing the main thesis and essential details.",
+                systemInstruction: "Summarize the provided text directly in 1 to 3 clear, concise sentences capturing the key facts. Never describe the prompt or say 'The text discusses' — state the summary directly.",
                 requiresInputText: true)
         case "keyPoints":
             return OperationSpec(
@@ -111,7 +196,9 @@ enum DoraxAppleIntelligenceRunner {
     static func resolveInputText(
         spec: OperationSpec,
         query: String,
-        formValues: [String: String]?
+        formValues: [String: String]?,
+        selectionOverride: String? = nil,
+        clipboardOverride: String? = nil
     ) -> (text: String, sourceLabel: String) {
         if let promptField = formValues?["prompt"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !promptField.isEmpty, spec.key == "ask"
@@ -130,15 +217,16 @@ enum DoraxAppleIntelligenceRunner {
         if !q.isEmpty {
             return (q, "Command Input")
         }
-        let selectionText = CornerDockController.shared.selection.snapshot.text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !selectionText.isEmpty {
-            return (String(selectionText.prefix(10_000)), "Selection")
+        if let sel = resolveLiveSelection(overrideText: selectionOverride) {
+            return sel
+        }
+        if let clipOverride = clipboardOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !clipOverride.isEmpty {
+            return (String(clipOverride.prefix(12_000)), "Clipboard")
         }
         if let clip = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines), !clip.isEmpty
         {
-            return (String(clip.prefix(10_000)), "Clipboard")
+            return (String(clip.prefix(12_000)), "Clipboard")
         }
         return ("", "Empty")
     }

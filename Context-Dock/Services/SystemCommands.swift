@@ -329,6 +329,8 @@ final class SystemCommandsRegistry {
         // Superseded by Packs/ProcessMonitor.doraxpack (.doraxpack v3)
         "Process Monitor",
         "Listening Ports",
+        // Superseded by Packs/CurrencyConverter.doraxpack (.doraxpack v3)
+        "Currency Converter",
     ]
 
     private static func isRetiredCustomSample(_ command: SystemCommand) -> Bool {

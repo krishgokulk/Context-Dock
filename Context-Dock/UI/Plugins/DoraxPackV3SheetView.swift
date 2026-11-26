@@ -26,6 +26,7 @@ struct DoraxPackV3SheetView: View {
     @ObservedObject private var runtime = DoraxPackV3Runtime.shared
     @ObservedObject private var registry = DoraxPackV3Registry.shared
     @ObservedObject private var aura = DockAuraEngine.shared
+    @ObservedObject private var headerBar = ExtensionHeaderBarState.shared
     @Environment(\.sharesOneCard) private var sharesOneCard
 
     @State private var selectedFilter: String = "All"
@@ -99,8 +100,10 @@ struct DoraxPackV3SheetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            topBar
-            Divider().opacity(0.18)
+            if !sharesOneCard {
+                topBar
+                Divider().opacity(0.18)
+            }
 
             ZStack {
                 if let overlay = activeOverlay {
@@ -130,6 +133,7 @@ struct DoraxPackV3SheetView: View {
             initializeFormDefaults()
             activateAura()
             installKeyBridge()
+            syncHeaderBar()
             if command.mode != .form {
                 Task { await refresh(force: false) }
             }
@@ -138,6 +142,16 @@ struct DoraxPackV3SheetView: View {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
             DockAuraEngine.shared.deactivate(id: "sheet:\(bound.id)")
+            headerBar.reset(ifMatching: bound.id)
+        }
+        .onChange(of: output) { _, _ in
+            syncHeaderBar()
+        }
+        .onChange(of: activeOverlay) { _, _ in
+            syncHeaderBar()
+        }
+        .onChange(of: cacheEntry.isRefreshing) { _, _ in
+            syncHeaderBar()
         }
         .onChange(of: prompt.query) { _, _ in
             if let first = filteredItems.first,
@@ -145,8 +159,10 @@ struct DoraxPackV3SheetView: View {
             {
                 selectedItemID = first.id
             }
+            syncHeaderBar()
         }
         .onChange(of: selectedFilter) { _, _ in
+            syncHeaderBar()
             if command.mode != .form {
                 Task { await refresh(force: false) }
             }
@@ -270,6 +286,7 @@ struct DoraxPackV3SheetView: View {
                     .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
             }
 
@@ -1257,6 +1274,49 @@ struct DoraxPackV3SheetView: View {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             if statusBanner == text { statusBanner = nil }
         }
+    }
+
+    private func syncHeaderBar() {
+        let overlayTitle: String? = {
+            switch activeOverlay {
+            case .logs: return "\(pack.name) — Logs"
+            case .configure: return "Configure \(command.title)"
+            case nil: return nil
+            }
+        }()
+        let itemCount: Int? = (activeOverlay == nil && (output?.items.isEmpty == false))
+            ? filteredItems.count
+            : nil
+        let ph: String = {
+            switch command.mode {
+            case .form: return "Type input or submit below…"
+            case .ai, .detail, .cli, .instant: return "Filter or ask \(command.title)…"
+            case .list, .grid, .notch: return "Filter \(command.title)…"
+            }
+        }()
+        headerBar.update(
+            id: bound.id,
+            title: overlayTitle ?? command.title,
+            icon: command.icon,
+            tintHex: effectiveAppearance?.tint,
+            count: itemCount,
+            filterOptions: activeOverlay == nil ? filterOptions : [],
+            selectedFilter: selectedFilter,
+            isRefreshing: cacheEntry.isRefreshing,
+            placeholder: ph,
+            onBack: {
+                if activeOverlay != nil {
+                    activeOverlay = nil
+                } else {
+                    _ = prompt.leaveScopeForGlobal()
+                }
+            },
+            onSelectFilter: filterOptions.isEmpty ? nil : { opt in
+                selectedFilter = opt
+            },
+            onRefresh: {
+                Task { await refresh(force: true) }
+            })
     }
 }
 

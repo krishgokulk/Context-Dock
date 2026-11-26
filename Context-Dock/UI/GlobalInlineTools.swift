@@ -718,41 +718,43 @@ struct EmojiSymbolsBoardCard: View {
         let activeItem = items.indices.contains(clamped) ? items[clamped] : nil
 
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Results  \(items.count)")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Menu {
-                    ForEach(EmojiCatalog.categories, id: \.self) { cat in
-                        Button {
-                            selectedCategory = cat
-                            selectedIndex = 0
-                        } label: {
-                            if selectedCategory == cat {
-                                Label("\(cat)  ✓", systemImage: "square.grid.2x2")
-                            } else {
-                                Text(cat)
+            if !sharesOneCard {
+                HStack(spacing: 8) {
+                    Text("Results  \(items.count)")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Menu {
+                        ForEach(EmojiCatalog.categories, id: \.self) { cat in
+                            Button {
+                                selectedCategory = cat
+                                selectedIndex = 0
+                            } label: {
+                                if selectedCategory == cat {
+                                    Label("\(cat)  ✓", systemImage: "square.grid.2x2")
+                                } else {
+                                    Text(cat)
+                                }
                             }
                         }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "square.grid.2x2")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text("\(selectedCategory) ▾")
+                                .font(.system(size: 11.5, weight: .medium))
+                        }
                     }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "square.grid.2x2")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                        Text("\(selectedCategory) ▾")
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .padding(.horizontal, 16)
+                .frame(height: 32)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 32)
 
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -844,10 +846,34 @@ struct EmojiSymbolsBoardCard: View {
                 copyEmoji(items[clamped])
                 return true
             }
+            syncEmojiHeader(count: items.count)
+        }
+        .onChange(of: selectedCategory) { _, _ in
+            syncEmojiHeader(count: items.count)
+        }
+        .onChange(of: prompt.query) { _, _ in
+            syncEmojiHeader(count: items.count)
         }
         .onDisappear {
             ScopedListKeyBridge.shared.run = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "emoji-symbols")
         }
+    }
+
+    private func syncEmojiHeader(count: Int) {
+        ExtensionHeaderBarState.shared.update(
+            id: "emoji-symbols",
+            title: "Emoji & Symbols",
+            icon: "face.smiling",
+            count: count,
+            filterOptions: EmojiCatalog.categories,
+            selectedFilter: selectedCategory,
+            placeholder: "Search emojis & symbols…",
+            onBack: { _ = prompt.leaveScopeForGlobal() },
+            onSelectFilter: { cat in
+                selectedCategory = cat
+                selectedIndex = 0
+            })
     }
 
     private func copyEmoji(_ item: EmojiCatalogItem) {

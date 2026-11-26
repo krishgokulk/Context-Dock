@@ -703,10 +703,13 @@ struct AppChatPromptPill: View {
         // Split, the apps and pins stand beside the field in their own piece (Part B): the
         // strip under the field would only show through it — a pinned extension sat in the
         // middle of the text (owner 2026-10-07).
-        let stripShown = !model.isInFileSubmode && (
-            model.phase == .dock
-            || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
-        )
+        let stripShown = !model.isInFileSubmode
+            && !model.showsExtensionPanel
+            && !model.isClipboardScope
+            && (
+                model.phase == .dock
+                || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
+            )
         return ZStack(alignment: globalStackAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
@@ -1293,6 +1296,8 @@ struct AppChatPromptPill: View {
                 FileSubmodeLeadingBar(submode: submode) {
                     _ = model.leaveFileSubmode()
                 }
+            } else if model.showsExtensionPanel {
+                ExtensionHeaderLeadingBar(model: model)
             } else if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
                     // The strip's own size in Global: the field opens on the icon the
@@ -1597,7 +1602,7 @@ struct AppChatPromptPill: View {
             // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
             // while typing the field is compact — attach, send, pin).
             // Split, the apps stand beside the field instead (Part B) — drawn there, not twice.
-            if model.showsFieldPills, !model.isClipboardScope, !splitsShell,
+            if model.showsFieldPills, !model.isClipboardScope, !model.showsExtensionPanel, !splitsShell,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
@@ -1640,7 +1645,7 @@ struct AppChatPromptPill: View {
                 // region, so the field does not draw a second one beside it.
                 // A composer draws its one clipboard icon at the end, next to the pin (owner
                 // 2026-09-26: two showed); only a search field keeps it here.
-                if clipboard.showsDockIcon, model.isSearchField, !model.isGlobalScope {
+                if clipboard.showsDockIcon, model.isSearchField, !model.isGlobalScope, !model.showsExtensionPanel {
                     clipboardTrailingButton
                 }
             }
@@ -1650,7 +1655,7 @@ struct AppChatPromptPill: View {
             // This lived only in the composer's own branch below, so Global Context and
             // the scopes reached from it never had a way to see or reach the selection at
             // all, whatever the frontmost app's AX tree actually reported.
-            if model.isSearchField, model.selection != nil, !model.isGlobalScope {
+            if model.isSearchField, model.selection != nil, !model.isGlobalScope, !model.showsExtensionPanel {
                 selectionScopeButton
             }
 
@@ -1663,6 +1668,10 @@ struct AppChatPromptPill: View {
             if let submode = model.fileSubmode {
                 Spacer(minLength: 8)
                 FileSubmodeDropdown(model: model, submode: submode)
+            } else if model.showsExtensionPanel {
+                Spacer(minLength: 8)
+                ExtensionHeaderTrailingControls()
+                    .padding(.trailing, 8)
             } else {
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.rows.isEmpty
@@ -1729,7 +1738,7 @@ struct AppChatPromptPill: View {
                 // its pins, then its tabs, scrolling inside the pill. Gone while typing.
                 // Not while the apps stand beside the field or the composer: the same pins
                 // would show twice (owner 2026-10-07).
-                if model.showsTabBar, !isTyping, !splitsShell, !splitsChatComposer,
+                if model.showsTabBar, !model.showsExtensionPanel, !isTyping, !splitsShell, !splitsChatComposer,
                     !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
                 {
                     AppBarPill(model: model)
@@ -1821,7 +1830,7 @@ struct AppChatPromptPill: View {
             // Split, the strip stands beside the field, not over its end: kept clear there it
             // pushed the match icon back against the text (owner 2026-10-08: "show the result
             // icon at the end of the search input field").
-            if let strip = globalStrip, !splitsShell {
+            if let strip = globalStrip, !splitsShell, !model.showsExtensionPanel, !model.isClipboardScope {
                 Color.clear
                     .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
                     .allowsHitTesting(false)
@@ -1830,7 +1839,7 @@ struct AppChatPromptPill: View {
         }
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? (model.phase == .chat ? 10 : 14))
-        .padding(.trailing, globalStrip == nil || splitsShell ? (model.phase == .chat ? 10 : 14) : 0)
+        .padding(.trailing, globalStrip == nil || splitsShell || model.showsExtensionPanel || model.isClipboardScope ? (model.phase == .chat ? 10 : 14) : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
@@ -1964,9 +1973,34 @@ struct AppChatPromptPill: View {
 
     /// Raycast's back button, leading the field while the clipboard board is open.
     private var clipboardBackChip: some View {
-        ScopeBackChip(title: "Clipboard", icon: nil, help: "Back (Esc)") {
-            ClipboardPanelController.shared.closeBoard()
+        HStack(spacing: 8) {
+            Button { ClipboardPanelController.shared.closeBoard() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.88))
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Back (Esc)")
+
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("Clipboard")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.07), in: Capsule())
         }
+        .layoutPriority(1)
         .accessibilityLabel("Back from the clipboard")
     }
 

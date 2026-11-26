@@ -1,0 +1,64 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "focus-shortcuts",
+  "name": "Shortcuts & Focus",
+  "version": "3.0.0",
+  "icon": "square.stack.3d.up.fill",
+  "description": "Browse and run your macOS Shortcuts library and toggle Focus modes right inside the unified Result Sheet.",
+  "scope": {
+    "surfaces": ["global", "notch"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#8B5CF6",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "cli:execute"],
+  "keywords": ["shortcuts", "siri shortcuts", "focus", "dnd", "do not disturb", "automation", "work", "personal"],
+  "commands": [
+    {
+      "id": "run-shortcut",
+      "title": "Run Apple Shortcut",
+      "subtitle": "Browse and execute shortcuts installed in the macOS Shortcuts app",
+      "icon": "square.stack.3d.up.fill",
+      "mode": "list",
+      "keywords": ["shortcuts", "run shortcut", "automation", "apple shortcuts"],
+      "script": "commands/list-shortcuts.py",
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "focus-modes",
+      "title": "Focus & Do Not Disturb",
+      "subtitle": "Quick-launch Work, Personal, Do Not Disturb Focus shortcuts or Focus settings",
+      "icon": "moon.circle.fill",
+      "mode": "grid",
+      "keywords": ["focus", "dnd", "do not disturb", "work focus", "personal focus"],
+      "script": "commands/focus-modes.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 60,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "shortcuts.list",
+      "name": "List Installed Apple Shortcuts",
+      "intent": "List all user Apple Shortcuts via /usr/bin/shortcuts list.",
+      "triggers": ["list shortcuts", "apple shortcuts"],
+      "type": "shell",
+      "script": "/usr/bin/shortcuts list",
+      "safety": "read"
+    }
+  ],
+  "cli_tools": [
+    {
+      "name": "shortcuts",
+      "binary": "/usr/bin/shortcuts",
+      "description": "Run and manage Apple Shortcuts from the command line."
+    }
+  ]
+}

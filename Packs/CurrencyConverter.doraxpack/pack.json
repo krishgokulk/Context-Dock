@@ -1,0 +1,84 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "currency-converter",
+  "name": "Currency Converter",
+  "version": "3.0.0",
+  "icon": "dollarsign.circle.fill",
+  "description": "Live exchange rates and instant currency conversion (USD, EUR, GBP, INR, JPY, CAD, AUD, CHF, SGD, AED) inside the 680 × 440 Result Sheet.",
+  "scope": {
+    "surfaces": ["global"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#10B981",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:clipboard"],
+  "keywords": ["currency", "fx", "exchange rate", "usd", "eur", "inr", "gbp", "convert", "money"],
+  "commands": [
+    {
+      "id": "convert-currency",
+      "title": "Convert Currency",
+      "subtitle": "Convert any amount between world currencies with live cached FX rates",
+      "icon": "dollarsign.arrow.circlepath",
+      "mode": "form",
+      "keywords": ["convert currency", "fx convert", "usd to inr", "currency converter"],
+      "script": "commands/convert.py",
+      "form_fields": [
+        {
+          "id": "amount",
+          "title": "Amount",
+          "type": "text",
+          "default": "100",
+          "placeholder": "100",
+          "required": true
+        },
+        {
+          "id": "from",
+          "title": "From Currency",
+          "type": "select",
+          "default": "USD",
+          "options": ["USD", "EUR", "GBP", "INR", "JPY", "CAD", "AUD", "CHF", "SGD", "AED"],
+          "required": true
+        },
+        {
+          "id": "to",
+          "title": "To Currency",
+          "type": "select",
+          "default": "INR",
+          "options": ["INR", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "SGD", "AED"],
+          "required": true
+        }
+      ],
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "exchange-rates",
+      "title": "Currency Exchange Rates",
+      "subtitle": "Browse live USD exchange rates across Major & Asia-Pacific currencies",
+      "icon": "chart.line.uptrend.xyaxis",
+      "mode": "list",
+      "keywords": ["exchange rates", "currency rates", "fx table", "currency converter"],
+      "script": "commands/rates.py",
+      "filter_options": ["All", "Major", "Asia & Gulf"],
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 300,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "currency.convert",
+      "name": "Convert Currency",
+      "intent": "Convert currency amounts cleanly with live FX rates.",
+      "triggers": ["convert currency", "exchange rate", "fx"],
+      "type": "aiPrompt",
+      "script": "Open Convert Currency or Currency Exchange Rates to calculate live FX values.",
+      "safety": "read"
+    }
+  ]
+}

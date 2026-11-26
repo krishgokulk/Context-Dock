@@ -28,6 +28,7 @@ enum ExtensionScopeMetrics {
 
 struct ExtensionScopeCard: View {
     @ObservedObject var model: AppChatPromptModel
+    @Environment(\.sharesOneCard) private var sharesOneCard
     /// One of the two: a Global Extension the user built, or a Global Command from the
     /// registry. They look the same to the user — something global with its own interface —
     /// and so they get one board rather than two that drift.
@@ -37,14 +38,22 @@ struct ExtensionScopeCard: View {
     /// compact traits to the one renderer rather than getting a panel of its own.
     var plugin: PluginManifest?
 
+    private var headerID: String {
+        plugin?.id ?? ext?.id.uuidString ?? command?.id.uuidString ?? "extension-scope"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            if !sharesOneCard {
+                header
+            }
             conversation
             content
                 .frame(
                     width: ExtensionScopeMetrics.width,
-                    height: ExtensionScopeMetrics.bodyHeight)
+                    height: sharesOneCard
+                        ? (ExtensionScopeMetrics.bodyHeight + ExtensionScopeMetrics.headerHeight)
+                        : ExtensionScopeMetrics.bodyHeight)
             footer
         }
         .padding(.vertical, ExtensionScopeMetrics.verticalPadding)
@@ -55,6 +64,17 @@ struct ExtensionScopeCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .modifier(BoardGlass())
         .onHover { _ in model.touch() }
+        .onAppear {
+            ExtensionHeaderBarState.shared.update(
+                id: headerID,
+                title: title,
+                icon: symbol,
+                placeholder: "Filter \(title)…",
+                onBack: { _ = model.leaveScopeForGlobal() })
+        }
+        .onDisappear {
+            ExtensionHeaderBarState.shared.reset(ifMatching: headerID)
+        }
     }
 
     /// What the field has asked this panel, and what it answered. Only while there is

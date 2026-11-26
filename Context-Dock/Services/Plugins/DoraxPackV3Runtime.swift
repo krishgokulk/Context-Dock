@@ -435,6 +435,15 @@ final class DoraxPackV3Runtime: ObservableObject {
             return .success(cachedOutput)
         }
 
+        // Apple Intelligence commands act on the user's current selection/clipboard,
+        // so never flash stale previous results while computing a fresh response.
+        if (command.source ?? "").hasPrefix("dorax.appleIntelligence."),
+           command.cacheTTLSeconds == 0,
+           formValues == nil
+        {
+            existing.output = nil
+        }
+
         // Stale-while-revalidate: keep showing last good output while refreshing.
         existing.isRefreshing = true
         existing.lastError = nil

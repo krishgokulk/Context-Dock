@@ -1,0 +1,107 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "system-utilities",
+  "name": "System & Hardware",
+  "version": "3.0.0",
+  "icon": "slider.horizontal.3",
+  "description": "Control macOS Dark/Light Appearance, Wi-Fi, Bluetooth devices, Audio Volume, Keep Awake caffeinate, and Sleep/Empty Trash inside Result View.",
+  "scope": {
+    "surfaces": ["global", "notch"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#38BDF8",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "cli:execute", "notch:activity"],
+  "keywords": ["system", "wifi", "bluetooth", "volume", "audio", "appearance", "dark mode", "light mode", "keep awake", "caffeinate", "trash", "battery", "settings"],
+  "commands": [
+    {
+      "id": "appearance",
+      "title": "Appearance Mode",
+      "subtitle": "Switch macOS Dark Mode, Light Mode, or Toggle theme inside Result View",
+      "icon": "circle.lefthalf.filled",
+      "mode": "grid",
+      "keywords": ["appearance", "dark mode", "light mode", "theme"],
+      "script": "commands/appearance.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "wifi",
+      "title": "Wi-Fi Inspector",
+      "subtitle": "Live Wi-Fi SSID, interface IPv4, power toggle, and Network settings",
+      "icon": "wifi",
+      "mode": "list",
+      "keywords": ["wifi", "wi-fi", "network", "ip", "ssid", "wireless"],
+      "script": "commands/wifi.py",
+      "refresh_seconds": 10,
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "bluetooth",
+      "title": "Bluetooth Devices",
+      "subtitle": "Inspect paired & connected Bluetooth devices and battery levels",
+      "icon": "wave.3.right.circle.fill",
+      "mode": "list",
+      "keywords": ["bluetooth", "bt", "airpods", "headphones", "devices", "battery"],
+      "script": "commands/bluetooth.py",
+      "filter_options": ["All", "Connected", "Paired"],
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    },
+    {
+      "id": "volume",
+      "title": "Volume Controls",
+      "subtitle": "Adjust output volume or Mute/Unmute in a visual grid",
+      "icon": "speaker.wave.3.fill",
+      "mode": "grid",
+      "keywords": ["volume", "sound", "audio", "mute", "speaker"],
+      "script": "commands/volume.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 3,
+      "safety": "read"
+    },
+    {
+      "id": "keep-awake",
+      "title": "Keep Awake",
+      "subtitle": "Prevent display & system sleep with caffeinate timer cards and Notch status",
+      "icon": "cup.and.saucer.fill",
+      "mode": "grid",
+      "keywords": ["keep awake", "caffeinate", "coffee", "prevent sleep", "awake"],
+      "script": "commands/keep-awake.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "system-power",
+      "title": "Power, Battery & Trash",
+      "subtitle": "Battery health, Lock Screen, confirmed Sleep, and confirmed Empty Trash",
+      "icon": "power.circle.fill",
+      "mode": "grid",
+      "keywords": ["power", "battery", "empty trash", "lock screen", "sleep mac"],
+      "script": "commands/system-power.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "system.appearance.toggle",
+      "name": "Toggle Dark Mode",
+      "intent": "Toggle macOS Light and Dark appearance.",
+      "triggers": ["toggle dark mode", "dark mode", "light mode"],
+      "type": "applescript",
+      "script": "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode",
+      "safety": "write"
+    }
+  ]
+}

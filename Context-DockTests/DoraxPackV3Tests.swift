@@ -537,7 +537,8 @@ struct DoraxPackV3Tests {
         let expectedNewIDs = [
             "youtube", "github", "homebrew", "spotify", "obsidian", "tailscale",
             "whatsapp", "claude", "chatgpt", "messages", "notes", "google-drive",
-            "apple-intelligence", "antigravity"
+            "apple-intelligence", "antigravity",
+            "system-utilities", "currency-converter", "focus-shortcuts"
         ]
         for id in expectedNewIDs {
             let pack = try #require(byID[id], "Missing curated pack \(id)")
@@ -610,6 +611,33 @@ struct DoraxPackV3Tests {
         let formOut = try await runtime.runCommand(
             formCmd, in: pack, formValues: ["action": "Make Concise", "text": "Long sample text"], forceRefresh: true).get()
         #expect(formOut.detail?.markdown.contains("Make Concise") == true)
+    }
+
+    @Test("ExtensionHeaderBarState resets only when ID matches and live selection takes priority over clipboard")
+    func extensionHeaderAndSelectionPriority() {
+        let state = ExtensionHeaderBarState.shared
+        state.update(id: "first", title: "First", icon: "star")
+        state.update(id: "second", title: "Second", icon: "bolt", filterOptions: ["All", "Formula"], selectedFilter: "Formula")
+        // Resetting stale ID must not clobber newer active header
+        state.reset(ifMatching: "first")
+        #expect(state.activeID == "second")
+        #expect(state.filterOptions == ["All", "Formula"])
+        state.reset(ifMatching: "second")
+        #expect(state.activeID.isEmpty)
+
+        // Selection priority must beat clipboard when selection text is present
+        let spec = DoraxAppleIntelligenceRunner.spec(for: "dorax.appleIntelligence.summarize")
+        let pickedSel = DoraxAppleIntelligenceRunner.resolveInputText(
+            spec: spec, query: "", formValues: nil,
+            selectionOverride: "Highlighted paragraph", clipboardOverride: "Old clipboard item")
+        #expect(pickedSel.text == "Highlighted paragraph")
+        #expect(pickedSel.sourceLabel == "Selection")
+
+        let fallbackClip = DoraxAppleIntelligenceRunner.resolveInputText(
+            spec: spec, query: "", formValues: nil,
+            selectionOverride: "", clipboardOverride: "Copied article text")
+        #expect(fallbackClip.text == "Copied article text")
+        #expect(fallbackClip.sourceLabel == "Clipboard")
     }
 
     @Test("Phase 1: DoraxPackV3EditorService copy-on-write upgrades, creates backups, rejects invalid patches, rolls back, and resets")
