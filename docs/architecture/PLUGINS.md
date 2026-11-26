@@ -1,15 +1,28 @@
 # Plugins and `.doraxpack` v2 Packs
 
-Architecture truth for the unified DoraX extension and App Pet pack system (updated 2026-11-20 for Tasks
-U3–U8; PRs #476, #477, #478, #480, #481). Original design (archived):
-`docs/history/specs/2026-09-15-plugins-design.md`. Current specification:
-`docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`.
+Architecture truth for the unified DoraX extension, App Pet, Web-App, and CLI pack system (updated
+2026-11-26). Original design (archived): `docs/history/specs/2026-09-15-plugins-design.md`. Current
+specifications:
+- `docs/superpowers/specs/2026-11-05-streamline-settings-and-extensions.md`
+- `docs/superpowers/specs/2026-11-26-doraxpack-v3-master-architecture-plan.md` (`.doraxpack` v3 Unified
+  Master Architecture Plan: `commands[]`, `tools/`, `hooks/` with Swift pre-filters, `$DORAX_CONTEXT`,
+  `dorax.*` sources, Keychain `preferences[]`, Web-App `domains`, Dynamic Notch Live Activities, and
+  Animated Dock/Sheet Glow)
+
+## Native Core vs. `.doraxpack` v2 Boundary
+
+DoraX owns core macOS surfaces natively (`Clipboard`, `Windows`, `Finder` file submodes & Vision OCR,
+`MediaPlayerObserver` Now Playing in Notch Page 0, `Quick Note`, `Drop Shelf` in Notch Page 1,
+`Inline Calculator / Units / Dates / World Clock`, `Emoji & Symbols`, and core hardware toggles
+`Wi-Fi` / `Bluetooth` / `Volume` / `Keep Awake`). Packs extend DoraX with **Global dashboards**,
+**App integrations** (`Notes`, `Mail`, `Spotify`), **Web-App integrations** (`YouTube`, `Linear`,
+`GitHub`), and **CLI wrappers** (`brew`, `docker`, `gh`) without duplicating native primitives.
 
 ## What a plugin / pack is (`.doraxpack` v2)
 
 A **`.doraxpack` v2** folder (`Services/Plugins/DoraxPackV2.swift`) is the **single canonical package
-format** in DoraX, unifying both App-scoped Pet Packs (`target_app.bundle_id` set) and Global Context
-Plugins (`target_app` omitted or `"global"`):
+format** in DoraX across all three scopes — **Global** (`target_app` omitted or `"global"`), **App**
+(`target_app.bundle_id` set), and **Web-App** (`web_domains` / `extension_hooks` URL patterns):
 
 ```text
 <pack-id>.doraxpack/
@@ -27,13 +40,14 @@ Plugins (`target_app` omitted or `"global"`):
 
 In `pack.json`, a pack declares any subset of:
 
-- `target_app` — `{ "bundle_id": "<bundleId>", "name": "<AppName>" }` for an App Pet pack, or omitted / `"global"` for Global Context.
-- `capabilities` & `actions` — named tools (`scriptFile`, `cli`, `applescript`, `jxa`, `menubar`, `urlScheme`, `shortcut`, `http`, or built-ins `copy`, `open`, `reveal`, `paste`, `push:<view>`), each with a declared `safety` / `risk` and optional `sandbox` (`container` micro-VM, PR #481).
+- `target_app` — `{ "bundle_id": "<bundleId>", "name": "<AppName>" }` for an App pack, `web_domains` (e.g. `["youtube.com", "youtu.be"]`) for a Web-App pack, or omitted / `"global"` for Global Context. When the matching App or Web-App URL is frontmost, Global Context automatically elevates the pack's commands and skills under `Contextual — <Name>`; when in the background, its commands remain searchable globally by name/keyword.
+- `capabilities` & `actions` — named tools (`scriptFile`, `cli`, `applescript`, `jxa`, `menubar`, `urlScheme`, `shortcut`, `http`, Notch hooks `notch.notify` / `notch.wing` / `notch.timer` / `notch.record`, or built-ins `copy`, `open`, `reveal`, `paste`, `push:<view>`, `set`), each with a declared `safety` / `risk`, optional shortcut, and optional `sandbox` (`container` micro-VM, PR #481).
 - `cli_tools` — embedded (`.app/Contents/MacOS/<binary>`) or PATH CLI binaries executed strictly as **argv, never a shell string**.
 - `utcp_endpoints` — zero-daemon OpenAPI / UTCP HTTP endpoints executed directly by `UTCPDirectExecutor`.
 - `mcp_servers` — lazy `stdio` MCP servers linked to `target_app.bundle_id` (e.g. `/usr/bin/safaridriver --mcp`).
 - `extension_hooks` — declarative browser/app extension scripts (`page_scripts/*.js`) with `url_matches`, `exclude_sensitive_urls`, and `safety`, registered in `ExtensionHookRegistry` (`Services/SafariExtensionHookRegistry.swift`, PR #478) and executed by `Context-DockExtension`.
-- `views` & `data` — any subset of `icon`, `widget`, `panel`, `window`, and `notch` (`PluginNotchView`: `wing` 44×32 pt badge + `page` 314×96 pt frontmost-app strip in the Dynamic Island Notch, PR #480), rendered over the fixed native component kit.
+- `views` & `data` — any subset of `icon`, `widget`, `panel` (full `680×440` Result Sheet with `<` Back, top-right filter/mode dropdown, colored row tags, metric accessories, Split Markdown + Right Metadata Sidebar, Visual Swatch Grids, Forms, Gauges, and searchable `⌘K` Actions popover), `window`, and `notch` (`PluginNotchView`: `wing` 44×32 pt badge + `page` 314×96 pt strip + live timer/recording hooks in the Dynamic Island Notch, PR #480).
+- `style` — optional accent `#HEX` color and Dock / Result Sheet glow animation (`off`, `ambient`, `pulse`, `orbit`, `burst`) rendered via `DockAuraEngine`.
 - `inputs` — `query`, `selection.*`, `clipboard.*`; satisfied inputs decide where it appears.
 - `agent` — references `AGENT.md`, `modes.json`, `skills/*/SKILL.md`, and `tools` ⊆ capabilities/actions.
 - `permissions` — declared, shown at install, gated at first run.
