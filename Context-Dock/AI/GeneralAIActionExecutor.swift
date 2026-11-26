@@ -214,6 +214,19 @@ final class GeneralAIActionExecutor {
         _ candidate: DoraXActionCandidate,
         approval: ExecutionApproval
     ) async -> GeneralAIActionResult {
+        var candidate = candidate
+        if candidate.capabilityID == "messages.send" || candidate.capabilityID == "messages.compose" {
+            if candidate.inputValues["recipient", default: ""].isEmpty {
+                let userQuery = candidate.inputValues["query"] ?? ""
+                if let parsed = MessagesAutomation.parseMessageIntent(from: userQuery) {
+                    candidate.inputValues["recipient"] = parsed.recipient
+                    if candidate.inputValues["body", default: ""].isEmpty {
+                        candidate.inputValues["body"] = parsed.body
+                    }
+                    candidate.title = "Send message to \"\(parsed.recipient)\": \"\(parsed.body)\""
+                }
+            }
+        }
         var grantSource = approval.grantSource
         if Self.requiresPrompt(approval, permissionKey: candidate.permissionKey) {
             let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
@@ -541,6 +554,17 @@ final class GeneralAIActionExecutor {
                 return .init(success: false, message: "Capability \(capabilityID) is not registered.")
             }
             var capabilityInput = candidate.inputValues
+            if capabilityID == "messages.send" || capabilityID == "messages.compose" {
+                if capabilityInput["recipient", default: ""].isEmpty {
+                    let userQuery = candidate.inputValues["query"] ?? ""
+                    if let parsed = MessagesAutomation.parseMessageIntent(from: userQuery) {
+                        capabilityInput["recipient"] = parsed.recipient
+                        if capabilityInput["body", default: ""].isEmpty {
+                            capabilityInput["body"] = parsed.body
+                        }
+                    }
+                }
+            }
             if capabilityID.hasPrefix("notes."),
                 candidate.requiredInputs.contains("noteID"),
                 capabilityInput["noteID", default: ""].isEmpty

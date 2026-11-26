@@ -566,8 +566,18 @@ final class AppPetManifestRegistry: @unchecked Sendable {
         appName: "Messages",
         bundleID: "com.apple.MobileSMS",
         summary: "Messages companion for reading conversations, drafting replies, and sending with confirmation.",
-        defaultMode: "read",
+        defaultMode: "assist",
         modes: [
+            AppPetModeManifest(
+                id: "assist",
+                name: "Assist",
+                summary: "General Messages companion: read recent messages, search history, draft replies, and send with confirmation.",
+                icon: "sparkles",
+                systemPromptOverlay: "Messages Assist mode: full companion for Messages. Read recent threads, search conversations, compose drafts, and prepare messages to send with recipient confirmation.",
+                preferredCapabilities: ["messages.read", "messages.search", "messages.send"],
+                capabilityFilter: .allowAll,
+                planDetail: .normal
+            ),
             AppPetModeManifest(
                 id: "read",
                 name: "Read",

@@ -275,6 +275,7 @@ enum ChatRouteResolver {
         let questionStarts = [
             "what", "which", "who", "when", "where", "why", "how", "is ", "are ", "do ",
             "does ", "did ", "can ", "am i", "tell me", "my ",
+            "to whom", "to what", "to which",
             // "show me" / "list" / "find" are requests to *see* something, and were being
             // read as commands because they begin with a verb that also names a GUI action.
             // "show me recent files i viewed" ran Preview's "Show Inspector" — a menu item
@@ -299,7 +300,9 @@ enum ChatRouteResolver {
             "turn on", "turn off", "switch on", "switch off", "enable", "disable",
             "uncheck", "untick", "click", "press",
         ]
-        if lowered.hasPrefix("text ") || lowered.hasPrefix("message ") {
+        if lowered.hasPrefix("text ") || lowered.hasPrefix("message ")
+            || lowered.hasPrefix("to ") || lowered.hasPrefix("to \"") || lowered.hasPrefix("to “")
+            || lowered.hasPrefix("tell ") || lowered.hasPrefix("msg ") || lowered.hasPrefix("dm ") {
             return true
         }
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
@@ -464,22 +467,22 @@ enum ChatRouteResolver {
 
         // Built-in first-party capabilities (EventKit Calendar, Reminders, Contacts,
         // Music, Photos, Messages, Notes, Finder, Safari, Mail).
-        //
-        // For question queries the term filter cannot be applied: the app's own name
-        // ("notes") is stripped from the query terms, leaving only words like "how",
-        // "many", or "have" that match nothing in notes.count or notes.search. When
-        // the word filter was the only gate, a counting question reached only the Notes
-        // adapter action (New Note) and created a blank note — the recorded bug.
-        // All read-only capabilities are included for question queries; term-matching
-        // still narrows the list for action requests where intent guides the choice.
+        let isMessagesApp = bundleId.caseInsensitiveCompare("com.apple.MobileSMS") == .orderedSame
+        let parsedMessageIntent = isMessagesApp ? MessagesAutomation.parseMessageIntent(from: query) : nil
+        let isDraftIntent = query.lowercased().contains("draft") || query.lowercased().contains("compose")
+
         let registeredCaps = CapabilityRegistry.shared.capabilities(for: bundleId)
         let isQuestion = !isActionRequest(query)
         for cap in registeredCaps
         where (cap.appBundleID?.caseInsensitiveCompare(bundleId) == .orderedSame
                || (cap.appBundleID == nil && cap.id.lowercased().hasPrefix(appName.lowercased())))
-            && (isQuestion
-                ? cap.riskLevel == .low
-                : (matches(cap.title) || matches(cap.id) || matches(AppAdapterCapabilityCatalog.verbSynonyms(for: cap.id)))) {
+            && (
+                parsedMessageIntent != nil
+                ? (isDraftIntent ? cap.id == "messages.compose" : cap.id == "messages.send")
+                : (isQuestion
+                    ? cap.riskLevel == .low
+                    : (matches(cap.title) || matches(cap.id) || matches(AppAdapterCapabilityCatalog.verbSynonyms(for: cap.id))))
+            ) {
             routes.append(
                 ChatRoute(
                     id: "capability:\(cap.id)",

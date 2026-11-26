@@ -18,10 +18,13 @@ enum AppAdapterCapabilityCatalog {
         case "search": return "find look lookup where which show list"
         case "read": return "open show display get contents"
         case "update": return "edit change amend revise"
-        case "delete": return "remove trash erase clear"
+        case "delete": return "remove trash erase clear delete"
         case "extract_tasks": return "todos tasks actions checklist"
         case "topContacts": return "most often frequently ranking top who messaged texted chatted"
-        case "recent": return "latest last lately newest"
+        case "recent": return "latest last lately newest recent"
+        case "count": return "how many count total number amount"
+        case "send": return "text message tell write to notify ping dm send dispatch"
+        case "compose", "draft": return "prepare draft compose"
         default: return ""
         }
     }

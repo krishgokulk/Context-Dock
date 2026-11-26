@@ -17,6 +17,7 @@ enum ScopedRecordRead {
         // the words above, planned as a read, and was handed no menu or window tool at all.
         "turn on ", "turn off ", "switch on ", "switch off ", "toggle ", "uncheck ", "untick ",
         "click ", "press ",
+        "tell ", "text ", "message ", "msg ", "dm ",
     ]
 
     /// Verbs that ask for a look-up. "look for"/"look up" were only understood by Mail's retired
@@ -24,7 +25,12 @@ enum ScopedRecordRead {
     static let lookupVerbs = ["find ", "search ", "list ", "look for ", "look up ", "lookup "]
 
     static func hasExplicitAction(_ query: String) -> Bool {
-        let lower = query.lowercased()
+        let lower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if (lower.hasPrefix("to \"") || lower.hasPrefix("to “") || lower.hasPrefix("to "))
+            && !lower.hasPrefix("to whom") && !lower.hasPrefix("to what") && !lower.hasPrefix("to which")
+        {
+            return true
+        }
         return actionWords.contains(where: lower.contains)
     }
 

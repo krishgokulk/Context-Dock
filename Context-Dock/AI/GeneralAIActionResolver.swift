@@ -65,7 +65,7 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
     }
 
     let id: String
-    let title: String
+    var title: String
     let appName: String?
     let bundleID: String?
     let source: Source

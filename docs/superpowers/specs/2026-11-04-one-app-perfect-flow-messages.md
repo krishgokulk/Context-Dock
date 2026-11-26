@@ -143,3 +143,29 @@ A test suite of 10 standard prompts for Messages must pass consistently:
 4. `Turn on [Setting] / Toggle [Setting]` -> Look at menus/window -> Click element -> Verified.
 5. `Search messages for [Keyword]` -> Accurate search results returned.
 6. `Emergency Stop (Esc)` -> Immediately aborts in-flight actions.
+
+---
+
+## 7. Messages Pet Mode & Send Route Resolution Fix
+
+### Root Cause Analysis of `to "Contact" "message"` Route Failure
+When the user typed `to "Gokula kannan J " hey "testing context-dock agent"`, the system incorrectly routed to `route(adapterAction, Search in Messages)` and answered `No Messages matched...`.
+
+**Why this happened:**
+1. **Default Mode Constraint:** `messagesManifest` defined `defaultMode: "read"` with `capabilityFilter: .readOnly`. The App Pet opened locked in "Read" mode.
+2. **Action Request Recognition Gap:** `ChatRouteResolver.isActionRequest` did not recognize `to "..."`, `to <contact>`, `tell <contact>`, `msg`, or `dm` as action verbs. It treated the query as a question.
+3. **Unattended Read Route Hijacking:** For non-action queries, `ChatRouteResolver.routes` added all low-risk capabilities (`messages.search`) without requiring keyword match. In `AppScopedChatService`, `ChatRouteResolver.unattendedRoute(routes)` selected the first read-only route (`messages.search`) and executed it with the full query string as the search keyword.
+4. **Missing Direct Intent Parsing:** Neither `GeneralAIActionExecutor` nor `AIExecutionEngine` parsed structured `recipient` and `body` fields from direct message syntax before raising approval or executing.
+
+### The Solution
+1. **Messages App Pet Default Mode:** Set `defaultMode: "assist"` with `AppPetModeManifest(id: "assist", name: "Assist", capabilityFilter: .allowAll, preferredCapabilities: ["messages.read", "messages.search", "messages.send"])`. Messages Pet now defaults to full companion assistance just like other App Pets.
+2. **Direct Intent Parser:** Implemented `MessagesAutomation.parseMessageIntent(from:)` supporting:
+   - `to "Recipient" [hey|saying|:] ["Body" | Body]` (including macOS smart curly quotes `“”`)
+   - `to <recipient> [:] <body>`
+   - `(send|text|message|tell|msg|dm) [to] [Recipient] [saying|that|with|:] [Body]`
+3. **Action Request & Route Resolution:**
+   - Updated `ChatRouteResolver.isActionRequest` and `ScopedRecordRead.actionWords` to recognize `to "`, `to `, `tell `, `text `, `message `, `msg `, `dm `.
+   - In `ChatRouteResolver.routes`, direct send syntax maps specifically to `messages.send` (or `messages.compose` if draft/compose is explicitly requested).
+   - Eliminated unqualified fallback of `messages.search` onto non-search queries.
+4. **Pre-populated Candidate & Approval Card:** In `GeneralAIActionExecutor.execute`, parsed `recipient` and `body` are automatically mapped into `candidate.inputValues`, and `candidate.title` is updated to `"Send message to \"[recipient]\": \"[body]\""`, cleanly populating the user's Outbound Approval Card.
+5. **Automated Verification:** Added unit tests in `MessagesSendWorkflowTests.swift` covering exact user syntax, curly quotes, unquoted names, action recognition, and routing resolution.

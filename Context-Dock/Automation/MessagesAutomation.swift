@@ -231,6 +231,147 @@ enum MessagesAutomation {
         return .notFound
     }
 
+    // MARK: - Direct Message Intent Parsing
+
+    struct ParsedMessageIntent: Equatable {
+        let recipient: String
+        let body: String
+    }
+
+    /// Parses command-line / chat style message intent such as:
+    /// - `to "Gokula kannan J " hey "testing context-dock agent"`
+    /// - `to "Gokula kannan J" hello there`
+    /// - `to Alex: hello`
+    /// - `send "hello" to "Alex"`
+    /// - `text Alex I'm home`
+    /// - `tell Mom I'm on my way`
+    static func parseMessageIntent(from query: String) -> ParsedMessageIntent? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Pattern 1: to "Recipient" [hey|saying|:] ["Body" | Body]
+        let quotedToRegex = try? NSRegularExpression(
+            pattern: #"^to\s+["“]([^"”]+)["”]\s*[:\-]?\s*(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = quotedToRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipientRange = match.range(at: 1)
+            let bodyRange = match.range(at: 2)
+            let recipient = (trimmed as NSString).substring(with: recipientRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: bodyRange).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Clean up body: if it has `hey "message"` or `saying "message"`, extract the inner text
+            let innerQuoteRegex = try? NSRegularExpression(
+                pattern: #"^(?:(?:hey|hi|saying|that|with)\s+)?["“]([^"”]+)["”]$"#,
+                options: .caseInsensitive
+            )
+            if let innerMatch = innerQuoteRegex?.firstMatch(in: rawBody, range: NSRange(location: 0, length: (rawBody as NSString).length)) {
+                rawBody = (rawBody as NSString).substring(with: innerMatch.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"") && rawBody.count >= 2 {
+                rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if rawBody.hasPrefix("“") && rawBody.hasSuffix("”") && rawBody.count >= 2 {
+                rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        // Pattern 2: to <recipient> [:] <body>
+        // 2a: with colon or dash separator: allows multi-word unquoted recipient
+        let unquotedColonToRegex = try? NSRegularExpression(
+            pattern: #"^to\s+([A-Za-z0-9_\.\+\-]+@[A-Za-z0-9_\.\-]+\.[A-Za-z]{2,}|\+?[0-9\-\(\)\s]{7,}|[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s*[:\-]\s*(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = unquotedColonToRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipient = (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"")) || (rawBody.hasPrefix("“") && rawBody.hasSuffix("”")) {
+                if rawBody.count >= 2 {
+                    rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        // 2b: space separator without colon: single-word recipient (or phone/email)
+        let unquotedToRegex = try? NSRegularExpression(
+            pattern: #"^to\s+([A-Za-z0-9_\.\+\-]+@[A-Za-z0-9_\.\-]+\.[A-Za-z]{2,}|\+?[0-9\-\(\)\s]{7,}|[A-Za-z0-9]+)\s+(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = unquotedToRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipient = (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"")) || (rawBody.hasPrefix("“") && rawBody.hasSuffix("”")) {
+                if rawBody.count >= 2 {
+                    rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        // Pattern 3: (send|text|message|tell|msg|dm) [a message to | to] ["Recipient" | Recipient] [saying|that|with|:] ["Body" | Body]
+        // 3a: with quoted recipient
+        let quotedVerbRegex = try? NSRegularExpression(
+            pattern: #"^(?:send|text|message|tell|msg|dm)\s+(?:(?:a\s+)?message\s+to\s+|to\s+)?["“]([^"”]+)["”]\s*(?:saying|that|with|:)?\s*(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = quotedVerbRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipient = (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"")) || (rawBody.hasPrefix("“") && rawBody.hasSuffix("”")) {
+                if rawBody.count >= 2 {
+                    rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        // 3b: with explicit keyword (saying|that|with|:) - allows multi-word recipient
+        let keywordVerbRegex = try? NSRegularExpression(
+            pattern: #"^(?:send|text|message|tell|msg|dm)\s+(?:(?:a\s+)?message\s+to\s+|to\s+)?([A-Za-z0-9_\.\+\-]+@[A-Za-z0-9_\.\-]+\.[A-Za-z]{2,}|\+?[0-9\-\(\)\s]{7,}|[A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s+(?:saying|that|with|:)\s+(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = keywordVerbRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipient = (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"")) || (rawBody.hasPrefix("“") && rawBody.hasSuffix("”")) {
+                if rawBody.count >= 2 {
+                    rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        // 3c: plain verb with single-word unquoted recipient
+        let plainVerbRegex = try? NSRegularExpression(
+            pattern: #"^(?:send|text|message|tell|msg|dm)\s+(?:(?:a\s+)?message\s+to\s+|to\s+)?([A-Za-z0-9_\.\+\-]+@[A-Za-z0-9_\.\-]+\.[A-Za-z]{2,}|\+?[0-9\-\(\)\s]{7,}|[A-Za-z0-9]+)\s+(.*)$"#,
+            options: .caseInsensitive
+        )
+        if let match = plainVerbRegex?.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)) {
+            let recipient = (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var rawBody = (trimmed as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawBody.hasPrefix("\"") && rawBody.hasSuffix("\"")) || (rawBody.hasPrefix("“") && rawBody.hasSuffix("”")) {
+                if rawBody.count >= 2 {
+                    rawBody = String(rawBody.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            if !recipient.isEmpty && !rawBody.isEmpty {
+                return ParsedMessageIntent(recipient: recipient, body: rawBody)
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Send Message (Rung 3 AppleScript -> Rung 4 UI Fallback + Verified Read-Back)
 
     static func sendMessage(to recipient: String, body: String) async -> (success: Bool, message: String, delivery: MessagesChatDBReader.DeliveryStatus) {
