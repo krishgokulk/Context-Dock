@@ -142,6 +142,7 @@ final class FileIndexManager: ObservableObject {
         let prefix = String(q.prefix(4))
         for (key, files) in nameIndex where key.hasPrefix(prefix) {
             for file in files {
+                guard !FileSearchService.isNoisyPath(file.path) else { continue }
                 guard seen.insert(file.path).inserted else { continue }
                 if let sc = FuzzyMatcher.score(q, against: file.name.lowercased()) {
                     scored.append((file, sc))
@@ -153,6 +154,7 @@ final class FileIndexManager: ObservableObject {
         if scored.count < limit {
             for (_, files) in nameIndex {
                 for file in files {
+                    guard !FileSearchService.isNoisyPath(file.path) else { continue }
                     guard seen.insert(file.path).inserted else { continue }
                     let lower = file.name.lowercased()
                     if lower.contains(q) {
@@ -222,6 +224,7 @@ final class FileIndexManager: ObservableObject {
         var scored: [(IndexedFile, Double)] = []
 
         for file in indexedFiles {
+            guard !FileSearchService.isNoisyPath(file.path) else { continue }
             guard file.path == root || file.path.hasPrefix(root + "/") else { continue }
             if query.filesOnly && file.isDirectory { continue }
             if !query.includeDirectories && file.isDirectory { continue }
@@ -292,9 +295,9 @@ final class FileIndexManager: ObservableObject {
         // Scope: user home + removable/network volumes
         q.searchScopes = spotlightScopes()
 
-        // Predicate: exclude hidden files and known build/cache dirs
+        // Predicate: exclude hidden files and known build/cache/graph dirs
         q.predicate = NSPredicate(
-            format: "NOT kMDItemDisplayName BEGINSWITH '.' AND NOT kMDItemPath CONTAINS '/node_modules/' AND NOT kMDItemPath CONTAINS '/DerivedData/' AND NOT kMDItemPath CONTAINS '/Library/Caches/' AND NOT kMDItemPath CONTAINS '/.git/' AND NOT kMDItemPath CONTAINS '/Pods/' AND NOT kMDItemPath CONTAINS '/.build/' AND NOT kMDItemPath CONTAINS '/build/'"
+            format: "NOT kMDItemDisplayName BEGINSWITH '.' AND NOT kMDItemPath CONTAINS '/graphify-out/' AND NOT kMDItemPath CONTAINS '/.cache/' AND NOT kMDItemPath CONTAINS '/node_modules/' AND NOT kMDItemPath CONTAINS '/DerivedData/' AND NOT kMDItemPath CONTAINS '/Library/Caches/' AND NOT kMDItemPath CONTAINS '/.git/' AND NOT kMDItemPath CONTAINS '/Pods/' AND NOT kMDItemPath CONTAINS '/.build/' AND NOT kMDItemPath CONTAINS '/build/'"
         )
 
         // Sort by last-used date — most relevant files float up
@@ -378,6 +381,7 @@ final class FileIndexManager: ObservableObject {
         for i in start ..< end {
             guard let item = q.result(at: i) as? NSMetadataItem else { continue }
             guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
+            guard !FileSearchService.isNoisyPath(path) else { continue }
             let url = URL(fileURLWithPath: path)
             let ext = url.pathExtension.lowercased()
 

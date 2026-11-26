@@ -188,6 +188,15 @@ final class ClipboardHistoryEngine {
         history.removeAll { $0.contentHash == hash }
         ClipboardImageStore.delete(fileNames: removed.compactMap(\.imageFileName))
         history.insert(entry, at: 0)
+        if !AppDelegate.isHostingTests, !text.isEmpty {
+            let clipType = DoraxContextBridge.classifyClipboardText(text)
+            DoraxPackHookDispatcher.shared.dispatch(DoraxHookEvent(
+                kind: .clipboard,
+                bundleID: sourceApp.bundleId,
+                appName: sourceApp.name,
+                clipboardText: text,
+                clipboardType: clipType))
+        }
         if let imageData {
             persistImageBlob(entryID: entry.id, data: imageData)
             scheduleOCR(for: entry.id, imageData: imageData)

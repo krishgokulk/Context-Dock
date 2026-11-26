@@ -11,6 +11,7 @@ import Foundation
 enum GlobalResultSection {
     static let applications = "Applications"
     static let commands = "Commands"
+    static let extensions = "Extensions"
     static let menuCommands = "Menu commands"
     static let files = "Files & Folders"
     static let web = "Web"
@@ -89,6 +90,7 @@ enum GlobalResultSection {
     static let canonicalOrder: [String] = [
         applications,
         commands,
+        extensions,
         windowLayouts,
         openTabs,
         menuCommands,

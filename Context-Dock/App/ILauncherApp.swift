@@ -254,13 +254,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // whose buttons quietly do nothing, and "nothing happened" is the hardest bug to
         // report. Routing through AICapabilityApprovalCenter keeps one approval surface.
         PluginCapability.installApprovalProvider()
+        // Safe one-time .zip backup & cleanup of pre-v3 legacy extension clutter.
+        LegacyPluginCleanup.runOnceIfNeeded()
         // The plugins the app ships, written onto disk where every other plugin lives so they
         // can be read and edited by hand. Never overwrites an edited one.
         PluginEssentials.seedIfNeeded()
-        // First-party .doraxpack v2 packs: Finder, Safari, Mail, IINA, Antigravity.
+        // First-party .doraxpack v3/v2 packs: Finder, Safari, Mail, IINA, Antigravity + flagship packs.
         FirstPartyPacks.loadIfNeeded()
         // One-time migration of legacy user-installed packs to .doraxpack v2 folder format.
         DoraxPackV2Migration.migrateInstalledPacksIfNeeded()
+        // Unified .doraxpack v3 registry & Swift-prefiltered reactive hook dispatcher.
+        DoraxPackV3Registry.shared.reload()
+        DoraxPackHookDispatcher.shared.startObserving()
         // Which apps exist on this Mac, read once in the background. Nothing owned this
         // before, so the catalog was built by whichever feature happened to touch an app
         // first — and General Chat, asked about an app on an empty desktop, resolved

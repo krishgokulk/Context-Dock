@@ -1,12 +1,35 @@
 {
   "format_version": 2,
+  "schema_version": 3,
   "id": "mail",
   "name": "Mail",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "icon": "envelope.fill",
   "description": "Search, read, and draft replies in Apple Mail.",
   "bundle_id": "com.apple.mail",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["com.apple.mail"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#60A5FA",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "mail:read"],
   "keywords": ["mail", "email", "inbox", "search", "draft", "reply", "send"],
+  "commands": [
+    {
+      "id": "mail-notifications",
+      "title": "Recent Mail Alerts",
+      "subtitle": "Recent notifications captured by DoraX",
+      "icon": "envelope.badge",
+      "mode": "list",
+      "keywords": ["mail", "notifications", "inbox", "alerts"],
+      "source": "dorax.notifications",
+      "safety": "read"
+    }
+  ],
   "capabilities": [
     {
       "id": "mail.searchInbox",

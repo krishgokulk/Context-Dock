@@ -78,6 +78,45 @@ enum DevCornerRemote {
             }
         case "hide":
             presentation.dismiss()
+        case "type":
+            if !presentation.isVisible {
+                controller.showCentred()
+            }
+            controller.prompt.query = argument
+            controller.prompt.updateGlobalTyping(for: argument)
+            controller.refresh()
+        case "v3":
+            let v3Parts = argument.split(separator: "/", maxSplits: 1).map(String.init)
+            if v3Parts.count == 2,
+               let pack = DoraxPackV3Registry.shared.pack(id: v3Parts[0]),
+               let cmd = pack.metadata.commands?.first(where: { $0.id == v3Parts[1] })
+            {
+                if !presentation.isVisible {
+                    controller.showCentred()
+                }
+                controller.prompt.scopeIntoV3Command(DoraxBoundCommand(
+                    pack: pack, command: cmd, sectionTitle: pack.name, isContextual: false))
+                controller.refresh()
+            }
+        case "studio":
+            if !presentation.isVisible {
+                controller.showCentred()
+            }
+            controller.prompt.openExtensionStudio(target: .appPlugin)
+            controller.refresh()
+        case "notch":
+            if argument == "dismiss" {
+                DynamicNotchState.shared.dismissPackActivity()
+            }
+        case "down":
+            _ = controller.prompt.moveMenuFocus(by: 1)
+            controller.refresh()
+        case "enter":
+            _ = controller.prompt.runFocusedRow()
+            controller.refresh()
+        case "back":
+            _ = controller.prompt.leaveScopeForGlobal()
+            controller.refresh()
         case "state":
             break
         default:
@@ -103,6 +142,10 @@ enum DevCornerRemote {
             "app": prompt.appName,
             "query": prompt.query,
             "attachments": prompt.attachments.map(\.lastPathComponent),
+            "rowCount": prompt.rows.count,
+            "rowTitles": Array(prompt.rows.prefix(8).map(\.title)),
+            "scopedV3": prompt.scopedV3Command?.id ?? "",
+            "notchActivity": DynamicNotchState.shared.activePackActivity?.payload.wingText ?? "",
             "writtenAt": ISO8601DateFormatter().string(from: Date()),
         ]
         guard

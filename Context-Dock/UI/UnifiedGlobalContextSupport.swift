@@ -91,6 +91,59 @@ extension AppChatPromptModel {
         }
 
         var items: [AppChatRow] = []
+
+        // 1. `.doraxpack` v3 frontmost App & Web-App (`domains`) contextual commands ranked FIRST.
+        let activeBrowserURL = DoraxContextBridge.activeBrowserURL(for: frontApp)
+        let contextualV3 = DoraxPackV3Registry.shared.contextualCommands(
+            frontmostBundleID: bundleID,
+            frontmostURL: activeBrowserURL,
+            query: typed)
+        for bound in contextualV3.prefix(6) {
+            var pill = DockPill(
+                id: "dorax-v3-ctx-\(bound.id)",
+                name: bound.command.title,
+                icon: bound.command.icon,
+                badge: bound.pack.name,
+                execute: { [weak self] in self?.scopeIntoV3Command(bound) }
+            )
+            pill.sourceBundleId = bundleID
+            pill.sourceAppName = bound.pack.name
+            pill.resultSection = bound.sectionTitle
+            pill.rankingKind = "doraxPackV3Contextual"
+            items.append(.dock(pill))
+        }
+
+        // 2. Reactive hook-staged suggestions (Guardrail 3: suggest/surface only).
+        for suggestion in DoraxPackHookDispatcher.shared.stagedSuggestions.prefix(3) {
+            if !trimmed.isEmpty,
+               !suggestion.title.lowercased().contains(trimmed),
+               !(suggestion.subtitle?.lowercased().contains(trimmed) ?? false)
+            { continue }
+            var pill = DockPill(
+                id: "dorax-hook-sug-\(suggestion.id)",
+                name: suggestion.title,
+                icon: suggestion.icon,
+                badge: suggestion.subtitle ?? "Suggested",
+                execute: { [weak self] in
+                    guard let action = suggestion.action,
+                          let packID = suggestion.packID,
+                          let pack = DoraxPackV3Registry.shared.pack(id: packID)
+                    else { return }
+                    if action.destructive {
+                        if let firstCmd = pack.metadata.commands?.first {
+                            self?.scopeIntoV3Command(DoraxBoundCommand(
+                                pack: pack, command: firstCmd, sectionTitle: pack.name, isContextual: false))
+                        }
+                        return
+                    }
+                    Task { _ = await DoraxPackV3Runtime.shared.runItemAction(action, in: pack) }
+                }
+            )
+            pill.resultSection = section
+            pill.rankingKind = "doraxHookSuggestion"
+            items.append(.dock(pill))
+        }
+
         if let adapter = AppAdapterManager.shared.adapter(for: bundleID) {
             let matching = trimmed.isEmpty
                 ? Array(adapter.actions.prefix(4))
@@ -229,6 +282,71 @@ extension AppChatPromptModel {
                 pill.resultSection = GlobalResultSection.applications
                 return .dock(pill)
             }
+    }
+
+    /// Background `.doraxpack` v3 commands searchable globally by name, keyword, or user alias,
+    /// plus context-aware `"Create for <Frontmost App / Website>"` entry into AI Studio.
+    func globalV3PackCommandRows(for typed: String) -> [AppChatRow] {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let lower = trimmed.lowercased()
+
+        let frontApp = AppDelegate.shared?.previousFrontmostApp
+            ?? AppDelegate.shared?.menuBarOwningUserFacingApplication()
+        let frontBundle = frontApp?.bundleIdentifier
+        let activeURL = DoraxContextBridge.activeBrowserURL(for: frontApp)
+        let contextualIDs = Set(
+            DoraxPackV3Registry.shared.contextualCommands(
+                frontmostBundleID: frontBundle,
+                frontmostURL: activeURL,
+                query: trimmed
+            ).map(\.id)
+        )
+
+        var rows: [AppChatRow] = []
+        let matches = DoraxPackV3Registry.shared.globalSearchCommands(
+            query: trimmed, excludingContextualIDs: contextualIDs)
+        for bound in matches.prefix(8) {
+            var pill = DockPill(
+                id: "dorax-v3-global-\(bound.id)",
+                name: bound.command.title,
+                icon: bound.command.icon,
+                badge: bound.pack.name,
+                execute: { [weak self] in self?.scopeIntoV3Command(bound) }
+            )
+            pill.resultSection = bound.sectionTitle
+            pill.rankingKind = "doraxPackV3"
+            rows.append(.dock(pill))
+        }
+
+        // Context-aware creation: `"Create for <Frontmost App / Website>"`
+        if lower.hasPrefix("create") || lower.contains("build pack") || lower.contains("new pack") || lower.contains("studio") {
+            let targetLabel: String
+            if let url = activeURL {
+                let host = DoraxPackScope.normalizedHost(from: url)
+                targetLabel = host.isEmpty ? (frontApp?.localizedName ?? "App") : host
+            } else {
+                targetLabel = frontApp?.localizedName ?? "Frontmost App"
+            }
+            var pill = DockPill(
+                id: "dorax-v3-create-for-frontmost",
+                name: "Create for \(targetLabel)",
+                icon: "wand.and.stars",
+                accentColorName: "purple",
+                badge: "AI Pack v3 Studio",
+                execute: { [weak self] in
+                    self?.openExtensionStudio(
+                        target: .appPlugin,
+                        contextFile: nil,
+                        contextBundleID: frontBundle)
+                }
+            )
+            pill.resultSection = "Extensions"
+            pill.rankingKind = "doraxPackStudio"
+            rows.append(.dock(pill))
+        }
+
+        return rows
     }
 
     /// Populates the Global Context board when `↓` opens the list on an empty query.

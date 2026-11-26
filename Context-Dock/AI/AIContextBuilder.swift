@@ -29,6 +29,22 @@ final class AIContextBuilder {
             )
             if !memory.isEmpty { prompt += "\n\n" + memory }
         }
+        let mentionedPacks = DoraxPackV3Registry.shared.resolveMentions(in: request.text)
+        if !mentionedPacks.isEmpty {
+            var blockLines = ["Referenced .doraxpack v3 packs (@pack mentions):"]
+            for m in mentionedPacks {
+                blockLines.append("- @\(m.pack.id) (\(m.pack.name)): \(m.pack.metadata.description)")
+                if let tool = m.tool {
+                    blockLines.append("  Requested tool: \(tool.id) — \(tool.description)")
+                } else if let cmd = m.command {
+                    blockLines.append("  Requested command: \(cmd.id) (\(cmd.mode.rawValue)) — \(cmd.subtitle)")
+                }
+                if let agent = m.pack.agentInstructions, !agent.isEmpty {
+                    blockLines.append("  Instructions: \(String(agent.prefix(600)))")
+                }
+            }
+            prompt += "\n\n" + blockLines.joined(separator: "\n")
+        }
         if !request.attachments.isEmpty {
             let attachmentSummary = request.attachments.prefix(20).map { attachment in
                 "- \(attachment.kind.rawValue): \(metadata(for: attachment.url))"

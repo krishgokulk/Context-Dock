@@ -501,6 +501,14 @@ final class SelectionScopeModel: ObservableObject {
         snapshot = SelectionSnapshot(
             text: selectedText, filePaths: selectedFiles.map(\.path),
             appName: context.appName, bundleID: context.bundleId)
+        if !AppDelegate.isHostingTests {
+            DoraxPackHookDispatcher.shared.dispatch(DoraxHookEvent(
+                kind: .selection,
+                bundleID: context.bundleId,
+                appName: context.appName,
+                selectedText: selectedText.isEmpty ? nil : selectedText,
+                selectedFilePaths: selectedFiles.map(\.path)))
+        }
         rows = []
         focusedIndex = nil
         isShowingAnswer = false

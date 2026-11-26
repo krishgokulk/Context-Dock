@@ -30,10 +30,13 @@ if [ "${1:-}" = "--app" ]; then
     shift 2
 fi
 
-COMMAND="${1:?usage: corner.sh [--app <bundle id>] centre|bottom|global|general|cmd|ask <text>|attach <path>|clear [bundle id]|hide|state}"
+COMMAND="${1:?usage: corner.sh [--app <bundle id>] centre|bottom|global|general|cmd|ask <text>|attach <path>|clear [bundle id]|type <text>|down|enter|back|v3 <pack/cmd>|studio|notch [dismiss]|hide|state}"
 [ "$COMMAND" = "ask" ] && COMMAND="ask:${2:?ask needs the question}"
 [ "$COMMAND" = "clear" ] && COMMAND="clear:${2:-}"
 [ "$COMMAND" = "attach" ] && COMMAND="attach:${2:?attach needs an absolute file path}"
+[ "$COMMAND" = "type" ] && COMMAND="type:${2:-}"
+[ "$COMMAND" = "v3" ] && COMMAND="v3:${2:?v3 needs <packID>/<commandID>}"
+[ "$COMMAND" = "notch" ] && COMMAND="notch:${2:-dismiss}"
 
 pgrep -x Context-Dock >/dev/null || { echo "Context-Dock is not running — ./scripts/dev-run.sh first." >&2; exit 1; }
 

@@ -34,10 +34,8 @@ class LayeredExtensionManager: ObservableObject {
         self.libraryBasePath = supportPath.appendingPathComponent("Context-Dock/Extensions")
         self.userExtensionsPath = libraryBasePath.appendingPathComponent("User-Created")
 
-        // Create directories if needed
-        createExtensionDirectories()
-
         // Load extensions asynchronously so init doesn't block main thread
+        // (legacy L1–L3 directories are created lazily only when saving a legacy extension).
         Task { await self.loadExtensions() }
     }
 
@@ -82,7 +80,7 @@ class LayeredExtensionManager: ObservableObject {
         // unanswered, so it is fire-and-forget: never awaited, and never in front of
         // discovery. A pending prompt costs the not-yet-copied extensions until the next
         // launch, not the whole library.
-        if !didStartDocumentsMigration {
+        if !didStartDocumentsMigration && !UserDefaults.standard.bool(forKey: LegacyPluginCleanup.completionKey) {
             didStartDocumentsMigration = true
             Task.detached(priority: .utility) { [libPath] in
                 let copied = LayeredExtensionManager.migrateFromDocumentsIfNeeded(to: libPath)

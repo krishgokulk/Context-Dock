@@ -140,7 +140,9 @@ enum PluginEssentials {
         """
     }
 
-    static var all: [PluginManifest] { [decode(sleepJSON), decode(currencyJSON)].compactMap { $0 } }
+    /// Sleep remains the sole shipped essential plugin; legacy Currency is retired in favor
+    /// of `.doraxpack` v3 packs (`currencyJSON` stays available for legacy migration tests).
+    static var all: [PluginManifest] { [decode(sleepJSON)].compactMap { $0 } }
 
     /// A string as a JSON string literal, quotes included — so a script can be written as it
     /// is run and embedded without hand-escaping.

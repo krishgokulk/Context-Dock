@@ -35,7 +35,8 @@ enum StorePackInstaller {
     static func install(
         _ manifest: PluginManifest,
         into pluginRoot: URL? = nil,
-        persistToDisk: Bool = !AppDelegate.isHostingTests
+        persistToDisk: Bool = !AppDelegate.isHostingTests,
+        writeToLegacyStorePacks: Bool = true
     ) throws -> StorePackBindResult {
         if let root = pluginRoot {
             _ = try PluginInstaller.install(
@@ -46,7 +47,7 @@ enum StorePackInstaller {
             if root == PluginInstaller.userRoot {
                 PluginRegistry.shared.reload()
             }
-        } else if persistToDisk {
+        } else if persistToDisk && writeToLegacyStorePacks {
             _ = try PluginInstaller.install(
                 [manifest],
                 into: PluginInstaller.userRoot,
@@ -333,7 +334,10 @@ enum StorePackInstaller {
         persistToDisk: Bool = !AppDelegate.isHostingTests
     ) throws -> StorePackBindResult {
         let manifest = pack.toPluginManifest()
-        let baseResult = try install(manifest, persistToDisk: persistToDisk)
+        let baseResult = try install(
+            manifest,
+            persistToDisk: persistToDisk,
+            writeToLegacyStorePacks: false)
         var boundCapIDs = baseResult.registeredCapabilityIDs
         var seenCapIDs = Set(boundCapIDs)
 

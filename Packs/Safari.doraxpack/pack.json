@@ -1,12 +1,35 @@
 {
   "format_version": 2,
+  "schema_version": 3,
   "id": "safari",
   "name": "Safari",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "icon": "safari.fill",
   "description": "Tab reading, history, page summarization, and link following for Safari.",
   "bundle_id": "com.apple.Safari",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["com.apple.Safari"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#0EA5E9",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:url", "browser:tabs"],
   "keywords": ["safari", "browser", "tabs", "history", "web", "reader", "bookmarks"],
+  "commands": [
+    {
+      "id": "open-tabs",
+      "title": "Open Browser Tabs",
+      "subtitle": "Inspect active and open tabs via WebContextEngine",
+      "icon": "safari",
+      "mode": "list",
+      "keywords": ["safari", "tabs", "browser", "open tabs"],
+      "source": "dorax.browser.tabs",
+      "safety": "read"
+    }
+  ],
   "capabilities": [
     {
       "id": "safari.summarizeTab",

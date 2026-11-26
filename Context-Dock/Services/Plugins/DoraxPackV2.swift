@@ -23,6 +23,9 @@ import Foundation
 
 struct DoraxPackMetadata: Codable, Equatable {
     var formatVersion: Int
+    /// Optional `.doraxpack` v3 schema version (3). Keeps `format_version: 2` compatible
+    /// with v2 loaders while declaring v3 commands/tools/hooks/scope/appearance/preferences.
+    var schemaVersion: Int?
     var id: String
     var name: String
     var version: String
@@ -34,19 +37,50 @@ struct DoraxPackMetadata: Codable, Equatable {
     var cliTools: [DoraxCLITool]?
     var mcpServers: [DoraxMCPServer]?
     var extensionHooks: [DoraxExtensionHook]?
+    // MARK: - .doraxpack v3 fields
+    var scope: DoraxPackScope?
+    var appearance: DoraxPackAppearance?
+    var permissions: [String]?
+    var preferences: [DoraxPackPreference]?
+    var commands: [DoraxPackCommand]?
+    var tools: [DoraxPackTool]?
+    var hooks: [DoraxPackHook]?
+
+    var isV3: Bool {
+        schemaVersion == 3 || formatVersion == 3 || commands != nil || hooks != nil || tools != nil || scope != nil
+    }
+
+    /// Resolved effective scope (merges legacy `bundle_id` into `scope.apps` when omitted).
+    var effectiveScope: DoraxPackScope {
+        if var s = scope {
+            if let bid = bundleId, !bid.isEmpty, bid.lowercased() != "global",
+               !s.apps.contains(where: { $0.lowercased() == bid.lowercased() })
+            {
+                s.apps.append(bid)
+            }
+            return s
+        }
+        if let bid = bundleId, !bid.isEmpty, bid.lowercased() != "global" {
+            return DoraxPackScope(surfaces: ["global", "appPet"], apps: [bid], domains: [])
+        }
+        return DoraxPackScope(surfaces: ["global"], apps: [], domains: [])
+    }
 
     enum CodingKeys: String, CodingKey {
         case formatVersion = "format_version"
+        case schemaVersion = "schema_version"
         case id, name, version, icon, description
         case bundleId = "bundle_id"
         case keywords, capabilities
         case cliTools = "cli_tools"
         case mcpServers = "mcp_servers"
         case extensionHooks = "extension_hooks"
+        case scope, appearance, permissions, preferences, commands, tools, hooks
     }
 
     init(
         formatVersion: Int = 2,
+        schemaVersion: Int? = nil,
         id: String,
         name: String,
         version: String = "2.0.0",
@@ -57,20 +91,32 @@ struct DoraxPackMetadata: Codable, Equatable {
         capabilities: [PluginPackCapability] = [],
         cliTools: [DoraxCLITool]? = nil,
         mcpServers: [DoraxMCPServer]? = nil,
-        extensionHooks: [DoraxExtensionHook]? = nil
+        extensionHooks: [DoraxExtensionHook]? = nil,
+        scope: DoraxPackScope? = nil,
+        appearance: DoraxPackAppearance? = nil,
+        permissions: [String]? = nil,
+        preferences: [DoraxPackPreference]? = nil,
+        commands: [DoraxPackCommand]? = nil,
+        tools: [DoraxPackTool]? = nil,
+        hooks: [DoraxPackHook]? = nil
     ) {
         self.formatVersion = formatVersion
+        self.schemaVersion = schemaVersion
         self.id = id; self.name = name; self.version = version
         self.icon = icon; self.description = description
         self.bundleId = bundleId; self.keywords = keywords
         self.capabilities = capabilities
         self.cliTools = cliTools; self.mcpServers = mcpServers
         self.extensionHooks = extensionHooks
+        self.scope = scope; self.appearance = appearance
+        self.permissions = permissions; self.preferences = preferences
+        self.commands = commands; self.tools = tools; self.hooks = hooks
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         version = try c.decodeIfPresent(String.self, forKey: .version) ?? "1.0.0"
@@ -83,6 +129,13 @@ struct DoraxPackMetadata: Codable, Equatable {
         cliTools = try c.decodeIfPresent([DoraxCLITool].self, forKey: .cliTools)
         mcpServers = try c.decodeIfPresent([DoraxMCPServer].self, forKey: .mcpServers)
         extensionHooks = try c.decodeIfPresent([DoraxExtensionHook].self, forKey: .extensionHooks)
+        scope = try c.decodeIfPresent(DoraxPackScope.self, forKey: .scope)
+        appearance = try c.decodeIfPresent(DoraxPackAppearance.self, forKey: .appearance)
+        permissions = try c.decodeIfPresent([String].self, forKey: .permissions)
+        preferences = try c.decodeIfPresent([DoraxPackPreference].self, forKey: .preferences)
+        commands = try c.decodeIfPresent([DoraxPackCommand].self, forKey: .commands)
+        tools = try c.decodeIfPresent([DoraxPackTool].self, forKey: .tools)
+        hooks = try c.decodeIfPresent([DoraxPackHook].self, forKey: .hooks)
     }
 }
 
@@ -185,7 +238,34 @@ struct DoraxPackV2: Equatable {
     let skills: [DoraxPackSkillEntry]
     let scripts: [DoraxPackScriptEntry]
     let pageScripts: [DoraxPackScriptEntry]
+    let commandScripts: [DoraxPackScriptEntry]
+    let toolScripts: [DoraxPackScriptEntry]
+    let hookScripts: [DoraxPackScriptEntry]
     let folderURL: URL
+
+    init(
+        metadata: DoraxPackMetadata,
+        agentInstructions: String?,
+        modes: [DoraxPackMode],
+        skills: [DoraxPackSkillEntry],
+        scripts: [DoraxPackScriptEntry],
+        pageScripts: [DoraxPackScriptEntry],
+        commandScripts: [DoraxPackScriptEntry] = [],
+        toolScripts: [DoraxPackScriptEntry] = [],
+        hookScripts: [DoraxPackScriptEntry] = [],
+        folderURL: URL
+    ) {
+        self.metadata = metadata
+        self.agentInstructions = agentInstructions
+        self.modes = modes
+        self.skills = skills
+        self.scripts = scripts
+        self.pageScripts = pageScripts
+        self.commandScripts = commandScripts
+        self.toolScripts = toolScripts
+        self.hookScripts = hookScripts
+        self.folderURL = folderURL
+    }
 
     var id: String { metadata.id }
     var name: String { metadata.name }
@@ -199,7 +279,7 @@ enum DoraxPackError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedVersion(let v): return "Unsupported .doraxpack format version \(v); expected 2"
+        case .unsupportedVersion(let v): return "Unsupported .doraxpack format version \(v); expected 2 or 3"
         case .missingPackJSON(let url): return "Missing pack.json in \(url.lastPathComponent)"
         }
     }
@@ -219,7 +299,7 @@ enum DoraxPackV2Loader {
         }
         let data = try Data(contentsOf: packJSONURL)
         let metadata = try decoder.decode(DoraxPackMetadata.self, from: data)
-        guard metadata.formatVersion == 2 else {
+        guard metadata.formatVersion == 2 || metadata.formatVersion == 3 else {
             throw DoraxPackError.unsupportedVersion(metadata.formatVersion)
         }
 
@@ -251,12 +331,18 @@ enum DoraxPackV2Loader {
 
         let scripts = loadScripts(from: folderURL.appendingPathComponent("scripts"))
         let pageScripts = loadScripts(from: folderURL.appendingPathComponent("page_scripts"))
+        let commandScripts = loadScripts(from: folderURL.appendingPathComponent("commands"))
+        let toolScripts = loadScripts(from: folderURL.appendingPathComponent("tools"))
+        let hookScripts = loadScripts(from: folderURL.appendingPathComponent("hooks"))
 
         return DoraxPackV2(
             metadata: metadata,
             agentInstructions: agentMD?.isEmpty == true ? nil : agentMD,
             modes: modes, skills: skills,
             scripts: scripts, pageScripts: pageScripts,
+            commandScripts: commandScripts,
+            toolScripts: toolScripts,
+            hookScripts: hookScripts,
             folderURL: folderURL)
     }
 

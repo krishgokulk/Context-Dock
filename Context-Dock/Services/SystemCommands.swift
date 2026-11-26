@@ -249,7 +249,7 @@ final class SystemCommandsRegistry {
             commands = Self.migratedCommands(from: decoded)
             save()
         } else {
-            commands = Self.defaults
+            commands = Self.migratedCommands(from: Self.defaults)
             save()
         }
     }
@@ -326,10 +326,17 @@ final class SystemCommandsRegistry {
         "Force Quit...",
         "Lock Screen",
         "Log Out...",
+        // Superseded by Packs/ProcessMonitor.doraxpack (.doraxpack v3)
+        "Process Monitor",
+        "Listening Ports",
     ]
 
+    private static func isRetiredCustomSample(_ command: SystemCommand) -> Bool {
+        !command.isEnabled && command.provider == "custom"
+    }
+
     private static func migratedCommands(from decoded: [SystemCommand]) -> [SystemCommand] {
-        var migrated = decoded.filter { !legacyDefaultNames.contains($0.name) }
+        var migrated = decoded.filter { !legacyDefaultNames.contains($0.name) && !isRetiredCustomSample($0) }
             .map { command -> SystemCommand in
                 if command.name == "Bluetooth",
                     command.keywords.contains(where: { $0.lowercased() == "provider:bluetooth" }),
@@ -368,7 +375,7 @@ final class SystemCommandsRegistry {
                 return defaultSleep
             }
         let existingNames = Set(migrated.map(\.name))
-        migrated.append(contentsOf: defaults.filter { !existingNames.contains($0.name) })
+        migrated.append(contentsOf: defaults.filter { !existingNames.contains($0.name) && !isRetiredCustomSample($0) })
         return migrated
     }
 

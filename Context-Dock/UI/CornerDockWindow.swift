@@ -1296,11 +1296,13 @@ final class CornerDockController: NSObject {
                 : showsScopeBoard
                 ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
-                ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
-                    ?? (prompt.scopedCommand?.isEmojiBoard == true || prompt.scopedCommand?.isStudioBoard == true
-                        ? CGSize(width: DockShellWidth.results, height: 440)
-                        : (prompt.scopedCommand?.hasOwnCornerBoard == true
-                            ? ClipboardBoardMetrics.size : ExtensionScopeMetrics.size)))
+                ? (prompt.scopedV3Command != nil
+                    ? CGSize(width: DockShellWidth.results, height: 440)
+                    : (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
+                        ?? (prompt.scopedCommand?.isEmojiBoard == true || prompt.scopedCommand?.isStudioBoard == true
+                            ? CGSize(width: DockShellWidth.results, height: 440)
+                            : (prompt.scopedCommand?.hasOwnCornerBoard == true
+                                ? ClipboardBoardMetrics.size : ExtensionScopeMetrics.size))))
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
@@ -2753,6 +2755,10 @@ struct CornerDockSurface: View {
             } else if CornerDockController.shared.showsScopeBoard {
                 // The app's card, in the board rather than hanging off the chip.
                 AppScopeBoard(model: prompt)
+                    .transition(boardTransition)
+            } else if CornerDockController.shared.showsExtensionPanel, let v3Cmd = prompt.scopedV3Command {
+                DoraxPackV3SheetView(bound: v3Cmd, prompt: prompt)
+                    .id(v3Cmd.id)
                     .transition(boardTransition)
             } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves

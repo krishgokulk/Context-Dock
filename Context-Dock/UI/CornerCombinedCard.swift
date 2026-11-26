@@ -77,6 +77,7 @@ struct CornerCombinedCard: ViewModifier {
                         // An app opening or quitting glows the one card, as it glows the dock.
                         .modifier(AppLaunchGlow(
                             shape: RoundedRectangle(cornerRadius: Self.radius, style: .continuous)))
+                        .doraxAuraRim(cornerRadius: Self.radius)
                         .opacity(active ? 1 : 0)
                 }
             }
@@ -104,6 +105,7 @@ struct BoardGlass: ViewModifier {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
                     .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                    .doraxAuraRim(cornerRadius: radius)
             }
         }
     }

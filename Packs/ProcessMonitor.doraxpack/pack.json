@@ -1,0 +1,151 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "process-port-monitor",
+  "name": "Process & Port Monitor",
+  "version": "3.0.0",
+  "icon": "cpu",
+  "description": "Live macOS processes, TCP listening ports, system metrics grid, port inspector form, and Dynamic Notch status wing.",
+  "scope": {
+    "surfaces": ["global", "notch"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#38BDF8",
+    "glow": "soft"
+  },
+  "permissions": [
+    "context:frontmost",
+    "process:read",
+    "process:signal",
+    "network:ports",
+    "hook:schedule"
+  ],
+  "preferences": [
+    {
+      "id": "cpu_alert_threshold",
+      "title": "CPU Alert Threshold (%)",
+      "type": "string",
+      "required": false,
+      "default": "80",
+      "placeholder": "80"
+    }
+  ],
+  "keywords": ["process", "processes", "ports", "listening", "cpu", "memory", "ram", "monitor", "kill", "lsof", "localhost"],
+  "commands": [
+    {
+      "id": "top-processes",
+      "title": "Process Monitor",
+      "subtitle": "Live CPU & RAM processes with detail view and safe quit confirmation",
+      "icon": "cpu",
+      "mode": "list",
+      "keywords": ["process", "processes", "cpu", "memory", "ram", "top", "activity", "kill"],
+      "script": "commands/list-processes.py",
+      "filter_options": ["All", "High CPU", "High Memory"],
+      "refresh_seconds": 5,
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "listening-ports",
+      "title": "Listening Ports",
+      "subtitle": "Inspect active TCP servers, open localhost URLs, or stop stuck dev servers",
+      "icon": "network",
+      "mode": "list",
+      "keywords": ["ports", "port", "listening", "lsof", "server", "localhost", "dev"],
+      "script": "commands/list-ports.py",
+      "filter_options": ["All", "Dev Ports", "System"],
+      "refresh_seconds": 5,
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "system-overview",
+      "title": "System Metrics Grid",
+      "subtitle": "Visual cards for CPU load, memory footprint, open ports, and uptime",
+      "icon": "square.grid.2x2",
+      "mode": "grid",
+      "keywords": ["metrics", "system", "grid", "uptime", "load"],
+      "script": "commands/system-grid.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 10,
+      "safety": "read"
+    },
+    {
+      "id": "port-inspector",
+      "title": "Inspect Port",
+      "subtitle": "Look up which process owns a specific TCP port",
+      "icon": "magnifyingglass.circle",
+      "mode": "form",
+      "keywords": ["inspect port", "which process", "port lookup"],
+      "script": "commands/inspect-port.py",
+      "form_fields": [
+        {
+          "id": "port",
+          "title": "TCP Port",
+          "type": "number",
+          "placeholder": "3000",
+          "default": "3000",
+          "required": true
+        }
+      ],
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "notch-monitor",
+      "title": "Pin System Status to Notch",
+      "subtitle": "Show live active listening port count and load in the Dynamic Island Notch",
+      "icon": "waveform.path.ecg",
+      "mode": "notch",
+      "keywords": ["notch", "live status", "ports wing"],
+      "script": "commands/notch-summary.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    }
+  ],
+  "tools": [
+    {
+      "id": "inspect-port",
+      "name": "Inspect TCP Port",
+      "description": "Returns the process name, PID, and command listening on a given TCP port.",
+      "script": "tools/inspect-port.py",
+      "safety": "read"
+    }
+  ],
+  "hooks": [
+    {
+      "id": "ports-schedule-summary",
+      "on": "schedule",
+      "script": "hooks/check-ports.py",
+      "filter": {
+        "every": "5m"
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "process.list",
+      "name": "List Top Processes",
+      "intent": "List running macOS processes sorted by CPU and memory.",
+      "triggers": ["top processes", "high cpu", "memory hogs"],
+      "type": "shell",
+      "script": "ps -axo pid=,%cpu=,rss=,comm= | sort -k2 -rn | head -15",
+      "safety": "read"
+    },
+    {
+      "id": "process.ports",
+      "name": "List Listening TCP Ports",
+      "intent": "Show processes currently listening on local TCP ports.",
+      "triggers": ["listening ports", "open ports", "what is on port"],
+      "type": "shell",
+      "script": "/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN",
+      "safety": "read"
+    }
+  ]
+}

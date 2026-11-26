@@ -270,6 +270,7 @@ final class AppChatPromptModel: ObservableObject {
     var isAppContextDock: Bool {
         !isGlobalScope && !appBundleID.isEmpty && !isCLIScope
             && scopedExtension == nil && scopedCommand == nil && scopedPlugin == nil
+            && scopedV3Command == nil
     }
     /// Global's height: Global Context and every app's Context Dock are one bar (owner
     /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
@@ -334,6 +335,8 @@ final class AppChatPromptModel: ObservableObject {
     /// The plugin this scope is showing, its panel drawn in the board above the field — from
     /// Global search, as a strip pin's card already was (owner 2026-09-28, inventory D6).
     @Published var scopedPlugin: PluginManifest?
+    /// Active `.doraxpack` v3 command running inside the unified 680 × 440 Result Sheet.
+    @Published var scopedV3Command: DoraxBoundCommand?
     /// What the panel's assistant has been asked and has answered, while this scope is up.
     @Published var panelConversation: [ChatMessage] = []
     @Published var isAskingPanel = false

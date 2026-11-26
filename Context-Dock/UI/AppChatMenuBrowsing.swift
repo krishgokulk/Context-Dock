@@ -187,8 +187,10 @@ extension AppChatPromptModel {
             // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
             rows += globalSourceRows(for: typed)
             if globalResultSource === GlobalContextResultSource.shared {
-                // Frontmost app contextual actions (or active Finder folder when Finder is in front).
+                // Frontmost app & Web-App contextual actions (including matching .doraxpack v3 commands first).
                 rows += frontmostContextualActionRows(for: typed)
+                // Background .doraxpack v3 global commands searchable by name, keyword, or alias.
+                rows += globalV3PackCommandRows(for: typed)
                 // Bounded Files & Folders from user-configured (or safe default) directories.
                 rows += globalFileAndFolderRows(for: lookup)
             }
@@ -203,6 +205,25 @@ extension AppChatPromptModel {
                 rows.removeAll { row in
                     GlobalResultSection.title(for: row) == GlobalResultSection.menuCommands
                         && windowLayoutTitles.contains(row.title.lowercased())
+                }
+            }
+            // Prefer unified `.doraxpack` v3 commands over legacy commands with the same title.
+            let v3Titles: Set<String> = Set(rows.compactMap { row in
+                guard case .dock(let pill) = row,
+                      pill.rankingKind == "doraxPackV3" || pill.rankingKind == "doraxPackV3Contextual"
+                else { return nil }
+                return pill.name.lowercased()
+            })
+            if !v3Titles.isEmpty {
+                rows.removeAll { row in
+                    if case .dock(let pill) = row,
+                       pill.rankingKind == "doraxPackV3" || pill.rankingKind == "doraxPackV3Contextual"
+                    {
+                        return false
+                    }
+                    let sec = GlobalResultSection.title(for: row)
+                    return (sec == GlobalResultSection.commands || sec == GlobalResultSection.menuCommands)
+                        && v3Titles.contains(row.title.lowercased())
                 }
             }
             // A time named — "today", "last week" — keeps only what happened then, with the
@@ -1000,6 +1021,7 @@ extension AppChatPromptModel {
     func scopeIntoExtension(_ ext: UserGlobalExtension) {
         scopedCommand = nil
         scopedPlugin = nil
+        scopedV3Command = nil
         scopedExtension = ext
         returnsToGlobalScope = true
         adoptScope(name: ext.name, bundleID: "userext://\(ext.id.uuidString)")
@@ -1016,6 +1038,7 @@ extension AppChatPromptModel {
         scopedExtension = nil
         scopedPlugin = nil
         scopedCommand = nil
+        scopedV3Command = nil
     }
 
     /// The board is showing an extension's, a command's or a plugin's own interface.
@@ -1025,6 +1048,21 @@ extension AppChatPromptModel {
         scopedExtension != nil
             || (scopedCommand != nil && scopedCommand?.isWindowsBoard != true)
             || scopedPlugin != nil
+            || scopedV3Command != nil
+    }
+
+    /// Step into a `.doraxpack` v3 command inside the unified 680 × 440 Result Sheet.
+    func scopeIntoV3Command(_ bound: DoraxBoundCommand) {
+        scopedExtension = nil
+        scopedCommand = nil
+        scopedPlugin = nil
+        scopedV3Command = bound
+        returnsToGlobalScope = true
+        adoptScope(name: bound.command.title, bundleID: "doraxpack://\(bound.pack.id)/\(bound.command.id)")
+        rows = []
+        updateGlobalTyping(for: "")
+        syncListPhase()
+        touch()
     }
 
     /// Step into a plugin with a panel: the panel, in the corner's board, as a strip pin's
@@ -1033,6 +1071,7 @@ extension AppChatPromptModel {
     func scopeIntoPlugin(_ manifest: PluginManifest) {
         scopedExtension = nil
         scopedCommand = nil
+        scopedV3Command = nil
         scopedPlugin = manifest
         returnsToGlobalScope = true
         adoptScope(name: manifest.name, bundleID: "plugin://\(manifest.id)")
@@ -1097,8 +1136,12 @@ extension AppChatPromptModel {
     /// extension work before this one covered `userext://` and so never reached them.
     /// Opens the Unified In-Sheet AI Extension, Plugin & Notch Studio (`provider:studio`)
     /// directly inside the 680 × 440 Result Sheet.
-    func openExtensionStudio(target: ExtensionStudioTarget = .globalCommand, contextFile: URL? = nil) {
-        let contextBundle = isGlobalScope ? nil : appBundleID
+    func openExtensionStudio(
+        target: ExtensionStudioTarget = .globalCommand,
+        contextFile: URL? = nil,
+        contextBundleID: String? = nil
+    ) {
+        let contextBundle = contextBundleID ?? (isGlobalScope ? nil : appBundleID)
         if isInFileSubmode {
             _ = leaveFileSubmode()
         }
@@ -1122,6 +1165,7 @@ extension AppChatPromptModel {
     func scopeIntoCommand(_ command: SystemCommand) {
         scopedExtension = nil
         scopedPlugin = nil
+        scopedV3Command = nil
         scopedCommand = command
         returnsToGlobalScope = true
         adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")

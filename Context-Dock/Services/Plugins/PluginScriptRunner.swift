@@ -27,7 +27,8 @@ actor PluginScriptRunner {
 
     func run(type: PluginScriptType, script: String, env: [String: String],
              timeout: TimeInterval, workingDirectory: String?,
-             sandbox: String? = nil) async
+             sandbox: String? = nil,
+             stdinData: Data? = nil) async
         -> Result<PluginRunResult, PluginRunFailure>
     {
         switch type {
@@ -51,8 +52,46 @@ actor PluginScriptRunner {
         case .bash, .applescript, .jxa, .scriptFile:
             return await spawn(
                 type: type, script: script, env: env, timeout: timeout,
-                workingDirectory: workingDirectory, sandbox: sandbox)
+                workingDirectory: workingDirectory, sandbox: sandbox, stdinData: stdinData)
         }
+    }
+
+    /// Strict argv-only execution (never invokes a shell string). Used by `.doraxpack` v3
+    /// `mode: cli` commands, Python/script runners, and hook subprocesses with `$DORAX_CONTEXT` on stdin.
+    func runArgv(
+        executable: String,
+        arguments: [String],
+        env: [String: String],
+        timeout: TimeInterval,
+        workingDirectory: String?,
+        stdinData: Data? = nil
+    ) async -> Result<PluginRunResult, PluginRunFailure> {
+        let resolvedURL: URL
+        if executable.hasPrefix("/") {
+            resolvedURL = URL(fileURLWithPath: executable)
+        } else {
+            let candidates = [
+                "/opt/homebrew/bin/\(executable)",
+                "/usr/local/bin/\(executable)",
+                "/usr/bin/\(executable)",
+                "/bin/\(executable)",
+                "/usr/sbin/\(executable)",
+                "/sbin/\(executable)",
+            ]
+            if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                resolvedURL = URL(fileURLWithPath: found)
+            } else {
+                resolvedURL = URL(fileURLWithPath: "/usr/bin/env")
+            }
+        }
+        let finalArgs = resolvedURL.path == "/usr/bin/env" ? ([executable] + arguments) : arguments
+        return await executeProcess(
+            executableURL: resolvedURL,
+            arguments: finalArgs,
+            env: env,
+            timeout: timeout,
+            workingDirectory: workingDirectory,
+            stdinData: stdinData)
     }
 
     /// An http data source. Separate from `run` because it is gated: an undeclared host never
@@ -90,41 +129,63 @@ actor PluginScriptRunner {
 
     private func spawn(type: PluginScriptType, script: String, env: [String: String],
                        timeout: TimeInterval, workingDirectory: String?,
-                       sandbox: String? = nil) async
+                       sandbox: String? = nil,
+                       stdinData: Data? = nil) async
         -> Result<PluginRunResult, PluginRunFailure>
     {
-        let process = Process()
         let containerPath = "/usr/bin/container"
         let useContainer = sandbox == "container"
             && FileManager.default.fileExists(atPath: containerPath)
+        let executableURL: URL
+        let arguments: [String]
         switch type {
         case .applescript:
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", script]
+            executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            arguments = ["-e", script]
         case .jxa:
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-l", "JavaScript", "-e", script]
+            executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            arguments = ["-l", "JavaScript", "-e", script]
         case .scriptFile:
             let path = workingDirectory.map { "\($0)/\(script)" } ?? script
             if useContainer {
-                process.executableURL = URL(fileURLWithPath: containerPath)
-                process.arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", "\"\(path)\""]
+                executableURL = URL(fileURLWithPath: containerPath)
+                arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", "\"\(path)\""]
             } else {
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-lc", "\"\(path)\""]
+                executableURL = URL(fileURLWithPath: "/bin/zsh")
+                arguments = ["-lc", "\"\(path)\""]
             }
         default:
             if useContainer {
-                process.executableURL = URL(fileURLWithPath: containerPath)
-                process.arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", script]
+                executableURL = URL(fileURLWithPath: containerPath)
+                arguments = ["run", "--rm", "--", "/bin/zsh", "-lc", script]
             } else {
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-lc", script]
+                executableURL = URL(fileURLWithPath: "/bin/zsh")
+                arguments = ["-lc", script]
                 if sandbox == "container" {
                     NSLog("Context-Dock PluginScriptRunner: sandbox=container requested but /usr/bin/container not found; running script unsandboxed")
                 }
             }
         }
+        return await executeProcess(
+            executableURL: executableURL,
+            arguments: arguments,
+            env: env,
+            timeout: timeout,
+            workingDirectory: workingDirectory,
+            stdinData: stdinData)
+    }
+
+    private func executeProcess(
+        executableURL: URL,
+        arguments: [String],
+        env: [String: String],
+        timeout: TimeInterval,
+        workingDirectory: String?,
+        stdinData: Data?
+    ) async -> Result<PluginRunResult, PluginRunFailure> {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
 
         // Merged OVER the real environment, never replacing it: a script calls git, jq, lsof,
         // and an empty PATH stops every one of them resolving.
@@ -139,17 +200,37 @@ actor PluginScriptRunner {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        // Never the host's stdin. A script has no terminal: left unset, the shell inherits
-        // whatever launched the app — a real tty when the test host is started from one —
-        // and a login zsh with a tty can settle at an interactive prompt that reads
-        // forever and ignores SIGTERM. Three did, and the suite waited on them for half an
-        // hour.
-        process.standardInput = FileHandle.nullDevice
+
+        let stdinPipe: Pipe?
+        if stdinData != nil {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            stdinPipe = pipe
+        } else {
+            // Never the host's stdin. A script has no terminal: left unset, the shell inherits
+            // whatever launched the app — a real tty when the test host is started from one —
+            // and a login zsh with a tty can settle at an interactive prompt that reads
+            // forever and ignores SIGTERM. Three did, and the suite waited on them for half an
+            // hour.
+            process.standardInput = FileHandle.nullDevice
+            stdinPipe = nil
+        }
 
         do {
             try process.run()
         } catch {
             return .failure(PluginRunFailure(message: error.localizedDescription, kind: .launch))
+        }
+
+        if let stdinData, let stdinPipe {
+            let writer = stdinPipe.fileHandleForWriting
+            // Prevent SIGPIPE from terminating the host when a fast child (e.g. /bin/echo or
+            // a script that ignores stdin) exits before consuming all stdin bytes.
+            _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+            Thread.detachNewThread {
+                defer { try? writer.close() }
+                try? writer.write(contentsOf: stdinData)
+            }
         }
 
         // Read both pipes BEFORE waiting. A pipe buffer is 64 KB; a script that prints more

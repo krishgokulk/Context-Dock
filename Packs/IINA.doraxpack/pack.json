@@ -1,12 +1,35 @@
 {
   "format_version": 2,
+  "schema_version": 3,
   "id": "iina",
   "name": "IINA",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "icon": "play.rectangle.fill",
   "description": "Playback control, media inspection, and playlist management for IINA.",
   "bundle_id": "com.colliderli.iina",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["com.colliderli.iina"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#A78BFA",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "media:read"],
   "keywords": ["iina", "video", "media", "player", "playback", "playlist", "subtitle"],
+  "commands": [
+    {
+      "id": "now-playing",
+      "title": "Now Playing Status",
+      "subtitle": "Current track and playback state from DoraX MediaPlayerObserver",
+      "icon": "play.circle.fill",
+      "mode": "detail",
+      "keywords": ["iina", "now playing", "media", "playback"],
+      "source": "dorax.nowPlaying",
+      "safety": "read"
+    }
+  ],
   "capabilities": [
     {
       "id": "iina.nowPlaying",

@@ -176,9 +176,10 @@ enum GlobalQuery {
             return prefixApp
         }
 
-        // 4. Direct System Command / Command match (e.g. "empty" -> "Empty Trash", "lock" -> "Lock Screen", "dark" -> "Dark Mode", "sleep" -> "Sleep")
+        // 4. Direct System Command / Pack v3 Command match (e.g. "empty" -> "Empty Trash", "process" -> "Process Monitor", "pin system status" -> "Pin System Status to Notch")
         if let commandHit = rows.first(where: { row in
-            guard GlobalResultSection.title(for: row) == GlobalResultSection.commands else { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            guard sec == GlobalResultSection.commands || sec == GlobalResultSection.extensions else { return false }
             guard GlobalResultSection.appName(of: row).isEmpty else { return false }
             if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
             let titleLower = row.title.lowercased()

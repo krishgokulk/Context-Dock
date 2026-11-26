@@ -40,6 +40,13 @@ struct NotchTimerEntry {
     }
 }
 
+struct DoraxNotchLiveActivity: Equatable, Identifiable {
+    let id = UUID()
+    let packID: String
+    let packName: String
+    let payload: DoraxNotchPayload
+}
+
 @MainActor
 final class DynamicNotchState: ObservableObject {
     static let shared = DynamicNotchState()
@@ -48,10 +55,37 @@ final class DynamicNotchState: ObservableObject {
     @Published var selectedPage: Int = 0
     @Published var dragOffset: CGFloat = 0
     @Published var activeTimer: NotchTimerEntry? = nil
+    /// Active `.doraxpack` v3 Notch Live Activity (compact wing + expanded interactive page).
+    @Published var activePackActivity: DoraxNotchLiveActivity? = nil
     /// Staged pack awaiting owner review from Notch AI pack authoring (Task U8a).
     @Published var pendingPackReview: PackSynthesisResult? = nil
     @Published var isBuildingPack: Bool = false
     @Published var packReviewError: String? = nil
+
+    func publishPackActivity(_ activity: DoraxNotchLiveActivity) {
+        activePackActivity = activity
+        if let secs = activity.payload.timerSeconds, secs > 0 {
+            startTimer(seconds: secs, label: activity.payload.title ?? activity.packName)
+        }
+        if let hex = activity.payload.wingColorHex, !hex.isEmpty {
+            DockAuraEngine.shared.activate(
+                id: "notch:\(activity.packID)",
+                appearance: DoraxPackAppearance(
+                    tint: hex,
+                    glow: activity.payload.isRecording ? .pulse : .soft),
+                priority: 70)
+        }
+    }
+
+    func dismissPackActivity() {
+        if let id = activePackActivity?.packID {
+            DockAuraEngine.shared.deactivate(id: "notch:\(id)")
+        }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            activePackActivity = nil
+            if selectedPage >= pageCount { selectedPage = 0 }
+        }
+    }
 
     func approvePendingPackReview() {
         guard let pending = pendingPackReview else { return }
@@ -73,7 +107,9 @@ final class DynamicNotchState: ObservableObject {
     private var isTrackingScroll = false
     private var timerTask: Task<Void, Never>? = nil
 
-    var pageCount: Int { activeTimer != nil ? 4 : 3 }
+    var pageCount: Int {
+        3 + (activeTimer != nil ? 1 : 0) + (activePackActivity != nil ? 1 : 0)
+    }
 
     func toggleExpand() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
@@ -216,7 +252,7 @@ struct DynamicNotchLiveActivityView: View {
 
     private var hasActiveStatus: Bool {
         mediaObserver.isPlaying || shelfStore.items.count > 0 || actionFeedback.progressTitle != nil
-            || notchState.activeTimer != nil
+            || notchState.activeTimer != nil || notchState.activePackActivity != nil
     }
 
     private var islandWidth: CGFloat {
@@ -229,7 +265,8 @@ struct DynamicNotchLiveActivityView: View {
         // At rest with physical notch:
         let showWings = hasActiveStatus || isHovered || !AppSettings.shared.notchCompactIslandAtRest
         if showWings {
-            let baseW = notchRect.width + 104 // 52pt per wing outside camera cutout
+            let extraPackWing: CGFloat = notchState.activePackActivity != nil ? 76 : 0
+            let baseW = notchRect.width + 104 + extraPackWing // wider wings when v3 pack status is active
             return baseW + (isHovered ? 6 : 0)
         } else {
             // Flush with camera notch cutout + small bezel transition
@@ -367,7 +404,7 @@ struct DynamicNotchLiveActivityView: View {
 
     @ViewBuilder
     private var restingContent: some View {
-        let wingW: CGFloat = 44
+        let wingW: CGFloat = notchState.activePackActivity != nil ? 82 : 44
         let showWings = hasActiveStatus || isHovered || !AppSettings.shared.notchCompactIslandAtRest
 
         HStack(spacing: 0) {
@@ -394,6 +431,21 @@ struct DynamicNotchLiveActivityView: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(.pink)
                         }
+                    } else if let packActivity = notchState.activePackActivity {
+                        let wingColor = packActivity.payload.wingColorHex
+                            .flatMap { DockAuraEngine.color(fromHex: $0) }
+                            ?? (packActivity.payload.isRecording ? .red : .cyan)
+                        if let icon = packActivity.payload.wingIcon, !icon.isEmpty {
+                            Image(systemName: icon)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(wingColor)
+                        } else if packActivity.payload.isRecording {
+                            Circle().fill(Color.red).frame(width: 6, height: 6)
+                        }
+                        Text(packActivity.payload.wingText)
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .lineLimit(1)
+                            .foregroundStyle(.white)
                     } else if let timer = notchState.activeTimer {
                         Image(systemName: timer.isFinished ? "checkmark.circle.fill" : "timer")
                             .font(.system(size: 11, weight: .semibold))
@@ -461,6 +513,10 @@ struct DynamicNotchLiveActivityView: View {
                         .frame(width: pageWidth)
                     if notchState.activeTimer != nil {
                         timerPage
+                            .frame(width: pageWidth)
+                    }
+                    if let packActivity = notchState.activePackActivity {
+                        packActivityPage(packActivity)
                             .frame(width: pageWidth)
                     }
                 }
@@ -1067,6 +1123,69 @@ struct DynamicNotchLiveActivityView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    // MARK: - Dynamic Pack v3 Live Activity Page
+
+    private func packActivityPage(_ activity: DoraxNotchLiveActivity) -> some View {
+        let payload = activity.payload
+        let tint = payload.wingColorHex.flatMap { DockAuraEngine.color(fromHex: $0) }
+            ?? (payload.isRecording ? .red : .cyan)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if let icon = payload.wingIcon, !icon.isEmpty {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(payload.title ?? activity.packName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let sub = payload.subtitle, !sub.isEmpty {
+                        Text(sub)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.65))
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                Button {
+                    notchState.dismissPackActivity()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: 20, height: 20)
+                        .background(Color.white.opacity(0.1), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let progress = payload.progress {
+                ProgressView(value: min(1, max(0, progress)))
+                    .tint(tint)
+            }
+
+            if !payload.actions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(payload.actions.prefix(3)) { act in
+                        quickChip(title: act.title, icon: act.icon) {
+                            if let pack = DoraxPackV3Registry.shared.pack(id: activity.packID) {
+                                Task {
+                                    _ = await DoraxPackV3Runtime.shared.runItemAction(act, in: pack)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func quickChip(title: String, icon: String, action: (() -> Void)? = nil) -> some View {

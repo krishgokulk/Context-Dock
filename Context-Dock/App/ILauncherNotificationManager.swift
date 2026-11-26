@@ -93,6 +93,11 @@ final class ILauncherNotificationManager: ObservableObject {
         notifications.insert(n, at: 0)
         // Cap at 50 entries
         if notifications.count > 50 { notifications = Array(notifications.prefix(50)) }
+        if !AppDelegate.isHostingTests && !DoraxPackHookDispatcher.shared.isDispatchingInternalOutput {
+            DoraxPackHookDispatcher.shared.dispatch(DoraxHookEvent(
+                kind: .notification,
+                notificationBody: "\(title) \(body)"))
+        }
         return n.id
     }
 

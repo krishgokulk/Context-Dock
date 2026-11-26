@@ -1,12 +1,35 @@
 {
   "format_version": 2,
+  "schema_version": 3,
   "id": "finder",
   "name": "Finder",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "icon": "folder.fill",
   "description": "File organization, trash, search, and metadata for the macOS Finder.",
   "bundle_id": "com.apple.finder",
+  "scope": {
+    "surfaces": ["global", "appPet", "selection"],
+    "apps": ["com.apple.finder"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#38BDF8",
+    "glow": "soft"
+  },
+  "permissions": ["context:frontmost", "context:selection", "files:read"],
   "keywords": ["finder", "files", "folders", "search", "organize", "trash", "metadata"],
+  "commands": [
+    {
+      "id": "recent-files",
+      "title": "Recent Indexed Files",
+      "subtitle": "Live files from DoraX's native file index",
+      "icon": "doc.text.magnifyingglass",
+      "mode": "list",
+      "keywords": ["finder", "recent", "files", "documents"],
+      "source": "dorax.files",
+      "safety": "read"
+    }
+  ],
   "capabilities": [
     {
       "id": "finder.inspectFolder",

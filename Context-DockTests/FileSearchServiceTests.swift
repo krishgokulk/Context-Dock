@@ -188,6 +188,54 @@ struct FileSearchServiceTests {
             query: "find my passport pdfs", bundleId: "com.apple.finder", appName: "Finder")
         #expect(plan.allowedToolNames.contains("find_files"))
     }
+
+    @Test func excludesGraphifyCacheBuildDirsAndHexHashFilenames() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("filesearch-noise-\(UUID().uuidString)")
+            .resolvingSymlinksInPath()
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: base) }
+
+        let dev = base.appendingPathComponent("Developer")
+        for noisyDir in ["graphify-out/cache", ".cache", ".git/objects", ".build/debug", "DerivedData/Index", "node_modules/pkg"] {
+            let dir = dev.appendingPathComponent(noisyDir, isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data("noise".utf8).write(to: dir.appendingPathComponent("18_notes.json"))
+        }
+        // Loose 32-char and 64-char hex-hash cache files directly inside a normal folder
+        let md5File = dev.appendingPathComponent("18a3f9c4e5b678901234567890abcdef.json")
+        let shaFile = dev.appendingPathComponent("18a3f9c4e5b678901234567890abcdef18a3f9c4e5b678901234567890abcdef.cache")
+        let legitimate = dev.appendingPathComponent("18_release_notes.md")
+        try Data("x".utf8).write(to: md5File)
+        try Data("x".utf8).write(to: shaFile)
+        try Data("ok".utf8).write(to: legitimate)
+
+        let outcome = FileSearchService.search(
+            query: "18",
+            options: .init(roots: [dev.path], homeDirectory: base.path),
+            spotlight: spotlightOff)
+        #expect(outcome.paths == [legitimate.path])
+
+        // Also verify Spotlight hits through noisy paths/hashes are rejected
+        let spotlightOutcome = FileSearchService.search(
+            query: "18",
+            options: .init(roots: [dev.path], homeDirectory: base.path),
+            spotlight: { _, _, _ in
+                [
+                    dev.appendingPathComponent("graphify-out/cache/18_notes.json").path,
+                    dev.appendingPathComponent("node_modules/pkg/18_notes.json").path,
+                    dev.appendingPathComponent("DerivedData/Index/18_notes.json").path,
+                    md5File.path,
+                    shaFile.path,
+                    legitimate.path,
+                ]
+            })
+        #expect(spotlightOutcome.paths == [legitimate.path])
+        #expect(FileSearchService.isHexHashCacheFilename(md5File.lastPathComponent))
+        #expect(FileSearchService.isHexHashCacheFilename(shaFile.lastPathComponent))
+        #expect(!FileSearchService.isHexHashCacheFilename("18_release_notes.md"))
+        #expect(!FileSearchService.isHexHashCacheFilename("report-2026-abc123.pdf"))
+    }
 }
 
 private final class Ticker: @unchecked Sendable {

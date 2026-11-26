@@ -1,12 +1,36 @@
 {
   "format_version": 2,
+  "schema_version": 3,
   "id": "antigravity",
   "name": "Antigravity",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "icon": "terminal.fill",
   "description": "Dev agent skills, terminal control, and workspace management for Antigravity.",
   "bundle_id": "dev.warp.Antigravity-macOS",
+  "scope": {
+    "surfaces": ["global", "appPet", "notch"],
+    "apps": ["dev.warp.Antigravity-macOS"],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#818CF8",
+    "glow": "breathe"
+  },
+  "permissions": ["context:frontmost", "cli:execute"],
   "keywords": ["antigravity", "terminal", "dev", "agent", "workspace", "shell", "code"],
+  "commands": [
+    {
+      "id": "git-status-cli",
+      "title": "Git Status (CLI)",
+      "subtitle": "Run git status -sb via strict argv CLI mode",
+      "icon": "arrow.triangle.branch",
+      "mode": "cli",
+      "keywords": ["git", "status", "repo", "antigravity"],
+      "binary": "git",
+      "args": ["status", "-sb"],
+      "safety": "read"
+    }
+  ],
   "capabilities": [
     {
       "id": "antigravity.runCommand",

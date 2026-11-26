@@ -519,11 +519,32 @@ struct ExtensionStudioBoardCard: View {
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @Environment(\.sharesOneCard) private var sharesOneCard
 
+    @State private var selectedV3Template: DoraxPackV3Template = .appCompanion
+    @State private var v3Synthesis: DoraxPackV3SynthesisResult? = nil
+    @State private var isSynthesizingV3: Bool = false
+
     var onCloseOverride: (() -> Void)? = nil
 
     private var activeAppBundleID: String {
         if !studio.targetBundleID.isEmpty { return studio.targetBundleID }
         return AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? "com.apple.finder"
+    }
+
+    private var activeBrowserApp: NSRunningApplication? {
+        if !studio.targetBundleID.isEmpty,
+           let matched = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == studio.targetBundleID && !$0.isTerminated })
+        {
+            return matched
+        }
+        return AppDelegate.shared?.previousFrontmostApp
+    }
+
+    private var activeFrontmostContextLabel: String {
+        if let url = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp) {
+            let host = DoraxPackScope.normalizedHost(from: url)
+            if !host.isEmpty { return host }
+        }
+        return AppDelegate.shared?.previousFrontmostApp?.localizedName ?? "Frontmost App"
     }
 
     var body: some View {
@@ -632,43 +653,95 @@ struct ExtensionStudioBoardCard: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 if studio.target == .appPlugin {
-                    HStack(spacing: 8) {
-                        Text("Target App")
+                    HStack(spacing: 6) {
+                        Text("Target")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Picker("", selection: $studio.targetBundleID) {
-                            Text("Global").tag("")
+                            Text("Frontmost").tag("")
+                            if !studio.targetBundleID.isEmpty,
+                               !adapterManager.adapters.contains(where: { $0.bundleId == studio.targetBundleID })
+                            {
+                                Text(AppDelegate.shared?.previousFrontmostApp?.localizedName ?? studio.targetBundleID)
+                                    .tag(studio.targetBundleID)
+                            }
                             ForEach(adapterManager.adapters.filter { !$0.bundleId.isEmpty }, id: \.bundleId) { a in
                                 Text(a.appName.isEmpty ? a.bundleId : a.appName).tag(a.bundleId)
                             }
                         }
                         .labelsHidden()
                         .controlSize(.small)
+                        .frame(maxWidth: 100)
                         .onChange(of: studio.targetBundleID) { _, bid in
                             studio.pluginCreator.selectedTargetBundleID = bid
                         }
-                        Spacer()
+                        Spacer(minLength: 4)
                         Button {
-                            Task { await studio.pluginCreator.buildPack() }
+                            Task {
+                                isSynthesizingV3 = true
+                                let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
+                                let res = await DoraxPackV3Builder.buildForTarget(
+                                    bundleID: activeAppBundleID,
+                                    appName: activeFrontmostContextLabel,
+                                    activeURL: activeURL,
+                                    template: nil)
+                                v3Synthesis = res
+                                pluginCreator.text = res.packJSONText
+                                isSynthesizingV3 = false
+                            }
                         } label: {
                             Label(
-                                studio.pluginCreator.isBuildingPack ? "Building…" : "4-Stage AI Pack",
+                                isSynthesizingV3 ? "Building v3…" : "Create for \(activeFrontmostContextLabel)",
                                 systemImage: "wand.and.stars"
                             )
                             .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     }
 
-                    Text("pack.json (.doraxpack v2)")
+                    // Starter Templates Strip (.doraxpack v3)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(DoraxPackV3Template.allCases) { tpl in
+                                Button {
+                                    selectedV3Template = tpl
+                                    Task {
+                                        isSynthesizingV3 = true
+                                        let activeURL = DoraxContextBridge.activeBrowserURL(for: activeBrowserApp)
+                                        let res = await DoraxPackV3Builder.buildForTarget(
+                                            bundleID: activeAppBundleID,
+                                            appName: activeFrontmostContextLabel,
+                                            activeURL: activeURL,
+                                            template: tpl)
+                                        v3Synthesis = res
+                                        pluginCreator.text = res.packJSONText
+                                        isSynthesizingV3 = false
+                                    }
+                                } label: {
+                                    Label(tpl.title, systemImage: tpl.icon)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(selectedV3Template == tpl ? Color.accentColor.opacity(0.2) : Color.white.opacity(0.06))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Text("pack.json (.doraxpack v3)")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                     TextEditor(text: $pluginCreator.text)
                         .font(.system(size: 11, design: .monospaced))
                         .scrollContentBackground(.hidden)
                         .padding(8)
-                        .frame(height: 245)
+                        .frame(height: 185)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(Color.black.opacity(0.22))
@@ -797,7 +870,98 @@ struct ExtensionStudioBoardCard: View {
                     notchPinManagerCard
                 }
 
-                if studio.target == .appPlugin, let pending = studio.pluginCreator.pendingPackResult {
+                if studio.target == .appPlugin, let syn = v3Synthesis {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label(syn.review.packName, systemImage: syn.pack.metadata.icon)
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Text("v3 · \(syn.review.targetLabel)")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        // 1. Schema & Diagnostic Check
+                        let errs = syn.review.diagnostics.filter { $0.severity == .error }
+                        HStack(spacing: 6) {
+                            Image(systemName: errs.isEmpty ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(errs.isEmpty ? .green : .orange)
+                            Text(errs.isEmpty
+                                ? "Schema & Diagnostics: 0 errors"
+                                : "\(errs.count) diagnostic error(s)")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+
+                        // 2. Permission & Hook Review Card
+                        if !syn.review.contextFieldsRead.isEmpty || !syn.review.hookSummaries.isEmpty || !syn.review.domains.isEmpty {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Permissions & Hooks Review")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                if !syn.review.domains.isEmpty {
+                                    Text("Domains: \(syn.review.domains.joined(separator: ", "))")
+                                        .font(.system(size: 10.5))
+                                }
+                                if !syn.review.contextFieldsRead.isEmpty {
+                                    Text("Context: \(syn.review.contextFieldsRead.joined(separator: ", "))")
+                                        .font(.system(size: 10.5))
+                                }
+                                ForEach(syn.review.hookSummaries, id: \.self) { h in
+                                    Text("Hook: \(h)").font(.system(size: 10.5)).foregroundStyle(.orange)
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
+                        }
+
+                        // 3. Read-Only Live Dry Run Preview
+                        if let dry = syn.review.dryRunOutput {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Live Dry-Run Preview (\(dry.items.count) items)")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(dry.items.prefix(3)) { item in
+                                    HStack(spacing: 6) {
+                                        Image(systemName: item.icon ?? "sparkles").font(.system(size: 10))
+                                        Text(item.title).font(.system(size: 11)).lineLimit(1)
+                                        Spacer()
+                                    }
+                                }
+                                if let detail = dry.detail, dry.items.isEmpty {
+                                    Text(String(detail.markdown.prefix(160)))
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .lineLimit(3)
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                        }
+
+                        // 4. One-Click Install
+                        HStack(spacing: 8) {
+                            Button("Install Pack (.doraxpack v3)") {
+                                do {
+                                    let installed = try DoraxPackV3Builder.approveAndInstall(syn)
+                                    studio.statusMessage = "Installed \(installed.name) (.doraxpack v3)"
+                                    v3Synthesis = nil
+                                } catch {
+                                    studio.statusMessage = "Install failed: \(error.localizedDescription)"
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(syn.review.hasBlockingErrors)
+
+                            Button("Dismiss") { v3Synthesis = nil }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                } else if studio.target == .appPlugin, let pending = studio.pluginCreator.pendingPackResult {
                     OwnerReviewCardView(
                         card: pending.reviewCard,
                         errorMessage: studio.pluginCreator.packBuildError,

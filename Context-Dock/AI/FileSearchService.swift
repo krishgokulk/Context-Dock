@@ -202,6 +202,8 @@ nonisolated enum FileSearchService {
                     } else if excluded {
                         continue
                     }
+                } else if isExcluded(path, roots: roots, home: options.homeDirectory) {
+                    continue
                 }
                 guard matches(name: item.lastPathComponent, tokens: tokens),
                     seen.insert(path).inserted
@@ -224,8 +226,55 @@ nonisolated enum FileSearchService {
         roots.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 
-    /// Hidden components and ~/Library are never searched — unless the root itself is inside
-    /// them, as iCloud Drive is.
+    /// Build, cache, VCS, and graph-index directory names excluded from Global File Search.
+    static let excludedDirectoryNames: Set<String> = [
+        "graphify-out",
+        ".cache",
+        ".git",
+        ".build",
+        "deriveddata",
+        "node_modules",
+        "pods",
+        "__pycache__",
+    ]
+
+    /// True when a filename looks like a 32+-character hex-hash cache blob (MD5/SHA1/SHA256),
+    /// e.g. `18a9f0c4...json` inside cache directories or loose build artifacts.
+    static func isHexHashCacheFilename(_ filename: String) -> Bool {
+        let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        guard stem.count >= 32 else { return false }
+        var runLength = 0
+        for scalar in stem.unicodeScalars {
+            let isHex = (scalar.value >= 48 && scalar.value <= 57)     // 0-9
+                || (scalar.value >= 65 && scalar.value <= 70)          // A-F
+                || (scalar.value >= 97 && scalar.value <= 102)         // a-f
+            if isHex {
+                runLength += 1
+                if runLength >= 32 { return true }
+            } else {
+                runLength = 0
+            }
+        }
+        return false
+    }
+
+    /// True when any path component is a noisy build/cache/graph directory or the filename
+    /// is a 32+-character hex-hash cache artifact.
+    static func isNoisyPath(_ path: String) -> Bool {
+        let components = path.split(separator: "/")
+        for component in components {
+            if excludedDirectoryNames.contains(component.lowercased()) {
+                return true
+            }
+        }
+        if let last = components.last, isHexHashCacheFilename(String(last)) {
+            return true
+        }
+        return false
+    }
+
+    /// Hidden components, noisy build/cache/graph directories, 32+-char hex-hash cache files,
+    /// and ~/Library are never searched — unless the root itself is inside ~/Library (iCloud Drive).
     static func isExcluded(_ path: String, roots: [String], home: String) -> Bool {
         let matchingRoots = roots.filter { path == $0 || path.hasPrefix($0 + "/") }
         guard let mostSpecificRoot = matchingRoots.max(by: { $0.count < $1.count })
@@ -233,6 +282,12 @@ nonisolated enum FileSearchService {
         let relative = String(path.dropFirst(mostSpecificRoot.count))
         let components = relative.split(separator: "/")
         if components.contains(where: { $0.hasPrefix(".") }) { return true }
+        if components.contains(where: { excludedDirectoryNames.contains($0.lowercased()) }) {
+            return true
+        }
+        if let last = components.last, isHexHashCacheFilename(String(last)) {
+            return true
+        }
         if components.first == "Library" { return true }
         let library = standardized(home) + "/Library"
         if path == library || (path.hasPrefix(library + "/") && !mostSpecificRoot.hasPrefix(library)) {

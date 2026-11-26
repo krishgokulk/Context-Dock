@@ -52,14 +52,15 @@ In `pack.json`, a pack declares any subset of:
 - `agent` — references `AGENT.md`, `modes.json`, `skills/*/SKILL.md`, and `tools` ⊆ capabilities/actions.
 - `permissions` — declared, shown at install, gated at first run.
 
-## First-Party Dogfooded `.doraxpack` v2 Bundles (`Packs/`)
+## First-Party Dogfooded `.doraxpack` v3 Bundles (`Packs/`)
 
-Shipped in `Packs/` and loaded on startup via `FirstPartyPacks.swift` (PR #476):
-- `Packs/Finder.doraxpack`
-- `Packs/Safari.doraxpack` (with `page_scripts/extract-article-and-links.js`, PR #478)
-- `Packs/Mail.doraxpack`
-- `Packs/IINA.doraxpack`
-- `Packs/Antigravity.doraxpack`
+Shipped in `Packs/` (all migrated to `schema_version: 3` while retaining `format_version: 2` compatibility) and loaded on startup via `FirstPartyPacks.swift` & `DoraxPackV3Registry.swift`:
+- `Packs/Finder.doraxpack` (`dorax.files` command, `#38BDF8` soft aura)
+- `Packs/Safari.doraxpack` (`dorax.browser.tabs` command + `page_scripts/extract-article-and-links.js`)
+- `Packs/Mail.doraxpack` (`dorax.notifications` command)
+- `Packs/IINA.doraxpack` (`dorax.nowPlaying` command)
+- `Packs/Antigravity.doraxpack` (`git status -sb` strict argv `mode: cli` command)
+- `Packs/ProcessMonitor.doraxpack` (flagship `.doraxpack` v3 reference pack: `list`, `grid`, `form`, `notch`, `tools/`, `hooks/`, Keychain/UserDefaults `preferences[]`, split detail + destructive confirmation)
 
 ## Atomic Binding Contract (`StorePackInstaller.installV2`)
 
@@ -101,10 +102,10 @@ creating a new registry (`StorePackInstaller.swift`, completed in Task U8c):
 ## Code homes
 
 ```
-Packs/                5 first-party dogfooded .doraxpack v2 bundles (Finder, Safari, Mail, IINA, Antigravity)
-Services/Plugins/     DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
+Packs/                6 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor)
+Services/Plugins/     DoraxPackV3, DoraxContextBridge, DoraxPackV3Runtime, DoraxPackHookDispatcher, LegacyPluginCleanup, DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
 Services/             SafariExtensionHookRegistry, SafariEscalationPolicy, NotchPinStore
-UI/Plugins/           renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace
-UI/                   NotchQuickActionsView, DynamicNotchLiveActivityView
-AI/PluginAuthoring/   AgenticAIPackBuilder, AIPackSynthesizer, PluginAuthoringEngine, PluginAuthoringPrompt
+UI/Plugins/           DoraxPackV3SheetView, renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace
+UI/                   DockAuraEngine, NotchQuickActionsView, DynamicNotchLiveActivityView, ExtensionStudioBoardCard
+AI/PluginAuthoring/   DoraxPackV3Authoring, AgenticAIPackBuilder, AIPackSynthesizer, PluginAuthoringEngine, PluginAuthoringPrompt
 ```

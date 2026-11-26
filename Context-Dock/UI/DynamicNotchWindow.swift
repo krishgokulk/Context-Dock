@@ -226,6 +226,7 @@ final class DynamicNotchController: NSObject, ObservableObject {
     private func bindObservers() {
         // Observe screen changes
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updatePosition(animated: false)
             }
@@ -233,6 +234,7 @@ final class DynamicNotchController: NSObject, ObservableObject {
 
         // Observe AppSettings toggle via UserDefaults notification
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
             .compactMap { _ in AppSettings.shared.notchLiveActivityEnabled }
             .removeDuplicates()
             .sink { [weak self] enabled in
