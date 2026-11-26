@@ -10,28 +10,36 @@
 
 ## In progress
 
-**Unified Global Launcher, Bounded Search, Green Dots, Window Management & Pinned Actions:**
-- Spec: `docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`
-- Owner Decision: 2026-11-23 (Single unified Liquid Glass launcher surface for both `⌘⌘` and `⌥⌥`; frontmost app chat invariant at `⌘,`; pinned action micro-pills and elevation).
-- Scope:
-  1. **Dual Hotkey Alignment (`ILauncherApp.swift`):** Both `⌘⌘` (double-Command) and `⌥⌥` (double-Option) open the Unified Global Launcher (`Global Context`). `⌘⌘` respects `launcherPresentationMode` (center or bottom dock), while `⌥⌥` always opens at the center of the display (remembering any user-dragged position). `⌘,` remains reserved for direct Frontmost App Chat.
-  2. **Raycast-Grade Window Management in Global Context:** Text queries like `left`, `right`, `center`, `maximize`, `tile`, `arrange` in Global Context execute `WindowManagementService` on the underlying active frontmost app window (0ms native snap) and display under `Window layouts`.
-  3. **Running Application Visual Indicator:** Applications section in Global Context displays a subtle green status dot for currently running applications (`isRunningApp == true`).
-  4. **Pinned Actions Satellite Micro-Pills & Elevation:** Top 2–3 pinned actions for the frontmost app appear as clickable micro-pills (`[ 📄 PDF ] [ 🔗 URL ]`) in the resting bar (with **no** frontmost app icon/chip in the Global Context prompt bar, per owner 2026-11-23), and elevate to `★ Pinned for <App>` with `+300` score boost and numbered shortcuts (`⌘1`, `⌘2`, `⌘3`) in the results board. `⌘P` toggles pin status on any highlighted result.
-  5. **Strict Bounded File Search:** Restrict disk searches and Global Context `Files & Folders` rows (`globalFileAndFolderRows` + `FileIndexManager` + `FileSearchService.boundedRoots` + `appendFinderDiskMatches`) to user-selected folders in App Settings (`settings.useCustomSearchDirectories` / `settings.searchDirectories`), or safe standard user roots when disabled.
-  6. **Dual AI Fallback (Siri-Style with Real App Icons):** `Ask Dora` (`↵` for General AI Chat, Dora icon), `Ask <FrontmostApp> Pet` (`⌥↵`, frontmost app icon), `Ask <RunningApp> Chat` (up to 3 other running apps with their real icons), and `Search Google` (`⌘↵`, default browser icon).
-- Tests: Add & update tests in `GlobalQueryTests.swift`, `GlobalResultSectionTests.swift`, `CornerGlobalContextParityTests.swift`, `DockKeyRulesTests.swift`.
+None — ready for the next queued task.
 
 ## Queued (next)
 
-- **#397: Foundation Models native image input: pass screenshots directly instead of OCR fallback (branch `claude/task-397-foundation-models-native-image`):**
-  - Spec: GitHub Issue #397 & `docs/master/00-NOW.md`.
-  - Replace Vision OCR text-extraction fallback in `OnDeviceToolBridge.swift` (`stream()` and `respond()`) with native Foundation Models multimodal image input (`@available(macOS 26.4, *)`).
-  - Maintain existing Vision OCR text-extraction path as graceful fallback on macOS 26.0–26.3.
 - **Agent harness model** (spec `docs/superpowers/specs/2026-11-09-agent-harness-model.md`): ~~#408~~ → ~~#409~~ → ~~#410~~ → ~~#411~~ → ~~#413~~ H6 tool core trim complete (all 9/n merged) → ~~#412~~ H5 merged.
 - Labs (E10–E16 model policy, parallel reads, hybrid retrieval, knowledge graph; **#398** App Intents / Siri AI: expose Dock actions `OpenAppPet`, `SwitchScope`, `SummariseContext` — post-1.0, macOS 27.3+)
 
 ## Done (most recent first)
+
+**feat(plugins): `.doraxpack` v3 Unified Runtime, File-Search Fix, Legacy Cleanup & Flagship ProcessMonitor Pack (2026-11-26, `2ff0e9ed`):**
+- Spec: `docs/superpowers/specs/2026-11-26-doraxpack-v3-master-architecture-plan.md`, `docs/architecture/PLUGINS.md`.
+- Excluded `graphify-out`, `.cache`, `.git`, `.build`, `DerivedData`, `node_modules`, and 32+-char hex-hash cache files from Global File Search (`FileSearchService`, `FileIndexManager`).
+- Added safe `.zip` backup (`LegacyPluginCleanup`) before deleting legacy `extensions.json`, `Extensions/L1-L3`, `plugins/store-packs`, and `Currency`, and retired legacy `Process Monitor` / `Listening Ports` `SystemCommands`.
+- Implemented `.doraxpack` v3 schema, Keychain `preferences[]`, permission-gated `$DORAX_CONTEXT` stdin bridge, zero-script `dorax.*` sources, stale-while-revalidate `DoraxPackV3Runtime`, `680×440` `DoraxPackV3SheetView`, `DockAuraEngine`, Notch Live Activities, Swift-prefiltered `DoraxPackHookDispatcher`, and AI Studio v3 templates (`DoraxPackV3Authoring`).
+- Migrated all 5 first-party packs (`Finder`, `Safari`, `Mail`, `IINA`, `Antigravity`) to `schema_version: 3` and shipped flagship `Packs/ProcessMonitor.doraxpack`.
+
+**fix(ai): Messages Pet Assist default mode & direct message intent routing (2026-11-25):**
+- Resolved Messages Pet misrouting `to "Contact" "message"` to `Search in Messages`.
+- Default Mode: Updated `messagesManifest` from locked `read` mode to `assist` mode (`capabilityFilter: .allowAll`) with support for read, search, draft, and send.
+- Intent Parsing: Implemented `MessagesAutomation.parseMessageIntent(from:)` parsing command-line / chat style send syntax (supporting standard and smart curly quotes `“”`).
+- Action Recognition: Added `to "`, `to `, `tell `, `text `, `msg `, `dm ` to `ChatRouteResolver.isActionRequest` and `ScopedRecordRead.hasExplicitAction`.
+- Direct Route Binding: Route resolver binds direct send syntax specifically to `messages.send` and populates `candidate.inputValues` (`recipient`, `body`) before raising the Outbound Approval Card.
+- Tests: Added test suite in `MessagesSendWorkflowTests.swift` covering exact syntax, variations, action classification, and route selection.
+
+**Task #397: Foundation Models native image input (PR #497, merged 2026-11-25 as `7ddb1c2c`):**
+- Replaced Vision OCR fallback in `OnDeviceToolBridge.swift` with native Foundation Models multimodal image input (`@available(macOS 26.4, *)`) while preserving Vision OCR fallback on older releases.
+
+**Unified Global Launcher, Bounded Search, Green Dots, Window Management & Pinned Actions (PR #499, merged 2026-11-24 as `d8cd8832`):**
+- Spec: `docs/superpowers/specs/2026-11-23-unified-global-launcher-and-file-boundaries.md`
+- Unified `⌘⌘` / `⌥⌥` Global Context launcher, 0ms `WindowManagementService` layouts, green running-app indicators, pinned action satellite pills & elevation, strict bounded file search, and Siri-style dual AI fallbacks.
 
 **feat(search): Perfectly Order Results in Global Context — The Blueprint (PR #498, merged 2026-11-22 as `12db1943`):**
 - Top Hit elevation for Applications: Direct application exact and prefix matches (`safari` -> Safari, `calc` -> Calculator, `term` -> Terminal) elevate immediately to `Top Hit` (row 0).

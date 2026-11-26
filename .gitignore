@@ -66,6 +66,7 @@ MAPPING.md
 sync-agents.sh
 *.local-bak
 .claude/skills/finish-before-expanding/
+scratch/
 
 # Kanban Pro writes these on project load (local tooling, not repo docs)
 .github/copilot-instructions.md
