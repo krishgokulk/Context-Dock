@@ -87,6 +87,7 @@ final class ILauncherNotificationManager: ObservableObject {
     @discardableResult
     func post(title: String, body: String,
               icon: String = "bell.fill", accentColor: String = "blue",
+              senderBundleID: String? = nil,
               action: (() -> Void)? = nil) -> UUID {
         let n = ILauncherNotification(title: title, body: body,
                                       icon: icon, accentColor: accentColor, action: action)
@@ -94,8 +95,11 @@ final class ILauncherNotificationManager: ObservableObject {
         // Cap at 50 entries
         if notifications.count > 50 { notifications = Array(notifications.prefix(50)) }
         if !AppDelegate.isHostingTests && !DoraxPackHookDispatcher.shared.isDispatchingInternalOutput {
+            let resolvedSender = senderBundleID
+                ?? AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
             DoraxPackHookDispatcher.shared.dispatch(DoraxHookEvent(
                 kind: .notification,
+                notificationSenderBundleID: resolvedSender,
                 notificationBody: "\(title) \(body)"))
         }
         return n.id
@@ -104,8 +108,9 @@ final class ILauncherNotificationManager: ObservableObject {
     /// Post both a system banner and an in-app notification.
     func postSystem(title: String, body: String,
                     icon: String = "bell.fill", accentColor: String = "blue",
+                    senderBundleID: String? = nil,
                     action: (() -> Void)? = nil) {
-        post(title: title, body: body, icon: icon, accentColor: accentColor, action: action)
+        post(title: title, body: body, icon: icon, accentColor: accentColor, senderBundleID: senderBundleID, action: action)
         if AppSettings.shared.notifySystemBanners {
             fireSystemBanner(title: title, body: body)
         }

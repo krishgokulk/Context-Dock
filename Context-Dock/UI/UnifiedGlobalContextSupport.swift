@@ -59,40 +59,8 @@ extension AppChatPromptModel {
         let section = GlobalResultSection.contextualActionsTitle(forApp: appName)
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        if bundleID == "com.apple.finder" {
-            guard let folder = finderBrowseStack.last
-                ?? (finderShowsDesktopOnly ? FinderFrontFolder.desktop : finderFrontFolder)
-                ?? FinderFrontFolder.desktop
-            else { return [] }
-            let urls = Self.folderListing(folder, matching: typed)
-            return urls.prefix(8).map { url in
-                let isDir = Self.isFolder(url)
-                var pill = DockPill(
-                    id: "global-finder-\(url.path)",
-                    name: url.lastPathComponent,
-                    icon: isDir ? "folder" : "doc",
-                    badge: folder.lastPathComponent,
-                    execute: { [weak self] in
-                        if isDir {
-                            _ = self?.enterFolder(url)
-                        } else {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                )
-                pill.menuItemImage = NSWorkspace.shared.icon(forFile: url.path)
-                pill.resolvedURL = url
-                pill.previewPath = url.path
-                pill.sourceBundleId = bundleID
-                pill.sourceAppName = appName
-                pill.resultSection = section
-                return AppChatRow.dock(pill)
-            }
-        }
-
-        var items: [AppChatRow] = []
-
-        // 1. `.doraxpack` v3 frontmost App & Web-App (`domains`) contextual commands ranked FIRST.
+        // 1. `.doraxpack` v3 frontmost App & Web-App (`domains`) contextual commands + hook suggestions.
+        var v3ContextualAndHookItems: [AppChatRow] = []
         let activeBrowserURL = DoraxContextBridge.activeBrowserURL(for: frontApp)
         let contextualV3 = DoraxPackV3Registry.shared.contextualCommands(
             frontmostBundleID: bundleID,
@@ -110,7 +78,7 @@ extension AppChatPromptModel {
             pill.sourceAppName = bound.pack.name
             pill.resultSection = bound.sectionTitle
             pill.rankingKind = "doraxPackV3Contextual"
-            items.append(.dock(pill))
+            v3ContextualAndHookItems.append(.dock(pill))
         }
 
         // 2. Reactive hook-staged suggestions (Guardrail 3: suggest/surface only).
@@ -141,8 +109,42 @@ extension AppChatPromptModel {
             )
             pill.resultSection = section
             pill.rankingKind = "doraxHookSuggestion"
-            items.append(.dock(pill))
+            v3ContextualAndHookItems.append(.dock(pill))
         }
+
+        if bundleID == "com.apple.finder" {
+            guard let folder = finderBrowseStack.last
+                ?? (finderShowsDesktopOnly ? FinderFrontFolder.desktop : finderFrontFolder)
+                ?? FinderFrontFolder.desktop
+            else { return v3ContextualAndHookItems }
+            let urls = Self.folderListing(folder, matching: typed)
+            let finderRows: [AppChatRow] = urls.prefix(8).map { url in
+                let isDir = Self.isFolder(url)
+                var pill = DockPill(
+                    id: "global-finder-\(url.path)",
+                    name: url.lastPathComponent,
+                    icon: isDir ? "folder" : "doc",
+                    badge: folder.lastPathComponent,
+                    execute: { [weak self] in
+                        if isDir {
+                            _ = self?.enterFolder(url)
+                        } else {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                )
+                pill.menuItemImage = NSWorkspace.shared.icon(forFile: url.path)
+                pill.resolvedURL = url
+                pill.previewPath = url.path
+                pill.sourceBundleId = bundleID
+                pill.sourceAppName = appName
+                pill.resultSection = section
+                return AppChatRow.dock(pill)
+            }
+            return v3ContextualAndHookItems + finderRows
+        }
+
+        var items: [AppChatRow] = v3ContextualAndHookItems
 
         if let adapter = AppAdapterManager.shared.adapter(for: bundleID) {
             let matching = trimmed.isEmpty

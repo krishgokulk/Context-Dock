@@ -522,7 +522,9 @@ struct AppChatPromptPill: View {
         // When the menu list / results are open on screen, arrow keys navigate the items.
         // It must NEVER interrupt menu browsing to open the AI conversation.
         if model.phase == .suggesting || model.focusedMenuIndex != nil || model.isShowingScopeCard {
-            if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+            if (model.scopedCommand != nil || model.scopedV3Command != nil),
+                ScopedListKeyBridge.shared.move?(!up) == true
+            {
                 return .handled
             }
             if AppChatPromptModel.layerKeyComesFirst(
@@ -554,7 +556,9 @@ struct AppChatPromptPill: View {
         }
 
         // Fall through for scoped commands or general row browsing
-        if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+        if (model.scopedCommand != nil || model.scopedV3Command != nil),
+            ScopedListKeyBridge.shared.move?(!up) == true
+        {
             return .handled
         }
         if AppChatPromptModel.layerKeyComesFirst(
@@ -1387,7 +1391,9 @@ struct AppChatPromptPill: View {
                         if model.activateSnapshotApp() { return }
                         // A command's list runs its chosen row, as Return does in the
                         // list's own window.
-                        if model.scopedCommand != nil, ScopedListKeyBridge.shared.run?() == true {
+                        if (model.scopedCommand != nil || model.scopedV3Command != nil),
+                            ScopedListKeyBridge.shared.run?() == true
+                        {
                             return
                         }
                         // A panel on screen is what the field is talking to.

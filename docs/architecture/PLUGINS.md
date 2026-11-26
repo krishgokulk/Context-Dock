@@ -1,4 +1,4 @@
-# Plugins and `.doraxpack` v2 Packs
+# Plugins and `.doraxpack` v3 Packs
 
 Architecture truth for the unified DoraX extension, App Pet, Web-App, and CLI pack system (updated
 2026-11-26). Original design (archived): `docs/history/specs/2026-09-15-plugins-design.md`. Current
@@ -9,7 +9,7 @@ specifications:
   `dorax.*` sources, Keychain `preferences[]`, Web-App `domains`, Dynamic Notch Live Activities, and
   Animated Dock/Sheet Glow)
 
-## Native Core vs. `.doraxpack` v2 Boundary
+## Native Core vs. `.doraxpack` v3 Boundary
 
 DoraX owns core macOS surfaces natively (`Clipboard`, `Windows`, `Finder` file submodes & Vision OCR,
 `MediaPlayerObserver` Now Playing in Notch Page 0, `Quick Note`, `Drop Shelf` in Notch Page 1,
@@ -18,11 +18,11 @@ DoraX owns core macOS surfaces natively (`Clipboard`, `Windows`, `Finder` file s
 **App integrations** (`Notes`, `Mail`, `Spotify`), **Web-App integrations** (`YouTube`, `Linear`,
 `GitHub`), and **CLI wrappers** (`brew`, `docker`, `gh`) without duplicating native primitives.
 
-## What a plugin / pack is (`.doraxpack` v2)
+## What a plugin / pack is (`.doraxpack` v3)
 
-A **`.doraxpack` v2** folder (`Services/Plugins/DoraxPackV2.swift`) is the **single canonical package
-format** in DoraX across all three scopes — **Global** (`target_app` omitted or `"global"`), **App**
-(`target_app.bundle_id` set), and **Web-App** (`web_domains` / `extension_hooks` URL patterns):
+A **`.doraxpack` v3** folder (`Services/Plugins/DoraxPackV3.swift` + `DoraxPackV2.swift` loader) is the
+**single canonical package format** in DoraX across all three scopes — **Global** (`scope.apps` &
+`scope.domains` empty), **App** (`scope.apps` / `bundle_id` set), and **Web-App** (`scope.domains` set):
 
 ```text
 <pack-id>.doraxpack/

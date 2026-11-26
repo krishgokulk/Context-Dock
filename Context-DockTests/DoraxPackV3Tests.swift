@@ -477,4 +477,51 @@ struct DoraxPackV3Tests {
         let bind = try StorePackInstaller.installV2(finderPack, persistToDisk: false)
         #expect(bind.packID == "finder")
     }
+
+    @Test("DoraxHotkeyShortcut parses symbolic & word modifiers, rejects bare keys, and resolves configured v3 command hotkeys")
+    func commandHotkeyParsingAndResolution() throws {
+        let sym = try #require(DoraxHotkeyShortcut.parse("⌥⇧P"))
+        #expect(sym.keyEquivalent == "p")
+        #expect(sym.modifiers == [.option, .shift])
+        #expect(sym.matches(charactersIgnoringModifiers: "P", modifierFlags: [.option, .shift]))
+        #expect(!sym.matches(charactersIgnoringModifiers: "P", modifierFlags: [.option]))
+
+        let words = try #require(DoraxHotkeyShortcut.parse("cmd+opt+k"))
+        #expect(words.keyEquivalent == "k")
+        #expect(words.modifiers == [.command, .option])
+
+        // Bare single key or shift-only key MUST be rejected so normal typing is never hijacked
+        #expect(DoraxHotkeyShortcut.parse("p") == nil)
+        #expect(DoraxHotkeyShortcut.parse("⇧P") == nil)
+
+        let tmp = FileManager.default.temporaryDirectory
+        let cfgURL = tmp.appendingPathComponent("hk-cfg-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: cfgURL) }
+        let registry = DoraxPackV3Registry(roots: [tmp.appendingPathComponent("empty-\(UUID().uuidString)")], configFileURL: cfgURL)
+        let cmd = DoraxPackCommand(id: "ports", title: "Listening Ports", mode: .list)
+        let pack = DoraxPackV2(
+            metadata: DoraxPackMetadata(schemaVersion: 3, id: "pm-hk", name: "PM", commands: [cmd]),
+            agentInstructions: nil, modes: [], skills: [], scripts: [], pageScripts: [], folderURL: tmp)
+        registry.register(pack)
+        registry.updateCommandConfig(packID: "pm-hk", commandID: "ports") { $0.hotkey = "⌥⇧P" }
+
+        let resolved = registry.matchingCommand(charactersIgnoringModifiers: "p", modifierFlags: [.option, .shift])
+        #expect(resolved?.command.id == "ports")
+        #expect(registry.matchingCommand(charactersIgnoringModifiers: "p", modifierFlags: [.command]) == nil)
+    }
+
+    @Test("Notification hook pre-filter matches senderApps + contains accurately")
+    func notificationSenderAppsHookFilter() {
+        let filter = DoraxPackHookFilter(senderApps: ["com.apple.mail"], contains: "VIP")
+        let matching = DoraxHookEvent(
+            kind: .notification,
+            notificationSenderBundleID: "com.apple.mail",
+            notificationBody: "VIP: Quarterly board deck")
+        let wrongSender = DoraxHookEvent(
+            kind: .notification,
+            notificationSenderBundleID: "com.tinyspeck.slackmacgap",
+            notificationBody: "VIP: Quarterly board deck")
+        #expect(DoraxPackHookDispatcher.matchesFilter(filter, event: matching))
+        #expect(!DoraxPackHookDispatcher.matchesFilter(filter, event: wrongSender))
+    }
 }

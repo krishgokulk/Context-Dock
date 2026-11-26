@@ -28,7 +28,6 @@ struct DoraxPackV3SheetView: View {
     @ObservedObject private var aura = DockAuraEngine.shared
     @Environment(\.sharesOneCard) private var sharesOneCard
 
-    @State private var localQuery: String = ""
     @State private var selectedFilter: String = "All"
     @State private var selectedItemID: String? = nil
     @State private var showActionsPopover: Bool = false
@@ -46,6 +45,11 @@ struct DoraxPackV3SheetView: View {
     private var pack: DoraxPackV2 { bound.pack }
     private var command: DoraxPackCommand { bound.command }
 
+    /// Unified Dock Surface rule: driven directly by the launcher's single input bar (`prompt.query`).
+    private var effectiveQuery: String {
+        prompt.query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var cacheEntry: DoraxCommandCacheEntry {
         runtime.state(packID: pack.id, commandID: command.id, filter: selectedFilter == "All" ? "" : selectedFilter)
     }
@@ -60,7 +64,7 @@ struct DoraxPackV3SheetView: View {
 
     private var filteredItems: [DoraxCommandItem] {
         guard let items = output?.items else { return [] }
-        let q = localQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = effectiveQuery.lowercased()
         return items.filter { item in
             if selectedFilter != "All", let cat = item.category, !cat.isEmpty {
                 if cat.caseInsensitiveCompare(selectedFilter) != .orderedSame {
@@ -125,12 +129,22 @@ struct DoraxPackV3SheetView: View {
         .onAppear {
             initializeFormDefaults()
             activateAura()
+            installKeyBridge()
             if command.mode != .form {
                 Task { await refresh(force: false) }
             }
         }
         .onDisappear {
+            ScopedListKeyBridge.shared.move = nil
+            ScopedListKeyBridge.shared.run = nil
             DockAuraEngine.shared.deactivate(id: "sheet:\(bound.id)")
+        }
+        .onChange(of: prompt.query) { _, _ in
+            if let first = filteredItems.first,
+               selectedItemID == nil || !filteredItems.contains(where: { $0.id == selectedItemID })
+            {
+                selectedItemID = first.id
+            }
         }
         .onChange(of: selectedFilter) { _, _ in
             if command.mode != .form {
@@ -208,9 +222,18 @@ struct DoraxPackV3SheetView: View {
                 .foregroundStyle(accentColor)
 
             if activeOverlay == nil {
-                TextField("Filter \(command.title)…", text: $localQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                Text(command.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                if let items = output?.items, !items.isEmpty {
+                    Text("\(filteredItems.count)")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                }
+                Spacer()
             } else {
                 Text(activeOverlay == .logs ? "\(pack.name) — Pack Logs" : "Configure \(command.title)")
                     .font(.system(size: 13, weight: .semibold))
@@ -326,7 +349,7 @@ struct DoraxPackV3SheetView: View {
         if output == nil && cacheEntry.isRefreshing {
             loadingPlaceholder
         } else if filteredItems.isEmpty {
-            emptyPlaceholder(output?.emptyMessage ?? "No items match \"\(localQuery)\".")
+            emptyPlaceholder(output?.emptyMessage ?? "No items match \"\(effectiveQuery)\".")
         } else {
             let hasDetail = selectedItem?.detail != nil
             HStack(spacing: 0) {
@@ -1108,12 +1131,38 @@ struct DoraxPackV3SheetView: View {
         }
     }
 
+    private func installKeyBridge() {
+        let bridge = ScopedListKeyBridge.shared
+        bridge.move = { down in
+            guard activeOverlay == nil, pendingDestructiveAction == nil, !filteredItems.isEmpty else {
+                return false
+            }
+            stepSelection(delta: down ? 1 : -1)
+            return true
+        }
+        bridge.run = {
+            if let pending = pendingDestructiveAction {
+                pendingDestructiveAction = nil
+                Task { await executeAction(pending.action, item: pending.item) }
+                return true
+            }
+            guard activeOverlay == nil else { return false }
+            if command.mode == .form {
+                Task { await refresh(force: true, withFormValues: formValues) }
+                return true
+            }
+            guard let primary = primaryAction else { return false }
+            invokeAction(primary, item: selectedItem)
+            return true
+        }
+    }
+
     private func refresh(force: Bool, withFormValues: [String: String]? = nil) async {
         let filterArg = selectedFilter == "All" ? "" : selectedFilter
         _ = await runtime.runCommand(
             command,
             in: pack,
-            query: localQuery,
+            query: effectiveQuery,
             filter: filterArg,
             formValues: withFormValues,
             forceRefresh: force)

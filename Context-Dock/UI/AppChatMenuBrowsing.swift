@@ -1104,9 +1104,18 @@ extension AppChatPromptModel {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, showsExtensionPanel, !isAskingPanel else { return }
 
-        let title = scopedExtension?.name ?? scopedCommand?.name ?? scopedPlugin?.name ?? ""
-        let subtitle = scopedExtension?.description ?? scopedCommand?.description ?? ""
-        let extra = scopedExtension?.aiPrompt ?? ""
+        let title = scopedExtension?.name
+            ?? scopedCommand?.name
+            ?? scopedPlugin?.name
+            ?? scopedV3Command?.command.title
+            ?? ""
+        let subtitle = scopedExtension?.description
+            ?? scopedCommand?.description
+            ?? scopedV3Command?.command.subtitle
+            ?? ""
+        let extra = scopedExtension?.aiPrompt
+            ?? scopedV3Command?.pack.agentInstructions
+            ?? ""
         let history = panelConversation
         let provider = AppSettings.shared.selectedAIProvider
 

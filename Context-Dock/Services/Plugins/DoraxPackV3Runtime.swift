@@ -795,3 +795,124 @@ final class DoraxPackV3Runtime: ObservableObject {
         }
     }
 }
+
+// MARK: - Global Hotkey Parser & Monitor for `Configure Command` (`DoraxCommandConfig.hotkey`)
+
+struct DoraxHotkeyShortcut: Equatable {
+    let modifiers: NSEvent.ModifierFlags
+    let keyEquivalent: String
+
+    /// Parses human-friendly hotkey strings such as `"⌥⇧P"`, `"⌘⇧M"`, `"⌃⌥K"`, or `"cmd+shift+p"`.
+    /// Requires at least one non-Shift modifier (`⌘`, `⌥`, or `⌃`) so plain typing is never captured.
+    static func parse(_ raw: String) -> DoraxHotkeyShortcut? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var mods: NSEvent.ModifierFlags = []
+        var remainder = trimmed.lowercased()
+
+        let wordTokens: [(String, NSEvent.ModifierFlags)] = [
+            ("command+", .command), ("cmd+", .command), ("super+", .command),
+            ("option+", .option), ("opt+", .option), ("alt+", .option),
+            ("control+", .control), ("ctrl+", .control),
+            ("shift+", .shift),
+        ]
+        for (token, flag) in wordTokens {
+            if remainder.contains(token) {
+                mods.insert(flag)
+                remainder = remainder.replacingOccurrences(of: token, with: "")
+            }
+        }
+
+        var keyChars = ""
+        for ch in remainder {
+            switch ch {
+            case "⌘": mods.insert(.command)
+            case "⌥": mods.insert(.option)
+            case "⌃": mods.insert(.control)
+            case "⇧": mods.insert(.shift)
+            case " ", "+": continue
+            default: keyChars.append(ch)
+            }
+        }
+
+        guard keyChars.count == 1,
+              !mods.intersection([.command, .option, .control]).isEmpty
+        else { return nil }
+
+        return DoraxHotkeyShortcut(modifiers: mods, keyEquivalent: keyChars)
+    }
+
+    func matches(charactersIgnoringModifiers: String?, modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        let relevant = modifierFlags.intersection([.command, .option, .control, .shift])
+        guard relevant == modifiers,
+              let chars = charactersIgnoringModifiers?.lowercased(),
+              chars == keyEquivalent
+        else { return false }
+        return true
+    }
+}
+
+extension DoraxPackV3Registry {
+    /// Resolves the first enabled `.doraxpack` v3 command matching the given key event's shortcut.
+    func matchingCommand(
+        charactersIgnoringModifiers: String?,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> DoraxBoundCommand? {
+        let relevant = modifierFlags.intersection([.command, .option, .control, .shift])
+        guard !relevant.intersection([.command, .option, .control]).isEmpty else { return nil }
+        for pack in packs {
+            for cmd in pack.metadata.commands ?? [] {
+                let cfg = commandConfig(packID: pack.id, commandID: cmd.id)
+                guard cfg.isEnabled,
+                      let parsed = DoraxHotkeyShortcut.parse(cfg.hotkey),
+                      parsed.matches(charactersIgnoringModifiers: charactersIgnoringModifiers, modifierFlags: relevant)
+                else { continue }
+                return DoraxBoundCommand(
+                    pack: pack, command: cmd, sectionTitle: pack.name, isContextual: false)
+            }
+        }
+        return nil
+    }
+}
+
+@MainActor
+final class DoraxPackHotkeyMonitor {
+    static let shared = DoraxPackHotkeyMonitor()
+
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
+
+    private init() {}
+
+    func start() {
+        guard globalMonitor == nil, localMonitor == nil, !AppDelegate.isHostingTests else { return }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            Task { @MainActor in
+                _ = self?.handle(event)
+            }
+        }
+
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if MainActor.assumeIsolated({ self?.handle(event) == true }) {
+                return nil
+            }
+            return event
+        }
+    }
+
+    @discardableResult
+    private func handle(_ event: NSEvent) -> Bool {
+        guard let bound = DoraxPackV3Registry.shared.matchingCommand(
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            modifierFlags: event.modifierFlags
+        ) else { return false }
+
+        let controller = CornerDockController.shared
+        controller.showCentred()
+        controller.prompt.scopeIntoV3Command(bound)
+        controller.refresh()
+        return true
+    }
+}

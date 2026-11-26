@@ -263,9 +263,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         FirstPartyPacks.loadIfNeeded()
         // One-time migration of legacy user-installed packs to .doraxpack v2 folder format.
         DoraxPackV2Migration.migrateInstalledPacksIfNeeded()
-        // Unified .doraxpack v3 registry & Swift-prefiltered reactive hook dispatcher.
+        // Unified .doraxpack v3 registry, global command hotkeys & Swift-prefiltered reactive hook dispatcher.
         DoraxPackV3Registry.shared.reload()
         DoraxPackHookDispatcher.shared.startObserving()
+        DoraxPackHotkeyMonitor.shared.start()
         // Which apps exist on this Mac, read once in the background. Nothing owned this
         // before, so the catalog was built by whichever feature happened to touch an app
         // first — and General Chat, asked about an app on an empty desktop, resolved

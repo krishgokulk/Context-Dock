@@ -105,6 +105,8 @@ final class DoraxPackHookDispatcher: ObservableObject {
     private var lastScheduleFire: [HookKey: Date] = [:]
     private var isApplyingHookOutput: Bool = false
     private var workspaceObserver: NSObjectProtocol?
+    private var browserContextCancellable: AnyCancellable?
+    private var lastDispatchedBrowserURL: String?
     private var scheduleTimer: Timer?
     private var isStarted = false
 
@@ -138,10 +140,28 @@ final class DoraxPackHookDispatcher: ObservableObject {
                 guard let self else { return }
                 self.dispatch(DoraxHookEvent(kind: .frontmostChange, bundleID: bid, appName: name))
                 if let url = DoraxContextBridge.activeBrowserURL(for: app) {
+                    self.lastDispatchedBrowserURL = url
                     self.dispatch(DoraxHookEvent(kind: .urlChange, bundleID: bid, appName: name, url: url))
                 }
             }
         }
+
+        // Also observe in-browser tab switches & URL navigations via SafariBrowserBridge!
+        browserContextCancellable = SafariBrowserBridge.shared.$latestContext
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] ctx in
+                guard let self, let rawURL = ctx?.url.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !rawURL.isEmpty,
+                      SensitivePageGuard.allows(rawURL),
+                      rawURL != self.lastDispatchedBrowserURL
+                else { return }
+                self.lastDispatchedBrowserURL = rawURL
+                self.dispatch(DoraxHookEvent(
+                    kind: .urlChange,
+                    bundleID: "com.apple.Safari",
+                    appName: "Safari",
+                    url: rawURL))
+            }
 
         scheduleTimer?.invalidate()
         scheduleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -156,6 +176,8 @@ final class DoraxPackHookDispatcher: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
             workspaceObserver = nil
         }
+        browserContextCancellable?.cancel()
+        browserContextCancellable = nil
         scheduleTimer?.invalidate()
         scheduleTimer = nil
         debounceTasks.values.forEach { $0.cancel() }
