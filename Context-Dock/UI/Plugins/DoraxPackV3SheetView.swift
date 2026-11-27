@@ -33,6 +33,7 @@ struct DoraxPackV3SheetView: View {
     @State private var selectedItemID: String? = nil
     @State private var showActionsPopover: Bool = false
     @State private var actionSearchText: String = ""
+    @State private var selectedActionIndex: Int = 0
     @State private var pendingDestructiveAction: (action: DoraxItemAction, item: DoraxCommandItem?)? = nil
     @State private var activeOverlay: SheetOverlay? = nil
     @State private var formValues: [String: String] = [:]
@@ -117,6 +118,26 @@ struct DoraxPackV3SheetView: View {
                     mainBody
                 }
 
+                if showActionsPopover, activeOverlay == nil, pendingDestructiveAction == nil {
+                    Color.black.opacity(0.18)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            showActionsPopover = false
+                        }
+                    DoraxInlineActionsDrawer(
+                        entries: filteredActionEntries,
+                        itemTitle: selectedItem?.title,
+                        accentColor: accentColor,
+                        searchText: $actionSearchText,
+                        selectedIndex: $selectedActionIndex,
+                        onSelect: handleDrawerEntry,
+                        onDismiss: { showActionsPopover = false }
+                    )
+                    .padding(10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
+                }
+
                 if let pending = pendingDestructiveAction {
                     destructiveConfirmationOverlay(action: pending.action, item: pending.item)
                 }
@@ -141,6 +162,8 @@ struct DoraxPackV3SheetView: View {
         .onDisappear {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
+            ScopedListKeyBridge.shared.openActions = nil
+            ScopedListKeyBridge.shared.closeOverlay = nil
             DockAuraEngine.shared.deactivate(id: "sheet:\(bound.id)")
             headerBar.reset(ifMatching: bound.id)
         }
@@ -370,20 +393,30 @@ struct DoraxPackV3SheetView: View {
         } else {
             let hasDetail = selectedItem?.detail != nil
             HStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(filteredItems) { item in
-                            itemRow(item, isSelected: item.id == selectedItem?.id)
-                                .onTapGesture {
-                                    selectedItemID = item.id
-                                }
-                                .onTapGesture(count: 2) {
-                                    selectedItemID = item.id
-                                    triggerPrimaryAction()
-                                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(filteredItems) { item in
+                                itemRow(item, isSelected: item.id == selectedItem?.id)
+                                    .id(item.id)
+                                    .onTapGesture {
+                                        selectedItemID = item.id
+                                    }
+                                    .onTapGesture(count: 2) {
+                                        selectedItemID = item.id
+                                        triggerPrimaryAction()
+                                    }
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .onChange(of: selectedItemID) { _, newID in
+                        if let id = newID {
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                proxy.scrollTo(id, anchor: .center)
+                            }
                         }
                     }
-                    .padding(8)
                 }
                 .frame(width: hasDetail ? 310 : nil)
 
@@ -437,6 +470,18 @@ struct DoraxPackV3SheetView: View {
                 .fill(swatch)
                 .frame(width: 22, height: 22)
                 .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+        } else if let rawPath = item.iconPath, !rawPath.isEmpty {
+            let expanded = NSString(string: rawPath).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: expanded) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: expanded))
+                    .resizable()
+                    .frame(width: 22, height: 22)
+            } else {
+                Image(systemName: item.icon ?? command.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 22, height: 22)
+            }
         } else if let bid = item.appIconBundleId,
                   let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid)
         {
@@ -553,62 +598,72 @@ struct DoraxPackV3SheetView: View {
             emptyPlaceholder(output?.emptyMessage ?? "No grid items to display.")
         } else {
             let columns = [GridItem(.adaptive(minimum: 148, maximum: 200), spacing: 10)]
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(filteredItems) { item in
-                        let isSelected = item.id == selectedItem?.id
-                        Group {
-                            if let thumb = item.thumbnailPath, !thumb.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ZStack(alignment: .topTrailing) {
-                                        DoraxThumbnailImage(path: thumb, maxPixelSize: 480, cornerRadius: 8)
-                                            .frame(height: 92)
-                                        if let firstAcc = item.accessories.first {
-                                            accessoryView(firstAcc)
-                                                .padding(5)
-                                                .background(.black.opacity(0.55), in: Capsule())
-                                                .padding(6)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(filteredItems) { item in
+                            let isSelected = item.id == selectedItem?.id
+                            Group {
+                                if let thumb = item.thumbnailPath, !thumb.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ZStack(alignment: .topTrailing) {
+                                            DoraxThumbnailImage(path: thumb, maxPixelSize: 480, cornerRadius: 8)
+                                                .frame(height: 92)
+                                            if let firstAcc = item.accessories.first {
+                                                accessoryView(firstAcc)
+                                                    .padding(5)
+                                                    .background(.black.opacity(0.55), in: Capsule())
+                                                    .padding(6)
+                                            }
+                                        }
+                                        Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                        if let sub = item.subtitle, !sub.isEmpty {
+                                            Text(sub).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                                         }
                                     }
-                                    Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                    if let sub = item.subtitle, !sub.isEmpty {
-                                        Text(sub).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                                } else {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            itemLeadingIcon(item)
+                                            Spacer()
+                                            if let firstAcc = item.accessories.first { accessoryView(firstAcc) }
+                                        }
+                                        Text(item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                        if let sub = item.subtitle, !sub.isEmpty {
+                                            Text(sub).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                                        }
                                     }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
                                 }
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                            } else {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        itemLeadingIcon(item)
-                                        Spacer()
-                                        if let firstAcc = item.accessories.first { accessoryView(firstAcc) }
-                                    }
-                                    Text(item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                                    if let sub = item.subtitle, !sub.isEmpty {
-                                        Text(sub).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }
-                                .padding(12)
-                                .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                            }
+                            .id(item.id)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(isSelected ? accentColor.opacity(0.20) : Color.white.opacity(0.06))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(isSelected ? accentColor.opacity(0.7) : Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                            .onTapGesture { selectedItemID = item.id }
+                            .onTapGesture(count: 2) {
+                                selectedItemID = item.id
+                                triggerPrimaryAction()
                             }
                         }
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(isSelected ? accentColor.opacity(0.20) : Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(isSelected ? accentColor.opacity(0.7) : Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                        .onTapGesture { selectedItemID = item.id }
-                        .onTapGesture(count: 2) {
-                            selectedItemID = item.id
-                            triggerPrimaryAction()
+                    }
+                    .padding(14)
+                }
+                .onChange(of: selectedItemID) { _, newID in
+                    if let id = newID {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(id, anchor: .center)
                         }
                     }
                 }
-                .padding(14)
             }
         }
     }
@@ -765,6 +820,7 @@ struct DoraxPackV3SheetView: View {
 
             Button {
                 actionSearchText = ""
+                selectedActionIndex = 0
                 showActionsPopover.toggle()
             } label: {
                 HStack(spacing: 5) {
@@ -782,9 +838,6 @@ struct DoraxPackV3SheetView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut("k", modifiers: .command)
-            .popover(isPresented: $showActionsPopover, arrowEdge: .top) {
-                actionsPopoverContent
-            }
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
@@ -794,117 +847,37 @@ struct DoraxPackV3SheetView: View {
         selectedItem?.actions.first
     }
 
-    // MARK: - Searchable `Actions ⌘K` Popover
-
-    private var actionsPopoverContent: some View {
-        let itemActions = selectedItem?.actions ?? []
+    private var filteredActionEntries: [DoraxSheetActionEntry] {
         let q = actionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let matchingItemActions = itemActions.filter {
-            q.isEmpty || $0.title.lowercased().contains(q)
+        let itemActions = (selectedItem?.actions ?? [])
+            .filter { q.isEmpty || $0.title.lowercased().contains(q) }
+            .map { DoraxSheetActionEntry.item($0) }
+        let packEntries: [DoraxSheetActionEntry] = [
+            .upgradeWithAI,
+            .configurePack,
+            .viewLogs(runtime.logs(for: pack.id).count),
+            .forceRefresh,
+        ].filter { q.isEmpty || $0.title.lowercased().contains(q) }
+        return itemActions + packEntries
+    }
+
+    private func handleDrawerEntry(_ entry: DoraxSheetActionEntry) {
+        showActionsPopover = false
+        switch entry {
+        case .item(let action):
+            invokeAction(action, item: selectedItem)
+        case .upgradeWithAI:
+            prompt.openExtensionStudio(
+                target: .appPlugin,
+                upgradePackID: pack.id,
+                packStudioMode: .upgradeExisting)
+        case .configurePack:
+            activeOverlay = .configure
+        case .viewLogs:
+            activeOverlay = .logs
+        case .forceRefresh:
+            Task { await refresh(force: true) }
         }
-        return VStack(alignment: .leading, spacing: 6) {
-            TextField("Search actions…", text: $actionSearchText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(matchingItemActions) { act in
-                        Button {
-                            showActionsPopover = false
-                            invokeAction(act, item: selectedItem)
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: act.icon)
-                                    .frame(width: 14)
-                                    .foregroundStyle(act.destructive ? .red : accentColor)
-                                Text(act.title)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(act.destructive ? .red : .primary)
-                                Spacer()
-                                if let sc = act.shortcut, !sc.isEmpty {
-                                    Text(sc)
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    Divider().padding(.vertical, 4)
-
-                    Button {
-                        showActionsPopover = false
-                        prompt.openExtensionStudio(
-                            target: .appPlugin,
-                            upgradePackID: pack.id,
-                            packStudioMode: .upgradeExisting)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wand.and.stars").frame(width: 14)
-                                .foregroundStyle(accentColor)
-                            Text("Upgrade Pack with AI…").font(.system(size: 12))
-                            Spacer()
-                            Text("⌘E").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        showActionsPopover = false
-                        activeOverlay = .configure
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "slider.horizontal.3").frame(width: 14)
-                            Text("Configure Command & Pack").font(.system(size: 12))
-                            Spacer()
-                            Text("⌘,").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        showActionsPopover = false
-                        activeOverlay = .logs
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "doc.text.magnifyingglass").frame(width: 14)
-                            Text("View Pack Logs (\(runtime.logs(for: pack.id).count))").font(.system(size: 12))
-                            Spacer()
-                            Text("⌘L").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        showActionsPopover = false
-                        Task { await refresh(force: true) }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise").frame(width: 14)
-                            Text("Force Refresh").font(.system(size: 12))
-                            Spacer()
-                            Text("⌘R").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(10)
-        .frame(width: 260, height: 240)
     }
 
     // MARK: - Red Destructive Confirmation Overlay
@@ -1204,6 +1177,13 @@ struct DoraxPackV3SheetView: View {
     private func installKeyBridge() {
         let bridge = ScopedListKeyBridge.shared
         bridge.move = { down in
+            if showActionsPopover {
+                let entries = filteredActionEntries
+                guard !entries.isEmpty else { return false }
+                let clamped = min(max(0, selectedActionIndex), entries.count - 1)
+                selectedActionIndex = min(entries.count - 1, max(0, clamped + (down ? 1 : -1)))
+                return true
+            }
             guard activeOverlay == nil, pendingDestructiveAction == nil, !filteredItems.isEmpty else {
                 return false
             }
@@ -1216,6 +1196,13 @@ struct DoraxPackV3SheetView: View {
                 Task { await executeAction(pending.action, item: pending.item) }
                 return true
             }
+            if showActionsPopover {
+                let entries = filteredActionEntries
+                guard !entries.isEmpty else { return false }
+                let clamped = min(max(0, selectedActionIndex), entries.count - 1)
+                handleDrawerEntry(entries[clamped])
+                return true
+            }
             guard activeOverlay == nil else { return false }
             if command.mode == .form {
                 Task { await refresh(force: true, withFormValues: formValues) }
@@ -1224,6 +1211,29 @@ struct DoraxPackV3SheetView: View {
             guard let primary = primaryAction else { return false }
             invokeAction(primary, item: selectedItem)
             return true
+        }
+        bridge.openActions = {
+            guard activeOverlay == nil, pendingDestructiveAction == nil else { return false }
+            if showActionsPopover { return true }
+            actionSearchText = ""
+            selectedActionIndex = 0
+            showActionsPopover = true
+            return true
+        }
+        bridge.closeOverlay = {
+            if pendingDestructiveAction != nil {
+                pendingDestructiveAction = nil
+                return true
+            }
+            if showActionsPopover {
+                showActionsPopover = false
+                return true
+            }
+            if activeOverlay != nil {
+                activeOverlay = nil
+                return true
+            }
+            return false
         }
     }
 
@@ -1265,14 +1275,19 @@ struct DoraxPackV3SheetView: View {
     }
 
     private func executeAction(_ action: DoraxItemAction, item: DoraxCommandItem?) async {
-        let res = await runtime.runItemAction(action, in: pack, item: item)
+        let filterArg = selectedFilter == "All" ? "" : selectedFilter
+        let res = await runtime.runItemActionDetailed(
+            action, in: pack, command: command, item: item, filter: filterArg)
         switch res {
-        case .success(let msg):
+        case .success(let outcome):
             let kind = action.kind.lowercased()
-            let cancelledPicker = msg.isEmpty && (kind == "pick_folder" || kind == "pick_files")
-            if !cancelledPicker {
-                showBanner(msg.isEmpty ? "\(action.title) completed" : msg)
-                if ["script", "cli", "pick_folder", "pick_files", "refresh"].contains(kind) {
+            let cancelledPicker = outcome.message.isEmpty && (kind == "pick_folder" || kind == "pick_files")
+            if outcome.didReplaceOutput {
+                selectedItemID = nil
+                if !outcome.message.isEmpty { showBanner(outcome.message) }
+            } else if !cancelledPicker {
+                showBanner(outcome.message.isEmpty ? "\(action.title) completed" : outcome.message)
+                if ["script", "run", "cli", "pick_folder", "pick_files", "refresh"].contains(kind) {
                     await refresh(force: true)
                 }
             }

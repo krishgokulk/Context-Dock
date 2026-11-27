@@ -867,4 +867,93 @@ struct DoraxPackV3Tests {
         let precReg = DoraxPackV3Registry(roots: [v2Root, fpRoot, v3Root], configFileURL: cfgURL)
         #expect(precReg.pack(id: "safari")?.metadata.version == "3.1.0")
     }
+
+    @Test("DoraxItemAction decodes Raycast/AI aliases (type/path/target/confirm/payload), icon_path, and run drill-down")
+    func itemActionAliasesIconPathAndRunDrillDown() async throws {
+        let json = """
+        {
+          "items": [
+            {
+              "id": "/Applications/Demo.app",
+              "title": "Demo",
+              "icon_path": "/Applications/Demo.app",
+              "actions": [
+                {
+                  "title": "Show Leftover Files",
+                  "type": "run",
+                  "payload": {"id": "leftovers", "name": "Demo"}
+                },
+                {
+                  "title": "Move App Only to Trash",
+                  "type": "run",
+                  "payload": {"id": "app_only", "path": "/Applications/Demo.app"},
+                  "confirm": "Move Demo to Trash?"
+                },
+                {
+                  "title": "Reveal in Finder",
+                  "type": "reveal",
+                  "path": "/Applications/Demo.app"
+                },
+                {
+                  "title": "Open Docs",
+                  "type": "open",
+                  "target": "https://example.com"
+                }
+              ]
+            }
+          ]
+        }
+        """
+        let output = DoraxCommandOutput.parse(stdout: json, commandTitle: "Uninstall")
+        let item = try #require(output.items.first)
+        #expect(item.iconPath == "/Applications/Demo.app")
+        #expect(item.actions.count == 4)
+
+        let showLeftovers = item.actions[0]
+        #expect(showLeftovers.kind == "run")
+        #expect(showLeftovers.destructive == false)
+        #expect(showLeftovers.payloadJSON?.contains("leftovers") == true)
+
+        let trashAct = item.actions[1]
+        #expect(trashAct.kind == "run")
+        #expect(trashAct.destructive == true)
+        #expect(trashAct.confirmMessage == "Move Demo to Trash?")
+
+        #expect(item.actions[2].kind == "reveal")
+        #expect(item.actions[2].value == "/Applications/Demo.app")
+        #expect(item.actions[3].kind == "open")
+        #expect(item.actions[3].value == "https://example.com")
+
+        // Verify `run` action forwards payload in ctx["action"] + DORAX_ACTION and updates command cache cleanly
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-run-drill-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("commands"), withIntermediateDirectories: true)
+        let py = """
+        #!/usr/bin/env python3
+        import json, os, sys
+        ctx = json.loads(sys.stdin.read() or '{}')
+        act = ctx.get('action') or {}
+        if act.get('id') == 'leftovers':
+            print(json.dumps({"items": [{"id": "left1", "title": "Leftover Cache"}], "toast": "Loaded leftovers"}))
+        else:
+            print(json.dumps({"items": [{"id": "root", "title": "Root App"}]}))
+        """
+        let scriptURL = tmp.appendingPathComponent("commands/uninstall.py")
+        try Data(py.utf8).write(to: scriptURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+        let cmd = DoraxPackCommand(id: "uninstall", title: "Uninstall App", mode: .list, script: "commands/uninstall.py")
+        let pack = DoraxPackV2(
+            metadata: DoraxPackMetadata(schemaVersion: 3, id: "mole-test-\(UUID().uuidString.prefix(6))", name: "Mole Test", commands: [cmd]),
+            agentInstructions: nil, modes: [], skills: [], scripts: [], pageScripts: [], folderURL: tmp)
+
+        let runtime = DoraxPackV3Runtime()
+        let res = await runtime.runItemActionDetailed(showLeftovers, in: pack, command: cmd, item: item)
+        let outcome = try res.get()
+        #expect(outcome.didReplaceOutput == true)
+        #expect(outcome.message == "Loaded leftovers")
+        let cached = runtime.state(packID: pack.id, commandID: cmd.id)
+        #expect(cached.output?.items.first?.title == "Leftover Cache")
+    }
 }

@@ -765,8 +765,10 @@ enum RaycastImporter {
         Strict rules:
         - Every Python script MUST start with `#!/usr/bin/env python3` and `from __future__ import annotations` (macOS /usr/bin/python3 is 3.9.6 — no PEP 604 `X | Y` without `from __future__ import annotations`).
         - Write REAL working macOS automation using stdlib (`plistlib`, `sqlite3` copied to temp file, `subprocess` calling `osascript`/`open`/`pbcopy`/`mdfind`/installed CLIs, `urllib.request`) rather than placeholder stubs!
+        - For item icons on macOS apps/files, include `"icon_path": "/Applications/Foo.app"` or `"app_icon_bundle_id": "..."`.
+        - For item `actions[]`, ALWAYS use DoraX canonical schema: `{"id": "...", "title": "...", "icon": "sf.symbol", "shortcut": "↵", "kind": "script|run|open|reveal|copy|cli", "value": "...", "script": "commands/<script>.py", "payload": {...}, "destructive": true/false, "confirm_message": "..."}`. Use `"kind": "run"` with `"payload"` when triggering a script action or drill-down inside the same command.
         - Handle missing permissions or unrunning apps gracefully by returning helpful items instead of crashing.
-        - Read context JSON from `sys.stdin` (`ctx.get("preferences")`, `DORAX_QUERY`, `DORAX_FILTER`), print ONE JSON object (`{"items":[...],"detail":{...},"filter_options":[...],"toast":"..."}`).
+        - Read context JSON from `sys.stdin` (`ctx.get("preferences")`, `ctx.get("action")`, `DORAX_QUERY`, `DORAX_FILTER`), print ONE JSON object (`{"items":[...],"detail":{...},"filter_options":[...],"toast":"..."}`).
         """
 
         let userPrompt = """

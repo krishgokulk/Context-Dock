@@ -548,12 +548,52 @@ struct DoraxItemDetail: Codable, Equatable {
     }
 }
 
+private enum DoraxJSONValue: Decodable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: DoraxJSONValue])
+    case array([DoraxJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let arr = try? c.decode([DoraxJSONValue].self) { self = .array(arr) }
+        else if let obj = try? c.decode([String: DoraxJSONValue].self) { self = .object(obj) }
+        else { self = .null }
+    }
+
+    var foundationValue: Any {
+        switch self {
+        case .string(let s): return s
+        case .number(let n): return n
+        case .bool(let b): return b
+        case .object(let o): return o.mapValues(\.foundationValue)
+        case .array(let a): return a.map(\.foundationValue)
+        case .null: return NSNull()
+        }
+    }
+
+    var jsonString: String? {
+        let obj = foundationValue
+        guard JSONSerialization.isValidJSONObject(obj),
+              let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+              let str = String(data: data, encoding: .utf8)
+        else { return nil }
+        return str
+    }
+}
+
 struct DoraxItemAction: Codable, Equatable, Identifiable {
     var id: String
     var title: String
     var icon: String
     var shortcut: String?
-    /// `"copy" | "open" | "reveal" | "paste" | "script" | "cli" | "url" | "notify" | "notch" | "pick_folder" | "pick_files" | "refresh"`
+    /// `"copy" | "open" | "reveal" | "paste" | "script" | "run" | "cli" | "url" | "notify" | "notch" | "pick_folder" | "pick_files" | "refresh"`
     var kind: String
     var value: String?
     var script: String?
@@ -561,10 +601,14 @@ struct DoraxItemAction: Codable, Equatable, Identifiable {
     var args: [String]?
     var destructive: Bool
     var confirmMessage: String?
+    var payloadJSON: String?
 
     enum CodingKeys: String, CodingKey {
         case id, title, icon, shortcut, kind, value, script, binary, args, destructive
         case confirmMessage = "confirm_message"
+        case payloadJSON = "payload_json"
+        // Decoding aliases emitted by Raycast / AI-generated scripts
+        case type, path, url, target, confirm, payload
     }
 
     init(
@@ -578,12 +622,14 @@ struct DoraxItemAction: Codable, Equatable, Identifiable {
         binary: String? = nil,
         args: [String]? = nil,
         destructive: Bool = false,
-        confirmMessage: String? = nil
+        confirmMessage: String? = nil,
+        payloadJSON: String? = nil
     ) {
         self.id = id; self.title = title; self.icon = icon
         self.shortcut = shortcut; self.kind = kind; self.value = value
         self.script = script; self.binary = binary; self.args = args
         self.destructive = destructive; self.confirmMessage = confirmMessage
+        self.payloadJSON = payloadJSON
     }
 
     init(from decoder: Decoder) throws {
@@ -593,13 +639,50 @@ struct DoraxItemAction: Codable, Equatable, Identifiable {
             ?? title.lowercased().replacingOccurrences(of: " ", with: "-")
         icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "bolt"
         shortcut = try c.decodeIfPresent(String.self, forKey: .shortcut)
-        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "copy"
+
+        let rawKind = (try c.decodeIfPresent(String.self, forKey: .kind)
+            ?? (try c.decodeIfPresent(String.self, forKey: .type))
+            ?? "copy").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch rawKind {
+        case "shell": kind = "script"
+        case "url": kind = "open"
+        default: kind = rawKind.isEmpty ? "copy" : rawKind
+        }
+
         value = try c.decodeIfPresent(String.self, forKey: .value)
+            ?? (try c.decodeIfPresent(String.self, forKey: .path))
+            ?? (try c.decodeIfPresent(String.self, forKey: .url))
+            ?? (try c.decodeIfPresent(String.self, forKey: .target))
         script = try c.decodeIfPresent(String.self, forKey: .script)
         binary = try c.decodeIfPresent(String.self, forKey: .binary)
         args = try c.decodeIfPresent([String].self, forKey: .args)
-        destructive = try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? false
         confirmMessage = try c.decodeIfPresent(String.self, forKey: .confirmMessage)
+            ?? (try c.decodeIfPresent(String.self, forKey: .confirm))
+        let explicitDestructive = try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? false
+        destructive = explicitDestructive || !(confirmMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if let rawJSON = try c.decodeIfPresent(String.self, forKey: .payloadJSON) {
+            payloadJSON = rawJSON
+        } else if let decodedPayload = try c.decodeIfPresent(DoraxJSONValue.self, forKey: .payload) {
+            payloadJSON = decodedPayload.jsonString
+        } else {
+            payloadJSON = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(icon, forKey: .icon)
+        try c.encodeIfPresent(shortcut, forKey: .shortcut)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(value, forKey: .value)
+        try c.encodeIfPresent(script, forKey: .script)
+        try c.encodeIfPresent(binary, forKey: .binary)
+        try c.encodeIfPresent(args, forKey: .args)
+        try c.encode(destructive, forKey: .destructive)
+        try c.encodeIfPresent(confirmMessage, forKey: .confirmMessage)
+        try c.encodeIfPresent(payloadJSON, forKey: .payloadJSON)
     }
 }
 
@@ -608,6 +691,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
     var title: String
     var subtitle: String?
     var icon: String?
+    var iconPath: String?
     var appIconBundleId: String?
     var swatchHex: String?
     var thumbnailPath: String?
@@ -619,6 +703,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, subtitle, icon
+        case iconPath = "icon_path"
         case appIconBundleId = "app_icon_bundle_id"
         case swatchHex = "swatch"
         case thumbnailPath = "thumbnail_path"
@@ -630,6 +715,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         title: String,
         subtitle: String? = nil,
         icon: String? = nil,
+        iconPath: String? = nil,
         appIconBundleId: String? = nil,
         swatchHex: String? = nil,
         thumbnailPath: String? = nil,
@@ -640,7 +726,8 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         actions: [DoraxItemAction] = []
     ) {
         self.id = id; self.title = title; self.subtitle = subtitle
-        self.icon = icon; self.appIconBundleId = appIconBundleId
+        self.icon = icon; self.iconPath = iconPath
+        self.appIconBundleId = appIconBundleId
         self.swatchHex = swatchHex; self.thumbnailPath = thumbnailPath
         self.category = category
         self.keywords = keywords; self.accessories = accessories
@@ -653,6 +740,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         subtitle = try c.decodeIfPresent(String.self, forKey: .subtitle)
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        iconPath = try c.decodeIfPresent(String.self, forKey: .iconPath)
         appIconBundleId = try c.decodeIfPresent(String.self, forKey: .appIconBundleId)
         swatchHex = try c.decodeIfPresent(String.self, forKey: .swatchHex)
         thumbnailPath = try c.decodeIfPresent(String.self, forKey: .thumbnailPath)

@@ -95,6 +95,10 @@ final class ScopedListKeyBridge {
     var move: (@MainActor (_ down: Bool) -> Bool)?
     /// Runs the selected row; true when there was one to run.
     var run: (@MainActor () -> Bool)?
+    /// Opens or focuses the active sheet's Actions drawer (`→` / `⌘K`).
+    var openActions: (@MainActor () -> Bool)?
+    /// Closes an inline overlay / Actions drawer inside the active sheet (`Esc` / `←`).
+    var closeOverlay: (@MainActor () -> Bool)?
     /// Whether the arrows chose the row. The list selects its first row by itself, and a
     /// command's Return can be destructive (Listening Ports kills the process): Return in
     /// the field runs only a row the user picked, and asks the assistant otherwise.

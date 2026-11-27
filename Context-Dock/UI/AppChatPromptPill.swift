@@ -1493,6 +1493,11 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.escape) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.scopedV3Command != nil,
+                           ScopedListKeyBridge.shared.closeOverlay?() == true
+                        {
+                            return .handled
+                        }
                         if model.isClipboardScope {
                             ClipboardPanelController.shared.closeBoard()
                             return .handled
@@ -1515,6 +1520,11 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.leftArrow) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.scopedV3Command != nil,
+                           ScopedListKeyBridge.shared.closeOverlay?() == true
+                        {
+                            return .handled
+                        }
                         // The clipboard filter's caret, not the scope's.
                         if model.isClipboardScope { return .ignored }
                         // Inside a folder walk, ← steps back out to the parent folder (or Global Context).
@@ -1529,6 +1539,12 @@ struct AppChatPromptPill: View {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // The clipboard filter's caret, not the scope's.
                         if model.isClipboardScope { return .ignored }
+                        if model.scopedV3Command != nil,
+                           (model.query.isEmpty || ScopedListKeyBridge.shared.chosenByArrows),
+                           ScopedListKeyBridge.shared.openActions?() == true
+                        {
+                            return .handled
+                        }
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else — steps in, never runs (D4). Otherwise it takes
                         // the ghost completion, and on an empty field it steps into an app;

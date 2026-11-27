@@ -609,13 +609,30 @@ final class DoraxPackV3Runtime: ObservableObject {
         }
     }
 
-    /// Executes a typed item action from the `680 × 440` Result Sheet or `⌘K` Actions popover.
+    struct DoraxActionExecutionResult: Equatable {
+        var message: String
+        var didReplaceOutput: Bool
+    }
+
+    /// Executes a typed item action from the `680 × 440` Result Sheet or `⌘K` Actions panel.
     @discardableResult
     func runItemAction(
         _ action: DoraxItemAction,
         in pack: DoraxPackV2,
         item: DoraxCommandItem? = nil
     ) async -> Result<String, PluginRunFailure> {
+        let detailed = await runItemActionDetailed(action, in: pack, command: nil, item: item, filter: "")
+        return detailed.map(\.message)
+    }
+
+    @discardableResult
+    func runItemActionDetailed(
+        _ action: DoraxItemAction,
+        in pack: DoraxPackV2,
+        command: DoraxPackCommand? = nil,
+        item: DoraxCommandItem? = nil,
+        filter: String = ""
+    ) async -> Result<DoraxActionExecutionResult, PluginRunFailure> {
         let started = Date()
         switch action.kind.lowercased() {
         case "copy":
@@ -623,28 +640,29 @@ final class DoraxPackV3Runtime: ObservableObject {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Copied to clipboard")
-            return .success("Copied")
+            return .success(DoraxActionExecutionResult(message: "Copied", didReplaceOutput: false))
         case "paste":
             let text = action.value ?? item?.title ?? ""
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Staged paste to clipboard")
-            return .success("Copied for paste")
+            return .success(DoraxActionExecutionResult(message: "Copied for paste", didReplaceOutput: false))
         case "open", "url":
             let raw = action.value ?? ""
             guard let url = URL(string: raw) else {
                 return .failure(PluginRunFailure(message: "Invalid URL: \(raw)", kind: .launch))
             }
             NSWorkspace.shared.open(url)
-            return .success(raw)
+            return .success(DoraxActionExecutionResult(message: raw, didReplaceOutput: false))
         case "reveal":
-            let path = action.value ?? ""
+            let rawPath = action.value ?? ""
+            let path = NSString(string: rawPath).expandingTildeInPath
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-            return .success(path)
+            return .success(DoraxActionExecutionResult(message: path, didReplaceOutput: false))
         case "notify":
             let msg = action.value ?? action.title
             ILauncherNotificationManager.shared.post(title: pack.name, body: msg, icon: pack.metadata.icon)
-            return .success(msg)
+            return .success(DoraxActionExecutionResult(message: msg, didReplaceOutput: false))
         case "window":
             let cmdID = action.value ?? item?.id ?? ""
             guard let cmd = WindowManagementService.shared.matchingCommands(query: "").first(where: { $0.id == cmdID }) else {
@@ -658,7 +676,7 @@ final class DoraxPackV3Runtime: ObservableObject {
             }
             _ = WindowManagementService.shared.execute(cmd, sourceApp: frontApp)
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Applied window layout \(cmd.title)")
-            return .success("Applied \(cmd.title)")
+            return .success(DoraxActionExecutionResult(message: "Applied \(cmd.title)", didReplaceOutput: false))
         case "notch":
             let msg = action.value ?? action.title
             DynamicNotchState.shared.publishPackActivity(
@@ -671,7 +689,7 @@ final class DoraxPackV3Runtime: ObservableObject {
                         wingColorHex: pack.metadata.appearance?.tint,
                         title: action.title,
                         subtitle: msg)))
-            return .success(msg)
+            return .success(DoraxActionExecutionResult(message: msg, didReplaceOutput: false))
         case "cli":
             guard let binary = action.binary, !binary.isEmpty else {
                 return .failure(PluginRunFailure(message: "CLI action missing binary", kind: .blocked))
@@ -687,51 +705,70 @@ final class DoraxPackV3Runtime: ObservableObject {
             switch res {
             case .success(let r):
                 appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: ms, message: "Action \(action.title) succeeded")
-                return .success(r.stdout)
+                return .success(DoraxActionExecutionResult(message: r.stdout, didReplaceOutput: false))
             case .failure(let f):
                 appendLog(packID: pack.id, commandID: action.id, level: .error, durationMs: ms, message: f.message)
                 return .failure(f)
             }
         case "refresh":
-            return .success("")
+            return .success(DoraxActionExecutionResult(message: "", didReplaceOutput: false))
         case "pick_folder":
             let prefID = action.value ?? "folder"
             let pref = pack.metadata.preferences?.first(where: { $0.id == prefID })
                 ?? DoraxPackPreference(id: prefID, title: action.title, type: .directory)
             let initial = DoraxPackPreferenceStore.value(for: pref, packID: pack.id)
             guard let chosen = DoraxMediaPickers.chooseDirectory(title: action.title, initialPath: initial) else {
-                return .success("")
+                return .success(DoraxActionExecutionResult(message: "", didReplaceOutput: false))
             }
             DoraxPackPreferenceStore.setValue(chosen, for: pref, packID: pack.id)
             invalidateCache(forPackID: pack.id)
             let folderName = URL(fileURLWithPath: chosen).lastPathComponent
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Selected folder \(folderName)")
-            return .success("Folder set to \(folderName)")
+            return .success(DoraxActionExecutionResult(message: "Folder set to \(folderName)", didReplaceOutput: false))
         case "pick_files":
             let rawDest = (action.value?.isEmpty == false ? action.value! : "~/Library/Application Support/Context-Dock/wallpapers/collection")
             let destPath = NSString(string: rawDest).expandingTildeInPath
             let destURL = URL(fileURLWithPath: destPath, isDirectory: true)
             let added = DoraxMediaPickers.chooseImageFiles(title: action.title, into: destURL)
             guard !added.isEmpty else {
-                return .success("")
+                return .success(DoraxActionExecutionResult(message: "", didReplaceOutput: false))
             }
             invalidateCache(forPackID: pack.id)
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Added \(added.count) picture(s)")
-            return .success("Added \(added.count) picture(s)")
-        case "script":
-            guard let script = action.script, !script.isEmpty else {
-                return .failure(PluginRunFailure(message: "Script action missing script", kind: .blocked))
+            return .success(DoraxActionExecutionResult(message: "Added \(added.count) picture(s)", didReplaceOutput: false))
+        case "script", "run":
+            let resolvedScript = (action.script?.isEmpty == false ? action.script : nil) ?? command?.script
+            guard let script = resolvedScript, !script.isEmpty else {
+                return .failure(PluginRunFailure(message: "Action missing target script", kind: .blocked))
             }
             let contextPayload = DoraxContextBridge.buildContext(
-                pack: pack.metadata, commandID: action.id, query: "")
-            let stdinData = DoraxContextBridge.encodeJSON(contextPayload)
+                pack: pack.metadata, commandID: command?.id ?? action.id, query: "")
+            let actionPayloadJSON = action.payloadJSON ?? "{}"
+            let stdinData: Data? = {
+                guard let baseData = DoraxContextBridge.encodeJSON(contextPayload),
+                      var obj = (try? JSONSerialization.jsonObject(with: baseData)) as? [String: Any]
+                else {
+                    return DoraxContextBridge.encodeJSON(contextPayload)
+                }
+                if let payloadData = actionPayloadJSON.data(using: .utf8),
+                   let parsedAction = try? JSONSerialization.jsonObject(with: payloadData)
+                {
+                    obj["action"] = parsedAction
+                } else {
+                    obj["action"] = ["id": action.id, "value": action.value ?? ""]
+                }
+                return try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
+            }()
+
             let res = await executePackScript(
                 script,
                 in: pack,
                 env: [
                     "DORAX_PACK_ID": pack.id,
+                    "DORAX_COMMAND_ID": command?.id ?? "",
                     "DORAX_ITEM_ID": item?.id ?? "",
                     "DORAX_ITEM_TITLE": item?.title ?? "",
+                    "DORAX_ACTION": actionPayloadJSON,
                     "DORAX_ACTION_VALUE": action.value ?? "",
                     "DORAX_CONTEXT_STDIN": "1",
                 ],
@@ -740,8 +777,23 @@ final class DoraxPackV3Runtime: ObservableObject {
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             switch res {
             case .success(let r):
+                let trimmed = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let command,
+                   trimmed.hasPrefix("{"),
+                   let outData = trimmed.data(using: .utf8),
+                   let rawObj = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+                   rawObj["items"] != nil || rawObj["detail"] != nil
+                {
+                    let output = DoraxCommandOutput.parse(stdout: r.stdout, commandTitle: command.title)
+                    let key = CacheKey(packID: pack.id, commandID: command.id, filter: filter)
+                    cache[key] = DoraxCommandCacheEntry(output: output, fetchedAt: Date(), isRefreshing: false, lastError: nil)
+                    applySideEffects(from: output, pack: pack, command: command)
+                    let msg = output.toast ?? ""
+                    appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: ms, message: "Action \(action.title) updated view (\(output.items.count) items)")
+                    return .success(DoraxActionExecutionResult(message: msg, didReplaceOutput: true))
+                }
                 appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: ms, message: "Action \(action.title) succeeded")
-                return .success(r.stdout)
+                return .success(DoraxActionExecutionResult(message: r.stdout, didReplaceOutput: false))
             case .failure(let f):
                 appendLog(packID: pack.id, commandID: action.id, level: .error, durationMs: ms, message: f.message)
                 return .failure(f)

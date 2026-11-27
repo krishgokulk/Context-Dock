@@ -2345,6 +2345,7 @@ final class CornerDockController: NSObject {
             event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
             chatPresentation.isVisible, chatPresentation.mode != .general,
             prompt.phase.showsInput, prompt.phase != .chat,
+            prompt.scopedV3Command == nil,
             prompt.rightArrowWalksFromEmptyField,
             !ClipboardPanelController.shared.model.isKeyboardArmed
         {
