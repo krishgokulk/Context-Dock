@@ -1,0 +1,89 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "wallpapers",
+  "name": "Wallpapers",
+  "version": "3.0.0",
+  "description": "Cycle next or random wallpaper, browse thumbnails, pick your wallpaper folder, or add individual pictures.",
+  "icon": "photo.on.rectangle.angled",
+  "scope": {
+    "surfaces": ["global"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#06B6D4",
+    "glow": "soft"
+  },
+  "preferences": [
+    {
+      "id": "folder",
+      "title": "Wallpaper Folder",
+      "type": "directory",
+      "required": false,
+      "placeholder": "Auto-detected from active desktop wallpaper"
+    },
+    {
+      "id": "apply_scope",
+      "title": "Apply To",
+      "type": "select",
+      "required": false,
+      "default": "all",
+      "options": ["all", "current"]
+    }
+  ],
+  "commands": [
+    {
+      "id": "next-wallpaper",
+      "title": "Next Wallpaper",
+      "subtitle": "Switch desktop to the next wallpaper in your folder or added pictures",
+      "icon": "photo.on.rectangle.angled",
+      "mode": "instant",
+      "cache_ttl_seconds": 0,
+      "keywords": ["next", "wallpaper", "background", "next background", "desktop", "picture", "cycle"],
+      "script": "commands/next-wallpaper.py"
+    },
+    {
+      "id": "browse-wallpapers",
+      "title": "Browse Wallpapers",
+      "subtitle": "Preview wallpapers, choose a folder, or add individual pictures",
+      "icon": "photo.stack",
+      "mode": "grid",
+      "cache_ttl_seconds": 0,
+      "keywords": ["wallpapers", "backgrounds", "browse wallpapers", "desktop pictures", "add wallpaper", "wallpaper folder", "choose folder"],
+      "script": "commands/browse-wallpapers.py"
+    },
+    {
+      "id": "random-wallpaper",
+      "title": "Random Wallpaper",
+      "subtitle": "Switch desktop to a random wallpaper",
+      "icon": "shuffle",
+      "mode": "instant",
+      "cache_ttl_seconds": 0,
+      "keywords": ["random wallpaper", "shuffle wallpaper", "random background"],
+      "script": "commands/next-wallpaper.py"
+    }
+  ],
+  "tools": [
+    {
+      "id": "next_wallpaper",
+      "name": "Switch to Next Wallpaper",
+      "description": "Switches the desktop wallpaper to the next image (or a random one if requested) from the user's wallpaper folder or added collection.",
+      "script": "commands/next-wallpaper.py",
+      "risk": "low",
+      "keywords": ["wallpaper", "background", "desktop picture", "next wallpaper"]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "wallpapers.next",
+      "name": "Next Wallpaper",
+      "intent": "Switch the desktop wallpaper to the next image in your folder or collection.",
+      "triggers": ["next wallpaper", "next background", "change wallpaper"],
+      "type": "shell",
+      "script": "python3 commands/next-wallpaper.py",
+      "safety": "write"
+    }
+  ],
+  "permissions": ["files:read", "applescript"]
+}

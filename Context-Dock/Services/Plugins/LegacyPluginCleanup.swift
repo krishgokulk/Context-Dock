@@ -24,7 +24,7 @@ struct LegacyCleanupReport: Equatable {
 
 enum LegacyPluginCleanup {
 
-    static let completionKey = "doraxpack_v3_legacy_cleanup_v2"
+    static let completionKey = "doraxpack_v3_legacy_cleanup_v3"
 
     /// Relative paths under `~/Library/Application Support/Context-Dock` that represent
     /// pre-v3 extension/plugin clutter to be archived into a `.zip` backup and removed.
@@ -37,7 +37,9 @@ enum LegacyPluginCleanup {
         "Extensions/User-Created",
         "plugins/store-packs",
         "plugins/essentials/plugins/currency",
+        "plugins/essentials/plugins/next-wallpaper",
         "plugins/state/currency.json",
+        "plugins/state/next-wallpaper.json",
         "plugins/v2/currency.doraxpack",
         "currency-favourites.json",
         "currency-target.json",

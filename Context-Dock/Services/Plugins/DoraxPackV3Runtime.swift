@@ -386,6 +386,10 @@ final class DoraxPackV3Runtime: ObservableObject {
         logsByPack[packID] = []
     }
 
+    func invalidateCache(forPackID packID: String) {
+        cache = cache.filter { $0.key.packID != packID }
+    }
+
     func appendLog(
         packID: String,
         commandID: String,
@@ -684,10 +688,39 @@ final class DoraxPackV3Runtime: ObservableObject {
                 appendLog(packID: pack.id, commandID: action.id, level: .error, durationMs: ms, message: f.message)
                 return .failure(f)
             }
+        case "refresh":
+            return .success("")
+        case "pick_folder":
+            let prefID = action.value ?? "folder"
+            let pref = pack.metadata.preferences?.first(where: { $0.id == prefID })
+                ?? DoraxPackPreference(id: prefID, title: action.title, type: .directory)
+            let initial = DoraxPackPreferenceStore.value(for: pref, packID: pack.id)
+            guard let chosen = DoraxMediaPickers.chooseDirectory(title: action.title, initialPath: initial) else {
+                return .success("")
+            }
+            DoraxPackPreferenceStore.setValue(chosen, for: pref, packID: pack.id)
+            invalidateCache(forPackID: pack.id)
+            let folderName = URL(fileURLWithPath: chosen).lastPathComponent
+            appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Selected folder \(folderName)")
+            return .success("Folder set to \(folderName)")
+        case "pick_files":
+            let rawDest = (action.value?.isEmpty == false ? action.value! : "~/Library/Application Support/Context-Dock/wallpapers/collection")
+            let destPath = NSString(string: rawDest).expandingTildeInPath
+            let destURL = URL(fileURLWithPath: destPath, isDirectory: true)
+            let added = DoraxMediaPickers.chooseImageFiles(title: action.title, into: destURL)
+            guard !added.isEmpty else {
+                return .success("")
+            }
+            invalidateCache(forPackID: pack.id)
+            appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Added \(added.count) picture(s)")
+            return .success("Added \(added.count) picture(s)")
         case "script":
             guard let script = action.script, !script.isEmpty else {
                 return .failure(PluginRunFailure(message: "Script action missing script", kind: .blocked))
             }
+            let contextPayload = DoraxContextBridge.buildContext(
+                pack: pack.metadata, commandID: action.id, query: "")
+            let stdinData = DoraxContextBridge.encodeJSON(contextPayload)
             let res = await executePackScript(
                 script,
                 in: pack,
@@ -696,9 +729,10 @@ final class DoraxPackV3Runtime: ObservableObject {
                     "DORAX_ITEM_ID": item?.id ?? "",
                     "DORAX_ITEM_TITLE": item?.title ?? "",
                     "DORAX_ACTION_VALUE": action.value ?? "",
+                    "DORAX_CONTEXT_STDIN": "1",
                 ],
                 timeout: 15,
-                stdinData: nil)
+                stdinData: stdinData)
             let ms = Int(Date().timeIntervalSince(started) * 1000)
             switch res {
             case .success(let r):

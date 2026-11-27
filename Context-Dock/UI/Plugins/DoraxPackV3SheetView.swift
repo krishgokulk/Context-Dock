@@ -508,8 +508,14 @@ struct DoraxPackV3SheetView: View {
     private func splitDetailPane(_ detail: DoraxItemDetail) -> some View {
         HStack(alignment: .top, spacing: 0) {
             ScrollView {
-                DoraxMarkdownBlockView(markdown: detail.markdown)
-                    .padding(12)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let imgPath = detail.imagePath, !imgPath.isEmpty {
+                        DoraxThumbnailImage(path: imgPath, maxPixelSize: 960, cornerRadius: 10)
+                            .frame(height: 175)
+                    }
+                    DoraxMarkdownBlockView(markdown: detail.markdown)
+                }
+                .padding(12)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -551,26 +557,42 @@ struct DoraxPackV3SheetView: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(filteredItems) { item in
                         let isSelected = item.id == selectedItem?.id
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                itemLeadingIcon(item)
-                                Spacer()
-                                if let firstAcc = item.accessories.first {
-                                    accessoryView(firstAcc)
+                        Group {
+                            if let thumb = item.thumbnailPath, !thumb.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ZStack(alignment: .topTrailing) {
+                                        DoraxThumbnailImage(path: thumb, maxPixelSize: 480, cornerRadius: 8)
+                                            .frame(height: 92)
+                                        if let firstAcc = item.accessories.first {
+                                            accessoryView(firstAcc)
+                                                .padding(5)
+                                                .background(.black.opacity(0.55), in: Capsule())
+                                                .padding(6)
+                                        }
+                                    }
+                                    Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                                    if let sub = item.subtitle, !sub.isEmpty {
+                                        Text(sub).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                                    }
                                 }
-                            }
-                            Text(item.title)
-                                .font(.system(size: 13, weight: .semibold))
-                                .lineLimit(1)
-                            if let sub = item.subtitle, !sub.isEmpty {
-                                Text(sub)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                            } else {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        itemLeadingIcon(item)
+                                        Spacer()
+                                        if let firstAcc = item.accessories.first { accessoryView(firstAcc) }
+                                    }
+                                    Text(item.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                    if let sub = item.subtitle, !sub.isEmpty {
+                                        Text(sub).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
                             }
                         }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
                         .background(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(isSelected ? accentColor.opacity(0.20) : Color.white.opacity(0.06))
@@ -1021,20 +1043,7 @@ struct DoraxPackV3SheetView: View {
                     GroupBox("Pack Preferences (Secrets stored in Keychain)") {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(prefs) { pref in
-                                HStack {
-                                    Text(pref.title).frame(width: 130, alignment: .leading).font(.system(size: 12))
-                                    let binding = Binding<String>(
-                                        get: { DoraxPackPreferenceStore.value(for: pref, packID: pack.id) ?? "" },
-                                        set: { DoraxPackPreferenceStore.setValue($0, for: pref, packID: pack.id) }
-                                    )
-                                    if pref.type == .secret {
-                                        SecureField(pref.placeholder ?? "Stored in Keychain", text: binding)
-                                            .textFieldStyle(.roundedBorder)
-                                    } else {
-                                        TextField(pref.placeholder ?? pref.title, text: binding)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                }
+                                DoraxPreferenceEditorRow(pref: pref, packID: pack.id)
                             }
                         }
                         .padding(6)
@@ -1259,9 +1268,13 @@ struct DoraxPackV3SheetView: View {
         let res = await runtime.runItemAction(action, in: pack, item: item)
         switch res {
         case .success(let msg):
-            showBanner(msg.isEmpty ? "\(action.title) completed" : msg)
-            if action.kind == "script" || action.kind == "cli" {
-                await refresh(force: true)
+            let kind = action.kind.lowercased()
+            let cancelledPicker = msg.isEmpty && (kind == "pick_folder" || kind == "pick_files")
+            if !cancelledPicker {
+                showBanner(msg.isEmpty ? "\(action.title) completed" : msg)
+                if ["script", "cli", "pick_folder", "pick_files", "refresh"].contains(kind) {
+                    await refresh(force: true)
+                }
             }
         case .failure(let err):
             showBanner("Failed: \(err.message)")

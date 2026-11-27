@@ -103,14 +103,15 @@ creating a new registry (`StorePackInstaller.swift`, completed in Task U8c):
 - **Raycast Script & Extension Importer (`RaycastImporter`):** Deterministically converts `@raycast.*` Script Commands (`.sh`, `.py`, `.applescript`) and maps Raycast extension `package.json` manifests into standalone `.doraxpack` v3 packs or merges them into existing packs inside `ExtensionStudioBoardCard`.
 
 - **Unified Raycast-Style Extension Header (`ExtensionHeaderBarState`):** Stepping into any extension (`.doraxpack` v3, Global Extension, Global Command, Clipboard, or Plugin) replaces the prompt bar chrome cleanly inside one shared shell: left `[<]` back button + tinted icon + extension title (+ item count capsule), clean filter input placeholder, and right single-chevron filter dropdown (`.menuIndicator(.hidden)`) + refresh spinner/button — hiding the running apps strip, pin button, and redundant inner sheet headers.
+- **Media Thumbnails & Native Folder/File Pickers (`DoraxPackMediaHelpers`):** `.doraxpack` v3 supports `directory`/`file` preferences, `thumbnail_path` grid cards, `detail.image_path` preview banners (downsampled via `CGImageSource` cache), and `pick_folder` / `pick_files` / `refresh` item actions backed by `NSOpenPanel`.
 
 ## Code homes
 
 ```
-Packs/                22 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor, AppleIntelligence, YouTube, GitHub, Homebrew, Spotify, Obsidian, Tailscale, WhatsApp, Claude, ChatGPT, Messages, Notes, GoogleDrive, SystemUtilities, CurrencyConverter, FocusShortcuts)
+Packs/                23 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor, AppleIntelligence, YouTube, GitHub, Homebrew, Spotify, Obsidian, Tailscale, WhatsApp, Claude, ChatGPT, Messages, Notes, GoogleDrive, SystemUtilities, CurrencyConverter, FocusShortcuts, Wallpapers)
 Services/Plugins/     DoraxPackV3, DoraxPackV3EditorService, DoraxAppleIntelligenceRunner, DoraxContextBridge, DoraxPackV3Runtime, DoraxPackHookDispatcher, LegacyPluginCleanup, DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
 Services/             SafariExtensionHookRegistry, SafariEscalationPolicy, NotchPinStore
-UI/Plugins/           ExtensionHeaderBarState, DoraxPackV3SheetView, renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace
+UI/Plugins/           ExtensionHeaderBarState, DoraxPackMediaHelpers, DoraxPackV3SheetView, renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace
 UI/                   DockAuraEngine, NotchQuickActionsView, DynamicNotchLiveActivityView, ExtensionStudioBoardCard, ExtensionStudioPackFlows
 AI/PluginAuthoring/   DoraxPackV3Authoring, RaycastImporter, AgenticAIPackBuilder, AIPackSynthesizer, PluginAuthoringEngine, PluginAuthoringPrompt
 ```

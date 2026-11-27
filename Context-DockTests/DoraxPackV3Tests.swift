@@ -538,7 +538,7 @@ struct DoraxPackV3Tests {
             "youtube", "github", "homebrew", "spotify", "obsidian", "tailscale",
             "whatsapp", "claude", "chatgpt", "messages", "notes", "google-drive",
             "apple-intelligence", "antigravity",
-            "system-utilities", "currency-converter", "focus-shortcuts"
+            "system-utilities", "currency-converter", "focus-shortcuts", "wallpapers"
         ]
         for id in expectedNewIDs {
             let pack = try #require(byID[id], "Missing curated pack \(id)")
@@ -773,5 +773,43 @@ struct DoraxPackV3Tests {
         #expect(!extImport.hasBlockingErrors)
         #expect(extSyn.pack.metadata.commands?.count == 2)
         #expect(extSyn.pack.metadata.preferences?.first?.type == .secret)
+    }
+
+    @Test("Wallpapers schema extensions: directory/file prefs, thumbnail_path, image_path, and next-wallpaper retirement")
+    func wallpapersSchemaAndLegacyRetirement() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "id": "w1",
+              "title": "Sample.jpg",
+              "thumbnail_path": "/tmp/sample.jpg",
+              "actions": [
+                {"id": "pick", "title": "Choose Folder", "kind": "pick_folder", "value": "folder"}
+              ]
+            }
+          ],
+          "detail": {
+            "markdown": "### Sample.jpg",
+            "image_path": "/tmp/sample.jpg"
+          }
+        }
+        """
+        let output = DoraxCommandOutput.parse(stdout: json, commandTitle: "Wallpapers")
+        #expect(output.items.first?.thumbnailPath == "/tmp/sample.jpg")
+        #expect(output.detail?.imagePath == "/tmp/sample.jpg")
+        #expect(output.items.first?.actions.first?.kind == "pick_folder")
+
+        let dirPref = try JSONDecoder().decode(
+            DoraxPackPreference.self,
+            from: Data(#"{"id":"folder","title":"Wallpaper Folder","type":"directory"}"#.utf8))
+        #expect(dirPref.type == .directory)
+        let filePref = try JSONDecoder().decode(
+            DoraxPackPreference.self,
+            from: Data(#"{"id":"pic","title":"Picture","type":"file"}"#.utf8))
+        #expect(filePref.type == .file)
+
+        // Legacy essentials next-wallpaper plugin must be listed for safe zip backup & retirement
+        #expect(LegacyPluginCleanup.legacyRelativePaths.contains("plugins/essentials/plugins/next-wallpaper"))
     }
 }

@@ -132,6 +132,8 @@ enum DoraxPreferenceType: String, Codable, Equatable {
     case secret
     case boolean
     case select
+    case directory
+    case file
 }
 
 struct DoraxPackPreference: Codable, Equatable, Identifiable {
@@ -525,16 +527,24 @@ struct DoraxMetadataEntry: Codable, Equatable, Identifiable {
 struct DoraxItemDetail: Codable, Equatable {
     var markdown: String
     var metadata: [DoraxMetadataEntry]
+    var imagePath: String?
 
-    init(markdown: String = "", metadata: [DoraxMetadataEntry] = []) {
+    enum CodingKeys: String, CodingKey {
+        case markdown, metadata
+        case imagePath = "image_path"
+    }
+
+    init(markdown: String = "", metadata: [DoraxMetadataEntry] = [], imagePath: String? = nil) {
         self.markdown = markdown
         self.metadata = metadata
+        self.imagePath = imagePath
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         markdown = try c.decodeIfPresent(String.self, forKey: .markdown) ?? ""
         metadata = try c.decodeIfPresent([DoraxMetadataEntry].self, forKey: .metadata) ?? []
+        imagePath = try c.decodeIfPresent(String.self, forKey: .imagePath)
     }
 }
 
@@ -543,7 +553,7 @@ struct DoraxItemAction: Codable, Equatable, Identifiable {
     var title: String
     var icon: String
     var shortcut: String?
-    /// `"copy" | "open" | "reveal" | "paste" | "script" | "cli" | "url" | "notify" | "notch"`
+    /// `"copy" | "open" | "reveal" | "paste" | "script" | "cli" | "url" | "notify" | "notch" | "pick_folder" | "pick_files" | "refresh"`
     var kind: String
     var value: String?
     var script: String?
@@ -600,6 +610,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
     var icon: String?
     var appIconBundleId: String?
     var swatchHex: String?
+    var thumbnailPath: String?
     var category: String?
     var keywords: [String]
     var accessories: [DoraxAccessory]
@@ -610,6 +621,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         case id, title, subtitle, icon
         case appIconBundleId = "app_icon_bundle_id"
         case swatchHex = "swatch"
+        case thumbnailPath = "thumbnail_path"
         case category, keywords, accessories, detail, actions
     }
 
@@ -620,6 +632,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         icon: String? = nil,
         appIconBundleId: String? = nil,
         swatchHex: String? = nil,
+        thumbnailPath: String? = nil,
         category: String? = nil,
         keywords: [String] = [],
         accessories: [DoraxAccessory] = [],
@@ -628,7 +641,8 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
     ) {
         self.id = id; self.title = title; self.subtitle = subtitle
         self.icon = icon; self.appIconBundleId = appIconBundleId
-        self.swatchHex = swatchHex; self.category = category
+        self.swatchHex = swatchHex; self.thumbnailPath = thumbnailPath
+        self.category = category
         self.keywords = keywords; self.accessories = accessories
         self.detail = detail; self.actions = actions
     }
@@ -641,6 +655,7 @@ struct DoraxCommandItem: Codable, Equatable, Identifiable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         appIconBundleId = try c.decodeIfPresent(String.self, forKey: .appIconBundleId)
         swatchHex = try c.decodeIfPresent(String.self, forKey: .swatchHex)
+        thumbnailPath = try c.decodeIfPresent(String.self, forKey: .thumbnailPath)
         category = try c.decodeIfPresent(String.self, forKey: .category)
         keywords = try c.decodeIfPresent([String].self, forKey: .keywords) ?? []
         accessories = try c.decodeIfPresent([DoraxAccessory].self, forKey: .accessories) ?? []
