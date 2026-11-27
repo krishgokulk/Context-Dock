@@ -813,12 +813,17 @@ struct DoraxCommandOutput: Codable, Equatable {
     var appearance: DoraxPackAppearance?
     var toast: String?
     var emptyMessage: String?
+    /// Optional script-emitted prompt routed straight into the user's selected AI provider.
+    var aiPrompt: String?
+    var aiSystem: String?
 
     enum CodingKeys: String, CodingKey {
         case items, detail
         case filterOptions = "filter_options"
         case notch, appearance, toast
         case emptyMessage = "empty_message"
+        case aiPrompt = "ai_prompt"
+        case aiSystem = "ai_system"
     }
 
     init(
@@ -828,12 +833,15 @@ struct DoraxCommandOutput: Codable, Equatable {
         notch: DoraxNotchPayload? = nil,
         appearance: DoraxPackAppearance? = nil,
         toast: String? = nil,
-        emptyMessage: String? = nil
+        emptyMessage: String? = nil,
+        aiPrompt: String? = nil,
+        aiSystem: String? = nil
     ) {
         self.items = items; self.detail = detail
         self.filterOptions = filterOptions; self.notch = notch
         self.appearance = appearance; self.toast = toast
         self.emptyMessage = emptyMessage
+        self.aiPrompt = aiPrompt; self.aiSystem = aiSystem
     }
 
     init(from decoder: Decoder) throws {
@@ -845,6 +853,8 @@ struct DoraxCommandOutput: Codable, Equatable {
         appearance = try c.decodeIfPresent(DoraxPackAppearance.self, forKey: .appearance)
         toast = try c.decodeIfPresent(String.self, forKey: .toast)
         emptyMessage = try c.decodeIfPresent(String.self, forKey: .emptyMessage)
+        aiPrompt = try c.decodeIfPresent(String.self, forKey: .aiPrompt)
+        aiSystem = try c.decodeIfPresent(String.self, forKey: .aiSystem)
     }
 
     /// Parses stdout JSON (object, JSON array of items, JSONL rows, or plain text fallback into detail).
@@ -856,7 +866,7 @@ struct DoraxCommandOutput: Codable, Equatable {
         let decoder = JSONDecoder()
         if let data = trimmed.data(using: .utf8) {
             if let decoded = try? decoder.decode(DoraxCommandOutput.self, from: data),
-               (!decoded.items.isEmpty || decoded.detail != nil || decoded.notch != nil || decoded.toast != nil || decoded.emptyMessage != nil)
+               (!decoded.items.isEmpty || decoded.detail != nil || decoded.notch != nil || decoded.toast != nil || decoded.emptyMessage != nil || decoded.aiPrompt != nil)
             {
                 return decoded
             }

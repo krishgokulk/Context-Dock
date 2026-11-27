@@ -459,7 +459,7 @@ final class DoraxPackV3Runtime: ObservableObject {
 
         let started = Date()
 
-        // 1. Native `dorax.*` zero-script data source
+        // 1. Native `dorax.*` zero-script data source OR pure AI command (`mode == .ai` without script)
         if let source = command.source, !source.isEmpty {
             let output: DoraxCommandOutput
             if source.hasPrefix("dorax.appleIntelligence.") {
@@ -468,6 +468,13 @@ final class DoraxPackV3Runtime: ObservableObject {
                     query: query,
                     formValues: formValues,
                     commandTitle: command.title)
+            } else if source.hasPrefix("dorax.ai") {
+                output = await runUserSelectedAI(
+                    promptText: query,
+                    systemInstructions: pack.agentInstructions,
+                    commandTitle: command.title,
+                    packName: pack.name,
+                    formValues: formValues)
             } else {
                 output = DoraxContextBridge.resolveNativeSource(source, query: query)
             }
@@ -479,6 +486,21 @@ final class DoraxPackV3Runtime: ObservableObject {
             return .success(output)
         }
 
+        if command.mode == .ai && (command.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let output = await runUserSelectedAI(
+                promptText: query,
+                systemInstructions: pack.agentInstructions,
+                commandTitle: command.title,
+                packName: pack.name,
+                formValues: formValues)
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            cache[key] = DoraxCommandCacheEntry(output: output, fetchedAt: Date(), isRefreshing: false, lastError: nil)
+            appendLog(packID: pack.id, commandID: command.id, level: .info, durationMs: ms,
+                      message: "Completed AI command using \(AppSettings.shared.selectedAIProvider.rawValue)")
+            applySideEffects(from: output, pack: pack, command: command)
+            return .success(output)
+        }
+
         // Build permission-gated $DORAX_CONTEXT JSON for stdin
         let contextPayload = DoraxContextBridge.buildContext(
             pack: pack.metadata,
@@ -486,7 +508,14 @@ final class DoraxPackV3Runtime: ObservableObject {
             query: query,
             filter: filter.isEmpty ? nil : filter,
             formValues: formValues)
-        let stdinData = DoraxContextBridge.encodeJSON(contextPayload)
+        let stdinData: Data? = {
+            guard let base = DoraxContextBridge.encodeJSON(contextPayload) else { return nil }
+            guard let formValues, !formValues.isEmpty,
+                  var obj = (try? JSONSerialization.jsonObject(with: base)) as? [String: Any]
+            else { return base }
+            obj["arguments"] = formValues
+            return try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
+        }()
 
         var env: [String: String] = [
             "DORAX_PACK_ID": pack.id,
@@ -501,6 +530,7 @@ final class DoraxPackV3Runtime: ObservableObject {
         if let formValues {
             for (k, v) in formValues {
                 env["DORAX_FORM_\(k.uppercased())"] = v
+                env["DORAX_ARG_\(k.uppercased())"] = v
             }
         }
 
@@ -547,7 +577,7 @@ final class DoraxPackV3Runtime: ObservableObject {
             recordFailure(failure, key: key, existing: existing, packID: pack.id, commandID: command.id, started: started)
             return .failure(failure)
         case .success(let res):
-            let output: DoraxCommandOutput
+            var output: DoraxCommandOutput
             if command.mode == .cli {
                 let text = res.stdout.isEmpty ? "(No output)" : res.stdout
                 output = DoraxCommandOutput(
@@ -561,6 +591,26 @@ final class DoraxPackV3Runtime: ObservableObject {
             } else {
                 output = DoraxCommandOutput.parse(stdout: res.stdout, commandTitle: command.title)
             }
+
+            // 3. Script -> User Selected AI bridge (`ai_prompt` emitted by extension script)
+            if let aiPrompt = output.aiPrompt, !aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let aiOut = await runUserSelectedAI(
+                    promptText: aiPrompt,
+                    systemInstructions: output.aiSystem ?? pack.agentInstructions,
+                    commandTitle: command.title,
+                    packName: pack.name,
+                    formValues: nil)
+                if output.detail == nil {
+                    output.detail = aiOut.detail
+                } else if let aiText = aiOut.detail?.markdown, !aiText.isEmpty {
+                    output.detail?.markdown = aiText
+                    output.detail?.metadata.append(contentsOf: aiOut.detail?.metadata ?? [])
+                }
+                if output.items.isEmpty {
+                    output.items = aiOut.items
+                }
+            }
+
             cache[key] = DoraxCommandCacheEntry(output: output, fetchedAt: Date(), isRefreshing: false, lastError: nil)
             appendLog(
                 packID: pack.id, commandID: command.id, level: .info, durationMs: ms,
@@ -569,6 +619,74 @@ final class DoraxPackV3Runtime: ObservableObject {
             applySideEffects(from: output, pack: pack, command: command)
             return .success(output)
         }
+    }
+
+    private func runUserSelectedAI(
+        promptText: String,
+        systemInstructions: String?,
+        commandTitle: String,
+        packName: String,
+        formValues: [String: String]?
+    ) async -> DoraxCommandOutput {
+        let started = Date()
+        var effectivePrompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let formValues, !formValues.isEmpty {
+            let joined = formValues.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+            effectivePrompt = effectivePrompt.isEmpty ? joined : "\(effectivePrompt)\n\nInputs:\n\(joined)"
+        }
+        if effectivePrompt.isEmpty {
+            let live = DoraxAppleIntelligenceRunner.resolveLiveSelection()?.text ?? ""
+            let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            effectivePrompt = !live.isEmpty ? live : clip
+        }
+        guard !effectivePrompt.isEmpty else {
+            return DoraxCommandOutput(
+                detail: DoraxItemDetail(
+                    markdown: "Type a prompt in the top bar (or select text / copy content first) to run **\(commandTitle)** with your selected AI.",
+                    metadata: [DoraxMetadataEntry(label: "AI Engine", value: AppSettings.shared.selectedAIProvider.rawValue)]))
+        }
+
+        let provider = AppSettings.shared.selectedAIProvider
+        let answer: String
+        let engineLabel: String
+        if let reply = try? await PanelAssistant.ask(
+            effectivePrompt,
+            title: commandTitle,
+            subtitle: packName,
+            extraPrompt: systemInstructions ?? "Follow the command instructions accurately and return concise Markdown.",
+            history: [],
+            provider: provider
+        ), !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            answer = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            engineLabel = provider.rawValue
+        } else {
+            let fallback = await DoraxAppleIntelligenceRunner.run(
+                source: "dorax.appleIntelligence.ask",
+                query: effectivePrompt,
+                formValues: formValues,
+                commandTitle: commandTitle)
+            return fallback
+        }
+
+        let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+        return DoraxCommandOutput(
+            items: [
+                DoraxCommandItem(
+                    id: "ai-answer",
+                    title: commandTitle,
+                    subtitle: String(answer.prefix(120)),
+                    icon: "sparkles",
+                    actions: [
+                        DoraxItemAction(id: "copy", title: "Copy Result", icon: "doc.on.doc", shortcut: "↵", kind: "copy", value: answer),
+                        DoraxItemAction(id: "refresh", title: "Regenerate", icon: "arrow.clockwise", shortcut: "⌘R", kind: "refresh"),
+                    ])
+            ],
+            detail: DoraxItemDetail(
+                markdown: answer,
+                metadata: [
+                    DoraxMetadataEntry(label: "Engine", value: engineLabel, colorHex: "#A855F7"),
+                    DoraxMetadataEntry(label: "Latency", value: "\(elapsed) ms"),
+                ]))
     }
 
     /// Executes a headless pack `tool` (e.g. from AI Chat `@pack.tool` mentions).

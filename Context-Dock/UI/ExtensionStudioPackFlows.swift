@@ -156,12 +156,70 @@ struct ImportRaycastStudioLeftView: View {
                 .controlSize(.small)
             }
 
+            if studio.raycastMergeTargetPackID.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text("Scope")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: $studio.raycastScopeMode) {
+                            ForEach(RaycastImportScopeMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .labelsHidden()
+                        .controlSize(.small)
+                    }
+
+                    if studio.raycastScopeMode == .globalAndApp || studio.raycastScopeMode == .frontmostAppOnly {
+                        let runningApps = NSWorkspace.shared.runningApplications
+                            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil }
+                            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+                        HStack(spacing: 6) {
+                            Text("Target App")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            TextField("com.apple.Safari (optional auto-detect)", text: $studio.raycastTargetBundleID)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 11))
+                                .padding(.horizontal, 7)
+                                .frame(height: 24)
+                                .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
+                            if !runningApps.isEmpty {
+                                Menu("Pick") {
+                                    ForEach(runningApps, id: \.processIdentifier) { app in
+                                        if let bid = app.bundleIdentifier {
+                                            Button(app.localizedName ?? bid) {
+                                                studio.raycastTargetBundleID = bid
+                                            }
+                                        }
+                                    }
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    } else if studio.raycastScopeMode == .webDomain {
+                        HStack(spacing: 6) {
+                            Text("Domain")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            TextField("github.com", text: $studio.raycastTargetDomain)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 11))
+                                .padding(.horizontal, 7)
+                                .frame(height: 24)
+                                .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+            }
+
             if let matchID = suggestedMergeID, let matchPack = v3Registry.pack(id: matchID) {
-                Text("Matched installed pack \(matchPack.name) — merging keeps frontmost app scope & existing commands.")
+                Text("Matched installed pack \(matchPack.name) — merge keeps its existing commands & scope, or choose Create New + Scope above.")
                     .font(.system(size: 10))
                     .foregroundStyle(.cyan)
             } else {
-                Text("Script commands (`@raycast.*`) convert without Node. Store/GitHub extensions synthesize live macOS scripts via AI.")
+                Text("Zero-Node import with Raycast arguments, dropdowns, @pack AI tools & required preferences using your selected AI provider.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
             }
@@ -176,7 +234,10 @@ struct ImportRaycastStudioLeftView: View {
                         let imported = try await RaycastImporter.importExtension(
                             from: studio.raycastSourceText,
                             mergeIntoPack: mergeTarget,
-                            existingPackIDs: Set(v3Registry.packs.map(\.id)))
+                            existingPackIDs: Set(v3Registry.packs.map(\.id)),
+                            scopeMode: mergeTarget == nil ? studio.raycastScopeMode : nil,
+                            targetAppBundleID: studio.raycastTargetBundleID.isEmpty ? nil : studio.raycastTargetBundleID,
+                            targetDomain: studio.raycastTargetDomain.isEmpty ? nil : studio.raycastTargetDomain)
                         raycastImportResult = imported
                         studio.statusMessage = nil
                     } catch {
@@ -310,10 +371,21 @@ struct RaycastImportReviewCardView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            if let bundleID = imported.matchedAppBundleID {
-                Text("Scope: Global (`⌥⌥`/`⌘⌘`) + Frontmost (`\(bundleID)`)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.cyan)
+            HStack(spacing: 8) {
+                if !imported.scopeSummary.isEmpty {
+                    Text("Scope: \(imported.scopeSummary)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.cyan)
+                } else if let bundleID = imported.matchedAppBundleID {
+                    Text("Scope: Global (`⌥⌥`/`⌘⌘`) + Frontmost (`\(bundleID)`)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.cyan)
+                }
+                if imported.importedToolCount > 0 {
+                    Text("AI Tools (@pack): \(imported.importedToolCount)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.purple)
+                }
             }
 
             if !previewCommands.isEmpty {

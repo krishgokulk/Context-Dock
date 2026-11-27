@@ -275,6 +275,9 @@ final class ExtensionStudioModel: ObservableObject {
     @Published var upgradeInstruction: String = ""
     @Published var raycastSourceText: String = ""
     @Published var raycastMergeTargetPackID: String = ""
+    @Published var raycastScopeMode: RaycastImportScopeMode = .globalOnly
+    @Published var raycastTargetBundleID: String = ""
+    @Published var raycastTargetDomain: String = ""
     @Published var name: String = ""
     @Published var icon: String = "sparkles"
     @Published var keywordsText: String = ""
@@ -844,6 +847,30 @@ struct ExtensionStudioBoardCard: View {
                             isImportingRaycast: $isImportingRaycast)
                     }
                 } else {
+                    if studio.target == .globalCommand {
+                        Button {
+                            withAnimation(FluidMotion.selectionGlide) {
+                                studio.target = .appPlugin
+                                studio.packStudioMode = .importRaycast
+                                studio.raycastScopeMode = .globalOnly
+                                studio.raycastMergeTargetPackID = ""
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.and.arrow.down")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                Text("Import Raycast Extension or Script as Global Command →")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                Spacer()
+                            }
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Icon")

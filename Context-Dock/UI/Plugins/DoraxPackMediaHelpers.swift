@@ -449,3 +449,48 @@ struct DoraxInlineActionsDrawer: View {
         onSelect(target)
     }
 }
+
+// MARK: - Required Preferences Onboarding Gate (Raycast-style credential prompt)
+
+struct DoraxRequiredPreferencesView: View {
+    let pack: DoraxPackV2
+    let missingPrefs: [DoraxPackPreference]
+    let accentColor: Color
+    let onContinue: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: pack.metadata.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                        .frame(width: 32, height: 32)
+                        .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Configure \(pack.name)")
+                            .font(.system(size: 13.5, weight: .bold))
+                        Text("Required preferences (secrets are stored safely in macOS Keychain)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(missingPrefs) { pref in
+                        DoraxPreferenceEditorRow(pref: pref, packID: pack.id)
+                    }
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+
+                Button("Save & Continue") {
+                    onContinue()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .padding(16)
+        }
+    }
+}

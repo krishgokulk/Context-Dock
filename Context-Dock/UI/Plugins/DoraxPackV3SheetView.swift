@@ -1,20 +1,5 @@
 // Context-Dock/UI/Plugins/DoraxPackV3SheetView.swift
-// Context-Dock
-//
-// Unified 680 × 440 Result Sheet renderer for `.doraxpack` v3 commands (Steps 3 & 4).
-// Supports all v3 modes: `list`, `grid`, `detail`, `form`, `instant`, `notch`, `cli`, `ai`.
-//
-// Chrome matches DoraX's 680 × 440 Result Sheet:
-// - Top bar: `<` Back button + live filter input + top-right filter/sort dropdown (`▾`) + refresh spinner
-// - Body:
-//   * `list`: scrollable items with icon/app icon/swatch + right accessories (`text`, colored `tag`,
-//     `date`, `progress`, `color`, `avatar`, CPU/RAM `metric`) + optional split Markdown/Metadata detail
-//   * `grid`: responsive card & color-swatch grid
-//   * `detail` / `cli` / `instant` / `ai`: Markdown + right Metadata sidebar
-//   * `form`: typed inputs + Submit
-// - Bottom footer: Pack icon + command title on left; Primary Action `↵` & searchable `Actions ⌘K`
-//   on right (with per-action shortcuts, red destructive confirmation, `View Pack Logs`, and
-//   `Configure Command` for hotkey, alias, tint, enable/disable, Keychain preferences, and hooks).
+// Unified 680 × 440 Result Sheet renderer for `.doraxpack` v3 commands (`list`, `grid`, `detail`, `form`, `instant`, `notch`, `cli`, `ai`).
 
 import AppKit
 import SwiftUI
@@ -346,18 +331,27 @@ struct DoraxPackV3SheetView: View {
                 .background(Color.green.opacity(0.12))
             }
 
-            switch command.mode {
-            case .list:
-                listModeView
-            case .grid:
-                gridModeView
-            case .detail, .cli, .instant, .ai:
-                detailModeView
-            case .form:
-                formModeView
-            case .notch:
-                notchModePreview
+            if !missingRequiredPreferences.isEmpty {
+                DoraxRequiredPreferencesView(pack: pack, missingPrefs: missingRequiredPreferences, accentColor: accentColor) {
+                    Task { await refresh(force: true) }
+                }
+            } else {
+                switch command.mode {
+                case .list: listModeView
+                case .grid: gridModeView
+                case .detail, .cli, .instant, .ai: detailModeView
+                case .form: formModeView
+                case .notch: notchModePreview
+                }
             }
+        }
+    }
+
+    private var missingRequiredPreferences: [DoraxPackPreference] {
+        (pack.metadata.preferences ?? []).filter { pref in
+            guard pref.required else { return false }
+            let val = DoraxPackPreferenceStore.value(for: pref, packID: pack.id) ?? ""
+            return val.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 

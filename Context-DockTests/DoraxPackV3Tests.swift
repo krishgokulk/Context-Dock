@@ -956,4 +956,115 @@ struct DoraxPackV3Tests {
         let cached = runtime.state(packID: pack.id, commandID: cmd.id)
         #expect(cached.output?.items.first?.title == "Leftover Cache")
     }
+
+    @Test("Raycast importer maps arguments, dropdown/bool prefs, menu-bar notch, AI tools, ai_prompt output, and explicit scopes")
+    func raycastParityAndExplicitScope() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-rc-parity-\(UUID().uuidString)", isDirectory: true)
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-rc-stage-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: tmp)
+            try? FileManager.default.removeItem(at: staging)
+        }
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        let pkgJSON = """
+        {
+          "name": "safari-helper",
+          "title": "Safari AI Helper",
+          "description": "Manage Safari tabs and summarize with AI",
+          "ai": { "instructions": "Always cite active tab URLs concisely." },
+          "preferences": [
+            { "name": "autoSummary", "title": "Auto Summarize", "type": "checkbox", "default": false, "required": false },
+            { "name": "apiKey", "title": "API Key", "type": "password", "required": true }
+          ],
+          "commands": [
+            {
+              "name": "ask-tabs",
+              "title": "Ask Tabs",
+              "mode": "view",
+              "arguments": [
+                { "name": "topic", "placeholder": "Topic", "type": "text", "required": true },
+                { "name": "tone", "placeholder": "Tone", "type": "dropdown", "data": [
+                  { "title": "Short", "value": "short" },
+                  { "title": "Deep", "value": "deep" }
+                ]}
+              ],
+              "preferences": [
+                { "name": "cmdFormat", "title": "Format", "type": "dropdown", "data": [{ "title": "Markdown", "value": "md" }] }
+              ]
+            },
+            {
+              "name": "tab-count",
+              "title": "Tab Counter",
+              "mode": "menu-bar"
+            }
+          ],
+          "tools": [
+            { "name": "get-active-tab", "title": "Get Active Tab", "description": "Reads active tab URL" }
+          ]
+        }
+        """
+        try Data(pkgJSON.utf8).write(to: tmp.appendingPathComponent("package.json"))
+
+        // 1. Explicit Global Only overrides Safari auto-detection!
+        let globalResult = try await RaycastImporter.importExtension(
+            from: tmp.path,
+            existingPackIDs: [],
+            stagingRoot: staging,
+            useLiveAI: false,
+            scopeMode: .globalOnly)
+        let globalMeta = try #require(globalResult.synthesis?.pack.metadata)
+        #expect(globalMeta.bundleId == nil)
+        #expect(globalMeta.scope?.surfaces.contains("global") == true)
+        #expect(globalMeta.scope?.surfaces.contains("notch") == true)
+        #expect(globalMeta.scope?.apps.isEmpty != false)
+        #expect(globalResult.importedToolCount == 1)
+        #expect(globalMeta.tools?.first?.id == "get-active-tab")
+        #expect(globalMeta.preferences?.count == 3)
+        let autoSummary = globalMeta.preferences?.first { $0.id == "autoSummary" }
+        #expect(autoSummary?.type == .boolean)
+        #expect(autoSummary?.defaultValue == "false")
+        let askCmd = try #require(globalMeta.commands?.first { $0.id == "ask-tabs" })
+        #expect(askCmd.mode == .form)
+        #expect(askCmd.formFields?.count == 2)
+        #expect(askCmd.formFields?[1].type == "select")
+        #expect(askCmd.formFields?[1].options == ["short", "deep"])
+        let notchCmd = try #require(globalMeta.commands?.first { $0.id == "tab-count" })
+        #expect(notchCmd.mode == .notch)
+        #expect(globalResult.synthesis?.pack.agentInstructions?.contains("Always cite active tab URLs concisely.") == true)
+
+        // 2. Explicit Frontmost App Only & Website Domain scoping
+        let appOnlyResult = try await RaycastImporter.importExtension(
+            from: tmp.path,
+            existingPackIDs: [],
+            stagingRoot: staging,
+            useLiveAI: false,
+            scopeMode: .frontmostAppOnly,
+            targetAppBundleID: "com.apple.Safari")
+        let appOnlyMeta = try #require(appOnlyResult.synthesis?.pack.metadata)
+        #expect(appOnlyMeta.bundleId == "com.apple.Safari")
+        #expect(appOnlyMeta.scope?.surfaces.contains("appPet") == true)
+        #expect(appOnlyMeta.scope?.surfaces.contains("global") == false)
+
+        let webResult = try await RaycastImporter.importExtension(
+            from: tmp.path,
+            existingPackIDs: [],
+            stagingRoot: staging,
+            useLiveAI: false,
+            scopeMode: .webDomain,
+            targetDomain: "github.com")
+        let webMeta = try #require(webResult.synthesis?.pack.metadata)
+        #expect(webMeta.scope?.surfaces.contains("web") == true)
+        #expect(webMeta.scope?.domains == ["github.com"])
+
+        // 3. Script-emitted ai_prompt & ai_system decoding on DoraxCommandOutput
+        let aiOut = DoraxCommandOutput.parse(
+            stdout: #"{"ai_prompt":"Summarize","ai_system":"Be brief","toast":"Asking"}"#,
+            commandTitle: "AI")
+        #expect(aiOut.aiPrompt == "Summarize")
+        #expect(aiOut.aiSystem == "Be brief")
+        #expect(aiOut.toast == "Asking")
+    }
 }

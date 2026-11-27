@@ -38,6 +38,24 @@ enum RaycastExtensionSource: Equatable {
     case queryOrSlug(String)
 }
 
+enum RaycastImportScopeMode: String, CaseIterable, Identifiable {
+    case globalOnly
+    case globalAndApp
+    case frontmostAppOnly
+    case webDomain
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .globalOnly: return "Global Only (⌥⌥ / ⌘⌘)"
+        case .globalAndApp: return "Global + Frontmost App"
+        case .frontmostAppOnly: return "Frontmost App Only"
+        case .webDomain: return "Website Domain"
+        }
+    }
+}
+
 struct RaycastImportResult {
     let sourceKind: String
     let summary: String
@@ -46,6 +64,8 @@ struct RaycastImportResult {
     let patch: DoraxPackV3Patch?
     var synthesizedWithAI: Bool = false
     var matchedAppBundleID: String? = nil
+    var importedToolCount: Int = 0
+    var scopeSummary: String = ""
 
     var diagnostics: [PluginDiagnostic] {
         patch?.diagnostics ?? synthesis?.review.diagnostics ?? []
@@ -175,7 +195,10 @@ enum RaycastImporter {
     static func importScriptCommand(
         fileURL: URL,
         mergeIntoPack: DoraxPackV2? = nil,
-        stagingRoot: URL? = nil
+        stagingRoot: URL? = nil,
+        scopeMode: RaycastImportScopeMode? = nil,
+        targetAppBundleID: String? = nil,
+        targetDomain: String? = nil
     ) async throws -> RaycastImportResult {
         guard let rawContent = try? String(contentsOf: fileURL, encoding: .utf8) else {
             throw RaycastImportError.unreadableFile(fileURL.path)
@@ -270,6 +293,12 @@ enum RaycastImporter {
         } else {
             let pkgTitle = meta.packageName?.isEmpty == false ? meta.packageName! : meta.title
             let packID = DoraxPackV3AIArchitect.slugify(pkgTitle, fallback: "raycast-script")
+            let resolvedScope = resolveImportScope(
+                scopeMode: scopeMode,
+                targetAppBundleID: targetAppBundleID,
+                targetDomain: targetDomain,
+                matchedApp: nil,
+                includeNotch: mappedMode == .notch)
             let metadata = DoraxPackMetadata(
                 formatVersion: 2,
                 schemaVersion: 3,
@@ -278,6 +307,7 @@ enum RaycastImporter {
                 version: "3.0.0",
                 icon: mappedIcon(from: meta.icon),
                 description: meta.description ?? "Imported from Raycast Script Command (\(fileURL.lastPathComponent)).",
+                bundleId: resolvedScope.bundleID,
                 keywords: [packID, slug, "raycast"],
                 capabilities: [
                     PluginPackCapability(
@@ -289,7 +319,7 @@ enum RaycastImporter {
                         script: "Run the imported \(meta.title) command.",
                         safety: meta.needsConfirmation ? "write" : "read")
                 ],
-                scope: DoraxPackScope(surfaces: mappedMode == .notch ? ["global", "notch"] : ["global"], apps: [], domains: []),
+                scope: resolvedScope.scope,
                 appearance: DoraxPackAppearance(tint: "#FF6363", glow: .soft),
                 permissions: ["context:frontmost"],
                 commands: [baseCmd])
@@ -311,7 +341,9 @@ enum RaycastImporter {
                 summary: "Converted \"\(meta.title)\" into `.doraxpack` v3 \"\(pkgTitle)\".",
                 targetPackID: nil,
                 synthesis: synthesis,
-                patch: nil)
+                patch: nil,
+                matchedAppBundleID: resolvedScope.bundleID,
+                scopeSummary: resolvedScope.summary)
         }
     }
 
@@ -410,12 +442,36 @@ enum RaycastImporter {
         })?.id
     }
 
+    private struct FlexibleString: Decodable {
+        let stringValue: String
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let s = try? c.decode(String.self) { stringValue = s; return }
+            if let b = try? c.decode(Bool.self) { stringValue = b ? "true" : "false"; return }
+            if let i = try? c.decode(Int.self) { stringValue = String(i); return }
+            if let d = try? c.decode(Double.self) { stringValue = String(d); return }
+            stringValue = ""
+        }
+    }
+
     private struct RaycastPackageJSON: Decodable {
-        struct Command: Decodable {
-            var name: String
+        struct DropdownOption: Decodable {
             var title: String?
-            var description: String?
-            var mode: String?
+            var value: String
+        }
+        struct Argument: Decodable {
+            var name: String
+            var placeholder: String?
+            var type: String?
+            var required: Bool?
+            var data: [DropdownOption]?
+            var defaultValue: FlexibleString?
+
+            enum CodingKeys: String, CodingKey {
+                case name, placeholder, type, required, data
+                case defaultValue = "default"
+            }
         }
         struct Preference: Decodable {
             var name: String
@@ -424,12 +480,156 @@ enum RaycastImporter {
             var required: Bool?
             var placeholder: String?
             var description: String?
+            var defaultValue: FlexibleString?
+            var data: [DropdownOption]?
+
+            enum CodingKeys: String, CodingKey {
+                case name, title, type, required, placeholder, description, data
+                case defaultValue = "default"
+            }
+        }
+        struct Command: Decodable {
+            var name: String
+            var title: String?
+            var description: String?
+            var mode: String?
+            var arguments: [Argument]?
+            var preferences: [Preference]?
+        }
+        struct Tool: Decodable {
+            var name: String
+            var title: String?
+            var description: String?
+        }
+        struct AIBlock: Decodable {
+            var instructions: String?
         }
         var name: String?
         var title: String?
         var description: String?
         var commands: [Command]?
         var preferences: [Preference]?
+        var tools: [Tool]?
+        var ai: AIBlock?
+    }
+
+    private static func resolveImportScope(
+        scopeMode: RaycastImportScopeMode?,
+        targetAppBundleID: String?,
+        targetDomain: String?,
+        matchedApp: (bundleID: String, appName: String)?,
+        includeNotch: Bool
+    ) -> (scope: DoraxPackScope, bundleID: String?, summary: String) {
+        let notchSuffix = includeNotch ? ["notch"] : []
+        let cleanApp = targetAppBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedApp = (cleanApp?.isEmpty == false ? cleanApp : nil) ?? matchedApp?.bundleID
+        let cleanDomain = targetDomain?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        switch scopeMode {
+        case .globalOnly:
+            return (
+                DoraxPackScope(surfaces: ["global"] + notchSuffix, apps: [], domains: []),
+                nil,
+                "Global Command (`⌥⌥` / `⌘⌘` everywhere)"
+            )
+        case .globalAndApp:
+            if let bid = resolvedApp {
+                return (
+                    DoraxPackScope(surfaces: ["global", "appPet"] + notchSuffix, apps: [bid], domains: []),
+                    bid,
+                    "Global (`⌥⌥`/`⌘⌘`) + Frontmost (`\(bid)`)"
+                )
+            }
+            return (
+                DoraxPackScope(surfaces: ["global"] + notchSuffix, apps: [], domains: []),
+                nil,
+                "Global Command (`⌥⌥` / `⌘⌘` everywhere)"
+            )
+        case .frontmostAppOnly:
+            if let bid = resolvedApp {
+                return (
+                    DoraxPackScope(surfaces: ["appPet"] + notchSuffix, apps: [bid], domains: []),
+                    bid,
+                    "Frontmost App Only (`\(bid)`)"
+                )
+            }
+            return (
+                DoraxPackScope(surfaces: ["global"] + notchSuffix, apps: [], domains: []),
+                nil,
+                "Global Command (`⌥⌥` / `⌘⌘` everywhere)"
+            )
+        case .webDomain:
+            if let domain = cleanDomain, !domain.isEmpty {
+                return (
+                    DoraxPackScope(surfaces: ["global", "web"] + notchSuffix, apps: [], domains: [domain]),
+                    nil,
+                    "Global + Website (`\(domain)`)"
+                )
+            }
+            return (
+                DoraxPackScope(surfaces: ["global"] + notchSuffix, apps: [], domains: []),
+                nil,
+                "Global Command (`⌥⌥` / `⌘⌘` everywhere)"
+            )
+        case nil:
+            if let bid = resolvedApp {
+                return (
+                    DoraxPackScope(surfaces: ["global", "appPet"] + notchSuffix, apps: [bid], domains: []),
+                    bid,
+                    "Global (`⌥⌥`/`⌘⌘`) + Frontmost (`\(bid)`)"
+                )
+            }
+            return (
+                DoraxPackScope(surfaces: ["global"] + notchSuffix, apps: [], domains: []),
+                nil,
+                "Global Command (`⌥⌥` / `⌘⌘` everywhere)"
+            )
+        }
+    }
+
+    private static func mapPreference(_ rp: RaycastPackageJSON.Preference) -> DoraxPackPreference {
+        let pType: DoraxPreferenceType = {
+            switch (rp.type ?? "textfield").lowercased() {
+            case "password": return .secret
+            case "checkbox": return .boolean
+            case "dropdown": return .select
+            case "directory": return .directory
+            case "file", "apppicker": return .file
+            default: return .string
+            }
+        }()
+        let opts = rp.data?.map(\.value).filter { !$0.isEmpty }
+        return DoraxPackPreference(
+            id: rp.name,
+            title: rp.title ?? rp.name,
+            type: pType,
+            required: rp.required ?? false,
+            defaultValue: rp.defaultValue?.stringValue,
+            placeholder: rp.placeholder ?? rp.description,
+            options: (opts?.isEmpty == false) ? opts : nil)
+    }
+
+    private static func mapArguments(_ args: [RaycastPackageJSON.Argument]?) -> [DoraxFormField]? {
+        guard let args, !args.isEmpty else { return nil }
+        return args.map { arg in
+            let fieldType: String = {
+                switch (arg.type ?? "text").lowercased() {
+                case "dropdown": return "select"
+                case "password": return "secret"
+                case "checkbox", "boolean": return "toggle"
+                default: return "text"
+                }
+            }()
+            let opts = arg.data?.map(\.value).filter { !$0.isEmpty }
+            return DoraxFormField(
+                id: arg.name,
+                title: arg.placeholder ?? arg.name.capitalized,
+                type: fieldType,
+                placeholder: arg.placeholder,
+                defaultValue: arg.defaultValue?.stringValue,
+                required: arg.required ?? false,
+                options: (opts?.isEmpty == false) ? opts : nil)
+        }
     }
 
     static func importExtension(
@@ -437,14 +637,23 @@ enum RaycastImporter {
         mergeIntoPack: DoraxPackV2? = nil,
         existingPackIDs: Set<String> = [],
         stagingRoot: URL? = nil,
-        useLiveAI: Bool = !AppDelegate.isHostingTests
+        useLiveAI: Bool = !AppDelegate.isHostingTests,
+        scopeMode: RaycastImportScopeMode? = nil,
+        targetAppBundleID: String? = nil,
+        targetDomain: String? = nil
     ) async throws -> RaycastImportResult {
         let trimmed = rawSource.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw RaycastImportError.emptySource }
 
         let parsed = parseExtensionSource(trimmed)
         if case .localScript(let fileURL) = parsed {
-            return try await importScriptCommand(fileURL: fileURL, mergeIntoPack: mergeIntoPack, stagingRoot: stagingRoot)
+            return try await importScriptCommand(
+                fileURL: fileURL,
+                mergeIntoPack: mergeIntoPack,
+                stagingRoot: stagingRoot,
+                scopeMode: scopeMode,
+                targetAppBundleID: targetAppBundleID,
+                targetDomain: targetDomain)
         }
 
         var extSlug = "raycast-extension"
@@ -480,15 +689,31 @@ enum RaycastImporter {
 
         let extTitle = pkg?.title ?? extSlug.replacingOccurrences(of: "-", with: " ").capitalized
         let extDesc = pkg?.description ?? "Converted Raycast extension \"\(extTitle)\" to native .doraxpack v3."
-        let matchedApp = mergeIntoPack?.metadata.bundleId.flatMap { bid in (bundleID: bid, appName: mergeIntoPack?.name ?? extTitle) }
-            ?? detectInstalledApp(matchingSlug: extSlug, title: extTitle)
+        let detectedApp = (scopeMode == .globalOnly || scopeMode == .webDomain)
+            ? nil
+            : (mergeIntoPack?.metadata.bundleId.flatMap { bid in (bundleID: bid, appName: mergeIntoPack?.name ?? extTitle) }
+                ?? detectInstalledApp(matchingSlug: extSlug, title: extTitle))
 
         var convertedCommands: [DoraxPackCommand] = []
         var extraFiles: [DoraxPackV3FileChange] = []
         var synthesizedWithAI = false
 
-        // Attempt real macOS Python/AppleScript code synthesis via AI when live AI is enabled
-        if useLiveAI, let rawCmds = pkg?.commands, !rawCmds.isEmpty {
+        // Map package-level command arguments & preferences ahead of AI synthesis so AI or fallback preserves exact schemas
+        let rawCmds = pkg?.commands ?? []
+        let argsBySlug: [String: [DoraxFormField]] = Dictionary(
+            uniqueKeysWithValues: rawCmds.compactMap { rc in
+                guard let fields = mapArguments(rc.arguments) else { return nil }
+                return (DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd"), fields)
+            }
+        )
+        let modesBySlug: [String: String] = Dictionary(
+            uniqueKeysWithValues: rawCmds.map { rc in
+                (DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd"), (rc.mode ?? "view").lowercased())
+            }
+        )
+
+        // Attempt real macOS Python/AppleScript/DoraX AI code synthesis when live AI is enabled
+        if useLiveAI, !rawCmds.isEmpty {
             let sourceContext = await fetchSourceSnippets(for: parsed, commands: rawCmds)
             if let aiDraft = await synthesizeRealCommandsWithAI(
                 extSlug: extSlug,
@@ -496,29 +721,48 @@ enum RaycastImporter {
                 extDesc: extDesc,
                 commands: rawCmds,
                 sourceContext: sourceContext,
-                matchedApp: matchedApp
+                matchedApp: detectedApp
             ) {
-                convertedCommands = aiDraft.commands
+                convertedCommands = aiDraft.commands.map { cmd in
+                    var updated = cmd
+                    if let fields = argsBySlug[cmd.id], (updated.formFields?.isEmpty ?? true) {
+                        updated.formFields = fields
+                        if updated.mode == .detail { updated.mode = .form }
+                    }
+                    if modesBySlug[cmd.id] == "menu-bar" {
+                        updated.mode = .notch
+                    }
+                    return updated
+                }
                 extraFiles = aiDraft.files
                 synthesizedWithAI = true
             }
         }
 
         if convertedCommands.isEmpty {
-            if let rawCmds = pkg?.commands, !rawCmds.isEmpty {
+            if !rawCmds.isEmpty {
                 convertedCommands = rawCmds.prefix(8).map { rc in
                     let cmdSlug = DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")
                     let scriptRel = "commands/\(cmdSlug).py"
                     let title = rc.title ?? rc.name.capitalized
                     let sub = rc.description ?? extDesc
+                    let fields = mapArguments(rc.arguments)
+                    let rawMode = (rc.mode ?? "view").lowercased()
+                    let mode: DoraxCommandMode = {
+                        if rawMode == "menu-bar" { return .notch }
+                        if rawMode == "no-view" { return .instant }
+                        if fields != nil { return .form }
+                        return .detail
+                    }()
                     let scriptBody = """
                     #!/usr/bin/env python3
                     from __future__ import annotations
                     import json, sys
-                    _ = sys.stdin.read()
+                    ctx = json.loads(sys.stdin.read() or "{}")
+                    args = ctx.get("arguments") or {}
                     print(json.dumps({
                         "detail": {
-                            "markdown": "### \(title.replacingOccurrences(of: "\"", with: ""))\\n\\n\(sub.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from Raycast extension **\(extTitle.replacingOccurrences(of: "\"", with: ""))**. Use **Upgrade Pack with AI** (`⌘E`) to wire live local data or CLI logic.",
+                            "markdown": "### \(title.replacingOccurrences(of: "\"", with: ""))\\n\\n\(sub.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from Raycast extension **\(extTitle.replacingOccurrences(of: "\"", with: ""))**." + ("\\n\\nSubmitted arguments: `" + json.dumps(args) + "`" if args else "") + "\\n\\nUse **Upgrade Pack with AI** (`⌘E`) to customize logic with your selected AI.",
                             "metadata": [{"label": "Source", "value": "Raycast Import"}]
                         }
                     }))
@@ -528,10 +772,12 @@ enum RaycastImporter {
                         id: cmdSlug,
                         title: title,
                         subtitle: sub,
-                        icon: "sparkles",
-                        mode: rc.mode == "no-view" ? .instant : .detail,
+                        icon: mode == .notch ? "menubar.rectangle" : (fields != nil ? "list.bullet.rectangle" : "sparkles"),
+                        mode: mode,
                         keywords: [extSlug, cmdSlug, "raycast"],
                         script: scriptRel,
+                        cacheTTLSeconds: fields != nil ? 0 : 60,
+                        formFields: fields,
                         safety: "read")
                 }
             } else {
@@ -564,22 +810,48 @@ enum RaycastImporter {
             }
         }
 
-        let convertedPrefs: [DoraxPackPreference]? = pkg?.preferences?.compactMap { rp in
-            let pType: DoraxPreferenceType = {
-                switch (rp.type ?? "textfield").lowercased() {
-                case "password": return .secret
-                case "checkbox": return .boolean
-                case "dropdown": return .select
-                default: return .string
-                }
-            }()
-            return DoraxPackPreference(
-                id: rp.name,
-                title: rp.title ?? rp.name,
-                type: pType,
-                required: rp.required ?? false,
-                placeholder: rp.placeholder ?? rp.description)
+        // Convert Raycast AI `tools[]` into DoraX `@pack` tools inside `tools/<id>.py`
+        var convertedTools: [DoraxPackTool] = []
+        for rt in (pkg?.tools ?? []).prefix(8) {
+            let toolSlug = DoraxPackV3AIArchitect.slugify(rt.name, fallback: "tool")
+            let toolTitle = rt.title ?? rt.name.capitalized
+            let toolDesc = rt.description ?? "Raycast AI tool \(toolTitle) from \(extTitle)"
+            let toolRel = "tools/\(toolSlug).py"
+            let matchingCmdScript = convertedCommands.first(where: { $0.id == toolSlug })?.script
+            let scriptRel = matchingCmdScript ?? toolRel
+            if matchingCmdScript == nil {
+                let toolPy = """
+                #!/usr/bin/env python3
+                from __future__ import annotations
+                import json, sys
+                ctx = json.loads(sys.stdin.read() or "{}")
+                print(json.dumps({
+                    "tool": "\(toolSlug)",
+                    "title": "\(toolTitle.replacingOccurrences(of: "\"", with: ""))",
+                    "input": ctx.get("query") or ctx.get("arguments") or {}
+                }))
+                """
+                extraFiles.append(DoraxPackV3FileChange(relativePath: toolRel, content: toolPy, isNew: true))
+            }
+            convertedTools.append(DoraxPackTool(
+                id: toolSlug,
+                name: toolTitle,
+                description: toolDesc,
+                script: scriptRel,
+                safety: "read"))
         }
+
+        // Merge root + per-command preferences (deduplicated by id)
+        var prefMap: [String: DoraxPackPreference] = [:]
+        var prefOrder: [String] = []
+        for rp in (pkg?.preferences ?? []) + rawCmds.flatMap({ $0.preferences ?? [] }) {
+            if prefMap[rp.name] == nil {
+                prefOrder.append(rp.name)
+                prefMap[rp.name] = mapPreference(rp)
+            }
+        }
+        let orderedPrefs = prefOrder.compactMap { prefMap[$0] }
+        let convertedPrefs: [DoraxPackPreference]? = orderedPrefs.isEmpty ? nil : orderedPrefs
 
         if let targetPack = mergeIntoPack {
             var meta = targetPack.metadata
@@ -593,6 +865,14 @@ enum RaycastImporter {
                 cmds.append(c)
             }
             meta.commands = cmds
+            if !convertedTools.isEmpty {
+                var existingTools = meta.tools ?? []
+                let seenTools = Set(existingTools.map(\.id))
+                for t in convertedTools where !seenTools.contains(t.id) {
+                    existingTools.append(t)
+                }
+                meta.tools = existingTools
+            }
             if let convertedPrefs, !convertedPrefs.isEmpty {
                 var prefs = meta.preferences ?? []
                 let existingPrefIDs = Set(prefs.map(\.id))
@@ -618,7 +898,9 @@ enum RaycastImporter {
                 synthesis: nil,
                 patch: patch,
                 synthesizedWithAI: synthesizedWithAI,
-                matchedAppBundleID: matchedApp?.bundleID)
+                matchedAppBundleID: targetPack.metadata.bundleId,
+                importedToolCount: convertedTools.count,
+                scopeSummary: "Merged into \(targetPack.name)")
         } else {
             let baseID = DoraxPackV3AIArchitect.slugify(pkg?.name ?? extSlug, fallback: "raycast-pack")
             var packID = existingPackIDs.contains(baseID) ? "raycast-\(baseID)" : baseID
@@ -628,9 +910,19 @@ enum RaycastImporter {
                 suffix += 1
             }
 
-            let scope = matchedApp.map {
-                DoraxPackScope(surfaces: ["global", "appPet"], apps: [$0.bundleID], domains: [])
-            } ?? DoraxPackScope(surfaces: ["global"], apps: [], domains: [])
+            let hasNotch = convertedCommands.contains { $0.mode == .notch }
+            let resolvedScope = resolveImportScope(
+                scopeMode: scopeMode,
+                targetAppBundleID: targetAppBundleID,
+                targetDomain: targetDomain,
+                matchedApp: detectedApp,
+                includeNotch: hasNotch)
+
+            let aiNotes = pkg?.ai?.instructions?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let agentMD = "# \(extTitle)\n\n\(extDesc)\n\nConverted from Raycast without Node daemon overhead.\n"
+                + (aiNotes.map { !$0.isEmpty ? "\n## Raycast AI Instructions\n\n\($0)\n" : "" } ?? "")
+            let skillMD = "---\nname: raycast-extension\ndescription: \(extDesc)\n---\n# \(extTitle)\nConverted `.doraxpack` v3 bundle.\n"
+                + (aiNotes.map { !$0.isEmpty ? "\n## AI Instructions\n\($0)\n" : "" } ?? "")
 
             let metadata = DoraxPackMetadata(
                 formatVersion: 2,
@@ -640,7 +932,7 @@ enum RaycastImporter {
                 version: "3.0.0",
                 icon: "puzzlepiece.extension.fill",
                 description: extDesc,
-                bundleId: matchedApp?.bundleID,
+                bundleId: resolvedScope.bundleID,
                 keywords: [packID, baseID, "raycast"] + convertedCommands.map(\.id),
                 capabilities: [
                     PluginPackCapability(
@@ -652,29 +944,32 @@ enum RaycastImporter {
                         script: "Run commands from \(extTitle).",
                         safety: "read")
                 ],
-                scope: scope,
+                scope: resolvedScope.scope,
                 appearance: DoraxPackAppearance(tint: "#FF6363", glow: .soft),
                 permissions: ["context:frontmost"],
                 preferences: convertedPrefs,
-                commands: convertedCommands)
+                commands: convertedCommands,
+                tools: convertedTools.isEmpty ? nil : convertedTools)
 
             let synthesis = await stageAndValidateNewPack(
                 metadata: metadata,
-                agentMarkdown: "# \(extTitle)\n\n\(extDesc)\n\nConverted from Raycast without Node daemon overhead.\n",
+                agentMarkdown: agentMD,
                 skillID: "raycast-extension",
-                skillMarkdown: "---\nname: raycast-extension\ndescription: \(extDesc)\n---\n# \(extTitle)\nConverted `.doraxpack` v3 bundle.\n",
+                skillMarkdown: skillMD,
                 extraFiles: extraFiles,
                 dryRunCommand: convertedCommands.first,
                 stagingRoot: stagingRoot)
 
             return RaycastImportResult(
                 sourceKind: "Raycast Extension",
-                summary: "Converted \"\(extTitle)\" (\(convertedCommands.count) commands) to `.doraxpack` v3 (`\(packID)`).",
+                summary: "Converted \"\(extTitle)\" (\(convertedCommands.count) commands\(convertedTools.isEmpty ? "" : ", \(convertedTools.count) @pack AI tools")) to `.doraxpack` v3 (`\(packID)`).",
                 targetPackID: nil,
                 synthesis: synthesis,
                 patch: nil,
                 synthesizedWithAI: synthesizedWithAI,
-                matchedAppBundleID: matchedApp?.bundleID)
+                matchedAppBundleID: resolvedScope.bundleID,
+                importedToolCount: convertedTools.count,
+                scopeSummary: resolvedScope.summary)
         }
     }
 
@@ -755,20 +1050,22 @@ enum RaycastImporter {
         matchedApp: (bundleID: String, appName: String)?
     ) async -> (commands: [DoraxPackCommand], files: [DoraxPackV3FileChange])? {
         let cmdSummaries = commands.prefix(8).map { rc in
-            "- id=\(DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")) title=\"\(rc.title ?? rc.name)\" mode=\(rc.mode ?? "view") desc=\"\(rc.description ?? "")\""
+            let argsDesc = (rc.arguments ?? []).map { "\($0.name)(\($0.type ?? "text"))" }.joined(separator: ",")
+            return "- id=\(DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")) title=\"\(rc.title ?? rc.name)\" mode=\(rc.mode ?? "view") args=[\(argsDesc)] desc=\"\(rc.description ?? "")\""
         }.joined(separator: "\n")
 
         let sysPrompt = """
         You convert Raycast extensions into native macOS `.doraxpack` v3 Python 3.9 commands for DoraX.
         Return ONLY valid JSON (no markdown fences) with exact shape:
-        {"commands":[{"id":"...","title":"...","subtitle":"...","icon":"sf.symbol","mode":"list|grid|detail|instant","keywords":["..."],"script":"commands/<id>.py","safety":"read|write"}],"files":{"commands/<id>.py":"#!/usr/bin/env python3\\nfrom __future__ import annotations\\n..."}}
+        {"commands":[{"id":"...","title":"...","subtitle":"...","icon":"sf.symbol","mode":"list|grid|detail|form|instant|notch|ai","keywords":["..."],"script":"commands/<id>.py","safety":"read|write"}],"files":{"commands/<id>.py":"#!/usr/bin/env python3\\nfrom __future__ import annotations\\n..."}}
         Strict rules:
         - Every Python script MUST start with `#!/usr/bin/env python3` and `from __future__ import annotations` (macOS /usr/bin/python3 is 3.9.6 — no PEP 604 `X | Y` without `from __future__ import annotations`).
         - Write REAL working macOS automation using stdlib (`plistlib`, `sqlite3` copied to temp file, `subprocess` calling `osascript`/`open`/`pbcopy`/`mdfind`/installed CLIs, `urllib.request`) rather than placeholder stubs!
+        - For Raycast AI commands (using Raycast `AI.ask`), output `{"ai_prompt": "...", "ai_system": "..."}` (or declare `"source": "dorax.ai"` and `"mode": "ai"`). DoraX routes `ai_prompt` directly to the user's selected AI provider automatically without any Raycast Pro key!
         - For item icons on macOS apps/files, include `"icon_path": "/Applications/Foo.app"` or `"app_icon_bundle_id": "..."`.
         - For item `actions[]`, ALWAYS use DoraX canonical schema: `{"id": "...", "title": "...", "icon": "sf.symbol", "shortcut": "↵", "kind": "script|run|open|reveal|copy|cli", "value": "...", "script": "commands/<script>.py", "payload": {...}, "destructive": true/false, "confirm_message": "..."}`. Use `"kind": "run"` with `"payload"` when triggering a script action or drill-down inside the same command.
         - Handle missing permissions or unrunning apps gracefully by returning helpful items instead of crashing.
-        - Read context JSON from `sys.stdin` (`ctx.get("preferences")`, `ctx.get("action")`, `DORAX_QUERY`, `DORAX_FILTER`), print ONE JSON object (`{"items":[...],"detail":{...},"filter_options":[...],"toast":"..."}`).
+        - Read context JSON from `sys.stdin` (`ctx.get("preferences")`, `ctx.get("arguments")`, `ctx.get("action")`, `DORAX_QUERY`, `DORAX_FILTER`, `DORAX_ARG_<KEY>`), print ONE JSON object (`{"items":[...],"detail":{...},"filter_options":[...],"toast":"...","ai_prompt":"..."}`).
         """
 
         let userPrompt = """

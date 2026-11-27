@@ -19,6 +19,12 @@ None — ready for the next queued task.
 
 ## Done (most recent first)
 
+**feat(plugins,ui): Full Raycast Extension & AI Parity, Selected-AI Runtime, Required Preferences Onboarding & Import Scope Control (2026-11-27):**
+- **User-Selected AI Execution (`DoraxPackV3.swift`, `DoraxPackV3Runtime.swift`):** Added `dorax.ai` native source, `mode == .ai` execution, and script-emitted `{"ai_prompt", "ai_system"}` routing through `AppSettings.shared.selectedAIProvider` (`PanelAssistant.ask` with `DoraxAppleIntelligenceRunner` fallback) alongside `DORAX_ARG_<KEY>` and stdin `arguments` forwarding.
+- **Full Raycast `package.json` & AI Parity (`RaycastImporter.swift`):** Maps Raycast `arguments[]` → `DoraxFormField[]`, `menu-bar` → `.notch`, command + root `preferences[]` (`dropdown` options, `checkbox` `boolean` defaults, `file`/`directory`/`password`), `tools[]` → `@pack` `DoraxPackTool` scripts (`tools/<id>.py`), and `ai.instructions` → `AGENT.md`/`SKILL.md`.
+- **Explicit Import Scope Selector & Global Command CTA (`ExtensionStudioBoardCard.swift`, `ExtensionStudioPackFlows.swift`):** Added `RaycastImportScopeMode` (`Global Only`, `Global + Frontmost App`, `Frontmost App Only`, `Website Domain`) with running-app/domain pickers and a quick-switch banner from the `Global Command` tab so importing a Raycast extension or script never forces frontmost-app scoping when the user wants a Global Command.
+- **Required Preferences Onboarding (`DoraxPackMediaHelpers.swift`, `DoraxPackV3SheetView.swift`):** Added inline `DoraxRequiredPreferencesView` inside `DoraxPackV3SheetView` whenever required Keychain preferences are missing on launch.
+
 **fix(plugins,ui): Inline Keyboard-Navigable Actions Drawer (`→` / `⌘K`), Autoscroll, Real App Icons & `"run"` Drill-Down Support (2026-11-27):**
 - **Resilient Action & Icon Decoding (`DoraxPackV3.swift`):** Decodes `type`/`kind` aliases (`"shell"` → `"script"`, `"url"` → `"open"`, `"run"`), `value`/`path`/`url`/`target`, `confirm_message`/`confirm` (auto-enabling red destructive confirmation), arbitrary JSON `payload`, and `DoraxCommandItem.icon_path` (rendering real app/file icons via `NSWorkspace.shared.icon(forFile:)`).
 - **Drill-Down `"run"` Actions (`DoraxPackV3Runtime.swift`):** `runItemActionDetailed` handles `"run"` and `"script"` actions with `ctx["action"]` + `DORAX_ACTION` JSON forwarding; JSON stdout (`items`/`detail`) updates the sheet cache live without triggering an overwriting refresh, and `reveal` expands `~`.
