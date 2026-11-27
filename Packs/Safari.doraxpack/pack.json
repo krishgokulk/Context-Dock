@@ -3,9 +3,9 @@
   "schema_version": 3,
   "id": "safari",
   "name": "Safari",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "icon": "safari.fill",
-  "description": "Tab reading, history, page summarization, and link following for Safari.",
+  "description": "Search open Safari tabs, bookmarks, Reading List, and history; copy URLs or Markdown links; add pages to Reading List; and summarize tabs.",
   "bundle_id": "com.apple.Safari",
   "scope": {
     "surfaces": ["global", "appPet", "notch"],
@@ -16,9 +16,105 @@
     "tint": "#0EA5E9",
     "glow": "soft"
   },
-  "permissions": ["context:frontmost", "context:url", "browser:tabs"],
-  "keywords": ["safari", "browser", "tabs", "history", "web", "reader", "bookmarks"],
+  "permissions": ["context:frontmost", "context:url", "browser:tabs", "files:read", "applescript"],
+  "keywords": ["safari", "browser", "tabs", "history", "bookmarks", "reading list", "reader", "raycast"],
   "commands": [
+    {
+      "id": "search-tabs",
+      "title": "Search Safari Tabs",
+      "subtitle": "Switch to, copy, bookmark, or close open Safari tabs",
+      "icon": "macwindow.on.rectangle",
+      "mode": "list",
+      "keywords": ["safari", "tabs", "search tabs", "open tabs", "switch tab"],
+      "script": "commands/search-tabs.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 3,
+      "safety": "read"
+    },
+    {
+      "id": "search-bookmarks",
+      "title": "Search Safari Bookmarks",
+      "subtitle": "Browse and filter Safari bookmarks by folder",
+      "icon": "book.closed.fill",
+      "mode": "list",
+      "keywords": ["safari", "bookmarks", "search bookmarks", "favorites"],
+      "script": "commands/search-bookmarks.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 30,
+      "safety": "read"
+    },
+    {
+      "id": "reading-list",
+      "title": "Search Safari Reading List",
+      "subtitle": "Filter unread and read Safari Reading List articles",
+      "icon": "eyeglasses",
+      "mode": "list",
+      "keywords": ["safari", "reading list", "read later", "articles"],
+      "script": "commands/reading-list.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 20,
+      "safety": "read"
+    },
+    {
+      "id": "search-history",
+      "title": "Search Safari History",
+      "subtitle": "Search recently visited pages from Safari history",
+      "icon": "clock.arrow.circlepath",
+      "mode": "list",
+      "keywords": ["safari", "history", "search history", "visited", "recent"],
+      "script": "commands/search-history.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 15,
+      "safety": "read"
+    },
+    {
+      "id": "search-all",
+      "title": "Search Safari All",
+      "subtitle": "Unified search across open tabs, bookmarks, Reading List, and history",
+      "icon": "magnifyingglass",
+      "mode": "list",
+      "keywords": ["safari", "search all", "tabs bookmarks history", "find in safari"],
+      "script": "commands/search-all.py",
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 10,
+      "safety": "read"
+    },
+    {
+      "id": "add-to-reading-list",
+      "title": "Add to Safari Reading List",
+      "subtitle": "Save the current Safari tab into your Reading List",
+      "icon": "plus.circle.fill",
+      "mode": "instant",
+      "keywords": ["add to reading list", "save page", "read later", "safari"],
+      "script": "commands/add-to-reading-list.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "write"
+    },
+    {
+      "id": "copy-tab-url",
+      "title": "Copy Safari URL to Clipboard",
+      "subtitle": "Copy the frontmost Safari tab URL cleanly",
+      "icon": "link",
+      "mode": "instant",
+      "keywords": ["copy url", "safari url", "copy link"],
+      "script": "commands/copy-tab-url.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "copy-tab-markdown",
+      "title": "Copy Safari Title as Link",
+      "subtitle": "Copy current Safari page as Markdown [Title](url)",
+      "icon": "doc.on.clipboard",
+      "mode": "instant",
+      "keywords": ["copy title as link", "markdown link", "safari link"],
+      "script": "commands/copy-tab-markdown.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
     {
       "id": "open-tabs",
       "title": "Open Browser Tabs",
@@ -75,6 +171,16 @@
       "type": "aiPrompt",
       "script": "Extract and categorize all hyperlinks from the current Safari page.",
       "safety": "read"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search_safari",
+      "name": "Search Safari (Tabs, Bookmarks & History)",
+      "description": "Searches open Safari tabs, bookmarks, Reading List, and history.",
+      "script": "commands/search-all.py",
+      "risk": "read",
+      "keywords": ["safari", "tabs", "bookmarks", "history", "reading list"]
     }
   ],
   "extension_hooks": [

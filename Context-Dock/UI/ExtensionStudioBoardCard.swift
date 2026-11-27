@@ -974,7 +974,15 @@ struct ExtensionStudioBoardCard: View {
                         imported: imported,
                         studio: studio,
                         v3Registry: v3Registry,
-                        raycastImportResult: $raycastImportResult)
+                        raycastImportResult: $raycastImportResult,
+                        onInstalledTryCommand: { packID, cmdID in
+                            if let p = v3Registry.pack(id: packID),
+                               let cmd = p.metadata.commands?.first(where: { $0.id == cmdID })
+                            {
+                                prompt.scopeIntoV3Command(
+                                    DoraxBoundCommand(pack: p, command: cmd, sectionTitle: p.name, isContextual: false))
+                            }
+                        })
                 } else if studio.target == .appPlugin, studio.packStudioMode == .upgradeExisting,
                           let activePack = v3Registry.pack(id: studio.selectedUpgradePackID) ?? v3Registry.packs.first
                 {

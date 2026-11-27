@@ -101,10 +101,14 @@ final class DoraxPackV3Registry: ObservableObject {
         if !extraRoots.isEmpty {
             searchDirs = extraRoots
         } else {
+            // Precedence (lowest -> highest):
+            // 1. Legacy v2 packs (`plugins/v2/`) so stale copies never shadow built-in v3 packs
+            // 2. First-party shipped packs (`Packs/*.doraxpack`)
+            // 3. Explicit v3 user overrides & imported/Studio packs (`plugins/v3/`)
+            searchDirs.append(Self.userV2Directory)
             if let firstParty = FirstPartyPacks.resolvePacksDirectory() {
                 searchDirs.append(firstParty)
             }
-            searchDirs.append(Self.userV2Directory)
             searchDirs.append(Self.userV3Directory)
         }
 

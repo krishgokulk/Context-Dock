@@ -812,4 +812,59 @@ struct DoraxPackV3Tests {
         // Legacy essentials next-wallpaper plugin must be listed for safe zip backup & retirement
         #expect(LegacyPluginCleanup.legacyRelativePaths.contains("plugins/essentials/plugins/next-wallpaper"))
     }
+
+    @Test("RaycastImporter avoids pack ID collisions, detects installed apps, and Safari pack ships all 9 commands")
+    func raycastImporterCollisionSafetyAndSafariPack() async throws {
+        let packsDir = try #require(FirstPartyPacks.resolvePacksDirectory())
+        let safariURL = packsDir.appendingPathComponent("Safari.doraxpack", isDirectory: true)
+        let safariPack = try DoraxPackV2Loader.load(from: safariURL)
+        #expect(safariPack.metadata.bundleId == "com.apple.Safari")
+        #expect(safariPack.metadata.effectiveScope.matchesBundleID("com.apple.Safari"))
+        let cmdIDs = Set((safariPack.metadata.commands ?? []).map(\.id))
+        #expect(cmdIDs.count == 9)
+        for expected in ["search-tabs", "search-bookmarks", "reading-list", "search-history", "search-all", "add-to-reading-list", "copy-tab-url", "copy-tab-markdown", "open-tabs"] {
+            #expect(cmdIDs.contains(expected), "Missing Safari command \(expected)")
+        }
+        let errors = DoraxPackV3Validator.validate(safariPack).filter { $0.severity == .error }
+        #expect(errors.isEmpty, "Safari pack validation errors: \(errors.map(\.message))")
+
+        // Installed app detection finds Safari -> com.apple.Safari
+        let detected = RaycastImporter.detectInstalledApp(matchingSlug: "safari", title: "Safari")
+        #expect(detected?.bundleID == "com.apple.Safari")
+
+        // Suggested merge matches existing Safari pack for raycast.com/loris/safari
+        let suggested = RaycastImporter.suggestedMergePackID(
+            for: "https://www.raycast.com/loris/safari",
+            existingPacks: [safariPack])
+        #expect(suggested == "safari")
+
+        // Standalone import with colliding existingPackIDs namespaces ID to raycast-safari
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-raycast-col-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let imported = try await RaycastImporter.importExtension(
+            from: "https://www.raycast.com/loris/safari",
+            mergeIntoPack: nil,
+            existingPackIDs: ["safari"],
+            stagingRoot: tmp,
+            useLiveAI: false)
+        let syn = try #require(imported.synthesis)
+        #expect(syn.pack.id == "raycast-safari")
+        #expect(imported.matchedAppBundleID == "com.apple.Safari")
+        #expect(syn.pack.metadata.effectiveScope.matchesBundleID("com.apple.Safari"))
+
+        // Precedence test: legacy v2 must not shadow newer firstParty, while v3 overrides cleanly
+        let v2Root = tmp.appendingPathComponent("v2", isDirectory: true)
+        let v3Root = tmp.appendingPathComponent("v3", isDirectory: true)
+        let fpRoot = tmp.appendingPathComponent("fp", isDirectory: true)
+        for (dir, ver) in [(v2Root, "2.0.0"), (fpRoot, "3.1.0")] {
+            let p = dir.appendingPathComponent("Safari.doraxpack", isDirectory: true)
+            try FileManager.default.createDirectory(at: p, withIntermediateDirectories: true)
+            let meta = DoraxPackMetadata(formatVersion: 2, schemaVersion: 3, id: "safari", name: "Safari", version: ver)
+            try Data(DoraxPackV3AIArchitect.encodeMetadata(meta).utf8).write(to: p.appendingPathComponent("pack.json"))
+        }
+        let cfgURL = tmp.appendingPathComponent("cfg.json")
+        let precReg = DoraxPackV3Registry(roots: [v2Root, fpRoot, v3Root], configFileURL: cfgURL)
+        #expect(precReg.pack(id: "safari")?.metadata.version == "3.1.0")
+    }
 }

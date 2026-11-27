@@ -105,6 +105,8 @@ struct ImportRaycastStudioLeftView: View {
     @Binding var raycastImportResult: RaycastImportResult?
     @Binding var isImportingRaycast: Bool
 
+    @State private var suggestedMergeID: String? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Raycast Store URL, GitHub URL, Script (.sh/.py), or Folder")
@@ -118,6 +120,13 @@ struct ImportRaycastStudioLeftView: View {
                     .padding(.horizontal, 8)
                     .frame(height: 28)
                     .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 7))
+                    .onChange(of: studio.raycastSourceText) { _, newVal in
+                        let suggested = RaycastImporter.suggestedMergePackID(for: newVal, existingPacks: v3Registry.packs)
+                        suggestedMergeID = suggested
+                        if let suggested, studio.raycastMergeTargetPackID.isEmpty {
+                            studio.raycastMergeTargetPackID = suggested
+                        }
+                    }
 
                 Button("Browse…") {
                     let panel = NSOpenPanel()
@@ -147,9 +156,15 @@ struct ImportRaycastStudioLeftView: View {
                 .controlSize(.small)
             }
 
-            Text("Script commands (`@raycast.*`) convert deterministically without Node. Store/local extensions map into native `.doraxpack` v3 commands that you can upgrade anytime with AI.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
+            if let matchID = suggestedMergeID, let matchPack = v3Registry.pack(id: matchID) {
+                Text("Matched installed pack \(matchPack.name) — merging keeps frontmost app scope & existing commands.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.cyan)
+            } else {
+                Text("Script commands (`@raycast.*`) convert without Node. Store/GitHub extensions synthesize live macOS scripts via AI.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
 
             Button {
                 Task {
@@ -160,7 +175,8 @@ struct ImportRaycastStudioLeftView: View {
                     do {
                         let imported = try await RaycastImporter.importExtension(
                             from: studio.raycastSourceText,
-                            mergeIntoPack: mergeTarget)
+                            mergeIntoPack: mergeTarget,
+                            existingPackIDs: Set(v3Registry.packs.map(\.id)))
                         raycastImportResult = imported
                         studio.statusMessage = nil
                     } catch {
@@ -169,7 +185,7 @@ struct ImportRaycastStudioLeftView: View {
                     isImportingRaycast = false
                 }
             } label: {
-                Label(isImportingRaycast ? "Converting…" : "Import & Convert", systemImage: "square.and.arrow.down")
+                Label(isImportingRaycast ? "Converting & Synthesizing…" : "Import & Convert", systemImage: "square.and.arrow.down")
                     .font(.system(size: 10.5, weight: .semibold))
             }
             .buttonStyle(.borderedProminent)
@@ -269,13 +285,23 @@ struct RaycastImportReviewCardView: View {
     @ObservedObject var studio: ExtensionStudioModel
     @ObservedObject var v3Registry: DoraxPackV3Registry
     @Binding var raycastImportResult: RaycastImportResult?
+    var onInstalledTryCommand: ((String, String) -> Void)? = nil
 
     var body: some View {
+        let previewCommands: [DoraxPackCommand] = imported.synthesis?.pack.metadata.commands
+            ?? imported.patch.flatMap { p in
+                (try? JSONDecoder().decode(DoraxPackMetadata.self, from: Data(p.updatedPackJSON.utf8)))?.commands
+            } ?? []
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label(imported.sourceKind, systemImage: "square.and.arrow.down")
                     .font(.system(size: 12.5, weight: .semibold))
                 Spacer()
+                Text(imported.synthesizedWithAI ? "AI Live Code" : "Template")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(imported.synthesizedWithAI ? .green : .orange)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.white.opacity(0.08), in: Capsule())
                 let errs = imported.diagnostics.filter { $0.severity == .error }
                 Image(systemName: errs.isEmpty ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(errs.isEmpty ? .green : .orange)
@@ -284,14 +310,36 @@ struct RaycastImportReviewCardView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
+            if let bundleID = imported.matchedAppBundleID {
+                Text("Scope: Global (`⌥⌥`/`⌘⌘`) + Frontmost (`\(bundleID)`)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.cyan)
+            }
+
+            if !previewCommands.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(previewCommands.prefix(5)), id: \.id) { c in
+                        Text("• \(c.title)")
+                            .font(.system(size: 10.5))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
+            }
+
             HStack(spacing: 8) {
                 if let patch = imported.patch {
                     Button("Merge into \(patch.packName)") {
                         guard let base = v3Registry.pack(id: patch.packID) else { return }
                         do {
                             let merged = try DoraxPackV3EditorService.shared.applyPatch(patch, to: base)
-                            studio.statusMessage = "✓ Merged Raycast command into \(merged.name)"
+                            studio.statusMessage = "✓ Merged into \(merged.name) — search command in ⌥⌥/⌘⌘"
                             raycastImportResult = nil
+                            if let firstCmd = previewCommands.first?.id {
+                                onInstalledTryCommand?(merged.id, firstCmd)
+                            }
                         } catch {
                             studio.statusMessage = "Merge failed: \(error.localizedDescription)"
                         }
@@ -300,11 +348,14 @@ struct RaycastImportReviewCardView: View {
                     .controlSize(.small)
                     .disabled(imported.hasBlockingErrors)
                 } else if let syn = imported.synthesis {
-                    Button("Install Imported Pack") {
+                    Button("Install & Open") {
                         do {
                             let installed = try DoraxPackV3Builder.approveAndInstall(syn)
                             studio.statusMessage = "✓ Installed \(installed.name) (.doraxpack v3)"
                             raycastImportResult = nil
+                            if let firstCmd = installed.metadata.commands?.first?.id {
+                                onInstalledTryCommand?(installed.id, firstCmd)
+                            }
                         } catch {
                             studio.statusMessage = "Install failed: \(error.localizedDescription)"
                         }

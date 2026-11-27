@@ -44,6 +44,8 @@ struct RaycastImportResult {
     let targetPackID: String?
     let synthesis: DoraxPackV3SynthesisResult?
     let patch: DoraxPackV3Patch?
+    var synthesizedWithAI: Bool = false
+    var matchedAppBundleID: String? = nil
 
     var diagnostics: [PluginDiagnostic] {
         patch?.diagnostics ?? synthesis?.review.diagnostics ?? []
@@ -315,6 +317,99 @@ enum RaycastImporter {
 
     // MARK: - 3. Raycast Store / GitHub / Local Extension Importer
 
+    private static let knownSlugAppAliases: [String: String] = [
+        "safari": "Safari",
+        "finder": "Finder",
+        "notes": "Notes",
+        "apple-notes": "Notes",
+        "messages": "Messages",
+        "reminders": "Reminders",
+        "apple-reminders": "Reminders",
+        "mail": "Mail",
+        "spotify": "Spotify",
+        "obsidian": "Obsidian",
+        "tailscale": "Tailscale",
+        "whatsapp": "WhatsApp",
+        "vscode": "Visual Studio Code",
+        "visual-studio-code": "Visual Studio Code",
+        "iterm": "iTerm",
+        "iterm2": "iTerm",
+        "google-chrome": "Google Chrome",
+        "arc": "Arc",
+        "claude": "Claude",
+        "chatgpt": "ChatGPT",
+        "cursor": "Cursor",
+        "slack": "Slack",
+        "notion": "Notion",
+        "figma": "Figma",
+        "linear": "Linear",
+    ]
+
+    /// Detects an installed macOS `.app` bundle matching a Raycast extension slug or title,
+    /// returning `(bundleID, appName)` so imported extensions automatically surface when that app is frontmost.
+    static func detectInstalledApp(matchingSlug slug: String, title: String? = nil) -> (bundleID: String, appName: String)? {
+        let lowerSlug = slug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lowerTitle = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let targetNames: [String] = {
+            var list: [String] = []
+            if let alias = knownSlugAppAliases[lowerSlug] { list.append(alias.lowercased()) }
+            list.append(lowerSlug.replacingOccurrences(of: "-", with: " "))
+            list.append(lowerSlug)
+            if !lowerTitle.isEmpty { list.append(lowerTitle) }
+            return Array(Set(list.filter { !$0.isEmpty }))
+        }()
+
+        let fm = FileManager.default
+        let roots = [
+            "/Applications",
+            "/System/Applications",
+            "/System/Applications/Utilities",
+            "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
+            (NSHomeDirectory() as NSString).appendingPathComponent("Applications"),
+        ]
+
+        for root in roots {
+            guard let items = try? fm.contentsOfDirectory(atPath: root) else { continue }
+            for entry in items where entry.hasSuffix(".app") {
+                let appName = String(entry.dropLast(4))
+                let norm = appName.lowercased()
+                let matches = targetNames.contains { t in norm == t || norm.replacingOccurrences(of: " ", with: "-") == lowerSlug }
+                guard matches else { continue }
+                let appURL = URL(fileURLWithPath: root).appendingPathComponent(entry)
+                if let bundle = Bundle(url: appURL), let bid = bundle.bundleIdentifier, !bid.isEmpty {
+                    return (bid, appName)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Returns an installed pack ID when a Raycast URL/slug matches an existing pack (e.g. `loris/safari` -> `safari`),
+    /// so Studio can default to safe Merge instead of shadowing the built-in pack.
+    static func suggestedMergePackID(for rawSource: String, existingPacks: [DoraxPackV2]) -> String? {
+        let trimmed = rawSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let candidate: String
+        switch parseExtensionSource(trimmed) {
+        case .raycastStore(_, let slug):
+            candidate = DoraxPackV3AIArchitect.slugify(slug, fallback: "")
+        case .githubRepo(_, let repo, let subpath):
+            let tail = subpath?.components(separatedBy: "/").last ?? repo
+            candidate = DoraxPackV3AIArchitect.slugify(tail, fallback: "")
+        case .localDirectory(let dir):
+            candidate = DoraxPackV3AIArchitect.slugify(dir.lastPathComponent, fallback: "")
+        case .queryOrSlug(let s):
+            candidate = DoraxPackV3AIArchitect.slugify(s, fallback: "")
+        case .localScript:
+            return nil
+        }
+        guard !candidate.isEmpty else { return nil }
+        return existingPacks.first(where: { p in
+            p.id.lowercased() == candidate
+                || DoraxPackV3AIArchitect.slugify(p.name, fallback: "") == candidate
+        })?.id
+    }
+
     private struct RaycastPackageJSON: Decodable {
         struct Command: Decodable {
             var name: String
@@ -340,6 +435,7 @@ enum RaycastImporter {
     static func importExtension(
         from rawSource: String,
         mergeIntoPack: DoraxPackV2? = nil,
+        existingPackIDs: Set<String> = [],
         stagingRoot: URL? = nil,
         useLiveAI: Bool = !AppDelegate.isHostingTests
     ) async throws -> RaycastImportResult {
@@ -384,65 +480,88 @@ enum RaycastImporter {
 
         let extTitle = pkg?.title ?? extSlug.replacingOccurrences(of: "-", with: " ").capitalized
         let extDesc = pkg?.description ?? "Converted Raycast extension \"\(extTitle)\" to native .doraxpack v3."
+        let matchedApp = mergeIntoPack?.metadata.bundleId.flatMap { bid in (bundleID: bid, appName: mergeIntoPack?.name ?? extTitle) }
+            ?? detectInstalledApp(matchingSlug: extSlug, title: extTitle)
 
-        let convertedCommands: [DoraxPackCommand]
+        var convertedCommands: [DoraxPackCommand] = []
         var extraFiles: [DoraxPackV3FileChange] = []
+        var synthesizedWithAI = false
 
-        if let rawCmds = pkg?.commands, !rawCmds.isEmpty {
-            convertedCommands = rawCmds.prefix(8).map { rc in
-                let cmdSlug = DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")
+        // Attempt real macOS Python/AppleScript code synthesis via AI when live AI is enabled
+        if useLiveAI, let rawCmds = pkg?.commands, !rawCmds.isEmpty {
+            let sourceContext = await fetchSourceSnippets(for: parsed, commands: rawCmds)
+            if let aiDraft = await synthesizeRealCommandsWithAI(
+                extSlug: extSlug,
+                extTitle: extTitle,
+                extDesc: extDesc,
+                commands: rawCmds,
+                sourceContext: sourceContext,
+                matchedApp: matchedApp
+            ) {
+                convertedCommands = aiDraft.commands
+                extraFiles = aiDraft.files
+                synthesizedWithAI = true
+            }
+        }
+
+        if convertedCommands.isEmpty {
+            if let rawCmds = pkg?.commands, !rawCmds.isEmpty {
+                convertedCommands = rawCmds.prefix(8).map { rc in
+                    let cmdSlug = DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")
+                    let scriptRel = "commands/\(cmdSlug).py"
+                    let title = rc.title ?? rc.name.capitalized
+                    let sub = rc.description ?? extDesc
+                    let scriptBody = """
+                    #!/usr/bin/env python3
+                    from __future__ import annotations
+                    import json, sys
+                    _ = sys.stdin.read()
+                    print(json.dumps({
+                        "detail": {
+                            "markdown": "### \(title.replacingOccurrences(of: "\"", with: ""))\\n\\n\(sub.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from Raycast extension **\(extTitle.replacingOccurrences(of: "\"", with: ""))**. Use **Upgrade Pack with AI** (`⌘E`) to wire live local data or CLI logic.",
+                            "metadata": [{"label": "Source", "value": "Raycast Import"}]
+                        }
+                    }))
+                    """
+                    extraFiles.append(DoraxPackV3FileChange(relativePath: scriptRel, content: scriptBody, isNew: true))
+                    return DoraxPackCommand(
+                        id: cmdSlug,
+                        title: title,
+                        subtitle: sub,
+                        icon: "sparkles",
+                        mode: rc.mode == "no-view" ? .instant : .detail,
+                        keywords: [extSlug, cmdSlug, "raycast"],
+                        script: scriptRel,
+                        safety: "read")
+                }
+            } else {
+                let cmdSlug = "\(DoraxPackV3AIArchitect.slugify(extSlug, fallback: "raycast"))-action"
                 let scriptRel = "commands/\(cmdSlug).py"
-                let title = rc.title ?? rc.name.capitalized
-                let sub = rc.description ?? extDesc
                 let scriptBody = """
                 #!/usr/bin/env python3
+                from __future__ import annotations
                 import json, sys
                 _ = sys.stdin.read()
                 print(json.dumps({
                     "detail": {
-                        "markdown": "### \(title.replacingOccurrences(of: "\"", with: ""))\\n\\n\(sub.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from Raycast extension **\(extTitle.replacingOccurrences(of: "\"", with: ""))**. Customize `\(scriptRel)` or click **Upgrade with AI** to bind live APIs/CLIs.",
-                        "metadata": [{"label": "Source", "value": "Raycast Import"}]
+                        "markdown": "### \(extTitle.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from `\(trimmed.replacingOccurrences(of: "\"", with: ""))`. Use **Upgrade Pack with AI** (`⌘E`) to wire specific CLI or API logic.",
+                        "metadata": [{"label": "Raycast Import", "value": "\(extTitle.replacingOccurrences(of: "\"", with: ""))"}]
                     }
                 }))
                 """
                 extraFiles.append(DoraxPackV3FileChange(relativePath: scriptRel, content: scriptBody, isNew: true))
-                return DoraxPackCommand(
-                    id: cmdSlug,
-                    title: title,
-                    subtitle: sub,
-                    icon: "sparkles",
-                    mode: rc.mode == "no-view" ? .instant : .detail,
-                    keywords: [extSlug, cmdSlug, "raycast"],
-                    script: scriptRel,
-                    safety: "read")
+                convertedCommands = [
+                    DoraxPackCommand(
+                        id: cmdSlug,
+                        title: extTitle,
+                        subtitle: extDesc,
+                        icon: "puzzlepiece.extension.fill",
+                        mode: .detail,
+                        keywords: [extSlug, "raycast"],
+                        script: scriptRel,
+                        safety: "read")
+                ]
             }
-        } else {
-            // URL / slug import fallback when no package.json was fetched
-            let cmdSlug = "\(DoraxPackV3AIArchitect.slugify(extSlug, fallback: "raycast"))-action"
-            let scriptRel = "commands/\(cmdSlug).py"
-            let scriptBody = """
-            #!/usr/bin/env python3
-            import json, sys
-            _ = sys.stdin.read()
-            print(json.dumps({
-                "detail": {
-                    "markdown": "### \(extTitle.replacingOccurrences(of: "\"", with: ""))\\n\\nConverted from `\(trimmed.replacingOccurrences(of: "\"", with: ""))`. Use **Upgrade Pack with AI** (`⌘E`) to wire specific CLI or API logic.",
-                    "metadata": [{"label": "Raycast Import", "value": "\(extTitle.replacingOccurrences(of: "\"", with: ""))"}]
-                }
-            }))
-            """
-            extraFiles.append(DoraxPackV3FileChange(relativePath: scriptRel, content: scriptBody, isNew: true))
-            convertedCommands = [
-                DoraxPackCommand(
-                    id: cmdSlug,
-                    title: extTitle,
-                    subtitle: extDesc,
-                    icon: "puzzlepiece.extension.fill",
-                    mode: .detail,
-                    keywords: [extSlug, "raycast"],
-                    script: scriptRel,
-                    safety: "read")
-            ]
         }
 
         let convertedPrefs: [DoraxPackPreference]? = pkg?.preferences?.compactMap { rp in
@@ -497,9 +616,22 @@ enum RaycastImporter {
                 summary: patch.summary,
                 targetPackID: targetPack.id,
                 synthesis: nil,
-                patch: patch)
+                patch: patch,
+                synthesizedWithAI: synthesizedWithAI,
+                matchedAppBundleID: matchedApp?.bundleID)
         } else {
-            let packID = DoraxPackV3AIArchitect.slugify(pkg?.name ?? extSlug, fallback: "raycast-pack")
+            let baseID = DoraxPackV3AIArchitect.slugify(pkg?.name ?? extSlug, fallback: "raycast-pack")
+            var packID = existingPackIDs.contains(baseID) ? "raycast-\(baseID)" : baseID
+            var suffix = 2
+            while existingPackIDs.contains(packID) {
+                packID = "raycast-\(baseID)-\(suffix)"
+                suffix += 1
+            }
+
+            let scope = matchedApp.map {
+                DoraxPackScope(surfaces: ["global", "appPet"], apps: [$0.bundleID], domains: [])
+            } ?? DoraxPackScope(surfaces: ["global"], apps: [], domains: [])
+
             let metadata = DoraxPackMetadata(
                 formatVersion: 2,
                 schemaVersion: 3,
@@ -508,7 +640,8 @@ enum RaycastImporter {
                 version: "3.0.0",
                 icon: "puzzlepiece.extension.fill",
                 description: extDesc,
-                keywords: [packID, "raycast"] + convertedCommands.map(\.id),
+                bundleId: matchedApp?.bundleID,
+                keywords: [packID, baseID, "raycast"] + convertedCommands.map(\.id),
                 capabilities: [
                     PluginPackCapability(
                         id: "\(packID).main",
@@ -519,7 +652,7 @@ enum RaycastImporter {
                         script: "Run commands from \(extTitle).",
                         safety: "read")
                 ],
-                scope: DoraxPackScope(surfaces: ["global"], apps: [], domains: []),
+                scope: scope,
                 appearance: DoraxPackAppearance(tint: "#FF6363", glow: .soft),
                 permissions: ["context:frontmost"],
                 preferences: convertedPrefs,
@@ -536,14 +669,147 @@ enum RaycastImporter {
 
             return RaycastImportResult(
                 sourceKind: "Raycast Extension",
-                summary: "Converted \"\(extTitle)\" (\(convertedCommands.count) commands) to `.doraxpack` v3.",
+                summary: "Converted \"\(extTitle)\" (\(convertedCommands.count) commands) to `.doraxpack` v3 (`\(packID)`).",
                 targetPackID: nil,
                 synthesis: synthesis,
-                patch: nil)
+                patch: nil,
+                synthesizedWithAI: synthesizedWithAI,
+                matchedAppBundleID: matchedApp?.bundleID)
         }
     }
 
     // MARK: - Helpers
+
+    private static func fetchText(from url: URL, limitBytes: Int = 4_000) async -> String? {
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
+        req.setValue("Context-Dock-RaycastImporter/1.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let text = String(data: data, encoding: .utf8)
+        else { return nil }
+        return String(text.prefix(limitBytes))
+    }
+
+    private static func fetchSourceSnippets(
+        for source: RaycastExtensionSource,
+        commands: [RaycastPackageJSON.Command]
+    ) async -> String {
+        let baseRaw: String? = {
+            switch source {
+            case .raycastStore(_, let slug):
+                return "https://raw.githubusercontent.com/raycast/extensions/main/extensions/\(slug)"
+            case .githubRepo(let owner, let repo, let subpath):
+                return subpath.map { "https://raw.githubusercontent.com/\(owner)/\(repo)/HEAD/\($0)" }
+                    ?? "https://raw.githubusercontent.com/\(owner)/\(repo)/HEAD"
+            case .localDirectory(let dirURL):
+                var chunks: [String] = []
+                if let readme = try? String(contentsOf: dirURL.appendingPathComponent("README.md"), encoding: .utf8) {
+                    chunks.append("README:\n\(readme.prefix(2500))")
+                }
+                for cmd in commands.prefix(3) {
+                    for ext in ["tsx", "ts"] {
+                        let p = dirURL.appendingPathComponent("src/\(cmd.name).\(ext)")
+                        if let code = try? String(contentsOf: p, encoding: .utf8) {
+                            chunks.append("src/\(cmd.name).\(ext):\n\(code.prefix(2500))")
+                            break
+                        }
+                    }
+                }
+                return chunks.isEmpty ? nil : "LOCAL::" + chunks.joined(separator: "\n---\n")
+            case .localScript, .queryOrSlug:
+                return nil
+            }
+        }()
+
+        guard let base = baseRaw else { return "" }
+        if base.hasPrefix("LOCAL::") {
+            return String(base.dropFirst("LOCAL::".count))
+        }
+
+        var parts: [String] = []
+        if let readmeURL = URL(string: "\(base)/README.md"),
+           let readme = await fetchText(from: readmeURL, limitBytes: 2_500)
+        {
+            parts.append("README:\n\(readme)")
+        }
+        for cmd in commands.prefix(3) {
+            for ext in ["tsx", "ts"] {
+                if let url = URL(string: "\(base)/src/\(cmd.name).\(ext)"),
+                   let code = await fetchText(from: url, limitBytes: 2_500)
+                {
+                    parts.append("src/\(cmd.name).\(ext):\n\(code)")
+                    break
+                }
+            }
+        }
+        return String(parts.joined(separator: "\n---\n").prefix(10_000))
+    }
+
+    private static func synthesizeRealCommandsWithAI(
+        extSlug: String,
+        extTitle: String,
+        extDesc: String,
+        commands: [RaycastPackageJSON.Command],
+        sourceContext: String,
+        matchedApp: (bundleID: String, appName: String)?
+    ) async -> (commands: [DoraxPackCommand], files: [DoraxPackV3FileChange])? {
+        let cmdSummaries = commands.prefix(8).map { rc in
+            "- id=\(DoraxPackV3AIArchitect.slugify(rc.name, fallback: "cmd")) title=\"\(rc.title ?? rc.name)\" mode=\(rc.mode ?? "view") desc=\"\(rc.description ?? "")\""
+        }.joined(separator: "\n")
+
+        let sysPrompt = """
+        You convert Raycast extensions into native macOS `.doraxpack` v3 Python 3.9 commands for DoraX.
+        Return ONLY valid JSON (no markdown fences) with exact shape:
+        {"commands":[{"id":"...","title":"...","subtitle":"...","icon":"sf.symbol","mode":"list|grid|detail|instant","keywords":["..."],"script":"commands/<id>.py","safety":"read|write"}],"files":{"commands/<id>.py":"#!/usr/bin/env python3\\nfrom __future__ import annotations\\n..."}}
+        Strict rules:
+        - Every Python script MUST start with `#!/usr/bin/env python3` and `from __future__ import annotations` (macOS /usr/bin/python3 is 3.9.6 — no PEP 604 `X | Y` without `from __future__ import annotations`).
+        - Write REAL working macOS automation using stdlib (`plistlib`, `sqlite3` copied to temp file, `subprocess` calling `osascript`/`open`/`pbcopy`/`mdfind`/installed CLIs, `urllib.request`) rather than placeholder stubs!
+        - Handle missing permissions or unrunning apps gracefully by returning helpful items instead of crashing.
+        - Read context JSON from `sys.stdin` (`ctx.get("preferences")`, `DORAX_QUERY`, `DORAX_FILTER`), print ONE JSON object (`{"items":[...],"detail":{...},"filter_options":[...],"toast":"..."}`).
+        """
+
+        let userPrompt = """
+        Extension: \(extTitle) (`\(extSlug)`)
+        Description: \(extDesc)
+        Target macOS App: \(matchedApp.map { "\($0.appName) (\($0.bundleID))" } ?? "Global utility")
+
+        Raycast package.json commands:
+        \(cmdSummaries)
+
+        Source excerpts:
+        \(sourceContext.isEmpty ? "(No source snippets available — implement standard macOS automation for \(extTitle))" : sourceContext)
+        """
+
+        guard let reply = try? await PanelAssistant.ask(
+            userPrompt,
+            title: "DoraX Raycast Importer",
+            subtitle: "Synthesize native commands for \(extTitle)",
+            extraPrompt: sysPrompt,
+            history: [],
+            provider: AppSettings.shared.selectedAIProvider
+        ) else { return nil }
+
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let start = trimmed.firstIndex(of: "{"),
+              let end = trimmed.lastIndex(of: "}"),
+              let data = String(trimmed[start...end]).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cmdsData = try? JSONSerialization.data(withJSONObject: obj["commands"] ?? []),
+              let decodedCmds = try? JSONDecoder().decode([DoraxPackCommand].self, from: cmdsData),
+              !decodedCmds.isEmpty,
+              let rawFiles = obj["files"] as? [String: String],
+              !rawFiles.isEmpty
+        else { return nil }
+
+        var changes: [DoraxPackV3FileChange] = []
+        for (rel, content) in rawFiles.sorted(by: { $0.key < $1.key }) {
+            guard let safeRel = DoraxPackV3EditorService.validateRelativePath(rel) else { continue }
+            changes.append(DoraxPackV3FileChange(relativePath: safeRel, content: content, isNew: true))
+        }
+        guard !changes.isEmpty else { return nil }
+        return (decodedCmds, changes)
+    }
 
     private static func fetchPackageJSON(from url: URL) async -> RaycastPackageJSON? {
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
