@@ -271,6 +271,8 @@ struct DoraxPackV2: Equatable {
     var name: String { metadata.name }
 }
 
+extension DoraxPackV2: Identifiable {}
+
 // MARK: - Error
 
 enum DoraxPackError: Error, LocalizedError {

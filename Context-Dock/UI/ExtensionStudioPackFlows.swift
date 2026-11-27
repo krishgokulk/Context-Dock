@@ -106,6 +106,7 @@ struct ImportRaycastStudioLeftView: View {
     @Binding var isImportingRaycast: Bool
 
     @State private var suggestedMergeID: String? = nil
+    @State private var userChoseDestination: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -123,8 +124,8 @@ struct ImportRaycastStudioLeftView: View {
                     .onChange(of: studio.raycastSourceText) { _, newVal in
                         let suggested = RaycastImporter.suggestedMergePackID(for: newVal, existingPacks: v3Registry.packs)
                         suggestedMergeID = suggested
-                        if let suggested, studio.raycastMergeTargetPackID.isEmpty {
-                            studio.raycastMergeTargetPackID = suggested
+                        if !userChoseDestination {
+                            studio.raycastMergeTargetPackID = suggested ?? ""
                         }
                     }
 
@@ -146,7 +147,13 @@ struct ImportRaycastStudioLeftView: View {
                 Text("Destination")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Picker("", selection: $studio.raycastMergeTargetPackID) {
+                Picker("", selection: Binding(
+                    get: { studio.raycastMergeTargetPackID },
+                    set: { newVal in
+                        userChoseDestination = true
+                        studio.raycastMergeTargetPackID = newVal
+                    }
+                )) {
                     Text("Create New Pack (.doraxpack v3)").tag("")
                     ForEach(v3Registry.packs, id: \.id) { p in
                         Text("Merge into \(p.name)").tag(p.id)
@@ -408,6 +415,8 @@ struct RaycastImportReviewCardView: View {
                         do {
                             let merged = try DoraxPackV3EditorService.shared.applyPatch(patch, to: base)
                             studio.statusMessage = "✓ Merged into \(merged.name) — search command in ⌥⌥/⌘⌘"
+                            studio.raycastMergeTargetPackID = ""
+                            studio.raycastSourceText = ""
                             raycastImportResult = nil
                             if let firstCmd = previewCommands.first?.id {
                                 onInstalledTryCommand?(merged.id, firstCmd)
@@ -424,6 +433,8 @@ struct RaycastImportReviewCardView: View {
                         do {
                             let installed = try DoraxPackV3Builder.approveAndInstall(syn)
                             studio.statusMessage = "✓ Installed \(installed.name) (.doraxpack v3)"
+                            studio.raycastMergeTargetPackID = ""
+                            studio.raycastSourceText = ""
                             raycastImportResult = nil
                             if let firstCmd = installed.metadata.commands?.first?.id {
                                 onInstalledTryCommand?(installed.id, firstCmd)

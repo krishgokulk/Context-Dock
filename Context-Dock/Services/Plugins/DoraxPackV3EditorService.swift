@@ -49,6 +49,8 @@ enum DoraxPackEditorError: Error, LocalizedError {
     case invalidPackJSON(String)
     case validationFailed([String])
     case noBackupAvailable(String)
+    case cannotRemoveLastCommand(String)
+    case cannotUninstallShippedPack(String)
 
     var errorDescription: String? {
         switch self {
@@ -60,6 +62,10 @@ enum DoraxPackEditorError: Error, LocalizedError {
             return "Validation failed (rolled back): \(msgs.joined(separator: "; "))"
         case .noBackupAvailable(let id):
             return "No backup snapshots available for pack \"\(id)\"."
+        case .cannotRemoveLastCommand(let id):
+            return "Cannot remove the only command in \"\(id)\" — uninstall or reset the pack instead."
+        case .cannotUninstallShippedPack(let id):
+            return "\"\(id)\" is a built-in pack — use Reset to Default or disable it in Settings."
         }
     }
 }
@@ -328,5 +334,73 @@ final class DoraxPackV3EditorService {
         registry.reload()
         NotificationCenter.default.post(name: .globalSearchIndexRebuildRequested, object: nil)
         return registry.pack(id: packID)
+    }
+
+    @discardableResult
+    func removeCommand(
+        commandID: String,
+        from basePack: DoraxPackV2,
+        v3Root: URL? = nil,
+        backupRoot: URL? = nil,
+        registry: DoraxPackV3Registry = .shared,
+        persistToDisk: Bool = !AppDelegate.isHostingTests
+    ) throws -> DoraxPackV2 {
+        var meta = basePack.metadata
+        let cmds = meta.commands ?? []
+        let remaining = cmds.filter { $0.id != commandID }
+        guard remaining.count < cmds.count else {
+            return basePack
+        }
+        guard !remaining.isEmpty else {
+            throw DoraxPackEditorError.cannotRemoveLastCommand(basePack.name)
+        }
+        meta.commands = remaining
+        let jsonText = DoraxPackV3AIArchitect.encodeMetadata(meta)
+        let root = v3Root ?? defaultV3Root()
+        let bRoot = backupRoot ?? defaultBackupRoot(v3Root: root)
+        let patch = DoraxPackV3Patch(
+            packID: basePack.id,
+            packName: basePack.name,
+            summary: "Removed command \"\(commandID)\" from \(basePack.name)",
+            updatedPackJSON: jsonText,
+            files: [],
+            addedPermissions: [],
+            addedHooks: [],
+            diagnostics: [],
+            dryRunOutput: nil,
+            dryRunError: nil,
+            stagedFolderURL: basePack.folderURL)
+        return try applyPatch(
+            patch,
+            to: basePack,
+            v3Root: root,
+            backupRoot: bRoot,
+            registry: registry,
+            persistToDisk: persistToDisk)
+    }
+
+    func uninstallUserPack(
+        packID: String,
+        v3Root: URL? = nil,
+        backupRoot: URL? = nil,
+        packsDirectory: URL? = nil,
+        registry: DoraxPackV3Registry = .shared
+    ) throws {
+        if hasShippedDefault(packID: packID, packsDirectory: packsDirectory) {
+            throw DoraxPackEditorError.cannotUninstallShippedPack(packID)
+        }
+        let root = v3Root ?? defaultV3Root()
+        let bRoot = backupRoot ?? defaultBackupRoot(v3Root: root)
+        let fm = FileManager.default
+        let packDir = editableFolderURL(for: packID, v3Root: root)
+        if fm.fileExists(atPath: packDir.path) {
+            try fm.removeItem(at: packDir)
+        }
+        let packBackups = bRoot.appendingPathComponent(packID, isDirectory: true)
+        if fm.fileExists(atPath: packBackups.path) {
+            try? fm.removeItem(at: packBackups)
+        }
+        registry.unregister(packID: packID)
+        NotificationCenter.default.post(name: .globalSearchIndexRebuildRequested, object: nil)
     }
 }

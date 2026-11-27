@@ -494,3 +494,100 @@ struct DoraxRequiredPreferencesView: View {
         }
     }
 }
+
+struct DoraxPackManagementBox: View {
+    let pack: DoraxPackV2
+    let command: DoraxPackCommand
+    @ObservedObject var registry: DoraxPackV3Registry
+    @ObservedObject var prompt: AppChatPromptModel
+    let onReloaded: (String) -> Void
+    let onDismissOverlay: () -> Void
+    let onError: (String) -> Void
+
+    var body: some View {
+        GroupBox("Pack Folder & Upgrades") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Button("Reveal Pack Folder in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([pack.folderURL])
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Hot-Reload Pack") {
+                        registry.reload()
+                        onDismissOverlay()
+                        onReloaded("Reloaded \(pack.name)")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Button("Upgrade with AI") {
+                        prompt.openExtensionStudio(
+                            target: .appPlugin,
+                            upgradePackID: pack.id,
+                            packStudioMode: .upgradeExisting)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                let editor = DoraxPackV3EditorService.shared
+                let backups = editor.listBackups(for: pack.id)
+                let isOverride = editor.isUserOverride(packID: pack.id)
+                let isShipped = editor.hasShippedDefault(packID: pack.id)
+                let commandCount = pack.metadata.commands?.count ?? 0
+
+                if !backups.isEmpty || isOverride || commandCount > 1 || !isShipped {
+                    HStack(spacing: 8) {
+                        if !backups.isEmpty {
+                            Button("Rollback Last Upgrade (\(backups.count))") {
+                                if (try? editor.rollback(packID: pack.id)) != nil {
+                                    onDismissOverlay()
+                                    onReloaded("Rolled back \(pack.name)")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        if isOverride && isShipped {
+                            Button("Reset to Shipped Default") {
+                                if (try? editor.resetToDefault(packID: pack.id)) != nil {
+                                    onDismissOverlay()
+                                    onReloaded("Reset \(pack.name) to shipped default")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        if commandCount > 1 {
+                            Button("Remove \"\(command.title)\"", role: .destructive) {
+                                do {
+                                    _ = try editor.removeCommand(commandID: command.id, from: pack)
+                                    _ = prompt.leaveScopeForGlobal()
+                                } catch {
+                                    onError(error.localizedDescription)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        if !isShipped {
+                            Button("Uninstall Pack", role: .destructive) {
+                                do {
+                                    try editor.uninstallUserPack(packID: pack.id)
+                                    _ = prompt.leaveScopeForGlobal()
+                                } catch {
+                                    onError(error.localizedDescription)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+            .padding(6)
+        }
+    }
+}

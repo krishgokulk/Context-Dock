@@ -133,6 +133,10 @@ final class DoraxPackV3Registry: ObservableObject {
         }
     }
 
+    func unregister(packID: String) {
+        packs.removeAll { $0.id.lowercased() == packID.lowercased() }
+    }
+
     /// Installs a `.doraxpack` folder into `plugins/v3/<id>.doraxpack`, binds v2 capabilities,
     /// and hot-reloads the registry.
     @discardableResult

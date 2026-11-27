@@ -601,57 +601,8 @@ struct ExtensionStudioBoardCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Target Mode Bar
-            HStack(spacing: 6) {
-                ForEach(ExtensionStudioTarget.allCases) { item in
-                    Button {
-                        withAnimation(FluidMotion.selectionGlide) {
-                            studio.target = item
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: item.symbol)
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text(item.title)
-                                .font(.system(size: 11.5, weight: .semibold))
-                        }
-                        .foregroundStyle(studio.target == item ? Color.accentColor : .secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(studio.target == item
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color.primary.opacity(0.05))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(
-                                    studio.target == item
-                                        ? Color.accentColor.opacity(0.45)
-                                        : Color.white.opacity(0.08),
-                                    lineWidth: 1
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-                if studio.isGeneratingAI {
-                    HStack(spacing: 5) {
-                        ProgressView().controlSize(.mini)
-                        Text("AI synthesizing…")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 38)
-
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-
             // Split Two-Column Body: Left = Authoring Form, Right = Live Preview / Notch Pins / Dry Run
+            // (Mode switching lives in the unified top bar right-end dropdown & `→` on empty input.)
             HStack(alignment: .top, spacing: 0) {
                 leftEditorColumn
                     .frame(width: 356)
@@ -682,6 +633,17 @@ struct ExtensionStudioBoardCard: View {
             }
         }
         .onAppear {
+            syncHeaderBar()
+            ScopedListKeyBridge.shared.cycleHeaderMode = {
+                let all = ExtensionStudioTarget.allCases
+                guard let idx = all.firstIndex(of: studio.target) else { return false }
+                let next = all[(idx + 1) % all.count]
+                withAnimation(FluidMotion.selectionGlide) {
+                    studio.target = next
+                }
+                syncHeaderBar()
+                return true
+            }
             ScopedListKeyBridge.shared.run = {
                 let typed = prompt.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !typed.isEmpty {
@@ -693,9 +655,33 @@ struct ExtensionStudioBoardCard: View {
                 return studio.saveCurrent()
             }
         }
+        .onChange(of: studio.target) { _, _ in syncHeaderBar() }
+        .onChange(of: studio.isGeneratingAI) { _, _ in syncHeaderBar() }
         .onDisappear {
             ScopedListKeyBridge.shared.run = nil
+            ScopedListKeyBridge.shared.cycleHeaderMode = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "studio")
         }
+    }
+
+    private func syncHeaderBar() {
+        ExtensionHeaderBarState.shared.update(
+            id: "studio",
+            title: "Create Extension",
+            icon: "wand.and.stars",
+            filterOptions: ExtensionStudioTarget.allCases.map(\.title),
+            selectedFilter: studio.target.title,
+            isRefreshing: studio.isGeneratingAI,
+            placeholder: "Ask AI to build, or press → to switch mode…",
+            onBack: { _ = prompt.leaveScopeForGlobal() },
+            onSelectFilter: { chosen in
+                if let match = ExtensionStudioTarget.allCases.first(where: { $0.title == chosen }) {
+                    withAnimation(FluidMotion.selectionGlide) {
+                        studio.target = match
+                    }
+                    syncHeaderBar()
+                }
+            })
     }
 
     // MARK: Left Column — Editor

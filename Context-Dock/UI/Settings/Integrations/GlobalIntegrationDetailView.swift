@@ -14,6 +14,9 @@ struct GlobalIntegrationDetailView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     @ObservedObject private var solvedSkillStore = SolvedSkillStore.shared
+    @ObservedObject private var v3Registry = DoraxPackV3Registry.shared
+    @State private var expandedPackIDs: Set<String> = []
+    @State private var packActionError: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -95,6 +98,7 @@ struct GlobalIntegrationDetailView: View {
                     spacing: 8
                 ) {
                     countTile("Commands", summary.commands.count, "globe")
+                    countTile("Packs (.doraxpack v3)", v3Registry.packs.count, "puzzlepiece.extension")
                     countTile("Selection actions", summary.selectionExtensions.count, "selection.pin.in.out")
                     countTile("Legacy selection rules", summary.selectionRules.count, "scope")
                     countTile("CLI tools", summary.cliTools.count, "terminal")
@@ -164,6 +168,69 @@ struct GlobalIntegrationDetailView: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("Remove \(command.name)"))
                         })
+                }
+
+                IntegrationResourceSection(
+                    title: "Extensions & Packs (.doraxpack v3)",
+                    icon: "puzzlepiece.extension",
+                    count: v3Registry.packs.count,
+                    emptyMessage: "No .doraxpack v3 extensions installed.",
+                    items: v3Registry.packs.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                ) { pack in
+                    let editor = DoraxPackV3EditorService.shared
+                    let cmds = pack.metadata.commands ?? []
+                    let isOverride = editor.isUserOverride(packID: pack.id)
+                    let isShipped = editor.hasShippedDefault(packID: pack.id)
+                    let isExpanded = expandedPackIDs.contains(pack.id)
+                    row(
+                        title: pack.name,
+                        subtitle: "\(cmds.count) command\(cmds.count == 1 ? "" : "s") · \(pack.metadata.bundleId ?? "Global")\(isOverride ? " · Modified" : "")",
+                        detail: cmds.isEmpty ? nil : AnyView(packCommandsDetail(pack: pack, cmds: cmds, isExpanded: isExpanded)),
+                        icon: pack.metadata.icon,
+                        tint: .purple,
+                        isOn: cmds.isEmpty ? nil : Binding(
+                            get: { cmds.allSatisfy { v3Registry.commandConfig(packID: pack.id, commandID: $0.id).isEnabled } },
+                            set: { newValue in
+                                for cmd in cmds {
+                                    v3Registry.updateCommandConfig(packID: pack.id, commandID: cmd.id) { $0.isEnabled = newValue }
+                                }
+                            }),
+                        trailing: {
+                            AnyView(HStack(spacing: 8) {
+                                if !cmds.isEmpty {
+                                    Button(isExpanded ? "Hide" : "Commands") {
+                                        if isExpanded { expandedPackIDs.remove(pack.id) }
+                                        else { expandedPackIDs.insert(pack.id) }
+                                    }
+                                    .controlSize(.mini)
+                                }
+                                if isOverride && isShipped {
+                                    Button("Reset") {
+                                        _ = try? editor.resetToDefault(packID: pack.id)
+                                    }
+                                    .controlSize(.mini)
+                                }
+                                if !isShipped {
+                                    Button(role: .destructive) {
+                                        do {
+                                            try editor.uninstallUserPack(packID: pack.id)
+                                            packActionError = nil
+                                        } catch {
+                                            packActionError = error.localizedDescription
+                                        }
+                                    } label: { Image(systemName: "trash") }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Uninstall \(pack.name)")
+                                }
+                            })
+                        })
+                }
+
+                if let packActionError {
+                    Text(packActionError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .padding(.bottom, 6)
                 }
 
                 IntegrationResourceSection(
@@ -392,6 +459,53 @@ struct GlobalIntegrationDetailView: View {
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - v3 Pack Command List
+
+    @ViewBuilder
+    private func packCommandsDetail(pack: DoraxPackV2, cmds: [DoraxPackCommand], isExpanded: Bool) -> some View {
+        if isExpanded {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(cmds) { cmd in
+                    let cfg = v3Registry.commandConfig(packID: pack.id, commandID: cmd.id)
+                    HStack(spacing: 6) {
+                        Image(systemName: cmd.icon)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14)
+                        Text(cmd.title)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { cfg.isEnabled },
+                            set: { v in v3Registry.updateCommandConfig(packID: pack.id, commandID: cmd.id) { $0.isEnabled = v } }
+                        ))
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .labelsHidden()
+                        if cmds.count > 1 {
+                            Button(role: .destructive) {
+                                do {
+                                    _ = try DoraxPackV3EditorService.shared.removeCommand(commandID: cmd.id, from: pack)
+                                    packActionError = nil
+                                } catch {
+                                    packActionError = error.localizedDescription
+                                }
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove \(cmd.title) from \(pack.name)")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(.top, 4)
+        }
     }
 
     // MARK: - Row

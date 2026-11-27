@@ -1545,6 +1545,12 @@ struct AppChatPromptPill: View {
                         {
                             return .handled
                         }
+                        if model.showsExtensionPanel,
+                           model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           ScopedListKeyBridge.shared.cycleHeaderMode?() == true
+                        {
+                            return .handled
+                        }
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else — steps in, never runs (D4). Otherwise it takes
                         // the ghost completion, and on an empty field it steps into an app;

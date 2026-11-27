@@ -2336,6 +2336,17 @@ final class CornerDockController: NSObject {
             if prompt.applyPillRowKey(.tab) { return nil }
             return event
         }
+        if let panel, event.window === panel,
+            event.keyCode == 124,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+            chatPresentation.isVisible,
+            prompt.showsExtensionPanel,
+            prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            ScopedListKeyBridge.shared.cycleHeaderMode?() == true
+        {
+            return nil
+        }
+
         // → on an empty field with nothing highlighted walks into the next app, or along the
         // scopes — the field's own `onKeyPress(.rightArrow)` ladder, taken here as well so it
         // does not depend on the field holding the caret. A scope swap had left it without

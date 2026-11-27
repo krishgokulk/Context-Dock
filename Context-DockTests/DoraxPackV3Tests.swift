@@ -1067,4 +1067,87 @@ struct DoraxPackV3Tests {
         #expect(aiOut.aiSystem == "Be brief")
         #expect(aiOut.toast == "Asking")
     }
+
+    @Test("EditorService removeCommand, uninstallUserPack, and StorePackInstaller v3 global non-duplication")
+    func packCommandRemovalUninstallAndGlobalDeduplication() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dorax-rm-test-\(UUID().uuidString)", isDirectory: true)
+        let v3Root = tmp.appendingPathComponent("v3", isDirectory: true)
+        let backupRoot = tmp.appendingPathComponent("backups", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let packID = "custom-test-pack-\(UUID().uuidString.prefix(6).lowercased())"
+        let sourceDir = v3Root.appendingPathComponent("\(packID).doraxpack", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDir.appendingPathComponent("commands"), withIntermediateDirectories: true)
+
+        let py = "#!/usr/bin/env python3\nimport json\nprint(json.dumps({'items': [{'id': 'a', 'title': 'Ok'}]}))\n"
+        try Data(py.utf8).write(to: sourceDir.appendingPathComponent("commands/cmd1.py"))
+        try Data(py.utf8).write(to: sourceDir.appendingPathComponent("commands/cmd2.py"))
+
+        let meta = DoraxPackMetadata(
+            formatVersion: 2,
+            schemaVersion: 3,
+            id: packID,
+            name: "Custom Pack",
+            commands: [
+                DoraxPackCommand(id: "cmd1", title: "Cmd One", mode: .list, script: "commands/cmd1.py"),
+                DoraxPackCommand(id: "cmd2", title: "Cmd Two", mode: .list, script: "commands/cmd2.py"),
+            ])
+        try Data(DoraxPackV3AIArchitect.encodeMetadata(meta).utf8).write(to: sourceDir.appendingPathComponent("pack.json"))
+
+        let loaded = try DoraxPackV2Loader.load(from: sourceDir)
+        let editor = DoraxPackV3EditorService.shared
+
+        // 1. Removing one command leaves the other intact
+        let afterRemove = try editor.removeCommand(
+            commandID: "cmd2",
+            from: loaded,
+            v3Root: v3Root,
+            backupRoot: backupRoot,
+            persistToDisk: false)
+        #expect(afterRemove.metadata.commands?.map(\.id) == ["cmd1"])
+
+        // 2. Removing the last remaining command is blocked cleanly
+        do {
+            _ = try editor.removeCommand(
+                commandID: "cmd1",
+                from: afterRemove,
+                v3Root: v3Root,
+                backupRoot: backupRoot,
+                persistToDisk: false)
+            Issue.record("Expected cannotRemoveLastCommand error")
+        } catch DoraxPackEditorError.cannotRemoveLastCommand {
+            // expected
+        }
+
+        // 3. Uninstalling user pack removes folder cleanly
+        try editor.uninstallUserPack(packID: packID, v3Root: v3Root, backupRoot: backupRoot)
+        #expect(!FileManager.default.fileExists(atPath: sourceDir.path))
+
+        // 4. Global v3 pack installV2 does NOT register duplicate SystemCommand entries
+        let uniqueGlobalCapName = "Unique V3 Test Action \(UUID().uuidString.prefix(6))"
+        let globalV3 = DoraxPackV2(
+            metadata: DoraxPackMetadata(
+                formatVersion: 2,
+                schemaVersion: 3,
+                id: "global-v3-\(UUID().uuidString.prefix(6).lowercased())",
+                name: "Global V3",
+                capabilities: [
+                    PluginPackCapability(id: "c1", name: uniqueGlobalCapName, intent: "Test", type: "shell", script: "echo hi")
+                ],
+                commands: [
+                    DoraxPackCommand(id: "c1", title: uniqueGlobalCapName, mode: .instant, script: "commands/cmd1.py")
+                ]),
+            agentInstructions: nil, modes: [], skills: [], scripts: [], pageScripts: [], folderURL: tmp)
+        let bind = try StorePackInstaller.installV2(globalV3, persistToDisk: false)
+        #expect(bind.registeredGlobalCommandIDs.isEmpty)
+        #expect(!SystemCommandsRegistry.shared.commands.contains(where: { $0.name == uniqueGlobalCapName }))
+
+        // 5. Core boards remain while retired legacy commands are excluded
+        let liveNames = Set(SystemCommandsRegistry.shared.commands.map(\.name))
+        #expect(liveNames.contains("Create Extension"))
+        #expect(liveNames.contains("Clipboard History"))
+        #expect(!liveNames.contains("Process Monitor"))
+        #expect(!liveNames.contains("List Listening TCP Ports"))
+    }
 }

@@ -36,7 +36,8 @@ enum StorePackInstaller {
         _ manifest: PluginManifest,
         into pluginRoot: URL? = nil,
         persistToDisk: Bool = !AppDelegate.isHostingTests,
-        writeToLegacyStorePacks: Bool = true
+        writeToLegacyStorePacks: Bool = true,
+        registerGlobalSystemCommands: Bool = true
     ) throws -> StorePackBindResult {
         if let root = pluginRoot {
             _ = try PluginInstaller.install(
@@ -60,7 +61,10 @@ enum StorePackInstaller {
         let isGlobal = rawBundleID.isEmpty || rawBundleID.lowercased() == "global"
 
         if isGlobal {
-            return bindToGlobalContext(manifest, persistToDisk: persistToDisk)
+            return bindToGlobalContext(
+                manifest,
+                persistToDisk: persistToDisk,
+                registerSystemCommands: registerGlobalSystemCommands)
         } else {
             let appName = manifest.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return bindToApp(
@@ -150,38 +154,41 @@ enum StorePackInstaller {
 
     private static func bindToGlobalContext(
         _ manifest: PluginManifest,
-        persistToDisk: Bool
+        persistToDisk: Bool,
+        registerSystemCommands: Bool = true
     ) -> StorePackBindResult {
         var commandIDs: [String] = []
-        for cap in manifest.capabilities ?? [] {
-            let scriptType: String = {
-                switch cap.type.lowercased() {
-                case "applescript": return "applescript"
-                case "jxa": return "jxa"
-                default: return "bash"
+        if registerSystemCommands {
+            for cap in manifest.capabilities ?? [] {
+                let scriptType: String = {
+                    switch cap.type.lowercased() {
+                    case "applescript": return "applescript"
+                    case "jxa": return "jxa"
+                    default: return "bash"
+                    }
+                }()
+                let script = cap.script ?? "echo \"\(cap.name)\""
+                let existing = SystemCommandsRegistry.shared.commands.first {
+                    $0.name.caseInsensitiveCompare(cap.name) == .orderedSame
                 }
-            }()
-            let script = cap.script ?? "echo \"\(cap.name)\""
-            let existing = SystemCommandsRegistry.shared.commands.first {
-                $0.name.caseInsensitiveCompare(cap.name) == .orderedSame
-            }
-            if let existing {
-                commandIDs.append(existing.id.uuidString)
-            } else {
-                let cmd = SystemCommand(
-                    name: cap.name,
-                    icon: manifest.icon,
-                    keywords: cap.triggers.isEmpty ? [cap.name.lowercased()] : cap.triggers,
-                    scriptType: scriptType,
-                    script: script,
-                    description: cap.intent,
-                    enabled: true)
-                if persistToDisk {
-                    SystemCommandsRegistry.shared.add(cmd)
-                    SystemCommandsRegistryObserver.shared.reload()
-                    CapabilityRegistry.shared.refreshGlobalCommands()
+                if let existing {
+                    commandIDs.append(existing.id.uuidString)
+                } else {
+                    let cmd = SystemCommand(
+                        name: cap.name,
+                        icon: manifest.icon,
+                        keywords: cap.triggers.isEmpty ? [cap.name.lowercased()] : cap.triggers,
+                        scriptType: scriptType,
+                        script: script,
+                        description: cap.intent,
+                        enabled: true)
+                    if persistToDisk {
+                        SystemCommandsRegistry.shared.add(cmd)
+                        SystemCommandsRegistryObserver.shared.reload()
+                        CapabilityRegistry.shared.refreshGlobalCommands()
+                    }
+                    commandIDs.append(cmd.id.uuidString)
                 }
-                commandIDs.append(cmd.id.uuidString)
             }
         }
 
@@ -337,7 +344,8 @@ enum StorePackInstaller {
         let baseResult = try install(
             manifest,
             persistToDisk: persistToDisk,
-            writeToLegacyStorePacks: false)
+            writeToLegacyStorePacks: false,
+            registerGlobalSystemCommands: !pack.metadata.isV3)
         var boundCapIDs = baseResult.registeredCapabilityIDs
         var seenCapIDs = Set(boundCapIDs)
 

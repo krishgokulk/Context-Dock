@@ -1064,65 +1064,17 @@ struct DoraxPackV3SheetView: View {
                     .padding(6)
                 }
 
-                GroupBox("Pack Folder & Upgrades") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Button("Reveal Pack Folder in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([pack.folderURL])
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-
-                            Button("Hot-Reload Pack") {
-                                registry.reload()
-                                activeOverlay = nil
-                                showBanner("Reloaded \(pack.name)")
-                                Task { await refresh(force: true) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-
-                            Button("Upgrade with AI") {
-                                prompt.openExtensionStudio(
-                                    target: .appPlugin,
-                                    upgradePackID: pack.id,
-                                    packStudioMode: .upgradeExisting)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-
-                        let backups = DoraxPackV3EditorService.shared.listBackups(for: pack.id)
-                        let isOverride = DoraxPackV3EditorService.shared.isUserOverride(packID: pack.id)
-                        if !backups.isEmpty || isOverride {
-                            HStack(spacing: 8) {
-                                if !backups.isEmpty {
-                                    Button("Rollback Last Upgrade (\(backups.count))") {
-                                        if let _ = try? DoraxPackV3EditorService.shared.rollback(packID: pack.id) {
-                                            activeOverlay = nil
-                                            showBanner("Rolled back \(pack.name)")
-                                            Task { await refresh(force: true) }
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                                if isOverride && DoraxPackV3EditorService.shared.hasShippedDefault(packID: pack.id) {
-                                    Button("Reset to Shipped Default") {
-                                        if let _ = try? DoraxPackV3EditorService.shared.resetToDefault(packID: pack.id) {
-                                            activeOverlay = nil
-                                            showBanner("Reset \(pack.name) to shipped default")
-                                            Task { await refresh(force: true) }
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-                    }
-                    .padding(6)
-                }
+                DoraxPackManagementBox(
+                    pack: pack,
+                    command: command,
+                    registry: registry,
+                    prompt: prompt,
+                    onReloaded: { msg in
+                        showBanner(msg)
+                        Task { await refresh(force: true) }
+                    },
+                    onDismissOverlay: { activeOverlay = nil },
+                    onError: { showBanner($0) })
             }
             .padding(14)
         }

@@ -329,8 +329,43 @@ final class SystemCommandsRegistry {
         // Superseded by Packs/ProcessMonitor.doraxpack (.doraxpack v3)
         "Process Monitor",
         "Listening Ports",
-        // Superseded by Packs/CurrencyConverter.doraxpack (.doraxpack v3)
+        "List Top Processes",
+        "List Listening TCP Ports",
+        "Top Memory",
+        "Top CPU",
+        // Superseded by Packs/SystemUtilities.doraxpack (.doraxpack v3)
+        "Appearance",
+        "Wi-Fi",
+        "Bluetooth",
+        "Volume",
+        "Keep Awake",
+        "Stop Keep Awake",
+        "Sleep",
+        "Empty Trash",
+        "Restart...",
+        "Shut Down...",
+        "Toggle Dark Mode",
+        // Superseded by Packs/FocusShortcuts.doraxpack (.doraxpack v3)
+        "Focus",
+        "List Installed Apple Shortcuts",
+        // Superseded by Packs/CurrencyConverter.doraxpack & other v3 packs
         "Currency Converter",
+        "Convert Currency",
+        "List Open Pull Requests",
+        "List My Pull Requests",
+        "List My Repositories",
+        "List Installed Brew Packages",
+        "Search YouTube",
+        "Play YouTube Video in IINA",
+        "Proofread Text (On-Device)",
+        "Summarize Text (On-Device)",
+        "Next Wallpaper",
+        "Safari",
+        "Mole",
+        // Legacy disabled starter samples superseded by Create Extension Studio & v3 packs
+        "Scratch Notes",
+        "Open in Chrome",
+        "Ask AI",
     ]
 
     private static func isRetiredCustomSample(_ command: SystemCommand) -> Bool {
@@ -377,7 +412,11 @@ final class SystemCommandsRegistry {
                 return defaultSleep
             }
         let existingNames = Set(migrated.map(\.name))
-        migrated.append(contentsOf: defaults.filter { !existingNames.contains($0.name) && !isRetiredCustomSample($0) })
+        migrated.append(contentsOf: defaults.filter {
+            !existingNames.contains($0.name)
+                && !legacyDefaultNames.contains($0.name)
+                && !isRetiredCustomSample($0)
+        })
         return migrated
     }
 
