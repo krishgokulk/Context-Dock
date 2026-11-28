@@ -1150,4 +1150,76 @@ struct DoraxPackV3Tests {
         #expect(!liveNames.contains("Process Monitor"))
         #expect(!liveNames.contains("List Listening TCP Ports"))
     }
+
+    @Test("SystemUtilities exposes direct instant system commands, Notch transient toast activates Aura, and Studio saves across all creation targets")
+    func directSystemCommandsNotchToastAndStudioSaveModes() throws {
+        let packsDir = try #require(FirstPartyPacks.resolvePacksDirectory())
+        let sysUtils = try DoraxPackV2Loader.load(from: packsDir.appendingPathComponent("SystemUtilities.doraxpack"))
+        #expect(DoraxPackV3Validator.validate(sysUtils).filter { $0.severity == .error }.isEmpty)
+
+        let cmdByID = Dictionary(uniqueKeysWithValues: (sysUtils.metadata.commands ?? []).map { ($0.id, $0) })
+        for directID in ["lock-screen", "sleep-mac", "empty-trash", "restart-mac", "shutdown-mac", "toggle-dark-mode"] {
+            let cmd = try #require(cmdByID[directID], "Missing direct command \(directID)")
+            #expect(cmd.mode == .instant)
+            #expect(cmd.script == "commands/quick-system.py")
+            if ["sleep-mac", "empty-trash", "restart-mac", "shutdown-mac"].contains(directID) {
+                #expect(cmd.safety == "destructive")
+            } else {
+                #expect(cmd.safety == "read")
+            }
+        }
+        let quickScript = try String(contentsOf: packsDir.appendingPathComponent("SystemUtilities.doraxpack/commands/quick-system.py"), encoding: .utf8)
+        #expect(quickScript.contains(#"ctx.get("commandId")"#))
+
+        // DynamicNotchState transient toast populates activePackActivity and pulses DockAuraEngine
+        DynamicNotchState.shared.publishTransientToast(
+            packID: "system-utilities",
+            packName: "System & Hardware",
+            title: "Trash Emptied",
+            subtitle: "All items removed",
+            icon: "trash.fill",
+            tintHex: "#34D399",
+            durationSeconds: 1.5)
+        #expect(DynamicNotchState.shared.activePackActivity?.payload.wingText == "Trash Emptied")
+        #expect(DockAuraEngine.shared.activeColor != nil)
+        DynamicNotchState.shared.dismissPackActivity()
+        DockAuraEngine.shared.deactivate(id: "toast:system-utilities")
+
+        // Verify ExtensionStudioModel saveCurrent() across Global, Selection, and Notch targets
+        let studio = ExtensionStudioModel.shared
+        let uniqueSuffix = UUID().uuidString.prefix(6)
+
+        studio.target = .globalCommand
+        studio.name = "Test Global \(uniqueSuffix)"
+        studio.globalCommandMode = "bash"
+        studio.scriptOrPrompt = "echo ok"
+        #expect(studio.saveCurrent())
+        let savedGlobal = SystemCommandsRegistry.shared.commands.first { $0.name == studio.name }
+        #expect(savedGlobal != nil)
+        if let savedGlobal { SystemCommandsRegistry.shared.remove(savedGlobal) }
+
+        studio.target = .selectionExtension
+        studio.name = "Test Selection \(uniqueSuffix)"
+        studio.selectionExecKind = .aiPrompt
+        studio.scriptOrPrompt = "Summarize {selection}"
+        #expect(studio.saveCurrent())
+        let savedSel = UserSelectionExtensionStore.shared.items.first { $0.name == studio.name }
+        #expect(savedSel != nil)
+        if let savedSel { UserSelectionExtensionStore.shared.remove(id: savedSel.id) }
+
+        studio.target = .notchAction
+        studio.name = "Test Notch \(uniqueSuffix)"
+        studio.globalCommandMode = "url"
+        studio.scriptOrPrompt = "https://example.com"
+        studio.targetBundleID = "com.test.studio-\(uniqueSuffix)"
+        #expect(studio.saveCurrent())
+        let savedNotch = SystemCommandsRegistry.shared.commands.first { $0.name == studio.name }
+        #expect(savedNotch != nil)
+        let capID = savedNotch.map { "user.syscmd.\($0.id.uuidString)" }
+        if let capID {
+            #expect(NotchPinStore.shared.isPinned(capID, for: studio.targetBundleID))
+            NotchPinStore.shared.toggle(capID, for: studio.targetBundleID)
+        }
+        if let savedNotch { SystemCommandsRegistry.shared.remove(savedNotch) }
+    }
 }

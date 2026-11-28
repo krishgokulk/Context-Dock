@@ -63,6 +63,8 @@ final class DynamicNotchState: ObservableObject {
     @Published var packReviewError: String? = nil
 
     func publishPackActivity(_ activity: DoraxNotchLiveActivity) {
+        transientActivityTask?.cancel()
+        transientActivityToken = nil
         activePackActivity = activity
         if let secs = activity.payload.timerSeconds, secs > 0 {
             startTimer(seconds: secs, label: activity.payload.title ?? activity.packName)
@@ -77,7 +79,45 @@ final class DynamicNotchState: ObservableObject {
         }
     }
 
+    func publishTransientToast(
+        packID: String,
+        packName: String,
+        title: String,
+        subtitle: String? = nil,
+        icon: String = "checkmark.circle.fill",
+        tintHex: String = "#34D399",
+        durationSeconds: TimeInterval = 3.0
+    ) {
+        transientActivityTask?.cancel()
+        let token = UUID()
+        transientActivityToken = token
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wing = cleanTitle.count > 22 ? String(cleanTitle.prefix(20)) + "…" : cleanTitle
+        let payload = DoraxNotchPayload(
+            wingText: wing.isEmpty ? packName : wing,
+            wingIcon: icon,
+            wingColorHex: tintHex,
+            title: cleanTitle.isEmpty ? packName : cleanTitle,
+            subtitle: subtitle)
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
+            activePackActivity = DoraxNotchLiveActivity(packID: packID, packName: packName, payload: payload)
+        }
+        DockAuraEngine.shared.activate(
+            id: "toast:\(packID)",
+            appearance: DoraxPackAppearance(tint: tintHex, glow: .pulse),
+            priority: 90,
+            ttlSeconds: durationSeconds)
+
+        transientActivityTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0.5, durationSeconds) * 1_000_000_000))
+            guard let self, !Task.isCancelled, self.transientActivityToken == token else { return }
+            self.dismissPackActivity()
+        }
+    }
+
     func dismissPackActivity() {
+        transientActivityTask?.cancel()
+        transientActivityToken = nil
         if let id = activePackActivity?.packID {
             DockAuraEngine.shared.deactivate(id: "notch:\(id)")
         }
@@ -106,6 +146,8 @@ final class DynamicNotchState: ObservableObject {
     private var accumulatedScroll: CGFloat = 0
     private var isTrackingScroll = false
     private var timerTask: Task<Void, Never>? = nil
+    private var transientActivityTask: Task<Void, Never>? = nil
+    private var transientActivityToken: UUID? = nil
 
     var pageCount: Int {
         3 + (activeTimer != nil ? 1 : 0) + (activePackActivity != nil ? 1 : 0)

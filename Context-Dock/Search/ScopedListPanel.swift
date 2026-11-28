@@ -99,8 +99,8 @@ final class ScopedListKeyBridge {
     var openActions: (@MainActor () -> Bool)?
     /// Closes an inline overlay / Actions drawer inside the active sheet (`Esc` / `←`).
     var closeOverlay: (@MainActor () -> Bool)?
-    /// Cycles header filter/mode dropdown options when pressing `→` on an empty input field.
-    var cycleHeaderMode: (@MainActor () -> Bool)?
+    /// Steps header filter/mode dropdown options on `→` (`1`) or `←` (`-1`) from an empty input field.
+    var stepHeaderMode: (@MainActor (_ delta: Int) -> Bool)?
     /// Whether the arrows chose the row. The list selects its first row by itself, and a
     /// command's Return can be destructive (Listening Ports kills the process): Return in
     /// the field runs only a row the user picked, and asks the assistant otherwise.

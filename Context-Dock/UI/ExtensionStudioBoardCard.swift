@@ -450,14 +450,61 @@ final class ExtensionStudioModel: ObservableObject {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         switch target {
         case .appPlugin:
+            if let data = pluginCreator.text.data(using: .utf8),
+               let v3Meta = try? JSONDecoder().decode(DoraxPackMetadata.self, from: data),
+               v3Meta.isV3
+            {
+                do {
+                    let fm = FileManager.default
+                    let packDir = DoraxPackV3Registry.userV3Directory
+                        .appendingPathComponent("\(v3Meta.id).doraxpack", isDirectory: true)
+                    try fm.createDirectory(at: packDir, withIntermediateDirectories: true)
+                    try Data(DoraxPackV3AIArchitect.encodeMetadata(v3Meta).utf8)
+                        .write(to: packDir.appendingPathComponent("pack.json"), options: .atomic)
+                    for cmd in v3Meta.commands ?? [] {
+                        if let rel = cmd.script, let safeRel = DoraxPackV3EditorService.validateRelativePath(rel) {
+                            let scriptURL = packDir.appendingPathComponent(safeRel)
+                            if !fm.fileExists(atPath: scriptURL.path) {
+                                try fm.createDirectory(at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                                let stub = "#!/usr/bin/env python3\nimport json, sys\n_ = sys.stdin.read()\nprint(json.dumps({'detail': {'markdown': '### \(cmd.title)\\n\\nReady to run.'}}))\n"
+                                try Data(stub.utf8).write(to: scriptURL, options: .atomic)
+                                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+                            }
+                        }
+                    }
+                    let installed = try DoraxPackV3Registry.shared.installPackFolder(from: packDir)
+                    statusMessage = "✓ Installed \(installed.name) (.doraxpack v3)"
+                    DynamicNotchState.shared.publishTransientToast(
+                        packID: installed.id,
+                        packName: installed.name,
+                        title: "Installed \(installed.name)",
+                        subtitle: ".doraxpack v3 ready in Global & App scopes",
+                        icon: installed.metadata.icon,
+                        tintHex: installed.metadata.appearance?.tint ?? "#34D399",
+                        durationSeconds: 3.0)
+                    return true
+                } catch {
+                    statusMessage = "Save failed: \(error.localizedDescription)"
+                    return false
+                }
+            }
             if (try? pluginCreator.save()) == true {
+                let packName = pluginCreator.previewManifest?.name ?? (cleanName.isEmpty ? "App Plugin" : cleanName)
                 if pinToNotchOnSave, let manifest = pluginCreator.previewManifest,
                     let capID = manifest.capabilities?.first?.id
                 {
                     let bid = manifest.targetApp?.bundleId ?? targetBundleID
                     if !bid.isEmpty { NotchPinStore.shared.toggle(capID, for: bid) }
                 }
-                statusMessage = "✓ Installed App Plugin (.doraxpack v2)"
+                statusMessage = "✓ Installed \(packName)"
+                DynamicNotchState.shared.publishTransientToast(
+                    packID: "studio-plugin",
+                    packName: packName,
+                    title: "Installed \(packName)",
+                    subtitle: "Ready in App Plugin & Global scopes",
+                    icon: pluginCreator.previewManifest?.icon ?? "puzzlepiece.extension.fill",
+                    tintHex: "#34D399",
+                    durationSeconds: 3.0)
                 return true
             }
             statusMessage = "Fix manifest diagnostics before saving"
@@ -472,9 +519,10 @@ final class ExtensionStudioModel: ObservableObject {
                 .split(whereSeparator: { $0 == "," || $0 == " " })
                 .map { String($0).replacingOccurrences(of: ".", with: "").lowercased() }
                 .filter { !$0.isEmpty }
+            let resolvedIcon = icon.isEmpty ? "sparkles" : icon
             let item = UserSelectionExtensionItem(
                 name: cleanName,
-                icon: icon.isEmpty ? "sparkles" : icon,
+                icon: resolvedIcon,
                 description: "Custom Selection Action",
                 fileExtensions: exts,
                 executionKind: selectionExecKind,
@@ -483,12 +531,30 @@ final class ExtensionStudioModel: ObservableObject {
             )
             UserSelectionExtensionStore.shared.add(item)
             statusMessage = "✓ Saved “\(cleanName)” to Selection Scope!"
+            DynamicNotchState.shared.publishTransientToast(
+                packID: "studio-selection",
+                packName: "Selection Action",
+                title: "Saved \(cleanName)",
+                subtitle: "Available whenever text or files are selected",
+                icon: resolvedIcon,
+                tintHex: "#14B8A6",
+                durationSeconds: 3.0)
             return true
 
         case .globalCommand, .notchAction:
             if target == .notchAction, pluginCreator.previewManifest != nil, cleanName.isEmpty {
                 let ok = (try? pluginCreator.save()) == true
                 statusMessage = ok ? "✓ Installed Notch Plugin" : "Could not save Notch Plugin"
+                if ok {
+                    DynamicNotchState.shared.publishTransientToast(
+                        packID: "studio-notch",
+                        packName: "Notch Action",
+                        title: "Installed Notch Plugin",
+                        subtitle: "Pinned to Dynamic Notch",
+                        icon: "menubar.dock.rectangle",
+                        tintHex: "#8B5CF6",
+                        durationSeconds: 3.0)
+                }
                 return ok
             }
             guard !cleanName.isEmpty, !scriptOrPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -510,17 +576,19 @@ final class ExtensionStudioModel: ObservableObject {
                 default: return "bash"
                 }
             }()
+            let resolvedIcon = icon.isEmpty ? "bolt.fill" : icon
             let cmd = SystemCommand(
                 name: cleanName,
-                icon: icon.isEmpty ? "bolt.fill" : icon,
+                icon: resolvedIcon,
                 keywords: kws.isEmpty ? [cleanName.lowercased()] : kws,
                 scriptType: scriptType,
                 script: scriptOrPrompt,
                 description: target == .notchAction ? "Notch & Global Action" : "Custom Global Command"
             )
             SystemCommandsRegistry.shared.add(cmd)
+            SystemCommandsRegistryObserver.shared.reload()
 
-            // Register in CapabilityRegistry so it can ALSO be pinned directly to Dynamic Notch!
+            // Register in CapabilityRegistry so it can ALSO run directly from Dynamic Notch!
             let capID = "user.syscmd.\(cmd.id.uuidString)"
             let targetBid = targetBundleID.isEmpty ? "global" : targetBundleID
             let capability = AICapability(
@@ -531,15 +599,36 @@ final class ExtensionStudioModel: ObservableObject {
                 riskLevel: .low,
                 runsWithoutAdapter: true,
                 executor: { _ in
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                    process.arguments = ["-lc", cmd.script]
-                    process.standardInput = FileHandle.nullDevice
-                    try? process.run()
-                    return AICapabilityExecutionResult(success: true, output: "Ran \(cleanName)")
+                    if scriptType == "url" {
+                        let rawURL = cmd.script.replacingOccurrences(of: "{query}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let u = URL(string: rawURL) {
+                            await MainActor.run { NSWorkspace.shared.open(u) }
+                        }
+                        return AICapabilityExecutionResult(success: true, output: "Opened \(cleanName)")
+                    } else if scriptType == "aiPrompt" {
+                        let reply = (try? await PanelAssistant.ask(
+                            cmd.script,
+                            title: cleanName,
+                            subtitle: "Notch Action",
+                            extraPrompt: "Be concise.",
+                            history: [],
+                            provider: AppSettings.shared.selectedAIProvider
+                        )) ?? "Completed \(cleanName)"
+                        return AICapabilityExecutionResult(success: true, output: String(reply.prefix(240)))
+                    } else {
+                        let process = Process()
+                        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                        process.arguments = ["-lc", cmd.script]
+                        process.standardInput = FileHandle.nullDevice
+                        try? process.run()
+                        return AICapabilityExecutionResult(success: true, output: "Ran \(cleanName)")
+                    }
                 }
             )
             CapabilityRegistry.shared.register(capability)
+            CapabilityRegistry.shared.refreshGlobalCommands()
+            NotificationCenter.default.post(name: .globalSearchIndexRebuildRequested, object: nil)
+
             if target == .notchAction || pinToNotchOnSave {
                 let pinBundle = targetBundleID.isEmpty
                     ? (AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? "com.apple.finder")
@@ -551,6 +640,14 @@ final class ExtensionStudioModel: ObservableObject {
             statusMessage = target == .notchAction
                 ? "✓ Saved & Pinned “\(cleanName)” to Dynamic Notch!"
                 : "✓ Saved “\(cleanName)” to Global Commands!"
+            DynamicNotchState.shared.publishTransientToast(
+                packID: target == .notchAction ? "studio-notch" : "studio-global",
+                packName: target == .notchAction ? "Notch Action" : "Global Command",
+                title: "Saved \(cleanName)",
+                subtitle: target == .notchAction ? "Pinned to Dynamic Notch" : "Ready in Global Search",
+                icon: resolvedIcon,
+                tintHex: target == .notchAction ? "#8B5CF6" : "#34D399",
+                durationSeconds: 3.0)
             return true
         }
     }
@@ -634,15 +731,25 @@ struct ExtensionStudioBoardCard: View {
         }
         .onAppear {
             syncHeaderBar()
-            ScopedListKeyBridge.shared.cycleHeaderMode = {
+            ScopedListKeyBridge.shared.stepHeaderMode = { delta in
                 let all = ExtensionStudioTarget.allCases
                 guard let idx = all.firstIndex(of: studio.target) else { return false }
-                let next = all[(idx + 1) % all.count]
-                withAnimation(FluidMotion.selectionGlide) {
-                    studio.target = next
+                if delta > 0 {
+                    let next = all[(idx + 1) % all.count]
+                    withAnimation(FluidMotion.selectionGlide) {
+                        studio.target = next
+                    }
+                    syncHeaderBar()
+                    return true
+                } else {
+                    guard idx > 0 else { return false }
+                    let prev = all[idx - 1]
+                    withAnimation(FluidMotion.selectionGlide) {
+                        studio.target = prev
+                    }
+                    syncHeaderBar()
+                    return true
                 }
-                syncHeaderBar()
-                return true
             }
             ScopedListKeyBridge.shared.run = {
                 let typed = prompt.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -652,14 +759,14 @@ struct ExtensionStudioBoardCard: View {
                     Task { await studio.generateWithAI(prompt: req) }
                     return true
                 }
-                return studio.saveCurrent()
+                return triggerPrimarySave()
             }
         }
         .onChange(of: studio.target) { _, _ in syncHeaderBar() }
         .onChange(of: studio.isGeneratingAI) { _, _ in syncHeaderBar() }
         .onDisappear {
             ScopedListKeyBridge.shared.run = nil
-            ScopedListKeyBridge.shared.cycleHeaderMode = nil
+            ScopedListKeyBridge.shared.stepHeaderMode = nil
             ExtensionHeaderBarState.shared.reset(ifMatching: "studio")
         }
     }
@@ -933,9 +1040,15 @@ struct ExtensionStudioBoardCard: View {
                                 .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
                         )
 
-                    Toggle("Also pin to Dynamic Island Notch for frontmost app", isOn: $studio.pinToNotchOnSave)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 11.5))
+                    if studio.target == .notchAction {
+                        Label("Pinned automatically to Dynamic Notch for \(activeFrontmostContextLabel)", systemImage: "menubar.dock.rectangle")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.purple)
+                    } else {
+                        Toggle("Also pin to Dynamic Island Notch for frontmost app", isOn: $studio.pinToNotchOnSave)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 11.5))
+                    }
                 }
             }
             .padding(14)
@@ -1291,9 +1404,9 @@ struct ExtensionStudioBoardCard: View {
 
                 BoardFooter.pill {
                     Button {
-                        _ = studio.saveCurrent()
+                        _ = triggerPrimarySave()
                     } label: {
-                        BoardFooter.action("Save & Install", keys: ["⌘", "↩"])
+                        BoardFooter.action(primarySaveTitle, keys: ["⌘", "↩"])
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -1304,5 +1417,110 @@ struct ExtensionStudioBoardCard: View {
         }
         .frame(height: BoardFooter.height)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+    }
+
+    private var primarySaveTitle: String {
+        if studio.target == .appPlugin {
+            if studio.packStudioMode == .upgradeExisting, upgradePatch != nil { return "Apply Upgrade" }
+            if studio.packStudioMode == .importRaycast, let imp = raycastImportResult {
+                return imp.patch != nil ? "Merge & Install" : "Install Extension"
+            }
+            if studio.packStudioMode == .createNew, v3Synthesis != nil { return "Install Pack (v3)" }
+        }
+        if studio.target == .notchAction { return "Save & Pin to Notch" }
+        return "Save & Install"
+    }
+
+    @discardableResult
+    private func triggerPrimarySave() -> Bool {
+        if studio.target == .appPlugin {
+            switch studio.packStudioMode {
+            case .upgradeExisting:
+                if let patch = upgradePatch, let base = v3Registry.pack(id: patch.packID) {
+                    do {
+                        let updated = try DoraxPackV3EditorService.shared.applyPatch(patch, to: base)
+                        studio.statusMessage = "✓ Upgraded \(updated.name) to v\(updated.metadata.version)"
+                        upgradePatch = nil
+                        DynamicNotchState.shared.publishTransientToast(
+                            packID: updated.id,
+                            packName: updated.name,
+                            title: "Upgraded \(updated.name)",
+                            subtitle: "v\(updated.metadata.version) active",
+                            icon: updated.metadata.icon,
+                            tintHex: updated.metadata.appearance?.tint ?? "#34D399",
+                            durationSeconds: 3.0)
+                        return true
+                    } catch {
+                        studio.statusMessage = "Upgrade failed: \(error.localizedDescription)"
+                        return false
+                    }
+                }
+            case .importRaycast:
+                if let imported = raycastImportResult {
+                    if let patch = imported.patch, let base = v3Registry.pack(id: patch.packID) {
+                        do {
+                            let merged = try DoraxPackV3EditorService.shared.applyPatch(patch, to: base)
+                            studio.statusMessage = "✓ Merged into \(merged.name)"
+                            studio.raycastMergeTargetPackID = ""
+                            studio.raycastSourceText = ""
+                            raycastImportResult = nil
+                            DynamicNotchState.shared.publishTransientToast(
+                                packID: merged.id,
+                                packName: merged.name,
+                                title: "Merged into \(merged.name)",
+                                subtitle: "Ready in Global & App scopes",
+                                icon: merged.metadata.icon,
+                                tintHex: merged.metadata.appearance?.tint ?? "#34D399",
+                                durationSeconds: 3.0)
+                            return true
+                        } catch {
+                            studio.statusMessage = "Merge failed: \(error.localizedDescription)"
+                            return false
+                        }
+                    } else if let syn = imported.synthesis {
+                        do {
+                            let installed = try DoraxPackV3Builder.approveAndInstall(syn)
+                            studio.statusMessage = "✓ Installed \(installed.name) (.doraxpack v3)"
+                            studio.raycastMergeTargetPackID = ""
+                            studio.raycastSourceText = ""
+                            raycastImportResult = nil
+                            DynamicNotchState.shared.publishTransientToast(
+                                packID: installed.id,
+                                packName: installed.name,
+                                title: "Installed \(installed.name)",
+                                subtitle: ".doraxpack v3 ready",
+                                icon: installed.metadata.icon,
+                                tintHex: installed.metadata.appearance?.tint ?? "#34D399",
+                                durationSeconds: 3.0)
+                            return true
+                        } catch {
+                            studio.statusMessage = "Install failed: \(error.localizedDescription)"
+                            return false
+                        }
+                    }
+                }
+            case .createNew:
+                if let syn = v3Synthesis {
+                    do {
+                        let installed = try DoraxPackV3Builder.approveAndInstall(syn)
+                        studio.statusMessage = "✓ Installed \(installed.name) (.doraxpack v3)"
+                        v3Synthesis = nil
+                        DynamicNotchState.shared.publishTransientToast(
+                            packID: installed.id,
+                            packName: installed.name,
+                            title: "Installed \(installed.name)",
+                            subtitle: ".doraxpack v3 ready",
+                            icon: installed.metadata.icon,
+                            tintHex: installed.metadata.appearance?.tint ?? "#34D399",
+                            durationSeconds: 3.0)
+                        return true
+                    } catch {
+                        studio.statusMessage = "Install failed: \(error.localizedDescription)"
+                        return false
+                    }
+                }
+            }
+        }
+        return studio.saveCurrent()
     }
 }

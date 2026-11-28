@@ -72,7 +72,7 @@ extension AppChatPromptModel {
                 name: bound.command.title,
                 icon: bound.command.icon,
                 badge: bound.pack.name,
-                execute: { [weak self] in self?.scopeIntoV3Command(bound) }
+                execute: { [weak self] in self?.invokeV3Command(bound) }
             )
             pill.sourceBundleId = bundleID
             pill.sourceAppName = bound.pack.name
@@ -314,7 +314,7 @@ extension AppChatPromptModel {
                 name: bound.command.title,
                 icon: bound.command.icon,
                 badge: bound.pack.name,
-                execute: { [weak self] in self?.scopeIntoV3Command(bound) }
+                execute: { [weak self] in self?.invokeV3Command(bound) }
             )
             pill.resultSection = bound.sectionTitle
             pill.rankingKind = "doraxPackV3"

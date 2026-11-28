@@ -22,7 +22,6 @@ struct DoraxPackV3SheetView: View {
     @State private var pendingDestructiveAction: (action: DoraxItemAction, item: DoraxCommandItem?)? = nil
     @State private var activeOverlay: SheetOverlay? = nil
     @State private var formValues: [String: String] = [:]
-    @State private var statusBanner: String? = nil
 
     private enum SheetOverlay: Equatable {
         case logs
@@ -319,16 +318,6 @@ struct DoraxPackV3SheetView: View {
         VStack(spacing: 0) {
             if let error = cacheEntry.lastError {
                 inlineErrorBar(error)
-            }
-            if let banner = statusBanner {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text(banner).font(.system(size: 11)).lineLimit(1)
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .background(Color.green.opacity(0.12))
             }
 
             if !missingRequiredPreferences.isEmpty {
@@ -1238,16 +1227,19 @@ struct DoraxPackV3SheetView: View {
                 }
             }
         case .failure(let err):
-            showBanner("Failed: \(err.message)")
+            showBanner("Failed: \(err.message)", isError: true)
         }
     }
 
-    private func showBanner(_ text: String) {
-        statusBanner = text
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            if statusBanner == text { statusBanner = nil }
-        }
+    private func showBanner(_ text: String, isError: Bool = false) {
+        DynamicNotchState.shared.publishTransientToast(
+            packID: pack.id,
+            packName: pack.name,
+            title: text,
+            subtitle: command.title,
+            icon: isError ? "exclamationmark.triangle.fill" : command.icon,
+            tintHex: isError ? "#EF4444" : (effectiveAppearance?.tint ?? "#34D399"),
+            durationSeconds: 3.0)
     }
 
     private func syncHeaderBar() {

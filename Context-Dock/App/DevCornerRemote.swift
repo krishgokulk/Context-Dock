@@ -112,8 +112,10 @@ enum DevCornerRemote {
                 controller.prompt.openExtensionStudio(
                     target: .appPlugin,
                     packStudioMode: .importRaycast)
-            } else {
+            } else if argument == "plugin" {
                 controller.prompt.openExtensionStudio(target: .appPlugin)
+            } else {
+                controller.prompt.openExtensionStudio(target: .globalCommand)
             }
             controller.refresh()
         case "notch":

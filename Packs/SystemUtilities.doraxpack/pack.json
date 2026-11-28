@@ -91,17 +91,89 @@
       "timeout_seconds": 6,
       "cache_ttl_seconds": 15,
       "safety": "read"
+    },
+    {
+      "id": "lock-screen",
+      "title": "Lock Screen",
+      "subtitle": "Lock your display immediately",
+      "icon": "lock.fill",
+      "mode": "instant",
+      "keywords": ["lock", "lock screen", "screen lock", "sleep display"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "sleep-mac",
+      "title": "Sleep Mac",
+      "subtitle": "Put your Mac to sleep (requires confirmation)",
+      "icon": "moon.fill",
+      "mode": "instant",
+      "keywords": ["sleep", "sleep mac", "standby"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "destructive"
+    },
+    {
+      "id": "empty-trash",
+      "title": "Empty Trash",
+      "subtitle": "Permanently delete all items in the Trash (requires confirmation)",
+      "icon": "trash.fill",
+      "mode": "instant",
+      "keywords": ["empty trash", "trash", "empty bin", "clear trash"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 15,
+      "cache_ttl_seconds": 0,
+      "safety": "destructive"
+    },
+    {
+      "id": "restart-mac",
+      "title": "Restart Mac",
+      "subtitle": "Restart this Mac safely (requires confirmation)",
+      "icon": "arrow.clockwise.circle.fill",
+      "mode": "instant",
+      "keywords": ["restart", "reboot", "restart mac"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "destructive"
+    },
+    {
+      "id": "shutdown-mac",
+      "title": "Shut Down Mac",
+      "subtitle": "Power off this Mac safely (requires confirmation)",
+      "icon": "power.circle.fill",
+      "mode": "instant",
+      "keywords": ["shutdown", "shut down", "power off", "turn off mac"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "destructive"
+    },
+    {
+      "id": "toggle-dark-mode",
+      "title": "Toggle Dark Mode",
+      "subtitle": "Switch immediately between macOS Dark and Light appearance",
+      "icon": "circle.lefthalf.filled",
+      "mode": "instant",
+      "keywords": ["toggle dark mode", "dark mode", "light mode", "switch theme", "appearance toggle"],
+      "script": "commands/quick-system.py",
+      "timeout_seconds": 5,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
     }
   ],
   "capabilities": [
     {
-      "id": "system.appearance.toggle",
-      "name": "Toggle Dark Mode",
-      "intent": "Toggle macOS Light and Dark appearance.",
-      "triggers": ["toggle dark mode", "dark mode", "light mode"],
-      "type": "applescript",
-      "script": "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode",
-      "safety": "write"
+      "id": "system.power.hardware",
+      "name": "Inspect System Power & Hardware",
+      "intent": "Query battery status, Wi-Fi, Bluetooth, or toggle Dark Mode when asked in AI chat.",
+      "triggers": ["hardware status", "battery status", "system utilities"],
+      "type": "aiPrompt",
+      "script": "Answer or invoke System & Hardware actions.",
+      "safety": "read"
     }
   ]
 }

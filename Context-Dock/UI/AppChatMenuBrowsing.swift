@@ -1051,6 +1051,63 @@ extension AppChatPromptModel {
             || scopedV3Command != nil
     }
 
+    /// Executes a `.doraxpack` v3 command: `.instant` runs headlessly in 1 step with Notch + Dock Aura feedback,
+    /// while `.list`, `.grid`, `.detail`, `.form`, `.notch`, `.cli`, and `.ai` open inside the unified 680 × 440 Result Sheet.
+    func invokeV3Command(_ bound: DoraxBoundCommand) {
+        if bound.command.mode == .instant {
+            if bound.command.safety.lowercased() == "destructive" {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "\(bound.command.title)?"
+                alert.informativeText = bound.command.subtitle.isEmpty
+                    ? "Confirm running \(bound.command.title)."
+                    : bound.command.subtitle
+                let confirmBtn = alert.addButton(withTitle: bound.command.title)
+                confirmBtn.hasDestructiveAction = true
+                alert.addButton(withTitle: "Cancel")
+                alert.window.level = .floating
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() != .alertFirstButtonReturn {
+                    return
+                }
+            }
+            let currentQuery = query
+            query = ""
+            updateGlobalTyping(for: "")
+            Task { @MainActor in
+                let result = await DoraxPackV3Runtime.shared.runCommand(
+                    bound.command,
+                    in: bound.pack,
+                    query: currentQuery,
+                    forceRefresh: true)
+                switch result {
+                case .success(let out):
+                    if out.toast == nil && out.notch == nil {
+                        DynamicNotchState.shared.publishTransientToast(
+                            packID: bound.pack.id,
+                            packName: bound.pack.name,
+                            title: "Done — \(bound.command.title)",
+                            subtitle: bound.pack.name,
+                            icon: bound.command.icon,
+                            tintHex: bound.effectiveAppearance?.tint ?? "#34D399",
+                            durationSeconds: 3.0)
+                    }
+                case .failure(let err):
+                    DynamicNotchState.shared.publishTransientToast(
+                        packID: bound.pack.id,
+                        packName: bound.pack.name,
+                        title: "Failed: \(err.message)",
+                        subtitle: bound.command.title,
+                        icon: "exclamationmark.triangle.fill",
+                        tintHex: "#EF4444",
+                        durationSeconds: 3.5)
+                }
+            }
+            return
+        }
+        scopeIntoV3Command(bound)
+    }
+
     /// Step into a `.doraxpack` v3 command inside the unified 680 × 440 Result Sheet.
     func scopeIntoV3Command(_ bound: DoraxBoundCommand) {
         scopedExtension = nil

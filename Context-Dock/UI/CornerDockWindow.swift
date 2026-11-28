@@ -2342,7 +2342,7 @@ final class CornerDockController: NSObject {
             chatPresentation.isVisible,
             prompt.showsExtensionPanel,
             prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            ScopedListKeyBridge.shared.cycleHeaderMode?() == true
+            ScopedListKeyBridge.shared.stepHeaderMode?(1) == true
         {
             return nil
         }
@@ -2371,6 +2371,20 @@ final class CornerDockController: NSObject {
               prompt.phase.showsInput,
               !ClipboardPanelController.shared.model.isKeyboardArmed
         else { return event }
+        if prompt.scopedV3Command != nil,
+           ScopedListKeyBridge.shared.closeOverlay?() == true
+        {
+            return nil
+        }
+        // ← inside Create Extension steps backwards through modes, then returns to Global Results.
+        // ← inside any other extension panel returns cleanly to Global Results (never jumping straight to General Chat).
+        if prompt.showsExtensionPanel,
+           prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            if ScopedListKeyBridge.shared.stepHeaderMode?(-1) == true { return nil }
+            _ = prompt.leaveScopeForGlobal()
+            return nil
+        }
         // ← while walking a folder climbs back up to the parent folder (or Global Context).
         if chatPresentation.mode != .general, prompt.isFinderFileSearch,
             prompt.leaveFinderFolder()

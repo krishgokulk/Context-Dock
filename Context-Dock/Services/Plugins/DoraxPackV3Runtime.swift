@@ -1007,18 +1007,40 @@ final class DoraxPackV3Runtime: ObservableObject {
         pack: DoraxPackV2,
         command: DoraxPackCommand
     ) {
+        let resolvedAppearance = output.appearance ?? command.appearance ?? pack.metadata.appearance
         if let notch = output.notch {
-            DynamicNotchState.shared.publishPackActivity(
-                DoraxNotchLiveActivity(packID: pack.id, packName: pack.name, payload: notch))
+            let hasTimer = (notch.timerSeconds ?? 0) > 0
+            if !hasTimer && command.mode == .instant {
+                DynamicNotchState.shared.publishTransientToast(
+                    packID: pack.id,
+                    packName: pack.name,
+                    title: notch.title ?? notch.wingText,
+                    subtitle: notch.subtitle,
+                    icon: notch.wingIcon ?? command.icon,
+                    tintHex: notch.wingColorHex ?? resolvedAppearance?.tint ?? "#34D399",
+                    durationSeconds: 3.2)
+            } else {
+                DynamicNotchState.shared.publishPackActivity(
+                    DoraxNotchLiveActivity(packID: pack.id, packName: pack.name, payload: notch))
+            }
+        } else if let toast = output.toast, !toast.isEmpty {
+            DynamicNotchState.shared.publishTransientToast(
+                packID: pack.id,
+                packName: pack.name,
+                title: toast,
+                subtitle: command.title,
+                icon: command.icon,
+                tintHex: resolvedAppearance?.tint ?? "#34D399",
+                durationSeconds: 3.0)
         }
-        if let appearance = output.appearance ?? command.appearance ?? pack.metadata.appearance,
+        if let appearance = resolvedAppearance,
            appearance.glow.normalized != .none
         {
             DockAuraEngine.shared.activate(
                 id: "pack-cmd:\(pack.id):\(command.id)",
                 appearance: appearance,
                 priority: 60,
-                ttlSeconds: command.mode == .notch ? nil : 12)
+                ttlSeconds: command.mode == .notch ? nil : 4)
         }
         if let toast = output.toast, !toast.isEmpty {
             ILauncherNotificationManager.shared.post(title: pack.name, body: toast, icon: pack.metadata.icon)

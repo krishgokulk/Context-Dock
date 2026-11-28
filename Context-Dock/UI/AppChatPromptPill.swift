@@ -758,6 +758,9 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
+        .doraxAuraRim(
+            cornerRadius: shellRadius,
+            appearance: sharesOneCard ? DoraxPackAppearance(tint: nil, glow: .none) : nil)
         // Only catch empty-background taps while resting as a dock so centred open fields
         // remain natively draggable by window background.
         .background {
@@ -893,6 +896,7 @@ struct AppChatPromptPill: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                .doraxAuraRim(cornerRadius: legacyRadius)
             }
         }
     }
@@ -1527,6 +1531,13 @@ struct AppChatPromptPill: View {
                         }
                         // The clipboard filter's caret, not the scope's.
                         if model.isClipboardScope { return .ignored }
+                        if model.showsExtensionPanel,
+                           model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        {
+                            if ScopedListKeyBridge.shared.stepHeaderMode?(-1) == true { return .handled }
+                            _ = model.leaveScopeForGlobal()
+                            return .handled
+                        }
                         // Inside a folder walk, ← steps back out to the parent folder (or Global Context).
                         if model.isFinderFileSearch, model.leaveFinderFolder() { return .handled }
                         // Left out of a scope entered from Global goes back to Global,
@@ -1547,7 +1558,7 @@ struct AppChatPromptPill: View {
                         }
                         if model.showsExtensionPanel,
                            model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                           ScopedListKeyBridge.shared.cycleHeaderMode?() == true
+                           ScopedListKeyBridge.shared.stepHeaderMode?(1) == true
                         {
                             return .handled
                         }
