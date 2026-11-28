@@ -202,6 +202,7 @@ struct NotificationsBoardCard: View {
     @ObservedObject private var manager = ILauncherNotificationManager.shared
     @ObservedObject private var usageStore = AIProviderUsageStore.shared
     @ObservedObject private var ledger = AITokenLedger.shared
+    @Environment(\.sharesOneCard) private var sharesOneCard
     @State private var focusedID: String?
 
     private var size: CGSize { NotificationsBoardMetrics.size }
@@ -221,8 +222,10 @@ struct NotificationsBoardCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            if !sharesOneCard {
+                header
+                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            }
             HStack(alignment: .top, spacing: 0) {
                 list
                     .frame(width: CornerBoardLayout.listWidth(
@@ -240,11 +243,29 @@ struct NotificationsBoardCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .modifier(BoardGlass())
         .onHover { _ in prompt.touch() }
-        .onAppear { registerKeys() }
+        .onAppear {
+            registerKeys()
+            syncHeaderBar()
+        }
+        .onChange(of: manager.notifications.count) { _, _ in
+            syncHeaderBar()
+        }
         .onDisappear {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "notifications")
         }
+    }
+
+    private func syncHeaderBar() {
+        ExtensionHeaderBarState.shared.update(
+            id: "notifications",
+            title: "Notifications",
+            icon: "bell.badge.fill",
+            tintHex: "#F59E0B",
+            count: manager.notifications.count,
+            placeholder: "Filter notifications & usage…",
+            onBack: { _ = prompt.leaveScopeForGlobal() })
     }
 
     /// The field keeps the keyboard for typing and forwards ↑/↓ and Return here, as it

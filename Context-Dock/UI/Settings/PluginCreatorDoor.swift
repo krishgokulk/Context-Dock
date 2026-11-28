@@ -19,9 +19,9 @@ struct PluginCreatorDoor: View {
                     Text("Describe it, see it, save it.")
                         .font(.system(size: 15, weight: .semibold))
                     Text("""
-                        A plugin is one JSON manifest. Say what you want — “a pomodoro timer \
-                        in the dock”, “my Sonos rooms with a volume slider” — and \
-                        \(settings.selectedAIProvider.displayName) drafts the manifest into \
+                        A `.doraxpack` v3 plugin is one manifest plus scripts. Say what you \
+                        want — “browse recent screenshots”, “monitor local dev servers” — and \
+                        \(settings.selectedAIProvider.displayName) drafts the pack into \
                         the editor, drawn live in every place it will appear. Change the text \
                         or describe the change; Save installs it, and it is searchable by name.
                         """)
@@ -75,12 +75,12 @@ struct PluginCreatorDoor: View {
     }
 
     private static let shapes: [(symbol: String, title: String, detail: String)] = [
-        ("bolt", "A one-shot", "No views, one action — Sleep. Choosing it runs it."),
-        ("rectangle.split.3x1", "A bar tile in the dock",
-         "One icon tall, up to four wide — Currency. Chips open a card above it."),
-        ("app", "An icon that is alive",
-         "Artwork and a waveform in one slot; hovering it opens its panel."),
-        ("rectangle.on.rectangle", "A panel or a window",
-         "Lists, grids, forms, a picker — the same tree at 380 or 640 points."),
+        ("bolt", "An instant action", "Runs directly from Global Context — Lock Screen, Toggle Dark Mode."),
+        ("menubar.dock.rectangle", "A Dynamic Notch wing",
+         "Compact live activity in the Notch — timers, now playing, status."),
+        ("app", "An app-scoped companion",
+         "Automatically surfaces when its target app or website is frontmost."),
+        ("rectangle.on.rectangle", "A 680 × 440 Result Sheet",
+         "Lists, thumbnail grids, forms, and inline Actions — unified inside one shell."),
     ]
 }

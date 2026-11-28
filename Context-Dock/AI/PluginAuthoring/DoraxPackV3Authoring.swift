@@ -550,6 +550,14 @@ enum DoraxPackV3AIArchitect {
             {
                 return await finalizeStagedPatch(parsed, basePack: pack)
             }
+            if let localReply = try? await DoraxAppleIntelligenceRunner.generateRaw(
+                systemInstruction: sysPrompt,
+                prompt: userMsg
+            ),
+               let parsed = parseAIStructuredUpgrade(localReply, basePack: pack, stagingRoot: stagingRoot)
+            {
+                return await finalizeStagedPatch(parsed, basePack: pack)
+            }
         }
 
         // Deterministic offline / fallback upgrade builder

@@ -83,8 +83,8 @@ enum SFSymbolResolver {
         if title.contains("app store") { return "app.badge" }
         if title.contains("recent") { return "clock.arrow.circlepath" }
         if title.contains("force quit") { return "xmark.octagon" }
-        if title.contains("sleep") { return "minus.circle" }
-        if title.contains("restart") { return "arrow.clockwise" }
+        if title.contains("sleep") { return "powersleep" }
+        if title.contains("restart") { return "arrow.clockwise.circle" }
         if title.contains("shut down") || title.contains("shutdown") { return "power" }
         if title.contains("lock screen") { return "lock" }
         if title.contains("log out") { return "person.crop.circle.badge.xmark" }
@@ -184,9 +184,16 @@ enum SFSymbolResolver {
 
     private static func genericMenuSymbol(title: String, path: String, parent: String) -> String {
         if title == "close" || title.hasPrefix("close ") { return "xmark" }
-        if title.contains("quit") { return "xmark.circle" }
+        if title.contains("quit") { return "power" }
         if title.contains("hide") { return "eye.slash" }
-        if title.contains("show all") { return "eye" }
+        if title.contains("show all") { return "macwindow.on.rectangle" }
+        if title.contains("settings") || title.contains("preferences") { return "gearshape" }
+        if title.hasPrefix("about ") || title == "about" { return "info.circle" }
+        if title.contains("help") { return "questionmark.circle" }
+        if title.contains("minimi") { return "minus.rectangle" }
+        if title.contains("sleep") { return "powersleep" }
+        if title.contains("restart") { return "arrow.clockwise.circle" }
+        if title.contains("new message") || title.contains("compose") { return "square.and.pencil" }
         if title.contains("recent") || path.contains("recent") { return "clock.arrow.circlepath" }
         if title.contains("history") || path.contains("history") { return "clock.arrow.circlepath" }
         if title.contains("search") || title.contains("find") { return "magnifyingglass" }

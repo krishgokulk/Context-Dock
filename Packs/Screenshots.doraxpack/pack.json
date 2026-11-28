@@ -1,0 +1,115 @@
+{
+  "format_version": 2,
+  "schema_version": 3,
+  "id": "screenshots",
+  "name": "Screenshots",
+  "version": "3.0.0",
+  "description": "Browse recent screenshots in a fast thumbnail gallery, capture area/window/screen, copy images, and extract text with OCR.",
+  "icon": "camera.viewfinder",
+  "scope": {
+    "surfaces": ["global", "notch"],
+    "apps": [],
+    "domains": []
+  },
+  "appearance": {
+    "tint": "#0EA5E9",
+    "glow": "soft"
+  },
+  "permissions": ["files:read", "cli:execute", "notch:activity"],
+  "keywords": ["screenshot", "screenshots", "capture", "screen capture", "snip", "ocr", "gallery"],
+  "preferences": [
+    {
+      "id": "screenshots_folder",
+      "title": "Screenshots Folder",
+      "type": "directory",
+      "required": false,
+      "placeholder": "Auto-detected from macOS & Context-Dock settings"
+    }
+  ],
+  "commands": [
+    {
+      "id": "browse-screenshots",
+      "title": "Browse Screenshots",
+      "subtitle": "Preview recent screenshots, copy image, extract text (OCR), or reveal in Finder",
+      "icon": "photo.on.rectangle.angled",
+      "mode": "grid",
+      "filter_options": ["All", "Today", "This Week", "PNG", "JPEG"],
+      "keywords": ["screenshots", "screenshot", "browse screenshots", "recent screenshots", "captures", "screen captures", "gallery"],
+      "script": "commands/browse-screenshots.py",
+      "timeout_seconds": 8,
+      "cache_ttl_seconds": 5,
+      "safety": "read"
+    },
+    {
+      "id": "capture-area",
+      "title": "Capture Area",
+      "subtitle": "Select a screen region to save and copy to clipboard",
+      "icon": "viewfinder",
+      "mode": "instant",
+      "keywords": ["capture area", "screenshot area", "snip", "take screenshot"],
+      "script": "commands/capture-screenshot.py",
+      "timeout_seconds": 60,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "capture-window",
+      "title": "Capture Window",
+      "subtitle": "Click any window to capture a screenshot",
+      "icon": "macwindow.badge.plus",
+      "mode": "instant",
+      "keywords": ["capture window", "screenshot window", "window screenshot"],
+      "script": "commands/capture-screenshot.py",
+      "timeout_seconds": 60,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "capture-screen",
+      "title": "Capture Full Screen",
+      "subtitle": "Save a full-screen capture immediately",
+      "icon": "display",
+      "mode": "instant",
+      "keywords": ["capture screen", "full screenshot", "screenshot full screen"],
+      "script": "commands/capture-screenshot.py",
+      "timeout_seconds": 15,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "capture-clipboard",
+      "title": "Capture Area to Clipboard",
+      "subtitle": "Select a screen region and copy directly to clipboard",
+      "icon": "doc.on.clipboard",
+      "mode": "instant",
+      "keywords": ["screenshot clipboard", "copy screenshot", "capture to clipboard"],
+      "script": "commands/capture-screenshot.py",
+      "timeout_seconds": 60,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    },
+    {
+      "id": "open-screenshots-folder",
+      "title": "Open Screenshots Folder",
+      "subtitle": "Open your configured screenshots folder in Finder",
+      "icon": "folder.fill",
+      "mode": "instant",
+      "keywords": ["screenshots folder", "open screenshots", "screenshots directory"],
+      "script": "commands/capture-screenshot.py",
+      "timeout_seconds": 6,
+      "cache_ttl_seconds": 0,
+      "safety": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "screenshots.browse",
+      "name": "Browse & Capture Screenshots",
+      "intent": "List recent screenshots or trigger area/window/full-screen capture.",
+      "triggers": ["screenshots", "recent screenshots", "capture screenshot"],
+      "type": "shell",
+      "script": "python3 commands/browse-screenshots.py",
+      "safety": "read"
+    }
+  ]
+}

@@ -360,6 +360,7 @@ final class SystemCommandsRegistry {
         "Proofread Text (On-Device)",
         "Summarize Text (On-Device)",
         "Next Wallpaper",
+        "Screenshots",
         "Safari",
         "Mole",
         // Legacy disabled starter samples superseded by Create Extension Studio & v3 packs

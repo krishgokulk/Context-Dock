@@ -221,10 +221,20 @@ extension DockCore {
     }
 
     func globalAppResultDockPill(_ result: SearchResult) -> DockPill {
+        let fallbackIcon: String = {
+            if result.type == .extensionCommand {
+                return SFSymbolResolver.menuSymbol(
+                    title: result.title,
+                    path: [result.subtitle, result.title],
+                    isAppleMenu: false
+                )
+            }
+            return "app"
+        }()
         var pill = DockPill(
             id: "global-result-\(result.trackingIdentifier)",
             name: result.title,
-            icon: "app",
+            icon: fallbackIcon,
             badge: result.subtitle,
             execute: { executeGlobalAppSearchResult(result) }
         )

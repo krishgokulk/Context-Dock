@@ -108,7 +108,7 @@
       "id": "sleep-mac",
       "title": "Sleep Mac",
       "subtitle": "Put your Mac to sleep (requires confirmation)",
-      "icon": "moon.fill",
+      "icon": "powersleep",
       "mode": "instant",
       "keywords": ["sleep", "sleep mac", "standby"],
       "script": "commands/quick-system.py",

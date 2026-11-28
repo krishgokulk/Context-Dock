@@ -104,7 +104,7 @@ enum CapabilitiesSkillsBrowser {
                 safety: cmd.interaction == "none" ? .write : .read,
                 appName: "System",
                 appBundleId: nil,
-                iconSymbol: cmd.icon.isEmpty ? "command" : cmd.icon,
+                iconSymbol: cmd.icon.isEmpty ? "slider.horizontal.3" : cmd.icon,
                 iconImage: nil,
                 keywords: cleanKeywords,
                 version: nil,
@@ -335,6 +335,7 @@ enum CapabilitiesSkillsBrowser {
 
 struct CapabilitiesSkillsBoardCard: View {
     @ObservedObject var prompt: AppChatPromptModel
+    @Environment(\.sharesOneCard) private var sharesOneCard
     @State private var focusedID: String?
     @State private var activeFilter: CapabilitiesSkillsBoardFilter = .all
     @State private var copiedNotice: String?
@@ -355,8 +356,10 @@ struct CapabilitiesSkillsBoardCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            if !sharesOneCard {
+                header
+                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            }
 
             HStack(alignment: .top, spacing: 0) {
                 list
@@ -378,11 +381,40 @@ struct CapabilitiesSkillsBoardCard: View {
         .onHover { _ in prompt.touch() }
         .onAppear {
             registerKeys()
+            syncHeaderBar()
+        }
+        .onChange(of: activeFilter) { _, _ in
+            syncHeaderBar()
+        }
+        .onChange(of: prompt.query) { _, _ in
+            syncHeaderBar()
         }
         .onDisappear {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
+            ScopedListKeyBridge.shared.stepHeaderMode = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "capabilities-skills")
         }
+    }
+
+    private func syncHeaderBar() {
+        ExtensionHeaderBarState.shared.update(
+            id: "capabilities-skills",
+            title: "Capabilities & Skills",
+            icon: "sparkles",
+            tintHex: "#A855F7",
+            count: items.count,
+            filterOptions: CapabilitiesSkillsBoardFilter.allCases.map(\.rawValue),
+            selectedFilter: activeFilter.rawValue,
+            placeholder: "Filter capabilities & skills…",
+            onBack: { _ = prompt.leaveScopeForGlobal() },
+            onSelectFilter: { chosen in
+                if let match = CapabilitiesSkillsBoardFilter(rawValue: chosen) {
+                    activeFilter = match
+                    prompt.touch()
+                    syncHeaderBar()
+                }
+            })
     }
 
     // MARK: - Keyboard Handling
@@ -401,6 +433,20 @@ struct CapabilitiesSkillsBoardCard: View {
                 activate(target)
             }
             return true
+        }
+        bridge.stepHeaderMode = { delta in
+            let all = CapabilitiesSkillsBoardFilter.allCases
+            guard let idx = all.firstIndex(of: activeFilter) else { return false }
+            if delta > 0 {
+                activeFilter = all[(idx + 1) % all.count]
+                syncHeaderBar()
+                return true
+            } else if idx > 0 {
+                activeFilter = all[idx - 1]
+                syncHeaderBar()
+                return true
+            }
+            return false
         }
     }
 

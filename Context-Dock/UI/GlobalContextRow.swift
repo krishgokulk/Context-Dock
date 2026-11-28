@@ -70,9 +70,25 @@ enum GlobalContextRow {
         switch doc.action {
         case .activatePID, .launchPath, .launchBundleId: return "app"
         case .cliScope: return "terminal"
-        case .systemCommandScope: return "switch.2"
-        case .cachedMenu: return "command"
-        case .adapterAction: return "bolt.fill"
+        case .systemCommandScope: return "slider.horizontal.3"
+        case .cachedMenu(_, _, let path, _, _):
+            return SFSymbolResolver.menuSymbol(
+                title: doc.title,
+                path: path,
+                isAppleMenu: path.first?.lowercased() == "apple"
+            )
+        case .adapterAction(let bundleId, let appName, let actionId):
+            if let icon = MainActor.assumeIsolated({
+                AppAdapterManager.shared.adapter(for: bundleId)?
+                    .actions.first(where: { $0.id == actionId })?.icon
+            }), !icon.isEmpty {
+                return SFSymbolResolver.validSymbol(icon, fallback: "bolt.circle")
+            }
+            return SFSymbolResolver.menuSymbol(
+                title: doc.title,
+                path: [appName, doc.title],
+                isAppleMenu: false
+            )
         case .userExtension: return "puzzlepiece.extension"
         case .plugin: return "puzzlepiece.extension.fill"
         case .browserURL: return "safari"

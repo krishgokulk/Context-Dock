@@ -156,6 +156,17 @@ struct ExtensionScopeCard: View {
     /// foot draws them (owner 2026-10-12: they were small icons in the header).
     private var footer: some View {
         HStack(spacing: 8) {
+            BoardFooter.pill {
+                HStack(spacing: 5) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(title)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 0)
             BoardFooter.pill {
                 BoardFooter.button(

@@ -332,7 +332,7 @@ struct PluginSupersessionByNameTests {
         let sleep = try JSONDecoder().decode(
             PluginManifest.self, from: Data(PluginEssentials.sleepJSON.utf8))
         #expect(PluginSupersession.replacedNames(in: [sleep]).contains("sleep"))
-        #expect(sleep.icon == "moon.zzz.fill")
+        #expect(sleep.icon == "powersleep")
         #expect(!PluginSchema.hasErrors(PluginSchema.validate(sleep)))
     }
 }

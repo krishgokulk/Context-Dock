@@ -129,7 +129,7 @@ struct BoardFoot: Hashable {
         case .cliSubcommand(let command, _):
             return BoardFoot(title: "\(command) · Subcommand", verb: "Run", symbol: "terminal")
         case .systemCommand:
-            return BoardFoot(title: "Command", verb: "Run", symbol: "command")
+            return BoardFoot(title: "Command", verb: "Run", symbol: "slider.horizontal.3")
         case .web(let url, _, let domain, let browserName):
             // A page open in a Safari tab says so, and Return shows that tab (owner 2026-10-18).
             let open = browserName == "Safari"
@@ -143,7 +143,7 @@ struct BoardFoot: Hashable {
                 title: appName.isEmpty ? "Window layout" : "\(appName) · Window layout",
                 verb: "Arrange", bundleID: bundleID, symbol: "rectangle.split.2x1")
         case nil:
-            return BoardFoot(title: fallbackTitle, verb: "Run", symbol: "command")
+            return BoardFoot(title: fallbackTitle, verb: "Run", symbol: "menubar.rectangle")
         }
     }
 

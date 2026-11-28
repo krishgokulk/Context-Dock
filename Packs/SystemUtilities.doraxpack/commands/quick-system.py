@@ -47,7 +47,7 @@ def main() -> None:
             "toast": "Sleeping Mac…",
             "notch": {
                 "wing_text": "Sleep",
-                "wing_icon": "moon.fill",
+                "wing_icon": "powersleep",
                 "wing_color": "#F59E0B",
                 "title": "Sleeping Mac",
                 "subtitle": "Entering sleep mode",

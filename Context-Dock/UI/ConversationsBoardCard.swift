@@ -160,6 +160,7 @@ enum ConversationsBoard {
 
 struct ConversationsBoardCard: View {
     @ObservedObject var prompt: AppChatPromptModel
+    @Environment(\.sharesOneCard) private var sharesOneCard
     @State private var focusedID: String?
     @State private var activeFilter: ConversationsBoardFilter = .all
     @State private var previewMessages: [AIChatMessage] = []
@@ -186,8 +187,10 @@ struct ConversationsBoardCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            if !sharesOneCard {
+                header
+                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            }
 
             HStack(alignment: .top, spacing: 0) {
                 list
@@ -211,14 +214,43 @@ struct ConversationsBoardCard: View {
             GeneralChatSessionStore.discoverDockThreads()
             registerKeys()
             loadFocusedPreview()
+            syncHeaderBar()
+        }
+        .onChange(of: activeFilter) { _, _ in
+            syncHeaderBar()
+        }
+        .onChange(of: prompt.query) { _, _ in
+            syncHeaderBar()
         }
         .onDisappear {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
+            ScopedListKeyBridge.shared.stepHeaderMode = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "conversations")
         }
         .onChange(of: focusedID) { _, _ in
             loadFocusedPreview()
         }
+    }
+
+    private func syncHeaderBar() {
+        ExtensionHeaderBarState.shared.update(
+            id: "conversations",
+            title: "Past Conversations",
+            icon: "bubble.left.and.bubble.right.fill",
+            tintHex: "#3B82F6",
+            count: items.count,
+            filterOptions: ConversationsBoardFilter.allCases.map(\.rawValue),
+            selectedFilter: activeFilter.rawValue,
+            placeholder: "Search conversations…",
+            onBack: { _ = prompt.leaveScopeForGlobal() },
+            onSelectFilter: { chosen in
+                if let match = ConversationsBoardFilter(rawValue: chosen) {
+                    activeFilter = match
+                    prompt.touch()
+                    syncHeaderBar()
+                }
+            })
     }
 
     // MARK: - Keyboard Handling
@@ -237,6 +269,20 @@ struct ConversationsBoardCard: View {
                 reopen(target)
             }
             return true
+        }
+        bridge.stepHeaderMode = { delta in
+            let all = ConversationsBoardFilter.allCases
+            guard let idx = all.firstIndex(of: activeFilter) else { return false }
+            if delta > 0 {
+                activeFilter = all[(idx + 1) % all.count]
+                syncHeaderBar()
+                return true
+            } else if idx > 0 {
+                activeFilter = all[idx - 1]
+                syncHeaderBar()
+                return true
+            }
+            return false
         }
     }
 

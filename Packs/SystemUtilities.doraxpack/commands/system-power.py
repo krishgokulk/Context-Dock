@@ -37,9 +37,9 @@ def main():
             "id": "sleep-mac",
             "title": "Sleep Mac",
             "subtitle": "Put Mac to sleep (requires confirmation)",
-            "icon": "moon.fill",
+            "icon": "powersleep",
             "accessories": [{"kind": "tag", "text": "Confirm", "color": "#F59E0B"}],
-            "actions": [{"id": "sleep", "title": "Sleep Mac", "icon": "moon.fill", "shortcut": "↵", "kind": "cli", "binary": "/usr/bin/osascript", "args": ["-e", 'tell application "System Events" to sleep'], "destructive": True, "confirm_message": "Put this Mac to sleep now?"}]
+            "actions": [{"id": "sleep", "title": "Sleep Mac", "icon": "powersleep", "shortcut": "↵", "kind": "cli", "binary": "/usr/bin/osascript", "args": ["-e", 'tell application "System Events" to sleep'], "destructive": True, "confirm_message": "Put this Mac to sleep now?"}]
         },
         {
             "id": "empty-trash",

@@ -415,7 +415,48 @@ struct ScopedListPanelContent: View {
     private var rowList: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            VStack(alignment: .leading, spacing: 1) {
+            if displayedRows.isEmpty {
+                VStack(spacing: 10) {
+                    if CustomListProviderService.shared.isRefreshing(command) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading \(command.name)…")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        SpotlightCommandBadgeIcon(
+                            symbol: command.icon.isEmpty ? "slider.horizontal.3" : command.icon,
+                            size: 40
+                        )
+                        Text(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                             ? "No items found"
+                             : "No matches for “\(query)”")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary.opacity(0.88))
+                        if !command.description.isEmpty {
+                            Text(command.description)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                        }
+                        Button {
+                            CustomListProviderService.shared.invalidate(command)
+                            refresh()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.primary.opacity(0.10), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 220)
+                .padding(.horizontal, 24)
+            } else {
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(displayedRows) { row in
                     if row.isCompare {
                         PanelCompareCard(row: row, command: command, query: query) {
@@ -427,7 +468,7 @@ struct ScopedListPanelContent: View {
                         run(row)
                         refresh()
                     } label: {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             // Same treatment the inline dock rows get: a row whose id is
                             // a real file shows that file, not a generic glyph. The panel
                             // had its own simpler renderer and missed out.
@@ -436,30 +477,38 @@ struct ScopedListPanelContent: View {
                                 fallbackImage: nil,
                                 systemName: symbol(row.icon),
                                 tint: .accentColor,
-                                size: 22,
-                                cornerRadius: 4
+                                size: 26,
+                                cornerRadius: 6
                             )
-                            .frame(width: 22, height: 22)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(row.title).font(.system(size: 12, weight: .medium))
+                            .frame(width: 26, height: 26)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.title)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .lineLimit(1)
                                 if let sub = row.subtitle, !sub.isEmpty {
-                                    Text(sub).font(.system(size: 10))
+                                    Text(sub)
+                                        .font(.system(size: 10.5))
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
                             }
                             Spacer()
                             if let badge = row.badge, !badge.isEmpty {
-                                Text(badge).font(.system(size: 10))
+                                Text(badge)
+                                    .font(.system(size: 10, weight: .medium))
                                     .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Color.primary.opacity(0.07), in: Capsule())
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
                         .contentShape(Rectangle())
                         .background(
                             selectedID == row.id
-                                ? Color.accentColor.opacity(0.18) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 6))
+                                ? Color.primary.opacity(0.11) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .simultaneousGesture(TapGesture().onEnded { selectedID = row.id })
@@ -468,7 +517,9 @@ struct ScopedListPanelContent: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            }
         }
         // Keyboard selection must stay on screen in a short panel.
         .onChange(of: selectedID) { _, id in

@@ -26,9 +26,9 @@ def main():
             "id": "stop",
             "title": "Allow Mac to Sleep" if active else "Normal Sleep Active",
             "subtitle": "Stop caffeinate timer" if active else "macOS sleep timer is currently idle",
-            "icon": "moon.zzz.fill",
+            "icon": "powersleep",
             "accessories": [{"kind": "tag", "text": "Active" if active else "Idle", "color": "#F59E0B" if active else "#64748B"}],
-            "actions": [{"id": "stop-awake", "title": "Stop Keep Awake", "icon": "moon.fill", "shortcut": "↵", "kind": "script", "script": "commands/run-caffeinate.py", "value": "stop"}]
+            "actions": [{"id": "stop-awake", "title": "Stop Keep Awake", "icon": "powersleep", "shortcut": "↵", "kind": "script", "script": "commands/run-caffeinate.py", "value": "stop"}]
         },
         {
             "id": "15m",

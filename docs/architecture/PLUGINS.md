@@ -109,7 +109,7 @@ creating a new registry (`StorePackInstaller.swift`, completed in Task U8c):
 ## Code homes
 
 ```
-Packs/                23 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor, AppleIntelligence, YouTube, GitHub, Homebrew, Spotify, Obsidian, Tailscale, WhatsApp, Claude, ChatGPT, Messages, Notes, GoogleDrive, SystemUtilities, CurrencyConverter, FocusShortcuts, Wallpapers)
+Packs/                24 first-party .doraxpack v3 bundles (Finder, Safari, Mail, IINA, Antigravity, ProcessMonitor, AppleIntelligence, YouTube, GitHub, Homebrew, Spotify, Obsidian, Tailscale, WhatsApp, Claude, ChatGPT, Messages, Notes, GoogleDrive, SystemUtilities, CurrencyConverter, FocusShortcuts, Wallpapers, Screenshots)
 Services/Plugins/     DoraxPackV3, DoraxPackV3EditorService, DoraxAppleIntelligenceRunner, DoraxContextBridge, DoraxPackV3Runtime, DoraxPackHookDispatcher, LegacyPluginCleanup, DoraxPackV2, FirstPartyPacks, StorePackInstaller, manifest, schema, registry, migration, runner
 Services/             SafariExtensionHookRegistry, SafariEscalationPolicy, NotchPinStore
 UI/Plugins/           ExtensionHeaderBarState, DoraxPackMediaHelpers, DoraxPackV3SheetView, renderer, HostTraits (incl. notchWing/notchPage), sizing, components/, window, creator workspace

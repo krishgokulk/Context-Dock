@@ -770,12 +770,87 @@ final class DoraxPackV3Runtime: ObservableObject {
             appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Staged paste to clipboard")
             return .success(DoraxActionExecutionResult(message: "Copied for paste", didReplaceOutput: false))
         case "open", "url":
-            let raw = action.value ?? ""
+            let raw = (action.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if raw.hasPrefix("/") || raw.hasPrefix("~") {
+                let path = NSString(string: raw).expandingTildeInPath
+                let fileURL = URL(fileURLWithPath: path)
+                guard FileManager.default.fileExists(atPath: path) else {
+                    return .failure(PluginRunFailure(message: "File not found: \(path)", kind: .launch))
+                }
+                NSWorkspace.shared.open(fileURL)
+                return .success(DoraxActionExecutionResult(message: "Opened \(fileURL.lastPathComponent)", didReplaceOutput: false))
+            }
             guard let url = URL(string: raw) else {
                 return .failure(PluginRunFailure(message: "Invalid URL: \(raw)", kind: .launch))
             }
             NSWorkspace.shared.open(url)
             return .success(DoraxActionExecutionResult(message: raw, didReplaceOutput: false))
+        case "copy_image":
+            let rawPath = action.value ?? item?.thumbnailPath ?? ""
+            let path = NSString(string: rawPath).expandingTildeInPath
+            guard !path.isEmpty, let image = NSImage(contentsOfFile: path) else {
+                return .failure(PluginRunFailure(message: "Could not load image at \(rawPath)", kind: .launch))
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects([image])
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: 0, message: "Copied image \(name) to clipboard")
+            return .success(DoraxActionExecutionResult(message: "Copied \(name) to clipboard", didReplaceOutput: false))
+        case "ocr":
+            let rawPath = action.value ?? item?.thumbnailPath ?? ""
+            let path = NSString(string: rawPath).expandingTildeInPath
+            guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
+                return .failure(PluginRunFailure(message: "Image not found: \(rawPath)", kind: .launch))
+            }
+            let fileURL = URL(fileURLWithPath: path)
+            let extracted = await Task.detached(priority: .userInitiated) {
+                LocalFileTextExtractor.extractText(from: fileURL).trimmingCharacters(in: .whitespacesAndNewlines)
+            }.value
+            let text = extracted.isEmpty ? "(No readable text detected in \(fileURL.lastPathComponent))" : extracted
+            if !extracted.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(extracted, forType: .string)
+            }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            if let command {
+                let ocrOutput = DoraxCommandOutput(
+                    items: [
+                        DoraxCommandItem(
+                            id: "ocr-result",
+                            title: extracted.isEmpty ? "No Text Found" : "Extracted Text Copied",
+                            subtitle: fileURL.lastPathComponent,
+                            icon: "text.viewfinder",
+                            detail: DoraxItemDetail(
+                                markdown: "### Extracted Text — \(fileURL.lastPathComponent)\n\n```\n\(text)\n```",
+                                metadata: [
+                                    DoraxMetadataEntry(label: "File", value: fileURL.lastPathComponent),
+                                    DoraxMetadataEntry(label: "Characters", value: "\(extracted.count)"),
+                                    DoraxMetadataEntry(label: "Clipboard", value: extracted.isEmpty ? "Unchanged" : "Copied"),
+                                ],
+                                imagePath: path),
+                            actions: [
+                                DoraxItemAction(id: "copy-ocr", title: "Copy Extracted Text", icon: "doc.on.doc", shortcut: "↵", kind: "copy", value: extracted),
+                                DoraxItemAction(id: "open-ocr-file", title: "Open Image", icon: "photo", shortcut: "⌘O", kind: "open", value: path),
+                                DoraxItemAction(id: "back-ocr", title: "Back to Gallery", icon: "arrow.clockwise", shortcut: "⌘R", kind: "refresh"),
+                            ])
+                    ],
+                    detail: DoraxItemDetail(
+                        markdown: "### Extracted Text — \(fileURL.lastPathComponent)\n\n```\n\(text)\n```",
+                        metadata: [
+                            DoraxMetadataEntry(label: "File", value: fileURL.lastPathComponent),
+                            DoraxMetadataEntry(label: "Characters", value: "\(extracted.count)"),
+                        ],
+                        imagePath: path))
+                let key = CacheKey(packID: pack.id, commandID: command.id, filter: filter)
+                cache[key] = DoraxCommandCacheEntry(output: ocrOutput, fetchedAt: Date(), isRefreshing: false, lastError: nil)
+                appendLog(packID: pack.id, commandID: action.id, level: .info, durationMs: ms, message: "OCR extracted \(extracted.count) chars from \(fileURL.lastPathComponent)")
+                return .success(DoraxActionExecutionResult(
+                    message: extracted.isEmpty ? "No text detected" : "Copied extracted text (\(extracted.count) chars)",
+                    didReplaceOutput: true))
+            }
+            return .success(DoraxActionExecutionResult(
+                message: extracted.isEmpty ? "No text detected" : "Copied extracted text",
+                didReplaceOutput: false))
         case "reveal":
             let rawPath = action.value ?? ""
             let path = NSString(string: rawPath).expandingTildeInPath

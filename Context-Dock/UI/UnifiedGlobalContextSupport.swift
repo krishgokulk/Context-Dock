@@ -154,16 +154,20 @@ extension AppChatPromptModel {
                         || $0.description.lowercased().contains(trimmed)
                 }
             for action in matching.prefix(5) {
+                let resolvedIcon = action.icon.isEmpty
+                    ? SFSymbolResolver.menuSymbol(title: action.name, path: [appName, action.name], isAppleMenu: false)
+                    : action.icon
                 var pill = DockPill(
                     id: "global-ctx-action-\(bundleID)-\(action.id)",
                     name: action.name,
-                    icon: "bolt.fill",
+                    icon: resolvedIcon,
                     badge: "\(appName) Action",
                     execute: { [weak self] in self?.runAdapterAction(action) }
                 )
                 pill.sourceBundleId = bundleID
                 pill.sourceAppName = appName
                 pill.resultSection = section
+                pill.rankingKind = "adapterAction"
                 items.append(.dock(pill))
             }
         }
@@ -241,7 +245,8 @@ extension AppChatPromptModel {
             var pill = DockPill(
                 id: "global-ctx-menu-\(bundleID)-\(item.path.joined(separator: ">"))",
                 name: item.title,
-                icon: "command",
+                icon: SFSymbolResolver.menuSymbol(
+                    title: item.title, path: item.path, isAppleMenu: item.isAppleMenu),
                 badge: item.path.dropLast().joined(separator: " ▸ "),
                 execute: { [weak self] in
                     self?.runMenuItem(item)
@@ -251,6 +256,8 @@ extension AppChatPromptModel {
             pill.sourceAppName = appName
             pill.resultSection = section
             pill.rankingKind = "menu"
+            pill.menuPath = item.path
+            pill.menuItemImage = item.image
             pill.keyboardShortcutLabel = item.shortcutDisplay
             items.append(.dock(pill))
         }

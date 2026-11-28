@@ -377,4 +377,43 @@ enum DoraxAppleIntelligenceRunner {
             appearance: DoraxPackAppearance(tint: tintHex, glow: .pulse)
         )
     }
+
+    enum RunnerError: LocalizedError {
+        case unavailable(String)
+        case emptyResponse
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable(let msg): return msg
+            case .emptyResponse: return "On-device Apple Intelligence returned an empty response."
+            }
+        }
+    }
+
+    /// Generates raw text/JSON on-device using macOS Foundation Models (`SystemLanguageModel.default`).
+    /// Used as an automatic zero-API-key fallback for Extension Studio & AI Pack Architect when
+    /// the primary cloud/CLI AI provider is unavailable.
+    static func generateRaw(systemInstruction: String, prompt: String) async throws -> String {
+        if AppDelegate.isHostingTests {
+            return #"{"name":"Sample Tool","icon":"sparkles","keywords":"sample, tool","mode":"bash","body":"echo \"ok\""}"#
+        }
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            let model = SystemLanguageModel.default
+            guard case .available = model.availability else {
+                throw RunnerError.unavailable("Apple Intelligence is unavailable on this Mac.")
+            }
+            let session = LanguageModelSession(instructions: systemInstruction)
+            var resultText = ""
+            let stream = session.streamResponse(to: prompt, generating: String.self)
+            for try await snapshot in stream {
+                resultText = snapshot.content
+            }
+            let cleaned = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { throw RunnerError.emptyResponse }
+            return cleaned
+        }
+        #endif
+        throw RunnerError.unavailable("Requires macOS 26.0+ with Apple Intelligence enabled.")
+    }
 }

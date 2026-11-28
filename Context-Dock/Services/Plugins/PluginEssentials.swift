@@ -32,7 +32,7 @@ enum PluginEssentials {
     {
       "id": "sleep",
       "name": "Sleep",
-      "icon": "moon.zzz.fill",
+      "icon": "powersleep",
       "description": "Put this Mac to sleep.",
       "keywords": ["sleep", "suspend", "replaces:Sleep"],
       "inputs": [],

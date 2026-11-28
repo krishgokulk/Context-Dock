@@ -178,13 +178,16 @@ struct QuickNoteBoardCard: View {
     @ObservedObject var prompt: AppChatPromptModel
     @ObservedObject private var board = QuickNoteBoardModel.shared
     @ObservedObject private var store = QuickNotesStore.shared
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     private var size: CGSize { QuickNoteBoardMetrics.size }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            if !sharesOneCard {
+                header
+                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            }
             NotepadScopeView(
                 selectedNoteID: $board.selectedNoteID,
                 isDark: true,
@@ -201,18 +204,38 @@ struct QuickNoteBoardCard: View {
                 onEditorFocusChanged: { PluginKeyboardClaim.shared.fieldFocusChanged($0) },
                 listWidth: CornerBoardLayout.listWidth(
                     board: size.width, preview: .file(URL(fileURLWithPath: "/"))),
-                height: QuickNoteBoardMetrics.editorHeight)
+                height: sharesOneCard
+                    ? (QuickNoteBoardMetrics.editorHeight + QuickNoteBoardMetrics.headerHeight + 1)
+                    : QuickNoteBoardMetrics.editorHeight)
             footer
         }
         .frame(width: size.width, height: size.height, alignment: .top)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .modifier(BoardGlass())
         .onHover { _ in prompt.touch() }
-        .onAppear { registerKeys() }
+        .onAppear {
+            registerKeys()
+            syncHeaderBar()
+        }
+        .onChange(of: store.notes.count) { _, _ in
+            syncHeaderBar()
+        }
         .onDisappear {
             ScopedListKeyBridge.shared.move = nil
             ScopedListKeyBridge.shared.run = nil
+            ExtensionHeaderBarState.shared.reset(ifMatching: "quick-note")
         }
+    }
+
+    private func syncHeaderBar() {
+        ExtensionHeaderBarState.shared.update(
+            id: "quick-note",
+            title: "Quick Note",
+            icon: "note.text",
+            tintHex: "#6366F1",
+            count: store.notes.count,
+            placeholder: "Ask AI into note, or filter…",
+            onBack: { _ = prompt.leaveScopeForGlobal() })
     }
 
     /// The field keeps the keyboard for the prompt and forwards ↑/↓ and Return here, as it

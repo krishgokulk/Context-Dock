@@ -133,7 +133,7 @@ enum GlobalQuery {
             return pathHit
         }
 
-        // 1. Exact folder match (including singular/plural fold) or exact title match across frontmost contextual actions, window layouts, applications, commands, and pinned actions
+        // 1. Exact folder match (including singular/plural fold)
         if let exactFolderHit = rows.first(where: { row in
             guard case .file(let url) = row, AppChatPromptModel.isFolder(url) else { return false }
             let titleLower = row.title.lowercased()
@@ -141,34 +141,48 @@ enum GlobalQuery {
         }) {
             return exactFolderHit
         }
-        if let exactHit = rows.first(where: { row in
-            let titleLower = row.title.lowercased()
-            guard titleLower == trimmed else { return false }
-            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
-            return true
-        }) {
-            return exactHit
-        }
 
-        // 2. Direct Window layout or frontmost contextual action prefix match
-        if let frontmostPrefixHit = rows.first(where: { row in
-            let titleLower = row.title.lowercased()
-            guard titleLower.hasPrefix(trimmed) else { return false }
-            let sec = GlobalResultSection.title(for: row) ?? ""
-            return sec == GlobalResultSection.windowLayouts
-                || sec.hasPrefix(GlobalResultSection.contextualActionsPrefix)
-                || sec.hasPrefix(GlobalResultSection.pinnedPrefix)
-        }) {
-            return frontmostPrefixHit
-        }
-
-        // 3. Direct Application exact or prefix match (e.g. "safari" -> Safari, "term" -> Terminal, "calc" -> Calculator)
+        // 1b. Direct Application exact match (e.g. "messages" -> Messages app, never a frontmost "View ▸ Messages" menu item)
         if let exactApp = rows.first(where: { row in
             guard GlobalResultSection.title(for: row) == GlobalResultSection.applications else { return false }
             return row.title.lowercased() == trimmed
         }) {
             return exactApp
         }
+
+        // 1c. Exact title match across window layouts, commands, pinned actions, and other rows
+        if let exactHit = rows.first(where: { row in
+            let titleLower = row.title.lowercased()
+            guard titleLower == trimmed else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            if case .dock(let pill) = row, pill.rankingKind == "menu" { return false }
+            if case .global(let doc) = row, case .cachedMenu = doc.action { return false }
+            if case .command = row { return false }
+            return true
+        }) {
+            return exactHit
+        }
+        if let exactMenuHit = rows.first(where: { row in
+            let titleLower = row.title.lowercased()
+            guard titleLower == trimmed else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            return true
+        }) {
+            return exactMenuHit
+        }
+
+        // 2. Direct Window layout or pinned action prefix match
+        if let layoutOrPinPrefixHit = rows.first(where: { row in
+            let titleLower = row.title.lowercased()
+            guard titleLower.hasPrefix(trimmed) else { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            return sec == GlobalResultSection.windowLayouts
+                || sec.hasPrefix(GlobalResultSection.pinnedPrefix)
+        }) {
+            return layoutOrPinPrefixHit
+        }
+
+        // 3. Direct Application prefix match (e.g. "safari" -> Safari, "mess" -> Messages, "term" -> Terminal)
         if let prefixApp = rows.first(where: { row in
             guard GlobalResultSection.title(for: row) == GlobalResultSection.applications else { return false }
             return row.title.lowercased().hasPrefix(trimmed)
@@ -176,11 +190,25 @@ enum GlobalQuery {
             return prefixApp
         }
 
-        // 4. Direct System Command / Pack v3 Command match (e.g. "empty" -> "Empty Trash", "process" -> "Process Monitor", "pin system status" -> "Pin System Status to Notch")
+        // 4. Frontmost contextual action / menu command prefix match
+        if let frontmostPrefixHit = rows.first(where: { row in
+            let titleLower = row.title.lowercased()
+            guard titleLower.hasPrefix(trimmed) else { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            return sec.hasPrefix(GlobalResultSection.contextualActionsPrefix)
+        }) {
+            return frontmostPrefixHit
+        }
+
+        // 5. Direct System Command / Pack v3 Command match (e.g. "empty" -> "Empty Trash", "sleep" -> "Sleep Mac", "process" -> "Process Monitor")
         if let commandHit = rows.first(where: { row in
             let sec = GlobalResultSection.title(for: row) ?? ""
             guard sec == GlobalResultSection.commands || sec == GlobalResultSection.extensions else { return false }
-            guard GlobalResultSection.appName(of: row).isEmpty else { return false }
+            let isGlobalV3: Bool = {
+                if case .dock(let pill) = row, pill.rankingKind == "doraxPackV3" { return true }
+                return false
+            }()
+            guard isGlobalV3 || GlobalResultSection.appName(of: row).isEmpty else { return false }
             if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
             let titleLower = row.title.lowercased()
             return titleLower.hasPrefix(trimmed)

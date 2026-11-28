@@ -151,6 +151,38 @@ struct GlobalTopHitTests {
         #expect(GlobalQuery.topHit(rows, query: "minimize")?.title == "Minimize")
         #expect(GlobalQuery.topHit(rows, query: "minimiz")?.title == "Minimize")
     }
+
+    @Test func applicationBeatsFrontmostContextualMenuWithSameName() {
+        var menuPill = DockPill(
+            id: "global-ctx-menu-messages-view",
+            name: "Messages",
+            icon: "command",
+            badge: "View",
+            execute: {}
+        )
+        menuPill.rankingKind = "menu"
+        menuPill.sourceAppName = "Messages"
+        menuPill.resultSection = GlobalResultSection.contextualActionsTitle(forApp: "Messages")
+
+        var appPill = DockPill(id: "app:Messages", name: "Messages", icon: "app", badge: "Running", execute: {})
+        appPill.rankingKind = "application"
+        appPill.resultSection = GlobalResultSection.applications
+
+        let rows: [AppChatRow] = [.dock(menuPill), .dock(appPill)]
+        #expect(GlobalQuery.topHit(rows, query: "messages")?.id == "app:Messages")
+        #expect(GlobalQuery.topHit(rows, query: "mess")?.id == "app:Messages")
+    }
+
+    @Test func globalDoraxPackV3CommandMatchesTopHitByPrefix() {
+        var sleepPill = DockPill(id: "dorax-v3-global-sleep-mac", name: "Sleep Mac", icon: "powersleep", badge: "System & Hardware", execute: {})
+        sleepPill.rankingKind = "doraxPackV3"
+        sleepPill.sourceAppName = "System & Hardware"
+        sleepPill.resultSection = "Extensions"
+
+        let menuRow = menu("Preventing Sleep", app: "Activity Monitor")
+        let rows: [AppChatRow] = [menuRow, .dock(sleepPill)]
+        #expect(GlobalQuery.topHit(rows, query: "sleep")?.id == "dorax-v3-global-sleep-mac")
+    }
 }
 
 /// S2: a named app's own commands join a list the engine filled with its pages.

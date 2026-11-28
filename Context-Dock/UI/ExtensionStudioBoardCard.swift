@@ -292,6 +292,7 @@ final class ExtensionStudioModel: ObservableObject {
     @Published var isTesting = false
     @Published var testOutput: String = ""
     @Published var statusMessage: String?
+    @Published var statusIsError: Bool = false
     @Published var previewContextFileURL: URL?
 
     var pluginCreator = PluginCreatorModel(text: PluginCreatorPane.starter)
@@ -306,6 +307,7 @@ final class ExtensionStudioModel: ObservableObject {
         target = initialTarget
         previewContextFileURL = contextFile
         statusMessage = nil
+        statusIsError = false
         if let upgradePackID, !upgradePackID.isEmpty {
             selectedUpgradePackID = upgradePackID
             packStudioMode = explicitMode ?? .upgradeExisting
@@ -330,13 +332,14 @@ final class ExtensionStudioModel: ObservableObject {
         }
     }
 
-    /// Uses AI (`PanelAssistant` / `PluginCreatorModel.draft`) to synthesize a complete command,
-    /// selection extension, `.doraxpack` v2 plugin, or Notch wing/action from a natural-language prompt.
+    /// Uses AI (`PanelAssistant` with automatic `DoraxAppleIntelligenceRunner` on-device fallback)
+    /// to synthesize a complete command, selection extension, `.doraxpack` v2/v3 plugin, or Notch action.
     func generateWithAI(prompt rawPrompt: String) async {
         let description = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty, !isGeneratingAI else { return }
         isGeneratingAI = true
         statusMessage = nil
+        statusIsError = false
         defer { isGeneratingAI = false }
 
         if target == .appPlugin || (target == .notchAction && !description.isEmpty && scriptOrPrompt.isEmpty && name.isEmpty) {
@@ -348,17 +351,21 @@ final class ExtensionStudioModel: ObservableObject {
                 name = manifest.name
                 icon = manifest.icon
                 keywordsText = manifest.keywords.joined(separator: ", ")
-                statusMessage = "AI drafted \(manifest.name) (.doraxpack v2)"
+                statusIsError = false
+                statusMessage = "AI drafted \(manifest.name)"
                 return
             }
         }
 
         let sysPrompt = """
-        Generate a macOS launcher extension specification as strict JSON (no markdown fences) with keys:
-        {"name":"Short Title","icon":"sparkles","keywords":"word1, word2","mode":"bash|aiPrompt|url|list","body":"script, URL with {query}, or AI prompt"}
+        Generate a production-ready macOS launcher extension specification as strict JSON ONLY (no markdown fences, no commentary) with keys:
+        {"name":"Short 2-4 Word Title","icon":"valid.sf.symbol","keywords":"word1, word2, word3","mode":"bash|list|aiPrompt|url","body":"complete working zsh/python3 script, URL with {query}, or AI prompt"}
         Rules:
+        - "name" MUST be a concise 2-4 word title (e.g. "Screenshot Toolkit", "Port Killer"), NEVER the user's raw sentence.
+        - "icon" MUST be a real macOS SF Symbol (e.g. "camera.viewfinder", "terminal", "sparkles", "globe", "folder.fill").
+        - "body" MUST be a real, complete, working macOS script (using /usr/bin/python3, /usr/sbin/screencapture, osascript, curl, etc.) — NEVER a placeholder echo statement.
         - For Selection Scope tasks on files/text, use $CD_FILE, $CD_TEXT, $CD_QUERY in bash, or {selection} / {file} in aiPrompt.
-        - For live list commands (mode="list"), print JSON lines: {"id":"...","title":"...","badge":"..."}.
+        - For live list commands (mode="list"), print JSON lines: {"id":"...","title":"...","subtitle":"...","badge":"..."}.
         - For URL quicklinks (mode="url"), output e.g. https://github.com/search?q={query}.
         """
         do {
@@ -371,19 +378,21 @@ final class ExtensionStudioModel: ObservableObject {
                 provider: AppSettings.shared.selectedAIProvider
             )
             applyAISynthesizedJSON(reply, fallbackRequest: description)
-        } catch {
-            // Instant deterministic fallback template when offline or no provider key set
-            if name.isEmpty {
-                name = String(description.prefix(32)).capitalized
+        } catch let primaryError {
+            // Tier 2: Automatic On-Device Apple Intelligence fallback
+            do {
+                let localReply = try await DoraxAppleIntelligenceRunner.generateRaw(
+                    systemInstruction: sysPrompt,
+                    prompt: description
+                )
+                applyAISynthesizedJSON(localReply, fallbackRequest: description)
+                statusIsError = false
+                statusMessage = "Synthesized “\(name)” with On-Device Apple Intelligence (primary provider unavailable)"
+            } catch {
+                // Tier 3: Honest error — never overwrite editor with a fake green echo stub
+                statusIsError = true
+                statusMessage = "AI synthesis failed (\(primaryError.localizedDescription)). Check AI Provider in Settings or edit manually."
             }
-            if target == .selectionExtension {
-                selectionExecKind = .aiPrompt
-                scriptOrPrompt = "\(description)\n\nContent:\n{selection}"
-            } else {
-                globalCommandMode = "bash"
-                scriptOrPrompt = "echo \"Running: \(description.replacingOccurrences(of: "\"", with: ""))\""
-            }
-            statusMessage = "Created starter template (configure AI provider for full synthesis)"
         }
     }
 
@@ -779,7 +788,7 @@ struct ExtensionStudioBoardCard: View {
             filterOptions: ExtensionStudioTarget.allCases.map(\.title),
             selectedFilter: studio.target.title,
             isRefreshing: studio.isGeneratingAI,
-            placeholder: "Ask AI to build, or press → to switch mode…",
+            placeholder: "Describe what to build (↵)",
             onBack: { _ = prompt.leaveScopeForGlobal() },
             onSelectFilter: { chosen in
                 if let match = ExtensionStudioTarget.allCases.first(where: { $0.title == chosen }) {
@@ -949,17 +958,29 @@ struct ExtensionStudioBoardCard: View {
                                 studio.raycastMergeTargetPackID = ""
                             }
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.down")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                Text("Import Raycast Extension or Script as Global Command →")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                Spacer()
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                Text("Import Raycast Extension or Script")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.primary.opacity(0.92))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
                             }
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
-                            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.06))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.09), lineWidth: 0.75)
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -969,18 +990,24 @@ struct ExtensionStudioBoardCard: View {
                             Text("Icon")
                                 .font(.system(size: 10.5, weight: .medium))
                                 .foregroundStyle(.secondary)
-                            TextField("sparkles", text: $studio.icon)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 12, design: .monospaced))
-                                .padding(.horizontal, 8)
-                                .frame(width: 78, height: 28)
-                                .background(Color.black.opacity(0.20), in: RoundedRectangle(cornerRadius: 7))
+                            HStack(spacing: 6) {
+                                SpotlightCommandBadgeIcon(
+                                    symbol: studio.icon.isEmpty ? "sparkles" : studio.icon,
+                                    size: 28
+                                )
+                                TextField("sparkles", text: $studio.icon)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .padding(.horizontal, 8)
+                                    .frame(width: 90, height: 28)
+                                    .background(Color.black.opacity(0.20), in: RoundedRectangle(cornerRadius: 7))
+                            }
                         }
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Name")
                                 .font(.system(size: 10.5, weight: .medium))
                                 .foregroundStyle(.secondary)
-                            TextField("e.g. Extract Emails / GitHub Search", text: $studio.name)
+                            TextField("Short command title", text: $studio.name)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 12.5, weight: .medium))
                                 .padding(.horizontal, 8)
@@ -1076,13 +1103,27 @@ struct ExtensionStudioBoardCard: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 if let msg = studio.statusMessage {
-                    Text(msg)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: studio.statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(studio.statusIsError ? .orange : .green)
+                            .padding(.top, 1)
+                        Text(msg)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(studio.statusIsError ? Color.orange : Color.green)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        (studio.statusIsError ? Color.orange : Color.green).opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder((studio.statusIsError ? Color.orange : Color.green).opacity(0.22), lineWidth: 0.75)
+                    )
                 }
 
                 if studio.target == .notchAction {
@@ -1270,14 +1311,14 @@ struct ExtensionStudioBoardCard: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         HStack(spacing: 10) {
-                            Image(systemName: studio.icon.isEmpty ? "sparkles" : studio.icon)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.accentColor)
-                                .frame(width: 28, height: 28)
-                                .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 7))
+                            SpotlightCommandBadgeIcon(
+                                symbol: studio.icon.isEmpty ? "sparkles" : studio.icon,
+                                size: 32
+                            )
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(studio.name.isEmpty ? "Untitled Extension" : studio.name)
                                     .font(.system(size: 13, weight: .semibold))
+                                    .lineLimit(1)
                                 Text(studio.target.title)
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)

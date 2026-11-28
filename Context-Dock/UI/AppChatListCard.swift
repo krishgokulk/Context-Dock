@@ -46,6 +46,75 @@ enum AppChatListMetrics {
     }
 }
 
+/// Apple Spotlight / Siri-style dark glass squircle badge for commands, menus, and actions,
+/// optionally carrying a small owning-app icon badge at the bottom-trailing corner.
+struct SpotlightCommandBadgeIcon: View {
+    let symbol: String
+    var customImage: NSImage? = nil
+    var appBadgeImage: NSImage? = nil
+    var tint: Color? = nil
+    var size: CGFloat = 32
+
+    private var cornerRadius: CGFloat { max(7, size * 0.25) }
+    private var resolvedSymbol: String {
+        SFSymbolResolver.validSymbol(symbol, fallback: "menubar.rectangle")
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            (tint ?? Color.primary).opacity(tint != nil ? 0.22 : 0.12),
+                            (tint ?? Color.primary).opacity(tint != nil ? 0.10 : 0.05),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: size, height: size)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(
+                            (tint ?? Color.white).opacity(tint != nil ? 0.28 : 0.16),
+                            lineWidth: 0.75
+                        )
+                )
+                .overlay {
+                    if let customImage {
+                        Image(nsImage: customImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: size * 0.54, height: size * 0.54)
+                    } else {
+                        Image(systemName: resolvedSymbol)
+                            .font(.system(size: size * 0.45, weight: .medium))
+                            .foregroundStyle(tint ?? .primary.opacity(0.92))
+                    }
+                }
+
+            if let appBadgeImage {
+                let badgeSize = max(12, size * 0.41)
+                Image(nsImage: appBadgeImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: badgeSize, height: badgeSize)
+                    .clipShape(RoundedRectangle(cornerRadius: badgeSize * 0.27, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: badgeSize * 0.27, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.65), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                    .offset(x: 3, y: 3)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 /// A command's icon: the menu's own image when macOS gives one, otherwise the symbol the
 /// dock resolves for that command, badged with the app it belongs to. `SFSymbolResolver` is
 /// already a shared service, so this is the dock's choice of glyph rather than a second one.
@@ -54,32 +123,12 @@ private struct MenuRowIcon: View {
     let bundleID: String
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.08))
-                .frame(width: 26, height: 26)
-                .overlay {
-                    if let image = item.image {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 15, height: 15)
-                    } else {
-                        Image(systemName: symbolName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary.opacity(0.85))
-                    }
-                }
-
-            if let appIcon {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .frame(width: 12, height: 12)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    .offset(x: 3, y: 3)
-            }
-        }
-        .frame(width: 28, height: 28)
+        SpotlightCommandBadgeIcon(
+            symbol: symbolName,
+            customImage: item.image,
+            appBadgeImage: appIcon,
+            size: 30
+        )
     }
 
     private var symbolName: String {
@@ -1181,23 +1230,17 @@ struct AppChatListCard: View {
     {
         let foot = model.foot(for: .global(doc))
         return HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(width: AppChatListMetrics.iconSize - 2, height: AppChatListMetrics.iconSize - 2)
-                CornerResultIcon(url: pageURL(doc), fallback: doc.icon,
-                    symbol: GlobalContextRow.symbol(for: doc))
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if foot.isRunningApp {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 7, height: 7)
-                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.85), lineWidth: 1))
+            globalLeadingIcon(for: doc)
+                .overlay(alignment: .bottomTrailing) {
+                    if foot.isRunningApp {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 7, height: 7)
+                            .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.85), lineWidth: 1))
+                    }
                 }
-            }
-            .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
-            .fluidIconZoom(isFocused: isFocused)
+                .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
+                .fluidIconZoom(isFocused: isFocused)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(doc.title)
@@ -1248,6 +1291,52 @@ struct AppChatListCard: View {
         return nil
     }
 
+    @ViewBuilder
+    private func globalLeadingIcon(for doc: GlobalSearchService.SearchDocument) -> some View {
+        switch doc.action {
+        case .activatePID, .launchPath, .launchBundleId:
+            CornerResultIcon(
+                url: pageURL(doc),
+                fallback: doc.icon,
+                symbol: GlobalContextRow.symbol(for: doc)
+            )
+        case .browserURL(let url, let browserBundleId, _, _, _):
+            CornerResultIcon(
+                url: url,
+                fallback: doc.icon ?? appIconImage(for: browserBundleId),
+                symbol: GlobalContextRow.symbol(for: doc)
+            )
+        case .cachedMenu(let bundleId, _, _, _, _):
+            SpotlightCommandBadgeIcon(
+                symbol: GlobalContextRow.symbol(for: doc),
+                customImage: doc.icon,
+                appBadgeImage: appIconImage(for: bundleId),
+                size: 32
+            )
+        case .adapterAction(let bundleId, _, _):
+            SpotlightCommandBadgeIcon(
+                symbol: GlobalContextRow.symbol(for: doc),
+                appBadgeImage: appIconImage(for: bundleId),
+                tint: .accentColor,
+                size: 32
+            )
+        case .cliScope, .systemCommandScope, .userExtension, .plugin:
+            SpotlightCommandBadgeIcon(
+                symbol: GlobalContextRow.symbol(for: doc),
+                customImage: doc.icon,
+                appBadgeImage: doc.bundleId.isEmpty ? nil : appIconImage(for: doc.bundleId),
+                size: 32
+            )
+        }
+    }
+
+    private func appIconImage(for bundleID: String) -> NSImage? {
+        guard !bundleID.isEmpty,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
     private func dockRow(_ pill: DockPill, isFocused: Bool) -> some View {
         // "Show N more" is a control, not a result: a small chevron, quieter text, no status
         // (owner 2026-10-17).
@@ -1259,15 +1348,18 @@ struct AppChatListCard: View {
             return rawSubtitle
         }()
         let foot = model.foot(for: .dock(pill))
+        let rowURL = pill.resolvedURL
+            ?? pill.previewPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        let isNativeAppOrFile = ["application", "appLaunch", "appSwitch"].contains(pill.rankingKind)
+            || (rowURL?.isFileURL == true)
+        let isAppScopedCommand = ["menu", "submenuChild", "finderMenu", "safariCommand", "adapterAction"].contains(pill.rankingKind)
         return HStack(spacing: 12) {
             Group {
                 if isShowMore {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
-                } else {
-                    let rowURL = pill.resolvedURL
-                        ?? pill.previewPath.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+                } else if isNativeAppOrFile {
                     CornerResultIcon(url: rowURL, fallback: pill.menuItemImage, symbol: pill.icon)
                         .overlay(alignment: .bottomTrailing) {
                             if foot.isRunningApp {
@@ -1277,6 +1369,41 @@ struct AppChatListCard: View {
                                     .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.85), lineWidth: 1))
                             }
                         }
+                } else if let rowURL, !rowURL.isFileURL {
+                    CornerResultIcon(url: rowURL, fallback: pill.menuItemImage, symbol: pill.icon)
+                } else {
+                    let badgeImage: NSImage? = {
+                        if !pill.sourceBundleId.isEmpty,
+                           isAppScopedCommand || pill.rankingKind == "doraxPackV3Contextual" || pill.rankingKind == "globalCommand"
+                        {
+                            return appIconImage(for: pill.sourceBundleId)
+                        }
+                        return nil
+                    }()
+                    let tintColor: Color? = {
+                        if pill.rankingKind == "nativeWindow" { return .blue }
+                        if pill.rankingKind == "doraxPackStudio" { return .purple }
+                        if pill.rankingKind == "adapterAction" { return .accentColor }
+                        return nil
+                    }()
+                    let resolvedSymbol: String = {
+                        let raw = pill.icon.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !raw.isEmpty && raw != "app" && raw != "command" {
+                            return raw
+                        }
+                        return SFSymbolResolver.menuSymbol(
+                            title: pill.name,
+                            path: pill.menuPath.isEmpty ? [pill.sourceAppName, pill.name] : pill.menuPath,
+                            isAppleMenu: pill.menuPath.first?.lowercased() == "apple"
+                        )
+                    }()
+                    SpotlightCommandBadgeIcon(
+                        symbol: resolvedSymbol,
+                        customImage: isAppScopedCommand ? pill.menuItemImage : nil,
+                        appBadgeImage: badgeImage,
+                        tint: tintColor,
+                        size: 32
+                    )
                 }
             }
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
@@ -1356,15 +1483,16 @@ struct AppChatListCard: View {
     /// An action the app's adapter declares: curated, so it says what it does rather than
     /// where it lives.
     private func actionRow(_ action: AdapterAction, isFocused: Bool) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.16))
-                    .frame(width: AppChatListMetrics.iconSize - 2, height: AppChatListMetrics.iconSize - 2)
-                Image(systemName: action.icon.isEmpty ? "bolt.fill" : action.icon)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-            }
+        let resolvedSymbol = action.icon.isEmpty
+            ? SFSymbolResolver.menuSymbol(title: action.name, path: [model.appName, action.name], isAppleMenu: false)
+            : action.icon
+        return HStack(spacing: 12) {
+            SpotlightCommandBadgeIcon(
+                symbol: resolvedSymbol,
+                appBadgeImage: appIconImage(for: model.appBundleID),
+                tint: .accentColor,
+                size: 32
+            )
             .frame(width: AppChatListMetrics.iconSize, height: AppChatListMetrics.iconSize)
             .fluidIconZoom(isFocused: isFocused)
 

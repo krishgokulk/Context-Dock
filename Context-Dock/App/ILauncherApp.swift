@@ -256,9 +256,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         PluginCapability.installApprovalProvider()
         // Safe one-time .zip backup & cleanup of pre-v3 legacy extension clutter.
         LegacyPluginCleanup.runOnceIfNeeded()
-        // The plugins the app ships, written onto disk where every other plugin lives so they
-        // can be read and edited by hand. Never overwrites an edited one.
-        PluginEssentials.seedIfNeeded()
         // First-party .doraxpack v3/v2 packs: Finder, Safari, Mail, IINA, Antigravity + flagship packs.
         FirstPartyPacks.loadIfNeeded()
         // One-time migration of legacy user-installed packs to .doraxpack v2 folder format.

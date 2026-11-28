@@ -45,8 +45,6 @@ struct PluginsSettingsPage: View {
                     Divider()
                     installed
                     Divider()
-                    examples
-                    Divider()
                     legacy
                 }
                 .padding(24)
@@ -296,7 +294,7 @@ struct PluginsSettingsPage: View {
             }
 
             if registry.plugins.isEmpty {
-                Text("Nothing installed yet. Create one, or open an example below.")
+                Text("No custom plugins installed yet. Click + Create Pack to build one with AI.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -421,45 +419,6 @@ struct PluginsSettingsPage: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-    }
-
-    // MARK: Examples
-
-    /// The shipped examples are the only plugins with a live icon and a hover panel until a
-    /// person writes one. Opening one in the Creator, saving it and pinning it is how those
-    /// hosts get seen; it also happens to be the fastest way to learn the format.
-    private var examples: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Examples", systemImage: "lightbulb")
-                .font(.headline)
-            Text("Open one in the Creator, change what you like, save it — it is installed "
-                + "and searchable, and it can be pinned to the corner dock.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(PluginExamples.all + PluginEssentials.all, id: \.id) { manifest in
-                row(
-                    icon: manifest.icon, name: manifest.name,
-                    detail: shape(of: manifest), badge: nil, enabled: nil
-                ) {
-                    Button("Open in Creator") {
-                        GeneralChatWindowController.shared.showCreator(editing: manifest)
-                    }
-                    .buttonStyle(.borderless).font(.caption)
-                }
-            }
-        }
-    }
-
-    /// One line on what hosts a manifest declares — enough to pick the one to try.
-    private func shape(of manifest: PluginManifest) -> String {
-        let hosts = manifest.declaredPresentations.map { presentation -> String in
-            if presentation == .widget, manifest.views.widget?.family == .bar {
-                return "bar tile"
-            }
-            return presentation.rawValue
-        }
-        return hosts.isEmpty ? "one-shot" : hosts.joined(separator: " · ")
     }
 
     private func isPinned(_ pluginID: String) -> Bool {
