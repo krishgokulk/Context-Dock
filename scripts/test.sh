@@ -21,7 +21,9 @@ set -euo pipefail
 # suite nobody runs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeTestDerivedData"
+MAIN_DIR="$(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null | awk 'NR==1{print $2}')"
+MAIN_DIR="${MAIN_DIR:-$ROOT_DIR}"
+DERIVED_DATA_DIR="$MAIN_DIR/.build/XcodeTestDerivedData"
 mkdir -p "$DERIVED_DATA_DIR"
 
 # Same Finder-detritus self-heal as build-debug.sh; see that script for why.

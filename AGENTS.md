@@ -59,8 +59,8 @@ Pure Xcode project — no Makefile, no SPM package at the root.
 **After every code edit, build + relaunch with the shared script — never raw `xcodebuild` + `open`:**
 
 ```bash
-./scripts/dev-run.sh     # builds Debug into .build/XcodeDerivedData and relaunches THAT app
-./scripts/build-debug.sh # build only, same DerivedData
+./scripts/dev-run.sh     # builds Debug into main checkout's .build/XcodeDerivedData and relaunches THAT signed app
+./scripts/build-debug.sh # build only, same shared DerivedData
 ./scripts/check.sh       # the gate: Debug build + oversized-file warning; --full adds the tests
 ./scripts/test.sh        # whole suite (offline: no API key, no network)
 ./scripts/corner.sh bottom  # hand checks: open the Corner (centre|bottom|global|general|cmd|ask|hide|state)
@@ -76,9 +76,11 @@ private context. If an App Pet scope is needed, use an app that is **already run
 nothing private. If you sent a test message, clean it up with `corner.sh clear` — but **only if
 the thread was empty when you opened it**; do not clear an existing owner conversation.
 
-Why: raw `xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
-agents' build — launching a `~/Library/Developer/Xcode/DerivedData` path has shipped a **stale app**
-before. `dev-run.sh` is the single source of truth for which binary runs.
+Why: **every agent (Claude Desktop, Claude Code, Codex, Antigravity) and every worktree builds into
+one shared `<main-repo>/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app`** (symlinked at
+`~/Applications/Context-Dock.app`). Never run raw `xcodebuild` into Xcode's hashed DerivedData or copy
+per-worktree `.app` bundles — a single signed binary updates in place, saves gigabytes of disk space,
+and preserves macOS Accessibility grants across rebuilds. `dev-run.sh` is the single source of truth.
 
 **Before finishing a turn that touched Swift, `./scripts/check.sh` must pass.** Claude's `Stop` hook
 runs it automatically.
@@ -146,9 +148,9 @@ what i need to check"). Not only at the end of a task: any message reporting a c
 a rebase, a CI repair, a review follow-up — closes with a short checklist of what the owner should
 try in the running app to confirm it, one line per change: where to go, what to do, what they should
 see. If nothing in the change is visible by hand (a test-only or docs-only change), say so in one line.
-The checklist comes with the terminal commands to launch that exact commit (owner 2026-10-07:
-"always give terminal cmd after code fix"): a copy-paste block that builds a test worktree beside
-the owner's checkout (`~/Developer/Context-Dock`) at the pushed SHA and runs `./scripts/dev-run.sh`.
+The checklist comes with the terminal command to update and launch the single canonical signed app
+in place (`cd ~/Developer/Context-Dock && ./scripts/main.sh` when pushed to `general-chat-agent`, or
+`./scripts/dev-run.sh` inside the active worktree — never spin up duplicate per-worktree `.build` copies).
 
 **UI work is checked by eye, not only by tests.** Any change a user can see is not done until the
 agent has launched the app (`./scripts/dev-run.sh`), taken screenshots of the changed surface **and of

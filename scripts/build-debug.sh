@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeDerivedData"
+MAIN_DIR="$(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null | awk 'NR==1{print $2}')"
+MAIN_DIR="${MAIN_DIR:-$ROOT_DIR}"
+DERIVED_DATA_DIR="$MAIN_DIR/.build/XcodeDerivedData"
 
 # Self-heal the recurring macOS custom-folder-icon detritus. Finder re-adds a
 # "has custom icon" FinderInfo xattr + an "Icon\r" resource-fork file to folders;

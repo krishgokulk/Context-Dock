@@ -12,23 +12,27 @@ does it reach the main build.
 | `~/Developer/Context-Dock-pr-<n>` | **Test build** of PR #n, for your hand check | `./scripts/try-pr.sh <n>` |
 | `~/Developer/Context-Dock/.claude/worktrees/*` | **Agent worktrees**: one per session, one per issue | the session that made it |
 
-Each folder has its own `.build`, so builds never overwrite each other. Only one DoraX runs at a
-time; launching one quits the other.
+All checkouts and agent worktrees build into **one shared canonical bundle** at
+`~/Developer/Context-Dock/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app`
+(symlinked at `~/Applications/Context-Dock.app`), saving gigabytes of disk space and keeping macOS
+Accessibility permissions valid across rebuilds. Only one DoraX runs at a time; `./scripts/dev-run.sh`
+quits the previous copy, rebuilds in place, and relaunches.
 
 ## The loop
 
 ```
 session builds an issue in its worktree ──► draft PR ──► CI green ──► agent-run hand check
                                                                               │
-   you: ./scripts/try-pr.sh <n>   (test build launches)                       ◄┘
+   you: ./scripts/try-pr.sh <n>   (rebuilds canonical app from PR & launches) ◄┘
    you: check the PR's list ──► "N passed" to the planner ──► planner merges
-   you: ./scripts/main.sh         (main build updates and launches)
+   you: ./scripts/main.sh         (main build fast-forwards & updates app in place)
 ```
 
 - **Try a PR:** `./scripts/try-pr.sh 210`. Add a commit to pin one: `./scripts/try-pr.sh 210 3d3c801`.
 - **Back to your daily app:** `./scripts/main.sh`.
 - **Free disk:** `./scripts/clean-worktrees.sh` lists every worktree with its size;
-  `./scripts/clean-worktrees.sh --pr` removes the `Context-Dock-pr-*` test builds (never one with edits).
+  `./scripts/clean-worktrees.sh --prune-builds` deletes redundant per-worktree `.build/` folders;
+  `./scripts/clean-worktrees.sh --pr` removes the `Context-Dock-pr-*` / `Context-Dock-check*` test worktrees (never one with edits).
 
 Parallel work is several agent worktrees at once (for example one Corner UI session and one
 builder). They never share a folder, and they meet only on GitHub through PRs.

@@ -8,14 +8,17 @@
 # hashed DerivedData, and .build/XcodeDerivedData), and launching the wrong one
 # means testing stale code.
 #
-# Single source of truth:
-#   build  → .build/XcodeDerivedData   (repo-local, gitignored, via build-debug.sh)
-#   launch → .build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app
+# Single source of truth across main checkout & every agent worktree (Claude Desktop,
+# Claude Code, Codex, Antigravity):
+#   build  → <main-repo>/.build/XcodeDerivedData   (via build-debug.sh; zero per-worktree bloat)
+#   launch → <main-repo>/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT_DIR/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app"
+MAIN_DIR="$(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null | awk 'NR==1{print $2}')"
+MAIN_DIR="${MAIN_DIR:-$ROOT_DIR}"
+APP="$MAIN_DIR/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app"
 
 # Quit BEFORE building, not after. The build rewrites and re-signs the .app in place,
 # so a running instance has its bundle replaced underneath it. The process survives
