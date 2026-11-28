@@ -65,6 +65,15 @@ struct ChatGPTSubscriptionTests {
         #expect(throws: (any Error).self) {
             try CodexCLIService.validateSubscriptionLogin(output: "Not logged in", status: 1)
         }
+        do {
+            try CodexCLIService.validateSubscriptionLogin(
+                output: "Error loading configuration: /Users/test/.codex/config.toml:253:14: duplicate key\n",
+                status: 1)
+            Issue.record("Expected invalidConfiguration error")
+        } catch CodexCLIService.SubscriptionFailure.invalidConfiguration(let detail) {
+            #expect(detail.contains("config.toml"))
+            #expect(detail.contains("duplicate key"))
+        }
     }
 
     @Test func catalogUsesAccountModelsAndRejectsAPIAuthentication() throws {

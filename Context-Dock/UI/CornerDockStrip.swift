@@ -88,7 +88,7 @@ struct CornerDockStrip: View {
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
         guard AppSettings.shared.showRunningApps else { return false }
-        return [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
+        return model.phase == .prompt && model.showsFieldPills
             // An app bar's field is compact and draws its own pill after "+": the big
             // icons fade across rather than flying into a pill at the strip's end.
             && !model.fitsField

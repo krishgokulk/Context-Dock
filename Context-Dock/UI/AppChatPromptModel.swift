@@ -247,8 +247,15 @@ final class AppChatPromptModel: ObservableObject {
         // (owner 2026-11-03).
         // Finder walking a folder is not a dock; otherwise Finder — in front or stepped into
         // from Global — is its own Context Dock and rests like any app's (owner 2026-10-09).
-        return isAppContextDock && !isFinderFileSearch
-            && !dockPins.pins(forApp: appBundleID).isEmpty
+        let hasDistinctPin = dockPins.pins(forApp: appBundleID).contains { pin in
+            if case .app(let pinnedBundleID) = pin.kind,
+                pinnedBundleID.caseInsensitiveCompare(appBundleID) == .orderedSame
+            {
+                return false
+            }
+            return true
+        }
+        return isAppContextDock && !isFinderFileSearch && hasDistinctPin
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
@@ -940,6 +947,7 @@ final class AppChatPromptModel: ObservableObject {
     /// even before the first message is sent in this session.
     @discardableResult
     func forceOpenChat() -> Bool {
+        guard !isGlobalScope else { return false }
         if openChat() { return true }
         isConversationHidden = false
         isShowingScopeCard = false

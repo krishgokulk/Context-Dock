@@ -129,7 +129,14 @@ extension AppChatPromptModel {
     /// This app's pins as the bar's icons — the same icons the tabs are, so they fold into
     /// the field's pill and back with them.
     func appPinIcons() -> [MatchDockIcon] {
-        let pins = dockPins.pins(forApp: appBundleID)
+        let pins = dockPins.pins(forApp: appBundleID).filter { pin in
+            if case .app(let pinnedBundleID) = pin.kind,
+                pinnedBundleID.caseInsensitiveCompare(appBundleID) == .orderedSame
+            {
+                return false
+            }
+            return true
+        }
         appPinsByIconID = Dictionary(
             pins.map { (Self.appPinIconID($0), $0) }, uniquingKeysWith: { a, _ in a })
         return pins.map { pin in

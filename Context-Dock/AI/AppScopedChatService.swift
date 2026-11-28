@@ -215,9 +215,13 @@ enum AppScopedChatService {
         // A picked route arrives from the surface without the turn that produced it, so
         // this one runs in the route's own app scope. Only a skill route re-enters `send`,
         // and a picked skill is already the user naming what they want.
-        return await execute(
-            route: route, query: query, history: history,
-            scope: .app(bundleId: route.bundleId), appName: route.appName)
+        do {
+            return try await execute(
+                route: route, query: query, history: history,
+                scope: .app(bundleId: route.bundleId), appName: route.appName)
+        } catch {
+            return Answer(text: "Error: \(error.localizedDescription)", toolChips: [])
+        }
     }
 
     /// Runs one resolved route and phrases the result.
@@ -235,7 +239,7 @@ enum AppScopedChatService {
         scope: GeneralChatScope, appName: String,
         attachments: [URL] = [], extraAppNames: [String] = [], finderSelection: [URL] = [],
         alternatives: [ChatRoute] = []
-    ) async -> Answer {
+    ) async throws -> Answer {
         // A skill is instructions, not a command: it is carried out by answering with the
         // user's own workflow foregrounded, in the scope it was written for.
         if route.kind == .skill {
@@ -248,7 +252,7 @@ enum AppScopedChatService {
                 scope: scope)
             // The thread's own scope, not the route's app: a skill belonging to Finder
             // does not turn a folder conversation into a Finder one.
-            let answer = try? await send(
+            return try await send(
                 scope: scope,
                 appName: appName,
                 query: query,
@@ -257,8 +261,6 @@ enum AppScopedChatService {
                 extraAppNames: extraAppNames,
                 finderSelection: finderSelection,
                 skillOverride: instructions)
-            return answer
-                ?? Answer(text: "Couldn't apply \(route.title).", toolChips: [])
         }
 
         log.notice("route: \(route.kind.rawValue, privacy: .public) \(route.title, privacy: .public)")
@@ -316,7 +318,7 @@ enum AppScopedChatService {
                 in: alternatives)
         {
             log.notice("route fell through: \(route.kind.rawValue, privacy: .public) → \(next.kind.rawValue, privacy: .public)")
-            return await execute(
+            return try await execute(
                 route: next, query: query, history: history, scope: scope,
                 appName: appName, attachments: attachments,
                 extraAppNames: extraAppNames, finderSelection: finderSelection,
@@ -1862,7 +1864,7 @@ enum AppScopedChatService {
                 routes, query: query, appName: routingAppName)
             {
                 log.notice("stage: exact route \(route.kind.rawValue, privacy: .public)")
-                return await execute(
+                return try await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection)
@@ -1873,7 +1875,7 @@ enum AppScopedChatService {
                 bundleId: bundleId, query: query),
                 let route = routes.first(where: { $0.kind == preferred })
             {
-                return await execute(
+                return try await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection)
@@ -1882,7 +1884,7 @@ enum AppScopedChatService {
             // sending the question to a model with a catalogue and hoping it picks well.
             if let route = ChatRouteResolver.unattendedRoute(routes) {
                 log.notice("stage: unattended route \(route.kind.rawValue, privacy: .public)")
-                return await execute(
+                return try await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection,
@@ -1897,7 +1899,7 @@ enum AppScopedChatService {
                 let route = ChatRouteResolver.clearPrimaryRoute(routes)
             {
                 log.notice("stage: clear primary route \(route.kind.rawValue, privacy: .public)")
-                return await execute(
+                return try await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection,
@@ -1918,7 +1920,7 @@ enum AppScopedChatService {
             }
             // A single read-only invocation is just the answer: run it and report.
             if routes.count == 1, let route = routes.first, route.isReadOnly {
-                return await execute(
+                return try await execute(
                     route: route, query: query, history: history, scope: scope,
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection)

@@ -83,7 +83,10 @@ enum DevCornerRemote {
                 controller.showCentred()
             }
             controller.prompt.query = argument
-            controller.prompt.updateGlobalTyping(for: argument)
+            controller.prompt.queryChanged()
+            controller.refresh()
+        case "chat":
+            _ = controller.prompt.forceOpenChat()
             controller.refresh()
         case "v3":
             let v3Parts = argument.split(separator: "/", maxSplits: 1).map(String.init)

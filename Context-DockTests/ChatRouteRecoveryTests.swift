@@ -140,4 +140,29 @@ struct ChatRouteRecoveryTests {
 
         #expect(candidates.map(\.bundleID) == ["com.apple.MobileSMS"])
     }
+
+    @MainActor
+    @Test func referenceKnowledgeSkillsNeverMatchActionRequestsAsRoutes() async {
+        let testBundleID = "com.test.sampleknowledge"
+        let appName = "SampleKnowledge"
+        let store = SkillStore.shared
+        let knowledgeID = AppKnowledgeSkill.id(for: testBundleID)
+        let prior = store.skills(for: testBundleID)
+        store.upsert(
+            AdapterSkill(
+                id: knowledgeID,
+                adapterBundleId: testBundleID,
+                name: "\(appName) — what this app is",
+                summary: "Learned from \(appName)'s Help menu and registered capabilities",
+                instructions: "Reference only.",
+                isEnabled: true))
+
+        let routes = await ChatRouteResolver.routes(
+            for: "update this app.", bundleId: testBundleID, appName: appName)
+        store.remove(id: knowledgeID)
+        for existing in prior {
+            store.upsert(existing)
+        }
+        #expect(!routes.contains(where: { $0.payload == knowledgeID || $0.kind == .skill }))
+    }
 }

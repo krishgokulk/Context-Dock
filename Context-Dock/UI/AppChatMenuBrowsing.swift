@@ -244,8 +244,9 @@ extension AppChatPromptModel {
                 ordered.insert(calcRow, at: 0)
                 globalTopHitID = calcRow.id
             } else {
-                let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
-                    ?? GlobalQuery.topHit(ordered, query: typed)
+                let queryTopHit = GlobalQuery.topHit(ordered, query: typed)
+                let topHit = pickMemory.preferredTopHit(
+                    in: ordered, fallback: queryTopHit, query: typed, scope: pickScope)
                 globalTopHitID = topHit?.id
                 if let topHit {
                     ordered.removeAll { $0.id == topHit.id }
@@ -993,6 +994,16 @@ extension AppChatPromptModel {
         }
         syncListPhase()
         touch()
+    }
+
+    /// Switch directly from one App Pet chat header into another running app's App Pet
+    /// while remaining in the conversation surface.
+    func switchAppPet(name: String, bundleID: String) {
+        guard !bundleID.isEmpty,
+            bundleID.caseInsensitiveCompare(appBundleID) != .orderedSame
+        else { return }
+        scopeIntoApp(name: name, bundleID: bundleID)
+        _ = forceOpenChat()
     }
 
     /// Whether a Global result is a Global Command — the `syscmd://` kind.

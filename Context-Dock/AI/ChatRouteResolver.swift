@@ -540,8 +540,16 @@ enum ChatRouteResolver {
 
         // The user's own workflows for this app. A skill runs nothing on its own, so it is
         // read-only by definition; it changes how the request is answered, not the machine.
+        // Auto-generated background knowledge skills (`AppKnowledgeSkill`) are already
+        // included in the system prompt's `.skills` section on every turn and must never
+        // match action requests (e.g. "update this app.") as an executable route.
+        let referenceKnowledgeID = AppKnowledgeSkill.id(for: bundleId)
         for skill in SkillStore.shared.skills(for: bundleId)
-        where skill.isEnabled && matches("\(skill.name) \(skill.summary)") {
+        where skill.isEnabled
+            && skill.id != referenceKnowledgeID
+            && !skill.name.hasSuffix("— what this app is")
+            && matches("\(skill.name) \(skill.summary)")
+        {
             routes.append(
                 ChatRoute(
                     id: "skill:\(skill.id)",

@@ -6,6 +6,7 @@ extension CodexCLIService {
         case signInRequired
         case apiKeyLogin
         case catalogUnavailable
+        case invalidConfiguration(String)
 
         var errorDescription: String? {
             switch self {
@@ -16,8 +17,17 @@ extension CodexCLIService {
                     + "Use `codex login` in Terminal to switch, or choose OpenAI API in DoraX."
             case .catalogUnavailable:
                 return "Codex could not load subscription models. Update Codex, run `codex login`, then check again."
+            case .invalidConfiguration(let detail):
+                return "Codex configuration error: \(detail). Fix ~/.codex/config.toml and retry."
             }
         }
+    }
+
+    nonisolated static func configurationError(in output: String) -> String? {
+        output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { $0.lowercased().contains("error loading configuration") }
     }
 
     struct SubscriptionModel: Identifiable, Equatable, Sendable {
@@ -64,10 +74,13 @@ extension CodexCLIService {
     }
 
     nonisolated static func validateSubscriptionLogin(output: String, status: Int32) throws {
+        if let configError = configurationError(in: output) {
+            throw SubscriptionFailure.invalidConfiguration(configError)
+        }
         guard status == 0 else { throw SubscriptionFailure.signInRequired }
-        let status = output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard status == "logged in using chatgpt" else {
-            if status.contains("api key") { throw SubscriptionFailure.apiKeyLogin }
+        let normalized = output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized == "logged in using chatgpt" else {
+            if normalized.contains("api key") { throw SubscriptionFailure.apiKeyLogin }
             throw SubscriptionFailure.signInRequired
         }
     }
@@ -108,6 +121,9 @@ extension CodexCLIService {
                         return ids.contains(2) && ids.contains(3)
                     }
                 })
+            if let configError = configurationError(in: result.stderr + "\n" + result.stdout) {
+                throw SubscriptionFailure.invalidConfiguration(configError)
+            }
             let page = try subscriptionCatalog(from: result.stdout)
             models += page.models.filter { model in !models.contains { $0.id == model.id } }
             cursor = page.nextCursor

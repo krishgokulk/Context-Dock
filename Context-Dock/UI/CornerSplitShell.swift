@@ -44,11 +44,9 @@ enum CornerSplitShell {
         phase: AppChatPromptPhase,
         stripHasContent: Bool
     ) -> Bool {
-        guard isVisible, !isGeneral, phase == .prompt || phase == .suggesting else { return false }
-        // For app scopes: show the split shell only when the app has pins —
-        // running apps alone beside an unpinned app are clutter (owner 2026-11-03).
-        // Global Context is unchanged: it always shows the right running-apps strip
-        // when apps are running.
+        // Result Sheet (.suggesting) keeps the input bar clean — no running-apps strip beside
+        // or inside the sheet header; running apps appear in compact prompt/dock mode only.
+        guard isVisible, !isGeneral, phase == .prompt else { return false }
         if !isGlobalScope { return hasPins }
         return stripHasContent
     }
@@ -123,11 +121,10 @@ enum CornerSplitShell {
         CornerLivePanelLayout.panelWidth(card: card) - chatInset
     }
 
-    /// Whether a conversation's composer splits: only with the app's panel open above, so the
-    /// apps have a column to stand under, and only with apps to show (owner 2026-10-07:
-    /// "show same for chat as well, if user pinned something").
+    /// Whether a conversation's composer splits: running apps are switched from the top App Pet
+    /// header dropdown rather than pinned beside the bottom composer.
     static func splitsChat(phase: AppChatPromptPhase, showsLivePanel: Bool, hasApps: Bool) -> Bool {
-        phase == .chat && showsLivePanel && hasApps
+        false
     }
 }
 

@@ -133,9 +133,12 @@ enum GlobalQuery {
             return pathHit
         }
 
-        // 1. Exact folder match (including singular/plural fold)
+        // 1. Exact top-level home folder match (e.g. "downloads" -> ~/Downloads, "pictures" -> ~/Pictures)
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
         if let exactFolderHit = rows.first(where: { row in
             guard case .file(let url) = row, AppChatPromptModel.isFolder(url) else { return false }
+            let parent = url.standardizedFileURL.deletingLastPathComponent()
+            guard parent == homeURL else { return false }
             let titleLower = row.title.lowercased()
             return titleLower == trimmed || titleLower == singularTrimmed
         }) {
@@ -150,11 +153,14 @@ enum GlobalQuery {
             return exactApp
         }
 
-        // 1c. Exact title match across window layouts, commands, pinned actions, and other rows
+        // 1c. Exact title match across window layouts, commands, pinned actions (never a random file or web row)
         if let exactHit = rows.first(where: { row in
             let titleLower = row.title.lowercased()
             guard titleLower == trimmed else { return false }
             if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            if case .file = row { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            if [GlobalResultSection.files, GlobalResultSection.web].contains(sec) { return false }
             if case .dock(let pill) = row, pill.rankingKind == "menu" { return false }
             if case .global(let doc) = row, case .cachedMenu = doc.action { return false }
             if case .command = row { return false }
@@ -166,6 +172,9 @@ enum GlobalQuery {
             let titleLower = row.title.lowercased()
             guard titleLower == trimmed else { return false }
             if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            if case .file = row { return false }
+            let sec = GlobalResultSection.title(for: row) ?? ""
+            if [GlobalResultSection.files, GlobalResultSection.web].contains(sec) { return false }
             return true
         }) {
             return exactMenuHit
@@ -203,11 +212,13 @@ enum GlobalQuery {
         // 5. Direct System Command / Pack v3 Command match (e.g. "empty" -> "Empty Trash", "sleep" -> "Sleep Mac", "process" -> "Process Monitor")
         if let commandHit = rows.first(where: { row in
             let sec = GlobalResultSection.title(for: row) ?? ""
-            guard sec == GlobalResultSection.commands || sec == GlobalResultSection.extensions else { return false }
             let isGlobalV3: Bool = {
                 if case .dock(let pill) = row, pill.rankingKind == "doraxPackV3" { return true }
                 return false
             }()
+            guard isGlobalV3 || sec == GlobalResultSection.commands || sec == GlobalResultSection.extensions else {
+                return false
+            }
             guard isGlobalV3 || GlobalResultSection.appName(of: row).isEmpty else { return false }
             if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
             let titleLower = row.title.lowercased()

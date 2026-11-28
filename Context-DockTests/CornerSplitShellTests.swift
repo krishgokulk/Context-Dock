@@ -8,17 +8,17 @@ import Testing
 @MainActor
 struct CornerSplitShellTests {
     private func splits(
-        visible: Bool = true, general: Bool = false, phase: AppChatPromptPhase = .suggesting,
+        visible: Bool = true, general: Bool = false, phase: AppChatPromptPhase = .prompt,
         content: Bool = true
     ) -> Bool {
         CornerSplitShell.splits(
             isVisible: visible, isGeneral: general, phase: phase, stripHasContent: content)
     }
 
-    /// Open, the field and the apps are two pieces — with or without a board above.
+    /// Open at compact prompt, the field and running apps are two pieces; Result Sheet (.suggesting) hides the running apps strip.
     @Test func anOpenFieldSplits() {
-        #expect(splits())
         #expect(splits(phase: .prompt))
+        #expect(!splits(phase: .suggesting))
     }
 
     /// Nothing to put beside the field (no apps, no copy, an empty shelf): it stays whole.
@@ -126,10 +126,10 @@ struct CornerSplitShellTests {
         #expect(ClipboardPanelModel.iconDwell == 3)
     }
 
-    /// A conversation splits its composer only with the app's panel open and apps to show
-    /// (owner 2026-10-07: "show same for chat as well, if user pinned something").
+    /// A conversation keeps its composer whole without a bottom-right running-apps strip;
+    /// running apps are switched from the top App Pet dropdown instead.
     @Test func aConversationSplitsUnderItsPanel() {
-        #expect(CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: true, hasApps: true))
+        #expect(!CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: true, hasApps: true))
         #expect(!CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: false, hasApps: true))
         #expect(!CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: true, hasApps: false))
         #expect(!CornerSplitShell.splitsChat(phase: .prompt, showsLivePanel: true, hasApps: true))

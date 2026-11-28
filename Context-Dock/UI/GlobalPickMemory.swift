@@ -85,18 +85,93 @@ final class GlobalPickMemory {
     func favourite(
         in rows: [AppChatRow], query: String, scope: String = "", now: Date = Date()
     ) -> AppChatRow? {
+        favouriteMatch(in: rows, query: query, scope: scope, now: now)?.row
+    }
+
+    /// Chooses the learned favourite unless it is a 1-count non-prefix incidental menu row
+    /// (e.g. "Preventing Sleep" for "sleep") while the deterministic fallback is a direct
+    /// prefix match for an Application, Global Command, or Pack Extension ("Sleep Mac").
+    func preferredTopHit(
+        in rows: [AppChatRow],
+        fallback: AppChatRow?,
+        query: String,
+        scope: String = "",
+        now: Date = Date()
+    ) -> AppChatRow? {
+        guard let matched = favouriteMatch(in: rows, query: query, scope: scope, now: now) else {
+            return fallback
+        }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if matched.pick.count < 2, !trimmed.isEmpty {
+            if Self.isMenuRow(matched.row),
+                !matched.row.title.lowercased().hasPrefix(trimmed)
+            {
+                if let fallback, Self.isDirectPrimaryHit(fallback, query: trimmed) {
+                    return fallback
+                }
+                if let directCommand = rows.first(where: { Self.isDirectPrimaryHit($0, query: trimmed) }) {
+                    return directCommand
+                }
+            }
+            if matched.row.title.lowercased() != trimmed,
+                let fallback,
+                GlobalResultSection.title(for: fallback) == GlobalResultSection.applications,
+                fallback.title.lowercased() == trimmed
+            {
+                return fallback
+            }
+        }
+        return matched.row
+    }
+
+    private func favouriteMatch(
+        in rows: [AppChatRow], query: String, scope: String, now: Date
+    ) -> (row: AppChatRow, pick: Pick, score: Double)? {
         guard let whole = Self.queryKeys(query).first, let taken = picks[whole] else { return nil }
         let typed = Set(GlobalQuery.words(query))
         func score(_ pick: Pick) -> Double {
             Double(pick.count) * pow(0.5, now.timeIntervalSince(pick.last) / Self.halfLife)
         }
         return rows
-            .compactMap { row -> (AppChatRow, Double)? in
+            .compactMap { row -> (row: AppChatRow, pick: Pick, score: Double)? in
                 guard let pick = taken[Self.rowKey(row, scope: scope)] else { return nil }
                 if let verb = GlobalQuery.destructiveVerb(of: row), !typed.contains(verb) { return nil }
-                return (row, score(pick))
+                return (row, pick, score(pick))
             }
-            .max { $0.1 < $1.1 }?.0
+            .max { $0.score < $1.score }
+    }
+
+    private static func isMenuRow(_ row: AppChatRow) -> Bool {
+        if GlobalResultSection.title(for: row) == GlobalResultSection.menuCommands {
+            return true
+        }
+        switch row {
+        case .dock(let pill):
+            return pill.rankingKind == "menu"
+                || pill.id.hasPrefix("indexed-menu-")
+                || pill.id.hasPrefix("global-ctx-menu-")
+        case .global(let doc):
+            if case .cachedMenu = doc.action { return true }
+            return false
+        case .command: return true
+        default: return false
+        }
+    }
+
+    private static func isDirectPrimaryHit(_ row: AppChatRow, query: String) -> Bool {
+        guard row.title.lowercased().hasPrefix(query) else { return false }
+        let sec = GlobalResultSection.title(for: row) ?? ""
+        if [
+            GlobalResultSection.applications,
+            GlobalResultSection.commands,
+            GlobalResultSection.extensions,
+        ].contains(sec) {
+            return true
+        }
+        if case .dock(let pill) = row {
+            return ["doraxPackV3", "globalCommand", "application"].contains(pill.rankingKind)
+        }
+        return false
     }
 
     /// Writes one after another, in the order the picks were made: two detached writes could

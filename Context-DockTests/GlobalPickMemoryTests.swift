@@ -73,4 +73,61 @@ struct GlobalPickMemoryTests {
         #expect(memory.favourite(in: [assist], query: "assist", scope: "com.apple.Notes", now: now)?.id == assist.id)
         #expect(memory.favourite(in: [assist], query: "assist", scope: "com.apple.Mail", now: now) == nil)
     }
+
+    @Test func singleIncidentalMenuPickDoesNotOverridePrefixCommand() {
+        let memory = GlobalPickMemory(file: nil)
+        let incidentalMenu = menu("Preventing Sleep", app: "Activity Monitor")
+        let randomFile = AppChatRow.file(URL(fileURLWithPath: "/tmp/sleep"))
+        var sleepPill = DockPill(
+            id: "dorax-v3-global-system-utilities::sleep-mac",
+            name: "Sleep Mac", icon: "powersleep", badge: "System & Hardware", execute: {})
+        sleepPill.rankingKind = "doraxPackV3"
+        sleepPill.resultSection = "System & Hardware"
+        let sleepCommand = AppChatRow.dock(sleepPill)
+
+        #expect(GlobalQuery.topHit([incidentalMenu, sleepCommand, randomFile], query: "sleep")?.id == sleepCommand.id)
+
+        memory.record(query: "sleep", row: incidentalMenu, scope: "global", now: now)
+        let preferredOnce = memory.preferredTopHit(
+            in: [incidentalMenu, sleepCommand, randomFile],
+            fallback: GlobalQuery.topHit([incidentalMenu, sleepCommand, randomFile], query: "sleep"),
+            query: "sleep",
+            scope: "global",
+            now: now)
+        #expect(preferredOnce?.id == sleepCommand.id)
+
+        // Repeatedly choosing the menu item earns Top Hit override.
+        memory.record(query: "sleep", row: incidentalMenu, scope: "global", now: now)
+        let preferredTwice = memory.preferredTopHit(
+            in: [incidentalMenu, sleepCommand],
+            fallback: sleepCommand,
+            query: "sleep",
+            scope: "global",
+            now: now)
+        #expect(preferredTwice?.id == incidentalMenu.id)
+    }
+
+    @Test func exactApplicationMatchBeatsSingleNonExactPick() {
+        let memory = GlobalPickMemory(file: nil)
+        var chatsPill = DockPill(
+            id: "dorax-v3-global-messages::recent-chats",
+            name: "Messages Chats", icon: "bubble.left.and.bubble.right", badge: "Messages", execute: {})
+        chatsPill.rankingKind = "doraxPackV3"
+        let chatsRow = AppChatRow.dock(chatsPill)
+
+        var appPill = DockPill(
+            id: "global-app-messages", name: "Messages", icon: "app", badge: "Application", execute: {})
+        appPill.rankingKind = "application"
+        appPill.resultSection = GlobalResultSection.applications
+        let appRow = AppChatRow.dock(appPill)
+
+        memory.record(query: "messages", row: chatsRow, scope: "global", now: now)
+        let preferred = memory.preferredTopHit(
+            in: [chatsRow, appRow],
+            fallback: GlobalQuery.topHit([chatsRow, appRow], query: "messages"),
+            query: "messages",
+            scope: "global",
+            now: now)
+        #expect(preferred?.id == appRow.id)
+    }
 }

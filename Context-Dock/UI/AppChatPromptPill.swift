@@ -708,7 +708,7 @@ struct AppChatPromptPill: View {
             && !model.isClipboardScope
             && (
                 model.phase == .dock
-                || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
+                || (model.phase == .prompt && !splitsShell)
             )
         return ZStack(alignment: globalStackAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
@@ -1117,23 +1117,60 @@ struct AppChatPromptPill: View {
         let fallbackName = model.appName.isEmpty ? "This app" : model.appName
         let identity = conversation.headerIdentity(fallbackAppName: fallbackName)
         return HStack(spacing: 6) {
-            if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            Menu {
+                let candidates = Self.runningAppSwitcherCandidates()
+                Section("Running Apps") {
+                    ForEach(candidates, id: \.bundleID) { item in
+                        Button {
+                            model.switchAppPet(name: item.name, bundleID: item.bundleID)
+                        } label: {
+                            Label {
+                                Text(item.bundleID.caseInsensitiveCompare(model.appBundleID) == .orderedSame
+                                    ? "\(item.name) (Active)" : item.name)
+                            } icon: {
+                                Image(nsImage: item.menuIcon)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button {
+                    model.returnsToGlobalScope = true
+                    _ = model.leaveScopeForGlobal()
+                } label: {
+                    Label("Global Search", systemImage: "magnifyingglass")
+                }
+                Button {
+                    CornerDockController.shared.chatPresentation.show(.general)
+                } label: {
+                    Label("General AI", systemImage: "sparkles")
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if let icon = appIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    Text(identity.primaryTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .layoutPriority(2)
+                    if let subtitle = identity.subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .layoutPriority(0)
+                    }
+                }
             }
-            Text(identity.primaryTitle)
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(1)
-                .layoutPriority(2)
-            if let subtitle = identity.subtitle {
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .layoutPriority(0)
-            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize(horizontal: true, vertical: false)
+            .help("Switch running App Pet")
 
             let petID = AppPetID(dockBundleID: model.appBundleID)
             let supportedModes = petID.map { AppPetManifestRegistry.shared.supportedModes(for: $0) } ?? []
@@ -1863,7 +1900,7 @@ struct AppChatPromptPill: View {
             // Split, the strip stands beside the field, not over its end: kept clear there it
             // pushed the match icon back against the text (owner 2026-10-08: "show the result
             // icon at the end of the search input field").
-            if let strip = globalStrip, !splitsShell, !model.showsExtensionPanel, !model.isClipboardScope {
+            if let strip = globalStrip, !splitsShell, model.phase != .suggesting, !model.showsExtensionPanel, !model.isClipboardScope {
                 Color.clear
                     .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
                     .allowsHitTesting(false)
@@ -1872,7 +1909,7 @@ struct AppChatPromptPill: View {
         }
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? (model.phase == .chat ? 10 : 14))
-        .padding(.trailing, globalStrip == nil || splitsShell || model.showsExtensionPanel || model.isClipboardScope ? (model.phase == .chat ? 10 : 14) : 0)
+        .padding(.trailing, globalStrip == nil || splitsShell || model.phase == .suggesting || model.showsExtensionPanel || model.isClipboardScope ? (model.phase == .chat ? 10 : 14) : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
@@ -2351,6 +2388,39 @@ struct AppChatPromptPill: View {
                 withBundleIdentifier: model.appBundleID)
         else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    private struct RunningAppSwitcherCandidate {
+        let name: String
+        let bundleID: String
+        let menuIcon: NSImage
+    }
+
+    private static func runningAppSwitcherCandidates() -> [RunningAppSwitcherCandidate] {
+        var seen = Set<String>()
+        let ownBundleID = Bundle.main.bundleIdentifier?.lowercased()
+        let running = NSWorkspace.shared.runningApplications.compactMap { app -> RunningAppSwitcherCandidate? in
+            guard app.activationPolicy == .regular, !app.isTerminated,
+                let bundleID = app.bundleIdentifier,
+                bundleID.lowercased() != ownBundleID,
+                seen.insert(bundleID.lowercased()).inserted
+            else { return nil }
+            let name = app.localizedName ?? bundleID
+            let raw = app.icon
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map {
+                    NSWorkspace.shared.icon(forFile: $0.path)
+                }
+                ?? NSImage(systemSymbolName: "app", accessibilityDescription: name)
+                ?? NSImage()
+            let sized = (raw.copy() as? NSImage) ?? raw
+            sized.size = NSSize(width: 16, height: 16)
+            return RunningAppSwitcherCandidate(name: name, bundleID: bundleID, menuIcon: sized)
+        }
+        return running.sorted {
+            if $0.bundleID == "com.apple.finder" { return true }
+            if $1.bundleID == "com.apple.finder" { return false }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 }
 
